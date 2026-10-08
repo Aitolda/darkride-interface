@@ -23,6 +23,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   endif()
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+  # TBB's build/macos.inc assumes intel64 on any 64-bit host (and then adds -mrtm); name the arch explicitly.
+  set(arch "arch=arm64")
+endif()
+
 tbb_build(TBB_ROOT ${CMAKE_CURRENT_BINARY_DIR}/src MAKE_ARGS ${arch} ${CPLUS} ${CONLY} ${TBB_STATIC_INCLUDE} ${FORWARD_SDK_ROOT})
 
 set(SUBDIR ${CMAKE_CURRENT_BINARY_DIR}/tbb_cmake_build/tbb_cmake_build_subdir)

@@ -69,7 +69,13 @@ async function buildIfNecessary(folder, hashMap) {
 		return hash;
 	}
 
-	await run("npm", ["install", "--no-save"], folderPath);
+	// npm 7+ refuses the Angular 12 / @angular-mdc peer-dependency mismatch; the lockfile is fine.
+	await run("npm", ["install", "--no-save", "--legacy-peer-deps"], folderPath);
+	// Node 17+ ships OpenSSL 3, which breaks webpack 5.50's md4 hashing without the legacy provider.
+	const nodeMajor = parseInt(process.versions.node.split(".")[0], 10);
+	if (nodeMajor >= 17 && !(process.env.NODE_OPTIONS || "").includes("--openssl-legacy-provider")) {
+		process.env.NODE_OPTIONS = ((process.env.NODE_OPTIONS || "") + " --openssl-legacy-provider").trim();
+	}
 	await run("npm", ["run", "build"], folderPath);
 
 	return hash;

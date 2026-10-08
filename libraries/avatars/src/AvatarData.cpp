@@ -41,6 +41,7 @@
 #include <VariantMapToScriptValue.h>
 #include <BitVectorHelpers.h>
 #include <NetworkingConstants.h>
+#include <PathUtils.h>
 
 #include "AvatarLogging.h"
 #include "AvatarTraits.h"
@@ -135,12 +136,10 @@ void AvatarData::randomizeDefaultFullAvatarModelUrl() {
     // TODO: this shouldnt have to live on the metaverse.
     // the idea is that the default avatar is random for each person.
     // on the server, it will set the albedo in the fst for the top and hair
-    _defaultFullAvatarModelUrl = QUrl(NetworkingConstants::METAVERSE_SERVER_URL().toString());
-    _defaultFullAvatarModelUrl.setPath(
-        "/api/lynden/" +
-        QString::number(usecTimestampNow()) +
-        ".fst"
-    );
+    // The Tivoli metaverse (which served a randomized lynden avatar) is gone; use the bundled mannequin
+    // from Overte instead. Without a loadable default avatar the skeleton never loads, the character
+    // controller never gets a rigid body, and the avatar is pinned to the world origin.
+    _defaultFullAvatarModelUrl = PathUtils::resourcesUrl("/meshes/defaultAvatar_full.fst");
 }
 
 const QUrl& AvatarData::defaultFullAvatarModelUrl() {

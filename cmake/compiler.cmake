@@ -102,7 +102,8 @@ if (NOT ANDROID_LIB_DIR)
 endif ()
 
 if (APPLE)
-  exec_program(sw_vers ARGS -productVersion  OUTPUT_VARIABLE OSX_VERSION)
+  # exec_program was removed in CMake 4
+  execute_process(COMMAND sw_vers -productVersion OUTPUT_VARIABLE OSX_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE)
   string(REGEX MATCH "^[0-9]+\\.[0-9]+" OSX_VERSION ${OSX_VERSION})
   message(STATUS "Detected OS X version = ${OSX_VERSION}")
   message(STATUS "OS X deployment target = ${CMAKE_OSX_DEPLOYMENT_TARGET}")

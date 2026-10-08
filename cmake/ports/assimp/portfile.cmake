@@ -10,6 +10,10 @@ vcpkg_from_github(
 
 file(REMOVE_RECURSE ${SOURCE_PATH}/contrib/draco)
 
+# Modern clang promotes warnings in this 2021 snapshot to errors (e.g. ordered comparison of
+# function pointers in Assimp.cpp); drop assimp's unconditional -Werror.
+vcpkg_replace_string(${SOURCE_PATH}/code/CMakeLists.txt "TARGET_COMPILE_OPTIONS(assimp PRIVATE -Werror)" "")
+
 set(VCPKG_C_FLAGS "${VCPKG_C_FLAGS} -D_CRT_SECURE_NO_WARNINGS")
 set(VCPKG_CXX_FLAGS "${VCPKG_CXX_FLAGS} -D_CRT_SECURE_NO_WARNINGS")
 
@@ -29,7 +33,8 @@ vcpkg_configure_cmake(
             -DASSIMP_BUILD_TESTS=OFF
             -DASSIMP_BUILD_ASSIMP_VIEW=OFF
             -DASSIMP_BUILD_ASSIMP_TOOLS=OFF
-            -DASSIMP_BUILD_ZLIB=ON
+            # assimp's bundled zlib does not compile against the macOS 26 SDK; use vcpkg's zlib.
+            -DASSIMP_BUILD_ZLIB=OFF
             -DASSIMP_INSTALL_PDB=OFF
             -DASSIMP_IGNORE_GIT_HASH=ON
             -DASSIMP_NO_EXPORT=ON

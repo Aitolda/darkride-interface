@@ -53,10 +53,13 @@ if (APPLE)
   # set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version" FORCE)
   # set(ENV{MACOSX_DEPLOYMENT_TARGET} 10.13)
   
-  # until we have qt5 with webengine for arm64, we'll be cross compiling for x86_64
-  set(CMAKE_REQUIRED_LINK_OPTIONS "-arch;x86_64" CACHE STRING "OSX link for x86_64" FORCE)
-  set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "OSX build for x86_64" FORCE)
-  set(CMAKE_SYSTEM_PROCESSOR "x86_64" CACHE STRING "OSX system processor is x86_64" FORCE)
+  # Build natively for the host architecture (arm64 on Apple Silicon). The x86_64 cross-compile
+  # that Tivoli used (for lack of an arm64 Qt WebEngine) is gone: we supply our own arm64 Qt via
+  # QT_CMAKE_PREFIX_PATH, and the arm64 build uses Apple's OpenGL 4.1 instead of Mesa/Zink.
+  if (NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET OR "${CMAKE_OSX_DEPLOYMENT_TARGET}" STREQUAL "")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS deployment version" FORCE)
+  endif()
+  set(ENV{MACOSX_DEPLOYMENT_TARGET} ${CMAKE_OSX_DEPLOYMENT_TARGET})
 endif()
 
 set(RELEASE_TYPE "$ENV{RELEASE_TYPE}")

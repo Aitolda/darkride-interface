@@ -27,3 +27,4 @@
 *.ttf binary
 *.wav binary
 *.rsrc binary
+cmake/ports/nvtt/fix-arm64-darwin.patch -text

@@ -12,8 +12,11 @@
 #define hifi_WebRTC_h
 
 #if defined(Q_OS_MACOS)
-#  define WEBRTC_ENABLED 1
-#  define WEBRTC_POSIX 1
+// The prebuilt WebRTC library (webrtc-m78-osx) is x86_64 only; no echo cancellation on Apple Silicon.
+#  if defined(Q_PROCESSOR_X86_64)
+#    define WEBRTC_ENABLED 1
+#    define WEBRTC_POSIX 1
+#  endif
 #elif defined(Q_OS_WIN)
 #  define WEBRTC_ENABLED 1
 #  define WEBRTC_WIN 1

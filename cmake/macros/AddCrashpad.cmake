@@ -30,6 +30,11 @@ macro(add_crashpad)
 
   # TODO: crashpad for linux doesn't work because no https support. youll probably have to link boringssl when compiling
   # if ((WIN32 OR APPLE OR UNIX AND NOT ANDROID) AND USE_CRASHPAD)
+  # No crashpad port for arm64 macOS (the vcpkg port is x64-only).
+  if (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+    set(USE_CRASHPAD FALSE)
+  endif()
+
   if ((WIN32 OR APPLE) AND USE_CRASHPAD)
     message(STATUS "Using Crashpad with backtrace URL: ${CMAKE_BACKTRACE_URL}")
 

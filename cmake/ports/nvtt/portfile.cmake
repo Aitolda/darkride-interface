@@ -8,18 +8,13 @@
 
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
-    REPO tivolicloud/nvidia-texture-tools
-    REF 9afc4b3455db676da47dfadd36c0e2b913d4ffa5
-    SHA512 1c7ebd97768b843c9dd4449c65b53766443e5336eb00dd4c7a82e9969bb6cbecd35c25ffb7ddc06e030fb5bae13c714e4fd680b97393194fce94af9bba82bad9
+    REPO vircadia/nvidia-texture-tools
+    REF d8b7a98aeb177b5eddb76571183bbd2f95d54e6c # 2021-07-04, already includes the arm64 Debug.cpp fix
+    SHA512 ea15ffd19eb1e14c8ebd62f8d7de3df1ecf6c18a339025f4a0e13419717d510903fc126ec6d1bdfbb5a2f4525a922412b72318bc8dd55dd000481a3924fbfcd4
     HEAD_REF master
+    PATCHES
+        fix-arm64-darwin.patch
 )
-
-if (VCPKG_TARGET_ARCHITECTURE STREQUAL "arm64")
-	vcpkg_apply_patches(
-		SOURCE_PATH ${SOURCE_PATH}
-		PATCHES fix-arm64.patch
-	)
-endif ()
 
 vcpkg_configure_cmake(
     SOURCE_PATH ${SOURCE_PATH}

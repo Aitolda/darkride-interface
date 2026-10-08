@@ -105,13 +105,21 @@ endif()
             self.bootstrapCmds = [ os.path.join(self.path, 'bootstrap-vcpkg.sh'), '-disableMetrics', "-allowAppleClang" ]
             # self.vcpkgUrl = 'https://cdn.tivolicloud.com/dependencies/vcpkg/vcpkg-osx-client.tar'
             # self.vcpkgHash = '519d666d02ef22b87c793f016ca412e70f92e1d55953c8f9bd4ee40f6d9f78c1df01a6ee293907718f3bbf24075cc35492fb216326dfc50712a95858e9cbcb4d'
-            self.hostTriplet = 'x64-osx'
-            
+            # Build natively: arm64-osx on Apple Silicon, x64-osx on Intel.
+            if platform.machine().lower() in ("arm64", "aarch64"):
+                self.hostTriplet = 'arm64-osx'
+            else:
+                self.hostTriplet = 'x64-osx'
+
             if usePrebuilt:
-                self.prebuiltArchive = "https://cdn.tivolicloud.com/dependencies/vcpkg/builds/vcpkg-osx.tgz"    
-            
+                self.prebuiltArchive = "https://cdn.tivolicloud.com/dependencies/vcpkg/builds/vcpkg-osx.tgz"
+
             macVersion = hifi_utils.getMacVersion()
             self.bootstrapEnv["MACOSX_DEPLOYMENT_TARGET"] = str(macVersion[0]) + "." + str(macVersion[1])
+            # The dependencies must not require a newer macOS than the Qt build and interface itself
+            # (the top-level CMakeLists.txt exports MACOSX_DEPLOYMENT_TARGET before running prebuild.py).
+            if 'MACOSX_DEPLOYMENT_TARGET' not in self.buildEnv:
+                self.buildEnv["MACOSX_DEPLOYMENT_TARGET"] = "12.0"
 
             # vcpkg uses tools for 10.15 that dont work on older version of macOS
             if macVersion[0] <= 10 and macVersion[1] <= 14:
@@ -243,13 +251,9 @@ endif()
         # TODO: causes Error: Invalid vcpkg root directory /interface/build/TIVOLI_VCPKG/5317b356-release/interface/build/TIVOLI_VCPKG/5317b356-release: No such file or directory
         # actualCommands = [self.exe, '--vcpkg-root', self.path]
 
-        system = platform.system()
-        arch = platform.machine().lower()
-        if system == "Darwin" and (arch == "aarch64" or arch == "arm64"):
-            actualCommands = ["/usr/bin/arch", "-x86_64", self.exe]
-        else:
-            actualCommands = [self.exe]
-        
+        # The vcpkg tool binary may be x86_64-only; macOS runs it under Rosetta automatically.
+        # We no longer force `arch -x86_64`, since the build now targets the native architecture.
+        actualCommands = [self.exe]
         actualCommands.extend(commands)
         
         print("Running command")
@@ -300,14 +304,17 @@ endif()
         print("Installing host tools")
         if (self.vcpkgBuildType):
             self.copyTripletForBuildType(self.hostTriplet)
-        self.run(['install', '--triplet', self.getTripletWithBuildType(self.hostTriplet), 'hifi-host-tools'])
+        hostTriplet = self.getTripletWithBuildType(self.hostTriplet)
+        # Pass the host triplet explicitly: when the vcpkg tool runs under Rosetta it would
+        # otherwise detect the host as x64-osx and build host tools for the wrong architecture.
+        self.run(['install', '--triplet', hostTriplet, '--host-triplet', hostTriplet, 'hifi-host-tools'])
 
         # If not android, install the hifi-client-deps libraries
         if not self.args.android:
             print("Installing build dependencies")
             if (self.vcpkgBuildType):
                 self.copyTripletForBuildType(self.triplet)
-            self.run(['install', '--triplet', self.getTripletWithBuildType(self.triplet), 'hifi-client-deps'])
+            self.run(['install', '--triplet', self.getTripletWithBuildType(self.triplet), '--host-triplet', hostTriplet, 'hifi-client-deps'])
 
     def cleanBuilds(self):
         if self.noClean:

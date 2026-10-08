@@ -9,7 +9,8 @@ include_hifi_library_headers(networking)
 
 if (ANDROID)
 else ()
-  if (NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+  # The prebuilt WebRTC audio-processing library only exists for x86_64 (see shared/WebRTC.h).
+  if (NOT CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
     target_webrtc()
   endif ()
 endif ()

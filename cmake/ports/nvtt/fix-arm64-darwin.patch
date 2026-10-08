@@ -1,0 +1,13 @@
+Apple Silicon: the Darwin signal handler only knew 32-bit ARM; arm64 uses the same __pc register.
+
+--- a/src/nvcore/Debug.cpp
++++ b/src/nvcore/Debug.cpp
+@@ -604,7 +604,7 @@
+ #    elif NV_CPU_X86
+         ucontext_t * ucp = (ucontext_t *)secret;
+         return (void *) ucp->uc_mcontext->__ss.__eip;
+-#    elif NV_CPU_ARM
++#    elif NV_CPU_ARM || NV_CPU_ARM_64
+         ucontext_t * ucp = (ucontext_t *)secret;
+         return (void *) ucp->uc_mcontext->__ss.__pc;
+ #    else

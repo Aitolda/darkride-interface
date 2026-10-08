@@ -1,6 +1,6 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
-    REPO tivolicloud/libsndfile
+    REPO libsndfile/libsndfile
     REF 831136e2874336dac644f868ca009d227bbb7b85
     SHA512 bc6ded23e53c1e2c1191ee32c6a48de3048ab225cc539c87d9fe9250a629b4946fa36ab3719c5d28b485987f372cb5adef768e1e82177d9d6cbfec7ae8c1fcb6
     HEAD_REF mpeg-support

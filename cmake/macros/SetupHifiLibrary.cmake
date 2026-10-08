@@ -17,13 +17,23 @@ macro(SETUP_HIFI_LIBRARY)
 
   include(CheckCXXCompilerFlag)
 
+  # The AVX/AVX2/AVX512 source files are x86-only; on arm64 they compile to empty objects and
+  # clang rejects the -mavx* flags, so only add them when targeting x86_64.
+  if (APPLE AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    set(HIFI_SKIP_AVX_FLAGS TRUE)
+  else()
+    set(HIFI_SKIP_AVX_FLAGS FALSE)
+  endif()
+
   # add compiler flags to AVX source files
   file(GLOB_RECURSE AVX_SRCS "src/avx/*.cpp" "src/avx/*.c")
   foreach(SRC ${AVX_SRCS})
-    if (WIN32)
+    if (HIFI_SKIP_AVX_FLAGS)
+      # nothing
+    elseif (WIN32)
       set_source_files_properties(${SRC} PROPERTIES COMPILE_FLAGS /arch:AVX)
     elseif (APPLE)
-      set_source_files_properties(${SRC} PROPERTIES COMPILE_FLAGS "-maxv")
+      set_source_files_properties(${SRC} PROPERTIES COMPILE_FLAGS "-mavx")
     elseif (UNIX AND NOT ANDROID)
       check_cxx_compiler_flag("-mavx" COMPILER_SUPPORTS_AVX)
       if (COMPILER_SUPPORTS_AVX)
@@ -35,7 +45,9 @@ macro(SETUP_HIFI_LIBRARY)
   # add compiler flags to AVX2 source files
   file(GLOB_RECURSE AVX2_SRCS "src/avx2/*.cpp" "src/avx2/*.c")
   foreach(SRC ${AVX2_SRCS})
-    if (WIN32)
+    if (HIFI_SKIP_AVX_FLAGS)
+      # nothing
+    elseif (WIN32)
       set_source_files_properties(${SRC} PROPERTIES COMPILE_FLAGS /arch:AVX2)
     elseif (APPLE)
       set_source_files_properties(${SRC} PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
@@ -50,7 +62,9 @@ macro(SETUP_HIFI_LIBRARY)
   # add compiler flags to AVX512 source files, if supported by compiler
   file(GLOB_RECURSE AVX512_SRCS "src/avx512/*.cpp" "src/avx512/*.c")
   foreach(SRC ${AVX512_SRCS})
-    if (WIN32)
+    if (HIFI_SKIP_AVX_FLAGS)
+      # nothing
+    elseif (WIN32)
       check_cxx_compiler_flag("/arch:AVX512" COMPILER_SUPPORTS_AVX512)
       if (COMPILER_SUPPORTS_AVX512)
         set_source_files_properties(${SRC} PROPERTIES COMPILE_FLAGS /arch:AVX512)

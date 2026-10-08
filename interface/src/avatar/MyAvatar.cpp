@@ -499,6 +499,7 @@ void MyAvatar::centerBody() {
     auto worldBodyPos = extractTranslation(worldBodyMatrix);
     auto worldBodyRot = glmExtractRotation(worldBodyMatrix);
 
+
     if (_characterController.getState() == CharacterController::State::Ground) {
         // the avatar's physical aspect thinks it is standing on something
         // therefore need to be careful to not "center" the body below the floor
@@ -1980,6 +1981,11 @@ void MyAvatar::loadData() {
 
     _prefOverrideAnimGraphUrl.set(_animGraphURLSetting.get().toString());
     _fullAvatarURLFromPreferences = _fullAvatarURLSetting.get(QUrl(AvatarData::defaultFullAvatarModelUrl()));
+    if (_fullAvatarURLFromPreferences.host().endsWith("tivolicloud.com", Qt::CaseInsensitive)) {
+        // Avatars served by the Tivoli metaverse (e.g. the old randomized default) can no longer load.
+        qCDebug(interfaceapp) << "Ignoring saved avatar URL from the defunct Tivoli metaverse:" << _fullAvatarURLFromPreferences;
+        _fullAvatarURLFromPreferences = AvatarData::defaultFullAvatarModelUrl();
+    }
     _fullAvatarModelName = _fullAvatarModelNameSetting.get(DEFAULT_FULL_AVATAR_MODEL_NAME).toString();
 
     useFullAvatarURL(_fullAvatarURLFromPreferences, _fullAvatarModelName);
@@ -2815,8 +2821,11 @@ void MyAvatar::nextAttitude(glm::vec3 position, glm::quat orientation) {
 }
 
 void MyAvatar::harvestResultsFromPhysicsSimulation(float deltaTime) {
-    glm::vec3 position;
-    glm::quat orientation;
+    // Start from the current transform: getPositionAndOrientation() leaves its arguments untouched while the
+    // character controller has no rigid body yet (e.g. the skeleton model has not loaded), and feeding the
+    // default-constructed zero vector back in would pin the avatar to the world origin.
+    glm::vec3 position = getWorldPosition();
+    glm::quat orientation = getWorldOrientation();
     if (_characterController.isEnabledAndReady() && !(_characterController.needsSafeLandingSupport() || _goToPending)) {
         _characterController.getPositionAndOrientation(position, orientation);
         setWorldVelocity(_characterController.getLinearVelocity() + _characterController.getFollowVelocity());

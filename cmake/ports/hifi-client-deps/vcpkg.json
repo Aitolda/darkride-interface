@@ -16,7 +16,7 @@
     "hifi-deps",
     {
       "name": "leapmotion",
-      "platform": "!android"
+      "platform": "!android & !(osx & arm64)"
     },
     {
       "name": "liblo",
@@ -28,7 +28,7 @@
     },
     {
       "name": "neuron",
-      "platform": "windows | osx"
+      "platform": "windows | (osx & x64)"
     },
     "nlohmann-json",
     {
@@ -57,7 +57,7 @@
     },
     {
       "name": "steamworks",
-      "platform": "!android"
+      "platform": "!android & !(osx & arm64)"
     },
     "vulkan-memory-allocator"
   ]

@@ -1,0 +1,15 @@
+Newer macOS SDKs define TARGET_OS_MAC from <sys/types.h>, which makes this block
+replace fdopen() with NULL and then breaks the fdopen declaration in <stdio.h>.
+This is what zlib 1.2.12 did upstream: only the classic-MacOS define is checked.
+
+--- a/zutil.h
++++ b/zutil.h
+@@ -130,7 +130,7 @@
+ #  endif
+ #endif
+ 
+-#if defined(MACOS) || defined(TARGET_OS_MAC)
++#if defined(MACOS)
+ #  define OS_CODE  7
+ #  ifndef Z_SOLO
+ #    if defined(__MWERKS__) && __dest_os != __be_os && __dest_os != __win32_os

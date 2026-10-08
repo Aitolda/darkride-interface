@@ -12,6 +12,7 @@ vcpkg_extract_source_archive_ex(
     REF ${VERSION}
     PATCHES
         "cmake_dont_build_more_than_needed.patch"
+        "fix-macos-fdopen.patch"
 )
 
 # This is generated during the cmake build

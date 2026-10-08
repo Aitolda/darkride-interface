@@ -21,10 +21,11 @@ function(calculate_qt5_version result _QT_DIR)
   #   .../include/QtCore/5.12.3/QtCore/private
   # Sometimes we need to include these private headers for debug hackery.
   # Hence we find one of these directories and pick apart its path to determine the actual QT_VERSION.
-  if (APPLE)
+  # A Qt built as plain dylibs (e.g. the Conan build) keeps its headers under include/QtCore even on
+  # macOS; only a framework build puts them inside QtCore.framework.
+  set(_QT_CORE_DIR "${_QT_DIR}/include/QtCore")
+  if (APPLE AND NOT EXISTS "${_QT_CORE_DIR}")
     set(_QT_CORE_DIR "${_QT_DIR}/lib/QtCore.framework/Versions/5/Headers")
-  else()
-    set(_QT_CORE_DIR "${_QT_DIR}/include/QtCore")
   endif()
   if(NOT EXISTS "${_QT_CORE_DIR}")
       message(FATAL_ERROR "Could not find 'include/QtCore' in '${_QT_DIR}'")

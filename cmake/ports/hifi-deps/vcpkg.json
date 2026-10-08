@@ -11,10 +11,13 @@
     "glad",
     {
       "name": "mesa",
-      "platform": "osx"
+      "platform": "osx & x64"
     },
     "glm",
-    "hifi-audio-codec",
+    {
+      "name": "hifi-audio-codec",
+      "platform": "!(osx & arm64)"
+    },
     "libsndfile",
     "nvtt",
     {
@@ -33,7 +36,7 @@
     "vhacd",
     {
       "name": "webrtc",
-      "platform": "!android"
+      "platform": "!android & !(osx & arm64)"
     },
     "zlib"
   ]

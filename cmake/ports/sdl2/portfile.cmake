@@ -32,6 +32,9 @@ vcpkg_configure_cmake(
         -DSDL_SHARED=${SDL_SHARED}
         -DFORCE_STATIC_VCRT=${FORCE_STATIC_VCRT}
         -DLIBC=ON
+        # new clang errors on declaration-after-statement in SDL's Cocoa .m files (-Werror)
+        -DHAVE_GCC_WDECLARATION_AFTER_STATEMENT=OFF
+        -DHAVE_GCC_WERROR_DECLARATION_AFTER_STATEMENT=OFF
 )
 
 vcpkg_install_cmake()
