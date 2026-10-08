@@ -53,6 +53,7 @@
 #include <EntityScriptingInterface.h> // TODO: consider moving to scriptengine.h
 
 #include <hfm/ModelFormatRegistry.h>
+#include <hfm/HFM.h>
 
 #include "entities/AssignmentParentFinder.h"
 #include "AssignmentDynamicFactory.h"
@@ -69,6 +70,12 @@ Agent::Agent(ReceivedMessage& message) :
     _avatarAudioTimer(this)
 {
     DependencyManager::set<ScriptableAvatar>();
+
+    // Animations are parsed on a worker thread and handed back over a queued, string-based
+    // signal (Animation::animationParseSuccess). Interface registers this type; the agent did
+    // not, so every animation an AC script played failed silently ("Cannot queue arguments
+    // of type 'HFMModel::Pointer'") and a scripted avatar never moved its joints.
+    qRegisterMetaType<HFMModel::Pointer>("HFMModel::Pointer");
 
     DependencyManager::registerInheritance<EntityDynamicFactoryInterface, AssignmentDynamicFactory>();
     DependencyManager::set<AssignmentDynamicFactory>();
