@@ -28,6 +28,11 @@ InspectorPanel::InspectorPanel(QWidget* parent) : QDockWidget("Inspector", paren
     setWidget(_scroll);
 }
 
+void InspectorPanel::setSummary(const QString& text) {
+    _empty->setText(text);
+    setContent(nullptr);
+}
+
 void InspectorPanel::setContent(QWidget* content) {
     if (!content) {
         content = _empty;

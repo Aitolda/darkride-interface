@@ -23,6 +23,8 @@ public:
 
     // the panel shows this widget, or the "Nothing selected" note when it is null
     void setContent(QWidget* content);
+    // the note shown while there is no content: what is selected, in a line or two
+    void setSummary(const QString& text);
 
 private:
     QScrollArea* _scroll { nullptr };

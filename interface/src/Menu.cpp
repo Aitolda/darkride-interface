@@ -245,6 +245,26 @@ Menu::Menu() {
         [](bool checked) { DependencyManager::get<Editor>()->setGridVisible(checked); },
         0, true);
 
+    buildMenu->addSeparator();
+
+    // Build > Undo, Redo, Duplicate, Frame Selected: only while build mode is on
+    {
+        auto editor = DependencyManager::get<Editor>();
+        QList<QAction*> buildActions = {
+            addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildUndo, Qt::CTRL | Qt::Key_Z,
+                editor.data(), SLOT(undo())),
+            addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildRedo, Qt::CTRL | Qt::SHIFT | Qt::Key_Z,
+                editor.data(), SLOT(redo())),
+            addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildDuplicate, Qt::CTRL | Qt::Key_D,
+                editor.data(), SLOT(duplicateSelection())),
+            addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildFrame, 0,
+                editor.data(), SLOT(frameSelection()))
+        };
+        for (auto action : buildActions) {
+            action->setEnabled(false);
+        }
+    }
+
     //TODO: Remove Navigation menu when these functions are included in GoTo menu
     // Navigate menu ----------------------------------
     MenuWrapper* navigateMenu = addMenu("Navigate");
