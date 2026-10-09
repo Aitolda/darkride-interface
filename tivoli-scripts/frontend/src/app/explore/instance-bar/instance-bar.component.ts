@@ -99,7 +99,7 @@ export class InstanceBarComponent implements OnInit, OnDestroy {
 				this.current = current;
 				this.snackBar.open(
 					on
-						? "Edit mode is on: you can build here. Save to update the world."
+						? `Edit mode is on in ${current.world.label}: you can build here. Save to update the world.`
 						: "Edit mode is off",
 					"OK",
 					{ duration: 6000 },
@@ -115,7 +115,7 @@ export class InstanceBarComponent implements OnInit, OnDestroy {
 			.subscribe(result => {
 				this.busy = false;
 				this.snackBar.open(
-					`Saved as version ${result.version} (${result.entities} entities). New instances start from it.`,
+					`Saved ${this.current.world.label} as version ${result.version} (${result.entities} entities). New instances start from it.`,
 					"OK",
 					{ duration: 8000 },
 				);

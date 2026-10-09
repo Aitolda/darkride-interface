@@ -34,6 +34,16 @@ export class ExploreHandler extends WebEventHandler {
 				this.uuidToId(Window.location.domainID),
 			);
 		});
+
+		// hostChanged fires before the new domain's ID is known, and not at all between
+		// domains on the same host (world instances differ only by port), so also report
+		// the ID once the connection to a domain has completed
+		this.signalManager.connect(Window.domainChanged, () => {
+			this.emitEvent(
+				"getCurrentDomainId",
+				this.uuidToId(Window.location.domainID),
+			);
+		});
 	}
 
 	private uuidToId(uuid: string) {

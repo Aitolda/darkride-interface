@@ -22,6 +22,15 @@
 				>
 					· {{ current.editingBy }} is editing in another instance
 				</span>
+				<span
+					*ngIf="
+						!instance.editing &&
+						!current.editingBy &&
+						current.world.instances.canEdit
+					"
+				>
+					· turn on Edit mode before building: changes made without it are not kept
+				</span>
 			</div>
 		</div>
 		<span style="flex-grow: 1"></span>
