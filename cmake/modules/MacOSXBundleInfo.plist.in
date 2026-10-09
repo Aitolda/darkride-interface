@@ -51,6 +51,12 @@
 			</array>
 		</dict>
 	</array>
+	<key>LSEnvironment</key>
+	<dict>
+		<!-- Launches from Finder/Dock use the production metaverse; a terminal launch can still override it. -->
+		<key>HIFI_METAVERSE_URL</key>
+		<string>https://vr.darkride.ai</string>
+	</dict>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
