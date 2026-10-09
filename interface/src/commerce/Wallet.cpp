@@ -682,18 +682,28 @@ void Wallet::updateImageProvider() {
     if (!offscreenUI) {
         return;
     }
-    QQmlEngine* engine = offscreenUI->getSurfaceContext()->engine();
+    // The username can change before the QML surfaces exist (the profile is refreshed right at startup).
+    auto surfaceContext = offscreenUI->getSurfaceContext();
+    QQmlEngine* engine = surfaceContext ? surfaceContext->engine() : nullptr;
+    if (!engine) {
+        return;
+    }
     securityImageProvider = reinterpret_cast<SecurityImageProvider*>(engine->imageProvider(SecurityImageProvider::PROVIDER_NAME));
-    securityImageProvider->setSecurityImage(_securityImage);
+    if (securityImageProvider) {
+        securityImageProvider->setSecurityImage(_securityImage);
+    }
 
     // inform tablet security image provider
     TabletProxy* tablet = DependencyManager::get<TabletScriptingInterface>()->getTablet("com.highfidelity.interface.tablet.system");
     if (tablet) {
         OffscreenQmlSurface* tabletSurface = tablet->getTabletSurface();
         if (tabletSurface) {
-            QQmlEngine* tabletEngine = tabletSurface->getSurfaceContext()->engine();
-            securityImageProvider = reinterpret_cast<SecurityImageProvider*>(tabletEngine->imageProvider(SecurityImageProvider::PROVIDER_NAME));
-            securityImageProvider->setSecurityImage(_securityImage);
+            auto tabletContext = tabletSurface->getSurfaceContext();
+            QQmlEngine* tabletEngine = tabletContext ? tabletContext->engine() : nullptr;
+            securityImageProvider = tabletEngine ? reinterpret_cast<SecurityImageProvider*>(tabletEngine->imageProvider(SecurityImageProvider::PROVIDER_NAME)) : nullptr;
+            if (securityImageProvider) {
+                securityImageProvider->setSecurityImage(_securityImage);
+            }
         }
     }
 }

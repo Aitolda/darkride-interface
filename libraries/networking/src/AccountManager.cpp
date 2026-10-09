@@ -187,8 +187,8 @@ void AccountManager::setAuthURL(const QUrl& authURL) {
             qCWarning(networking) << "Unable to load account file. No existing account settings will be loaded.";
         }
 
-        if (_isAgent && !_accountInfo.getAccessToken().token.isEmpty() && !_accountInfo.hasProfile()) {
-            // we are missing profile information, request it now
+        if (_isAgent && !_accountInfo.getAccessToken().token.isEmpty()) {
+            // refresh the profile even when one is cached: the username may have changed on the metaverse
             requestProfile();
         }
 
@@ -474,8 +474,8 @@ void AccountManager::removeAccountFromFile() {
 void AccountManager::setAccountInfo(const DataServerAccountInfo &newAccountInfo) {
     _accountInfo = newAccountInfo;
     _pendingPrivateKey.clear();
-    if (_isAgent && !_accountInfo.getAccessToken().token.isEmpty() && !_accountInfo.hasProfile()) {
-        // we are missing profile information, request it now
+    if (_isAgent && !_accountInfo.getAccessToken().token.isEmpty()) {
+        // refresh the profile even when one is cached: the username may have changed on the metaverse
         requestProfile();
     }
 
