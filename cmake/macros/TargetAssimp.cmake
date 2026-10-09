@@ -15,5 +15,11 @@ macro(TARGET_ASSIMP)
 
     if (UNIX AND NOT APPLE AND NOT ANDROID)
         target_link_libraries(${TARGET_NAME} Xxf86vm)
+        # assimp's build uses the system minizip when libminizip-dev is present (Ubuntu 24.04), leaving
+        # the unz* symbols undefined in the static libassimp.a; link it explicitly when it exists.
+        find_library(MINIZIP_LIBRARY minizip)
+        if (MINIZIP_LIBRARY)
+            target_link_libraries(${TARGET_NAME} ${MINIZIP_LIBRARY})
+        endif()
     endif()
 endmacro()
