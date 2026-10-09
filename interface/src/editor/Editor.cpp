@@ -12,11 +12,17 @@
 #include <cmath>
 
 #include <QtCore/QFile>
+#include <QtGui/QCursor>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QWheelEvent>
+#include <QtWidgets/QAbstractSpinBox>
 #include <QtWidgets/QAction>
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QLineEdit>
+#include <QtWidgets/QPlainTextEdit>
+#include <QtWidgets/QTextEdit>
 
 #include <EntityItem.h>
 #include <EntityScriptingInterface.h>
@@ -39,6 +45,18 @@ namespace {
     const int CLICK_SLOP_PIXELS = 5;        // a press that moves less than this is a click
     const int EDIT_INTERVAL_MS = 33;        // while dragging, edits go out at most this often
     const int PRUNE_EVERY_FRAMES = 30;      // how often the selection drops entities that are gone
+    const float PASTE_FALLBACK_DISTANCE = 3.0f;   // in front of the camera, when the cursor points at nothing
+
+    // what a click or a paste can land on: the world's visible entities, picked against their meshes
+    PickFilter worldPickFilter() {
+        PickFilter::Flags flags;
+        flags.set(PickFilter::DOMAIN_ENTITIES);
+        flags.set(PickFilter::VISIBLE);
+        flags.set(PickFilter::COLLIDABLE);
+        flags.set(PickFilter::NONCOLLIDABLE);
+        flags.set(PickFilter::PRECISE);
+        return PickFilter(flags);
+    }
 
     float tanHalfFov() {
         return 1.0f / qApp->getCamera().getProjection()[1][1];
@@ -291,16 +309,56 @@ PickRay Editor::pickRay(const QPoint& viewportPos) const {
 }
 
 QUuid Editor::pickEntity(const QPoint& viewportPos) const {
-    PickFilter::Flags flags;
-    flags.set(PickFilter::DOMAIN_ENTITIES);
-    flags.set(PickFilter::VISIBLE);
-    flags.set(PickFilter::COLLIDABLE);
-    flags.set(PickFilter::NONCOLLIDABLE);
-    flags.set(PickFilter::PRECISE);
     auto entities = DependencyManager::get<EntityScriptingInterface>();
-    auto result = entities->evalRayIntersectionVector(pickRay(viewportPos), PickFilter(flags),
+    auto result = entities->evalRayIntersectionVector(pickRay(viewportPos), worldPickFilter(),
         QVector<EntityItemID>(), QVector<EntityItemID>());
     return result.intersects ? result.entityID : QUuid();
+}
+
+bool Editor::cursorWorldPoint(glm::vec3& point) const {
+    auto viewport = qApp->getPrimaryWidget();
+    if (!viewport) {
+        return false;
+    }
+    QPoint local = viewport->mapFromGlobal(QCursor::pos());
+    if (!viewport->rect().contains(local)) {
+        return false;
+    }
+    PickRay ray = pickRay(local);
+    auto entities = DependencyManager::get<EntityScriptingInterface>();
+    auto result = entities->evalRayIntersectionVector(ray, worldPickFilter(), QVector<EntityItemID>(), QVector<EntityItemID>());
+    if (result.intersects) {
+        point = result.intersection;
+        return true;
+    }
+    // nothing under the cursor: the grid plane
+    if (std::abs(ray.direction.y) > 1.0e-4f) {
+        float t = (_grid.height() - ray.origin.y) / ray.direction.y;
+        if (t > 0.0f) {
+            point = ray.origin + ray.direction * t;
+            return true;
+        }
+    }
+    return false;
+}
+
+glm::vec3 Editor::selectionAnchor() const {
+    // the middle of the selection's footprint: what a paste puts on the point under the cursor
+    AABox box;
+    if (!_selection.bounds(box)) {
+        return glm::vec3(0.0f);
+    }
+    glm::vec3 center = box.calcCenter();
+    return glm::vec3(center.x, box.getMinimumPoint().y, center.z);
+}
+
+void Editor::takeFocusUnlessTyping() {
+    QWidget* focus = QApplication::focusWidget();
+    if (focus && (qobject_cast<QLineEdit*>(focus) || qobject_cast<QAbstractSpinBox*>(focus) ||
+                  qobject_cast<QTextEdit*>(focus) || qobject_cast<QPlainTextEdit*>(focus))) {
+        return;
+    }
+    focusViewport();
 }
 
 void Editor::clickSelect(const QPoint& viewportPos, Qt::KeyboardModifiers modifiers) {
@@ -425,8 +483,9 @@ void Editor::duplicateSelection() {
     if (!_active || _selection.isEmpty() || _gizmo.isDragging()) {
         return;
     }
+    // in place, as Unity does; the copy is selected and the gizmo is on it
     EditorClipboard copies;
-    copies.copy(_selection.topLevel());
+    copies.copy(_selection.topLevel(), selectionAnchor());
     QList<QUuid> created = copies.paste(_undo, "Duplicate");
     if (!created.isEmpty()) {
         _selection.set(created);
@@ -435,7 +494,7 @@ void Editor::duplicateSelection() {
 
 void Editor::copySelection() {
     if (_active && !_selection.isEmpty()) {
-        _clipboard.copy(_selection.topLevel());
+        _clipboard.copy(_selection.topLevel(), selectionAnchor());
     }
 }
 
@@ -443,7 +502,7 @@ void Editor::cutSelection() {
     if (!_active || _selection.isEmpty() || _gizmo.isDragging()) {
         return;
     }
-    _clipboard.copy(_selection.topLevel());
+    _clipboard.copy(_selection.topLevel(), selectionAnchor());
     deleteSelection();
 }
 
@@ -451,7 +510,12 @@ void Editor::paste() {
     if (!_active || _clipboard.isEmpty() || _gizmo.isDragging()) {
         return;
     }
-    QList<QUuid> created = _clipboard.paste(_undo, "Paste");
+    // the copies land where the cursor points, or a few metres in front of the camera
+    glm::vec3 target;
+    if (!cursorWorldPoint(target)) {
+        target = _camera.position() + _camera.orientation() * Vectors::FRONT * PASTE_FALLBACK_DISTANCE;
+    }
+    QList<QUuid> created = _clipboard.paste(_undo, "Paste", target - _clipboard.anchor());
     if (!created.isEmpty()) {
         _selection.set(created);
     }
@@ -509,8 +573,12 @@ bool Editor::handleMouseMove(QMouseEvent* event) {
         }
         return true;
     }
-    if (_gizmo.isVisible() && event->buttons() == Qt::NoButton) {
-        _gizmo.setHover(_gizmo.hitTest(pickRay(event->pos())));
+    if (event->buttons() == Qt::NoButton) {
+        // the keys follow the mouse into the viewport, as in Unity, unless something is being typed
+        takeFocusUnlessTyping();
+        if (_gizmo.isVisible()) {
+            _gizmo.setHover(_gizmo.hitTest(pickRay(event->pos())));
+        }
     }
     return false;
 }

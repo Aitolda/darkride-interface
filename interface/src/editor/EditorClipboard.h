@@ -24,9 +24,10 @@ class EditorUndo;
 
 class EditorClipboard {
 public:
-    // copies the entities and their descendants
-    void copy(const QList<QUuid>& ids);
+    // copies the entities and their descendants; the anchor is the point a paste lands on
+    void copy(const QList<QUuid>& ids, const glm::vec3& anchor);
     bool isEmpty() const { return _properties.isEmpty(); }
+    const glm::vec3& anchor() const { return _anchor; }
 
     // creates new entities from the copies, moved by the offset; returns the new top-level ids
     QList<QUuid> paste(EditorUndo& undo, const QString& text, const glm::vec3& offset = glm::vec3(0.0f)) const;
@@ -35,6 +36,7 @@ private:
     QVector<EntityItemProperties> _properties;
     QList<QUuid> _ids;
     QSet<QUuid> _topLevel;
+    glm::vec3 _anchor;
 };
 
 #endif // hifi_EditorClipboard_h

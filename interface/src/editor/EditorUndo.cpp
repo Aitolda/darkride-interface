@@ -15,6 +15,7 @@
 #include <EntityScriptingInterface.h>
 #include <EntityTree.h>
 #include <EntityTreeRenderer.h>
+#include <SharedUtil.h>
 
 #include "Application.h"
 
@@ -188,6 +189,12 @@ QList<QUuid> EditorUndo::createEntities(const QVector<EntityItemProperties>& pro
         if (!parentID.isNull()) {
             copy.setParentID(batch.contains(parentID) ? batch.value(parentID) : resolve(parentID));
         }
+        // a new entity: a fresh creation time (with the old one, a finite lifetime would already be
+        // over and the server would delete it on arrival), no stale edit stamp, no inherited physics
+        copy.setCreated(UNKNOWN_CREATED_TIME);
+        copy.setLastEdited(usecTimestampNow());
+        copy.setActionData(QByteArray());
+        copy.setSimulationOwner(QUuid(), 0);
         QUuid newId = entities->addEntity(copy);
         newIds << newId;
         QUuid oldId = i < oldIds.size() ? oldIds[i] : QUuid();

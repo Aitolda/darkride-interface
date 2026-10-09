@@ -118,8 +118,12 @@ private:
     void onSelectionChanged();
     void rename(const QUuid& id, const QString& name);
 
+    void takeFocusUnlessTyping();
     PickRay pickRay(const QPoint& viewportPos) const;
     QUuid pickEntity(const QPoint& viewportPos) const;
+    // where the cursor points in the world: a surface, or the grid plane; false when off the viewport
+    bool cursorWorldPoint(glm::vec3& point) const;
+    glm::vec3 selectionAnchor() const;
     void clickSelect(const QPoint& viewportPos, Qt::KeyboardModifiers modifiers);
     bool snapActive() const;
     void beginGizmoDrag(GizmoHandle handle, const PickRay& ray);

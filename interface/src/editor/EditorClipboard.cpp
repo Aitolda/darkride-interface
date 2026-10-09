@@ -10,10 +10,11 @@
 
 #include "EditorUndo.h"
 
-void EditorClipboard::copy(const QList<QUuid>& ids) {
+void EditorClipboard::copy(const QList<QUuid>& ids, const glm::vec3& anchor) {
     _properties.clear();
     _ids.clear();
     _topLevel.clear();
+    _anchor = anchor;
 
     QList<QUuid> all = EditorUndo::withDescendants(ids);
     QSet<QUuid> inBatch(all.begin(), all.end());

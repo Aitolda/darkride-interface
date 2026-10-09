@@ -45,8 +45,8 @@ namespace {
     const glm::vec3 HOVER_COLOR { 1.0f, 0.85f, 0.1f };
     const glm::vec3 CENTER_COLOR { 0.88f, 0.88f, 0.88f };
     const float DIM_FACTOR = 0.45f;
-    const float PLANE_ALPHA = 0.3f;
-    const float PLANE_HOVER_ALPHA = 0.6f;
+    const float PLANE_ALPHA = 0.55f;
+    const float PLANE_HOVER_ALPHA = 0.85f;
 
     // rotations that take +Y (the cylinder and cone axis) to each world axis
     const glm::quat Y_TO_AXIS[3] = {
@@ -149,8 +149,8 @@ void EditorGizmoShared::render(RenderArgs* args, bool planes) {
 
     auto geometryCache = DependencyManager::get<GeometryCache>();
     auto& batch = *args->_batch;
-    // the front layer draws straight into the lit frame: always the forward pipelines
-    geometryCache->bindSimpleProgram(batch, false, planes, true, false, true, true);
+    // unlit, and the front layer draws straight into the lit frame, so always the forward pipelines
+    auto pipeline = geometryCache->getShapePipelinePointer(planes, true, true);
 
     glm::mat4 gizmo = createMatFromQuatAndPos(state.rotation, state.position)
         * glm::scale(glm::mat4(1.0f), glm::vec3(state.scale));
@@ -160,7 +160,7 @@ void EditorGizmoShared::render(RenderArgs* args, bool planes) {
         Transform transform;
         transform.evalFromRawMatrix(gizmo * part);
         batch.setModelTransform(transform);
-        geometryCache->renderShape(batch, shape, color);
+        geometryCache->renderSolidShapeInstance(args, batch, shape, color, pipeline);
     };
 
     for (int axis = 0; axis < 3; ++axis) {
