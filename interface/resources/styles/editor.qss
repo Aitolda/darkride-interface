@@ -63,6 +63,64 @@ QDockWidget#EditorHierarchy::title, QDockWidget#EditorInspector::title {
 #EditorInspector QLabel#EditorInspectorEmpty {
     color: #8f8f8f;
 }
+#EditorInspector QLabel#EditorInspectorTitle {
+    font-size: 13px;
+    font-weight: bold;
+    padding: 4px 2px 6px 2px;
+}
+#EditorInspector QToolButton#EditorInspectorHeader {
+    background: #3c3c3c;
+    color: #d2d2d2;
+    font-weight: bold;
+    text-align: left;
+    border: none;
+    border-top: 1px solid #2b2b2b;
+    padding: 4px 6px;
+}
+#EditorInspector QToolButton#EditorInspectorHeader:hover {
+    background: #454545;
+}
+#EditorInspector #EditorInspectorMinorSection QToolButton#EditorInspectorHeader {
+    background: #383838;
+    font-weight: normal;
+    color: #b8b8b8;
+    padding-left: 14px;
+}
+#EditorInspector QLabel#EditorInspectorLabel {
+    color: #c4c4c4;
+}
+#EditorInspector QLabel#EditorComponentLabel {
+    color: #9a9a9a;
+    padding-right: 1px;
+}
+#EditorInspector QDoubleSpinBox, #EditorInspector QLineEdit, #EditorInspector QComboBox, #EditorInspector QPlainTextEdit {
+    background: #2a2a2a;
+    border: 1px solid #1f1f1f;
+    border-radius: 3px;
+    padding: 2px 4px;
+    selection-background-color: #2c5d87;
+    min-height: 18px;
+}
+#EditorInspector QDoubleSpinBox:focus, #EditorInspector QLineEdit:focus, #EditorInspector QPlainTextEdit:focus {
+    border-color: #2c5d87;
+}
+#EditorInspector QComboBox::drop-down {
+    border: none;
+    width: 16px;
+}
+#EditorInspector QComboBox QAbstractItemView {
+    background: #2a2a2a;
+    selection-background-color: #2c5d87;
+}
+#EditorInspector QToolButton {
+    background: #2a2a2a;
+    border: 1px solid #1f1f1f;
+    border-radius: 3px;
+    padding: 2px 6px;
+}
+#EditorInspector QCheckBox {
+    spacing: 6px;
+}
 
 /* scroll bars */
 #EditorHierarchy QScrollBar:vertical, #EditorInspector QScrollBar:vertical {

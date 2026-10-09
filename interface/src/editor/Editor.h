@@ -20,7 +20,9 @@
 #include <QtCore/QPoint>
 #include <QtCore/QRectF>
 #include <QtCore/QString>
+#include <QtCore/QTimer>
 #include <QtCore/QUuid>
+#include <QtCore/QVariant>
 #include <QtCore/QVector>
 #include <QtGui/QVector3D>
 
@@ -132,9 +134,15 @@ private:
     void setMenuActionsEnabled(bool enabled);
     void updateAxes();
     void updateGizmo();
-    void updateInspector();
     void onSelectionChanged();
     void rename(const QUuid& id, const QString& name);
+
+    // the Inspector: snapshots of the selection, and edits coming back from its fields
+    void refreshInspector(bool selectionChanged);
+    bool selectionSnapshots(QVector<EntityItemProperties>& snapshots, EntityTypes::EntityType& type, bool& multiple) const;
+    void onInspectorEditBegan(const QString& key);
+    void onInspectorLiveEdit(const QString& key, const QVariant& value);
+    void onInspectorCommitted(const QString& key, const QVariant& value);
 
     PickRay pickRay(const QPoint& viewportPos) const;
     QUuid pickEntity(const QPoint& viewportPos) const;
@@ -199,6 +207,12 @@ private:
     glm::quat _dragRotationDelta;
     glm::vec3 _dragScale { 1.0f };
     QElapsedTimer _editTimer;
+
+    // an edit in progress in the Inspector: the ids and the values before, for undo
+    QTimer _inspectorRefresh;
+    QString _inspectorEditKey;
+    QList<QUuid> _inspectorEditIds;
+    QVector<EntityItemProperties> _inspectorBefore;
 
     bool _panelsCreated { false };
     bool _syncingSelection { false };

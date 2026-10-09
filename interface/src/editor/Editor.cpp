@@ -38,11 +38,13 @@
 #include "Application.h"
 #include "EntityTreeModel.h"
 #include "Menu.h"
+#include "PropertySpec.h"
 #include "ui/HierarchyPanel.h"
 #include "ui/InspectorPanel.h"
 
 namespace {
     const float GIZMO_PIXELS = 110.0f;      // the gizmo's size on screen
+    const int INSPECTOR_REFRESH_MS = 500;   // how often the Inspector re-reads the selection
     const int CLICK_SLOP_PIXELS = 5;        // a press that moves less than this is a click
     const int EDIT_INTERVAL_MS = 33;        // while dragging, edits go out at most this often
     const int PRUNE_EVERY_FRAMES = 30;      // how often the selection drops entities that are gone
@@ -93,6 +95,8 @@ namespace {
 
 Editor::Editor() : _selection(this), _undo(this) {
     connect(&_selection, &EditorSelection::changed, this, &Editor::onSelectionChanged);
+    _inspectorRefresh.setInterval(INSPECTOR_REFRESH_MS);
+    connect(&_inspectorRefresh, &QTimer::timeout, this, [this] { refreshInspector(false); });
 }
 
 // --- build mode on and off ----------------------------------------------------------------------
@@ -122,9 +126,11 @@ void Editor::setActive(bool active) {
         }
         _axesValid = false;
         updateAxes();
-        updateInspector();
+        refreshInspector(true);
+        _inspectorRefresh.start();
         focusViewport();
     } else {
+        _inspectorRefresh.stop();
         if (_gizmo.isDragging()) {
             applyDrag(true);
             _gizmo.endDrag();
@@ -240,6 +246,9 @@ void Editor::createPanels() {
     });
 
     _inspector = new InspectorPanel(window);
+    connect(_inspector, &InspectorPanel::editBegan, this, &Editor::onInspectorEditBegan);
+    connect(_inspector, &InspectorPanel::liveEdit, this, &Editor::onInspectorLiveEdit);
+    connect(_inspector, &InspectorPanel::committed, this, &Editor::onInspectorCommitted);
 
     _toolBar = new EditorToolBar(window);
     _toolBar->setGridChecked(_gridVisible);
@@ -421,25 +430,132 @@ void Editor::onSelectionChanged() {
         _hierarchy->selectIds(_selection.ids());
         _syncingSelection = false;
     }
-    updateInspector();
+    refreshInspector(true);
     updateGizmo();
 }
 
-void Editor::updateInspector() {
-    if (!_inspector) {
+// --- the Inspector ------------------------------------------------------------------------------
+
+bool Editor::selectionSnapshots(QVector<EntityItemProperties>& snapshots, EntityTypes::EntityType& type, bool& multiple) const {
+    auto tree = entityTree();
+    if (!tree) {
+        return false;
+    }
+    snapshots.clear();
+    type = EntityTypes::Unknown;
+    multiple = false;
+    tree->withReadLock([&] {
+        for (const auto& id : _selection.ids()) {
+            auto entity = tree->findEntityByEntityItemID(id);
+            if (!entity) {
+                continue;
+            }
+            EntityTypes::EntityType entityType = entity->getType();
+            if (entityType == EntityTypes::Box || entityType == EntityTypes::Sphere) {
+                entityType = EntityTypes::Shape;
+            }
+            if (snapshots.isEmpty()) {
+                type = entityType;
+            } else if (entityType != type) {
+                multiple = true;
+            }
+            snapshots << entity->getProperties();
+        }
+    });
+    return !snapshots.isEmpty();
+}
+
+void Editor::refreshInspector(bool selectionChanged) {
+    if (!_inspector || !_active) {
         return;
     }
-    int count = _selection.count();
-    if (count == 0) {
+    QVector<EntityItemProperties> snapshots;
+    EntityTypes::EntityType type;
+    bool multiple;
+    if (!selectionSnapshots(snapshots, type, multiple)) {
         _inspector->setSummary("Nothing selected");
-    } else if (count == 1 && _treeModel) {
-        QModelIndex index = _treeModel->indexForId(_selection.primary());
-        QString name = index.data(Qt::DisplayRole).toString();
-        QString type = index.data(EntityTreeModel::TypeNameRole).toString();
-        _inspector->setSummary(name + "\n" + type);
-    } else {
-        _inspector->setSummary(QString("%1 entities selected").arg(count));
+        return;
     }
+    if (selectionChanged) {
+        QString title;
+        if (snapshots.size() == 1) {
+            QString name = snapshots.first().getName();
+            QString typeName = EntityTypes::getEntityTypeName(type);
+            title = name.isEmpty() ? typeName : name + "  ·  " + typeName;
+        } else {
+            title = QString("%1 entities selected").arg(snapshots.size());
+        }
+        _inspector->showEntities(snapshots, type, multiple, title);
+    } else if (_inspectorEditKey.isEmpty()) {
+        _inspector->refreshValues(snapshots);
+    }
+}
+
+void Editor::onInspectorEditBegan(const QString& key) {
+    // a scrub starts: what the entities hold now is the undo point
+    _inspectorEditKey = key;
+    _inspectorEditIds.clear();
+    _inspectorBefore.clear();
+    for (const auto& id : _selection.ids()) {
+        EntityItemProperties snapshot;
+        if (!EditorUndo::snapshot(id, snapshot) || EditorUndo::isLocked(id)) {
+            continue;
+        }
+        EntityItemProperties before;
+        PropertySpecs::set(key, before, PropertySpecs::get(key, snapshot));
+        _inspectorEditIds << id;
+        _inspectorBefore << before;
+    }
+}
+
+void Editor::onInspectorLiveEdit(const QString& key, const QVariant& value) {
+    if (key != _inspectorEditKey) {
+        return;
+    }
+    auto entities = DependencyManager::get<EntityScriptingInterface>();
+    for (const auto& id : _inspectorEditIds) {
+        EntityItemProperties properties;
+        PropertySpecs::set(key, properties, value);
+        entities->editEntity(id, properties);
+    }
+}
+
+void Editor::onInspectorCommitted(const QString& key, const QVariant& value) {
+    QList<QUuid> ids;
+    QVector<EntityItemProperties> before;
+    bool alreadyApplied = key == _inspectorEditKey && !_inspectorEditIds.isEmpty();
+    if (alreadyApplied) {
+        // the end of a scrub: the values went out live, the undo point was taken at its start
+        ids = _inspectorEditIds;
+        before = _inspectorBefore;
+        onInspectorLiveEdit(key, value);
+    } else {
+        for (const auto& id : _selection.ids()) {
+            EntityItemProperties snapshot;
+            if (!EditorUndo::snapshot(id, snapshot) || EditorUndo::isLocked(id)) {
+                continue;
+            }
+            EntityItemProperties properties;
+            PropertySpecs::set(key, properties, PropertySpecs::get(key, snapshot));
+            ids << id;
+            before << properties;
+        }
+    }
+    _inspectorEditKey.clear();
+    _inspectorEditIds.clear();
+    _inspectorBefore.clear();
+    if (ids.isEmpty()) {
+        return;
+    }
+    QVector<EntityItemProperties> after;
+    for (int i = 0; i < ids.size(); ++i) {
+        EntityItemProperties properties;
+        PropertySpecs::set(key, properties, value);
+        after << properties;
+    }
+    auto spec = PropertySpecs::find(key);
+    _undo.pushPropertyEdit(spec ? spec->label : key, ids, before, after, alreadyApplied);
+    refreshInspector(false);
 }
 
 PickRay Editor::pickRay(const QPoint& viewportPos) const {
