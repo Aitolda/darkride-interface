@@ -36,8 +36,7 @@ namespace {
     const float RING_RADIUS = 1.0f;
     const float RING_WIDTH = 0.045f;
     const float VIEW_RING_RADIUS = 1.22f;
-    const float SPHERE_RADIUS = 0.93f;             // the trackball inside the rings
-    const float SPHERE_ALPHA = 0.1f;
+    const float SPHERE_RADIUS = 0.93f;             // the trackball inside the rings (a hit area, not drawn)
     const float FREE_RADIANS_PER_PIXEL = glm::radians(0.5f);
     const float SCALE_CUBE = 0.13f;
     const float SCALE_CENTER_CUBE = 0.18f;
@@ -278,12 +277,7 @@ void EditorGizmoShared::renderMove(RenderArgs* args, const EditorGizmoState& sta
 
 void EditorGizmoShared::renderRotate(RenderArgs* args, const EditorGizmoState& state, bool translucentPass) {
     if (translucentPass) {
-        // the trackball's body, faint, so the free-rotation area reads as a thing to grab
-        GIZMO_PART_DRAW(state, true);
-        bool lit = state.hover == GizmoHandle::Sphere || state.active == GizmoHandle::Sphere;
-        glm::vec4 color(CENTER_COLOR, lit ? SPHERE_ALPHA * 2.0f : SPHERE_ALPHA);
-        draw(GeometryCache::Sphere, glm::quat(), glm::vec3(SPHERE_RADIUS * 2.0f), glm::vec3(0.0f), color);
-        return;
+        return;   // the trackball inside the rings is a hit area only, nothing is drawn for it
     }
     auto geometryCache = DependencyManager::get<GeometryCache>();
     auto& batch = *args->_batch;
