@@ -39,6 +39,7 @@
 #include "avatar/AvatarManager.h"
 #include "avatar/AvatarPackager.h"
 #include "AvatarBookmarks.h"
+#include "editor/Editor.h"
 #include "MainWindow.h"
 #include "render/DrawStatus.h"
 #include "scripting/MenuScriptingInterface.h"
@@ -230,6 +231,19 @@ Menu::Menu() {
 
     // View > Enter First Person Mode in HMD
     addCheckableActionToQMenuAndActionHash(viewMenu, MenuOption::FirstPersonHMD, 0, true);
+
+    // Build menu ----------------------------------
+    MenuWrapper* buildMenu = addMenu("Build");
+
+    // Build > Build Mode
+    addCheckableActionToQMenuAndActionHash(buildMenu, MenuOption::BuildMode,
+        [](bool checked) { DependencyManager::get<Editor>()->setActive(checked); },
+        Qt::CTRL | Qt::Key_B, false);
+
+    // Build > Show Grid
+    addCheckableActionToQMenuAndActionHash(buildMenu, MenuOption::BuildGrid,
+        [](bool checked) { DependencyManager::get<Editor>()->setGridVisible(checked); },
+        0, true);
 
     //TODO: Remove Navigation menu when these functions are included in GoTo menu
     // Navigate menu ----------------------------------

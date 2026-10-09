@@ -193,6 +193,7 @@
 #include "scripting/ControllerScriptingInterface.h"
 #include "scripting/RatesScriptingInterface.h"
 #include "scripting/SelectionScriptingInterface.h"
+#include "editor/Editor.h"
 #include "scripting/WalletScriptingInterface.h"
 #include "scripting/TTSScriptingInterface.h"
 #include "scripting/KeyboardScriptingInterface.h"
@@ -935,6 +936,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     DependencyManager::set<CloseEventSender>();
     DependencyManager::set<ResourceManager>();
     DependencyManager::set<SelectionScriptingInterface>();
+    DependencyManager::set<Editor>();
     DependencyManager::set<Ledger>();
     DependencyManager::set<Wallet>();
     DependencyManager::set<WalletScriptingInterface>();
@@ -3584,11 +3586,14 @@ void Application::onDesktopRootItemCreated(QQuickItem* rootItem) {
     auto surfaceContext = getOffscreenUI()->getSurfaceContext();
     surfaceContext->setContextProperty("Stats", Stats::getInstance());
     surfaceContext->setContextProperty("AnimStats", AnimStats::getInstance());
+    surfaceContext->setContextProperty("Editor", DependencyManager::get<Editor>().data());
 
 #if !defined(Q_OS_ANDROID)
     auto offscreenUi = getOffscreenUI();
     auto qml = PathUtils::qmlUrl("AvatarInputsBar.qml");
     offscreenUi->show(qml, "AvatarInputsBar");
+    // build mode's scene gizmo and view strip; hidden until build mode is on
+    offscreenUi->show(PathUtils::qmlUrl("editor/ViewportOverlay.qml"), "EditorViewportOverlay");
 #endif
     _desktopRootItemCreated = true;
 }
@@ -3698,6 +3703,14 @@ void Application::updateCamera(RenderArgs& renderArgs, float deltaTime) {
 
     // The render mode is default or mirror if the camera is in mirror mode, assigned further below
     renderArgs._renderMode = RenderArgs::DEFAULT_RENDER_MODE;
+
+    // build mode drives the camera itself, on CAMERA_MODE_INDEPENDENT
+    {
+        auto editor = DependencyManager::get<Editor>();
+        if (editor && editor->isActive()) {
+            editor->update(deltaTime);
+        }
+    }
 
     // Always use the default eye position, not the actual head eye position.
     // Using the latter will cause the camera to wobble with idle animations,
@@ -4471,6 +4484,10 @@ void Application::keyPressEvent(QKeyEvent* event) {
         _keysPressed.insert(event->key(), *event);
     }
 
+    if (DependencyManager::get<Editor>()->handleKeyPress(event)) {
+        return;
+    }
+
     _controllerScriptingInterface->emitKeyPressEvent(event); // send events to any registered scripts
     // if one of our scripts have asked to capture this event, then stop processing it
     if (_controllerScriptingInterface->isKeyCaptured(event) || isInterstitialMode()) {
@@ -4666,6 +4683,10 @@ void Application::keyReleaseEvent(QKeyEvent* event) {
         _keysPressed.remove(event->key());
     }
 
+    if (DependencyManager::get<Editor>()->handleKeyRelease(event)) {
+        return;
+    }
+
 #if defined(Q_OS_ANDROID)
     if (event->key() == Qt::Key_Back) {
         event->accept();
@@ -4749,6 +4770,10 @@ void Application::mouseMoveEvent(QMouseEvent* event) {
         return; // bail
     }
 
+    if (DependencyManager::get<Editor>()->handleMouseMove(event)) {
+        return;
+    }
+
 #if !defined(DISABLE_QML)
     auto offscreenUi = getOffscreenUI();
     auto eventPosition = compositor.getMouseEventPosition(event);
@@ -4803,6 +4828,11 @@ void Application::mousePressEvent(QMouseEvent* event) {
     QPointF transformedPos;
 #endif
 
+    // in build mode the viewport belongs to the editor: no entity clicks, no avatar input
+    if (DependencyManager::get<Editor>()->handleMousePress(event)) {
+        return;
+    }
+
     QMouseEvent mappedEvent(event->type(), transformedPos, event->screenPos(), event->button(), event->buttons(), event->modifiers());
     QUuid result = getEntities()->mousePressEvent(&mappedEvent);
     setKeyboardFocusEntity(getEntities()->wantsKeyboardFocus(result) ? result : UNKNOWN_ENTITY_ID);
@@ -4833,6 +4863,9 @@ void Application::mousePressEvent(QMouseEvent* event) {
 }
 
 void Application::mouseDoublePressEvent(QMouseEvent* event) {
+    if (DependencyManager::get<Editor>()->handleMouseDoubleClick(event)) {
+        return;
+    }
 #if !defined(DISABLE_QML)
     auto offscreenUi = getOffscreenUI();
     auto eventPosition = getApplicationCompositor().getMouseEventPosition(event);
@@ -4867,6 +4900,10 @@ void Application::mouseReleaseEvent(QMouseEvent* event) {
         transformedPos,
         event->screenPos(), event->button(),
         event->buttons(), event->modifiers());
+
+    if (DependencyManager::get<Editor>()->handleMouseRelease(event)) {
+        return;
+    }
 
     getEntities()->mouseReleaseEvent(&mappedEvent);
 
@@ -4966,6 +5003,10 @@ void Application::touchGestureEvent(QGestureEvent* event) {
 }
 
 void Application::wheelEvent(QWheelEvent* event) const {
+    if (DependencyManager::get<Editor>()->handleWheel(event)) {
+        return;
+    }
+
     _controllerScriptingInterface->emitWheelEvent(event); // send events to any registered scripts
 
     // if one of our scripts have asked to capture this event, then stop processing it

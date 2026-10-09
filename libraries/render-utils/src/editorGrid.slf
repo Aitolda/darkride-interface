@@ -1,0 +1,86 @@
+<@include gpu/Config.slh@>
+<$VERSION_HEADER$>
+//  <$_SCRIBE_FILENAME$>
+//  Generated on <$_SCRIBE_DATE$>
+//
+//  The build-mode grid: anti-aliased minor and major lines of constant pixel width on the
+//  world XZ plane, the X and Z axes in colour, fading with distance and as cells shrink.
+//
+//  Distributed under the Apache License, Version 2.0.
+//  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
+//
+
+<@include gpu/ShaderConstants.h@>
+<@include render-utils/ShaderConstants.h@>
+<@include gpu/Transform.slh@>
+<$declareStandardCameraTransform()$>
+
+<@if not HIFI_USE_FORWARD@>
+    <@include DeferredBufferWrite.slh@>
+<@else@>
+    layout(location=0) out vec4 _fragColor0;
+<@endif@>
+
+// matches EditorGridParams in interface/src/editor/EditorGrid.cpp
+struct EditorGridParams {
+    vec4 spacing;      // x: minor spacing (m), y: major spacing (m), z: fade distance (m), w: unused
+    vec4 minorColor;
+    vec4 majorColor;
+    vec4 axisXColor;
+    vec4 axisZColor;
+};
+
+LAYOUT(binding=0) uniform editorGridBuffer {
+    EditorGridParams params;
+};
+
+layout(location=RENDER_UTILS_ATTR_POSITION_WS) in vec4 _positionWS;
+
+// 1 on a grid line of `widthPx` pixels, 0 away from it, anti-aliased over one pixel
+float gridLine(vec2 coord, float widthPx) {
+    vec2 dd = max(fwidth(coord), vec2(0.00001));
+    vec2 dist = abs(fract(coord - 0.5) - 0.5) / dd;   // distance to the nearest line, in pixels
+    float d = min(dist.x, dist.y);
+    return 1.0 - smoothstep(widthPx * 0.5, widthPx * 0.5 + 1.0, d);
+}
+
+// fades the lines out as their cells shrink towards a few pixels, which is what stops the moire
+float cellFade(vec2 coord) {
+    vec2 dd = fwidth(coord);
+    return 1.0 - smoothstep(0.08, 0.4, max(dd.x, dd.y));
+}
+
+void main(void) {
+    vec2 p = _positionWS.xz;
+    vec2 minorCoord = p / params.spacing.x;
+    vec2 majorCoord = p / params.spacing.y;
+
+    float minor = gridLine(minorCoord, 1.0) * cellFade(minorCoord);
+    float major = gridLine(majorCoord, 1.5) * cellFade(majorCoord);
+
+    // the world axes: the line along X is z == 0, the line along Z is x == 0
+    vec2 dd = max(fwidth(p), vec2(0.00001));
+    float axisX = 1.0 - smoothstep(1.0, 2.0, abs(p.y) / dd.y);
+    float axisZ = 1.0 - smoothstep(1.0, 2.0, abs(p.x) / dd.x);
+
+    // coverage only scales alpha; the colour stays pure for straight alpha blending
+    vec4 color = vec4(params.minorColor.rgb, params.minorColor.a * minor);
+    color = mix(color, params.majorColor, major);
+    color = mix(color, params.axisZColor, axisZ);
+    color = mix(color, params.axisXColor, axisX);
+
+    vec3 eye = getTransformCamera()._viewInverse[3].xyz;
+    float dist = distance(eye, _positionWS.xyz);
+    float fade = 1.0 - smoothstep(params.spacing.z * 0.4, params.spacing.z, dist);
+    color.a *= fade;
+
+    if (color.a <= 0.003) {
+        discard;
+    }
+
+<@if not HIFI_USE_FORWARD@>
+    packDeferredFragmentTranslucent(vec3(0.0, 1.0, 0.0), color.a, color.rgb, 1.0);
+<@else@>
+    _fragColor0 = color;
+<@endif@>
+}

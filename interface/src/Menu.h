@@ -53,6 +53,8 @@ namespace MenuOption {
     const QString BookmarkAvatar = "Bookmark Avatar";
     const QString BookmarkAvatarEntities = "Bookmark Avatar Entities";
     const QString BookmarkLocation = "Bookmark Location";
+    const QString BuildGrid = "Show Grid";
+    const QString BuildMode = "Build Mode";
     const QString CalibrateCamera = "Calibrate Camera";
     const QString CenterPlayerInView = "Center Player In View";
     const QString Chat = "Chat...";
