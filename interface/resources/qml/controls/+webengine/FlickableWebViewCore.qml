@@ -105,6 +105,8 @@ Item {
         settings.pluginsEnabled: true
         settings.touchIconsEnabled: true
         settings.allowRunningInsecureContent: true
+        // pages loaded from file:// (the tablet apps) call the metaverse API; Qt blocks that unless this is on
+        settings.localContentCanAccessRemoteUrls: true
 
         // https://doc.qt.io/qt-5/qml-qtwebengine-webengineview.html#backgroundColor-prop
         backgroundColor: flick.transparentBackground ? "transparent" : "white"

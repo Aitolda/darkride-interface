@@ -42,6 +42,7 @@ Item {
         height: keyboardEnabled && keyboardRaised ? parent.height - keyboard.height : parent.height
 
         profile: TivoliWebEngineProfile;
+        settings.localContentCanAccessRemoteUrls: true
 
         property string userScriptUrl: ""
 

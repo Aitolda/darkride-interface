@@ -13,6 +13,7 @@ import QtWebEngine 1.5
 import controlsUit 1.0 as ControlsUit
 
 WebEngineView {
+    settings.localContentCanAccessRemoteUrls: true
     id: root
     Component.onCompleted: {
         console.log("Connecting JS messaging to Hifi Logging")
