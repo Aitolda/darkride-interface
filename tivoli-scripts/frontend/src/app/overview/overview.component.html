@@ -62,10 +62,15 @@
 					[alt]="user.username"
 				/>
 				<div>
-					<h3>{{ user.username }}</h3>
+					<h3>
+						{{ user.username }}
+						<span class="badge ai" *ngIf="user.ai" [title]="user.markLine"
+							>AI</span
+						>
+					</h3>
 					<h4 style="opacity: 0.75;">
 						{{
-							user.distance == 0
+							user.distance < 0
 								? "It's you!"
 								: user.distance.toFixed(2) + " m"
 						}}

@@ -59,6 +59,12 @@
 				text-shadow: none;
 				padding: 2px 4px;
 				font-size: 0.8em;
+
+				// an AI resident (hover for "✦ <word> · hosted by <host>")
+				&.ai {
+					background-color: #3f51b5;
+					cursor: help;
+				}
 			}
 		}
 

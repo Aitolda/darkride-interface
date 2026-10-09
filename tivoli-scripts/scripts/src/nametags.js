@@ -1,24 +1,7 @@
+import { usersCache } from "./users-cache";
+
 export function initNametags(showSelf) {
 	var nametags = {};
-
-	function getUsers(resolve) {
-		var req = new XMLHttpRequest();
-		req.onreadystatechange = function() {
-			if (req.readyState == 4 && req.status == 200) {
-				var json = req.responseText;
-				try { json = JSON.parse(json); } catch(err) { return; }
-				if (json.status!="success") return;
-				resolve(json.data.users);
-			}
-		}
-		req.open("GET",
-			AccountServices.metaverseServerURL+
-			"/api/v1/users?per_page=1000&status="+
-			location.domainID.slice(1,-1)+
-			"&a="+(new Date().getTime()),
-		true);
-		req.send();
-	}
 
 	function updateNametagEntity(nametag) {
 		if (nametag.entity==undefined) return;
@@ -26,7 +9,9 @@ export function initNametags(showSelf) {
 		Entities.editEntity(nametag.entity, {
 			alpha: 1,
 			imageURL: (
-				"https://tivolicloud.com/api/user/"+
+				// the picture is drawn by the metaverse we are on; for an AI resident it carries
+				// the mark, the resident's word and its host (AI-FIRST-CLIENT.md §10.2)
+				AccountServices.metaverseServerURL+"/api/user/"+
 				nametag.username+
 				"/nametag?"+ Date.now() +
 				(nametag.admin?"&admin":"")+
@@ -112,7 +97,7 @@ export function initNametags(showSelf) {
 			// add nametag
 			addNametag(id, {
 				username: localUser.displayName,
-				avatarURL: "https://tivolicloud.com/api/user/-/image",
+				avatarURL: AccountServices.metaverseServerURL+"/api/user/-/image",
 				connection: null,
 				admin: false,
 			});
@@ -140,22 +125,25 @@ export function initNametags(showSelf) {
 		}
 	}
 
-	function updateUsersAPI() {
-		//console.log("Updating users with API");
+	function applyUsersAPI(users) {
+		Object.keys(users).forEach(function(id) {
+			var nametag = nametags[id];
+			if (nametag==undefined) return;
+			var apiUser = users[id];
 
-		getUsers(function(apiUsers) {
-			apiUsers.forEach(function(apiUser) {
-				var id = "{"+apiUser.location.node_id+"}";
-				var nametag = nametags[id];
-				if (nametag==undefined) return;
-
-				updateNametag(nametag, {
-					avatarURL: apiUser.images.thumbnail,
-					connection: apiUser.connection,
-				});
-			});	
+			updateNametag(nametag, {
+				avatarURL: apiUser.thumbnail,
+				connection: apiUser.connection,
+			});
 		});
 	}
+
+	function updateUsersAPI() {
+		//console.log("Updating users with API");
+		usersCache.refreshSoon();
+	}
+
+	var usersListener = usersCache.onUpdate(applyUsersAPI);
 
 	var gracefullyUpdateReady = true;
 	var gracefullyUpdateToBeUpdated = false;
@@ -235,6 +223,7 @@ export function initNametags(showSelf) {
 		// AvatarList.avatarSessionChangedEvent.disconnect(avatarSessionChangedEvent);
 		location.hostChanged.disconnect(hostChanged);
 		Users.usernameFromIDReply.disconnect(usernameFromIDReply);
+		usersCache.offUpdate(usersListener);
 
 		Object.keys(nametags).forEach(function(id) {
 			Entities.deleteEntity(nametags[id].entity);

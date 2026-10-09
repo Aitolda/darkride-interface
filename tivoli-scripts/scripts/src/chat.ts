@@ -1,6 +1,7 @@
 import { ButtonData } from "./buttons/button-manager";
 import { SignalManager } from "./lib/signal-manager";
 import { WebEventHandler } from "./buttons/web-event-handler";
+import { usersCache } from "./users-cache";
 
 class ChatJoinAndLeave {
 	private signals = new SignalManager();
@@ -142,10 +143,22 @@ class ChatHandler extends WebEventHandler {
 			if (data.local) {
 				this.emitEvent("showMessage", data);
 			} else {
+				// the name is the account's (the engine forces the display name to the username);
+				// a sender with no name at all is shown as the mixer names it, never dropped
 				const user = AvatarList.getAvatar(senderID);
-				const username = user.displayName;
-				delete data["username"]; // make sure people dont overwrite it
-				this.emitEvent("sendMessage", { username, ...data });
+				const cached = usersCache.get(senderID);
+				const username =
+					(user && user.displayName) ||
+					(user && user.sessionDisplayName) ||
+					(cached && cached.username) ||
+					"anonymous";
+				// an AI resident's mark comes from the metaverse by session id, never from the
+				// message itself; the sender cannot set these (AI-FIRST-CLIENT.md §5, §10.4)
+				const mark =
+					cached && cached.ai
+						? { ai: true, aiWord: cached.aiWord, host: cached.host }
+						: { ai: false, aiWord: undefined, host: undefined };
+				this.emitEvent("sendMessage", { ...data, username, ...mark });
 			}
 		});
 

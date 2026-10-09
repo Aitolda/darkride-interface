@@ -219,7 +219,14 @@ class Message {
 		public type: "message" | "announcement",
 		public message: string,
 		public username?: string,
-		public extras: { me?: boolean; tts?: boolean } = {},
+		public extras: {
+			me?: boolean;
+			tts?: boolean;
+			// an AI resident, as the metaverse marks it (set by the script, never by the sender)
+			ai?: boolean;
+			aiWord?: string;
+			host?: string;
+		} = {},
 		public forceEnableSound = false,
 	) {
 		this.getImageOrVideoFromText();
@@ -283,6 +290,15 @@ export class ChatService {
 	focused$ = new BehaviorSubject<boolean>(false);
 
 	readonly messageShownTime = 1000 * 20; // how long till messages fade out
+
+	// the line under an AI resident's name: "✦ language model · hosted by caitlyn"
+	markLine(extras: { aiWord?: string; host?: string }) {
+		return (
+			"✦ " +
+			(extras.aiWord || "AI resident") +
+			(extras.host ? " · hosted by " + extras.host : "")
+		);
+	}
 
 	addMessage(message: Message) {
 		// TODO: virtual scroll bar instead?

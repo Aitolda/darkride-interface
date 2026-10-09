@@ -1,6 +1,7 @@
 import { ButtonData } from "./buttons/button-manager";
 import { WebEventHandler } from "./buttons/web-event-handler";
 import { SignalManager } from "./lib/signal-manager";
+import { markLine, usersCache } from "./users-cache";
 
 class OverviewHandler extends WebEventHandler {
 	private getPing() {
@@ -28,16 +29,31 @@ class OverviewHandler extends WebEventHandler {
 		return AvatarList.getAvatarIdentifiers()
 			.map(id => {
 				const avatar = AvatarList.getAvatar(id);
+				// an AI resident's mark, from the metaverse by session id (AI-FIRST-CLIENT.md §10.4)
+				const cached = usersCache.get(id);
+				const mark =
+					cached && cached.ai
+						? { ai: true, markLine: markLine(cached) }
+						: { ai: false, markLine: "" };
 
 				return MyAvatar.SELF_ID == id
-					? { id, username: AccountServices.username, distance: -1 }
+					? {
+							id,
+							username: AccountServices.username,
+							distance: -1,
+							...mark,
+					  }
 					: {
 							id,
-							username: avatar.displayName,
+							username:
+								avatar.displayName ||
+								avatar.sessionDisplayName ||
+								(cached ? cached.username : ""),
 							distance: Vec3.distance(
 								MyAvatar.position,
 								avatar.position,
 							),
+							...mark,
 					  };
 			})
 			.sort((a, b) => a.distance - b.distance);
