@@ -430,8 +430,10 @@ void Editor::updateGizmo() {
             position = gizmoPosition();
             rotation = gizmoRotation();
         }
-        float distance = std::max(0.01f, glm::length(position - _camera.position()));
-        float scale = distance * 2.0f * tanHalfFov() * (GIZMO_PIXELS / viewportHeight());
+        // sized by depth along the view axis, not straight-line distance, so the handles keep the
+        // same projected size at the edge of the frame as in the middle (Unity does the same)
+        float depth = std::max(0.01f, glm::dot(position - _camera.position(), viewDirection()));
+        float scale = depth * 2.0f * tanHalfFov() * (GIZMO_PIXELS / viewportHeight());
         _gizmo.setTransform(position, rotation, scale, viewDirection());
     }
     _gizmo.setVisible(show);
