@@ -25,6 +25,10 @@
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QTextEdit>
 #include <QtWidgets/QTreeView>
+#include <QtQuick/QQuickItem>
+#include <QtQuick/QQuickWindow>
+
+#include <OffscreenUi.h>
 
 #include <EntityItem.h>
 #include <EntityScriptingInterface.h>
@@ -210,9 +214,12 @@ void Editor::setMenuActionsEnabled(bool enabled) {
     auto menu = Menu::getInstance();
     for (const auto& name : { MenuOption::BuildUndo, MenuOption::BuildRedo, MenuOption::BuildDuplicate,
                               MenuOption::BuildFrame, MenuOption::BuildResetPanels }) {
-        if (auto action = menu->getActionForOption(name)) {
+        auto action = menu->getActionForOption(name);
+        if (action) {
             action->setEnabled(enabled);
         }
+        qCDebug(interfaceapp) << "editor menu action" << name << (action ? (enabled ? "enabled" : "disabled") : "NOT FOUND")
+            << (action ? action->shortcut().toString() : QString());
     }
 }
 
@@ -975,6 +982,8 @@ bool Editor::handleMousePress(QMouseEvent* event) {
         return true;
     }
     PickRay ray = pickRay(event->pos());
+    _pressPos = event->pos();
+    _pressModifiers = event->modifiers();
     if (_gizmo.isVisible()) {
         GizmoHandle handle = _gizmo.hitTest(ray);
         if (handle != GizmoHandle::None) {
@@ -983,8 +992,6 @@ bool Editor::handleMousePress(QMouseEvent* event) {
         }
     }
     _clickPending = true;
-    _pressPos = event->pos();
-    _pressModifiers = event->modifiers();
     return true;
 }
 
@@ -1083,6 +1090,7 @@ bool Editor::handleKeyPress(QKeyEvent* event) {
     }
     bool command = event->modifiers().testFlag(Qt::ControlModifier);
     bool shift = event->modifiers().testFlag(Qt::ShiftModifier);
+    qCDebug(interfaceapp) << "editor key" << Qt::hex << event->key() << "modifiers" << (int)event->modifiers();
     switch (event->key()) {
         case Qt::Key_Delete:
         case Qt::Key_Backspace:
@@ -1157,27 +1165,43 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
     if (!widget) {
         return false;
     }
-    bool inPanels = _hierarchy->isAncestorOf(widget) || _inspector->isAncestorOf(widget) || _toolBar->isAncestorOf(widget);
-    if (!inPanels) {
-        return false;
-    }
     auto keyEvent = static_cast<QKeyEvent*>(event);
     bool command = keyEvent->modifiers().testFlag(Qt::ControlModifier);
     bool shift = keyEvent->modifiers().testFlag(Qt::ShiftModifier);
     bool typing = qobject_cast<QLineEdit*>(widget) || qobject_cast<QPlainTextEdit*>(widget) || qobject_cast<QTextEdit*>(widget)
         || qobject_cast<QAbstractSpinBox*>(widget);
     bool inTree = qobject_cast<QTreeView*>(widget) || (widget->parentWidget() && qobject_cast<QTreeView*>(widget->parentWidget()));
-    // text fields keep their own undo while typing; the JSON box keeps everything
+    bool inPanels = _hierarchy->isAncestorOf(widget) || _inspector->isAncestorOf(widget) || _toolBar->isAncestorOf(widget);
+
+    // undo and redo are taken here, ahead of everything, from any widget of the window: the menu
+    // shortcut and the viewport's key handler were never reached on macOS
+    if (command && keyEvent->key() == Qt::Key_Z && !typing) {
+        // unless a QML text field (chat, a dialog) is being typed in
+        bool qmlTyping = false;
+        if (auto offscreenUi = DependencyManager::get<OffscreenUi>()) {
+            if (auto window = offscreenUi->getWindow()) {
+                if (auto item = window->activeFocusItem()) {
+                    qmlTyping = item->inherits("QQuickTextInput") || item->inherits("QQuickTextEdit")
+                        || item->inherits("QQuickWebEngineView");
+                }
+            }
+        }
+        qCDebug(interfaceapp) << "editor Cmd+Z seen on" << watched->metaObject()->className() << "qml typing" << qmlTyping;
+        if (!qmlTyping) {
+            if (shift) { redo(); } else { undo(); }
+            return true;
+        }
+        return false;
+    }
+
+    if (!inPanels) {
+        return false;
+    }
+    // text fields keep their own keys while typing; the JSON box keeps everything
     if (qobject_cast<QPlainTextEdit*>(widget)) {
         return false;
     }
     switch (keyEvent->key()) {
-        case Qt::Key_Z:
-            if (command && !typing) {
-                if (shift) { redo(); } else { undo(); }
-                return true;
-            }
-            break;
         case Qt::Key_D:
             if (command && !typing) { duplicateSelection(); return true; }
             break;
