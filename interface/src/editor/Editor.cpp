@@ -93,6 +93,13 @@ namespace {
         return renderer ? renderer->getTree() : nullptr;
     }
 
+    // the shortcut modifier: Command, and also Option and Control, for hands trained on other keyboards
+    // (a PC keyboard's Alt key is Option on macOS; Option never pairs with a letter in the editor otherwise)
+    bool commandModifier(Qt::KeyboardModifiers modifiers) {
+        return modifiers.testFlag(Qt::ControlModifier) || modifiers.testFlag(Qt::AltModifier)
+            || modifiers.testFlag(Qt::MetaModifier);
+    }
+
     GizmoMode gizmoModeFor(EditorToolBar::Tool tool) {
         switch (tool) {
             case EditorToolBar::Tool::Rotate: return GizmoMode::Rotate;
@@ -713,7 +720,7 @@ void Editor::frameSelection() {
 // --- the gizmo drag -----------------------------------------------------------------------------
 
 bool Editor::snapActive() const {
-    return _snapAlways || QGuiApplication::keyboardModifiers().testFlag(Qt::ControlModifier);
+    return _snapAlways || commandModifier(QGuiApplication::keyboardModifiers());
 }
 
 void Editor::beginGizmoDrag(GizmoHandle handle, const PickRay& ray) {
@@ -1088,9 +1095,8 @@ bool Editor::handleKeyPress(QKeyEvent* event) {
     if (_camera.keyPress(event)) {
         return true;
     }
-    bool command = event->modifiers().testFlag(Qt::ControlModifier);
+    bool command = commandModifier(event->modifiers());
     bool shift = event->modifiers().testFlag(Qt::ShiftModifier);
-    qCDebug(interfaceapp) << "editor key" << Qt::hex << event->key() << "modifiers" << (int)event->modifiers();
     switch (event->key()) {
         case Qt::Key_Delete:
         case Qt::Key_Backspace:
@@ -1166,7 +1172,7 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
         return false;
     }
     auto keyEvent = static_cast<QKeyEvent*>(event);
-    bool command = keyEvent->modifiers().testFlag(Qt::ControlModifier);
+    bool command = commandModifier(keyEvent->modifiers());
     bool shift = keyEvent->modifiers().testFlag(Qt::ShiftModifier);
     bool typing = qobject_cast<QLineEdit*>(widget) || qobject_cast<QPlainTextEdit*>(widget) || qobject_cast<QTextEdit*>(widget)
         || qobject_cast<QAbstractSpinBox*>(widget);
@@ -1186,7 +1192,6 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
                 }
             }
         }
-        qCDebug(interfaceapp) << "editor Cmd+Z seen on" << watched->metaObject()->className() << "qml typing" << qmlTyping;
         if (!qmlTyping) {
             if (shift) { redo(); } else { undo(); }
             return true;
