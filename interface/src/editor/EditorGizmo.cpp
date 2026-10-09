@@ -36,6 +36,9 @@ namespace {
     const float RING_RADIUS = 1.0f;
     const float RING_WIDTH = 0.045f;
     const float VIEW_RING_RADIUS = 1.22f;
+    const float SPHERE_RADIUS = 0.93f;             // the trackball inside the rings
+    const float SPHERE_ALPHA = 0.1f;
+    const float FREE_RADIANS_PER_PIXEL = glm::radians(0.5f);
     const float SCALE_CUBE = 0.13f;
     const float SCALE_CENTER_CUBE = 0.18f;
     const int RING_SEGMENTS = 72;
@@ -275,6 +278,11 @@ void EditorGizmoShared::renderMove(RenderArgs* args, const EditorGizmoState& sta
 
 void EditorGizmoShared::renderRotate(RenderArgs* args, const EditorGizmoState& state, bool translucentPass) {
     if (translucentPass) {
+        // the trackball's body, faint, so the free-rotation area reads as a thing to grab
+        GIZMO_PART_DRAW(state, true);
+        bool lit = state.hover == GizmoHandle::Sphere || state.active == GizmoHandle::Sphere;
+        glm::vec4 color(CENTER_COLOR, lit ? SPHERE_ALPHA * 2.0f : SPHERE_ALPHA);
+        draw(GeometryCache::Sphere, glm::quat(), glm::vec3(SPHERE_RADIUS * 2.0f), glm::vec3(0.0f), color);
         return;
     }
     auto geometryCache = DependencyManager::get<GeometryCache>();
@@ -361,7 +369,7 @@ namespace render {
 
 bool EditorGizmo::isRing(GizmoHandle handle) {
     return handle == GizmoHandle::RingX || handle == GizmoHandle::RingY || handle == GizmoHandle::RingZ
-        || handle == GizmoHandle::RingView;
+        || handle == GizmoHandle::RingView || handle == GizmoHandle::Sphere;
 }
 
 bool EditorGizmo::isScale(GizmoHandle handle) {
@@ -507,7 +515,12 @@ GizmoHandle EditorGizmo::hitTest(const PickRay& ray) const {
                 float distance = glm::length(hit - ray.origin);
                 if (std::abs(r - VIEW_RING_RADIUS) < RING_PICK_WIDTH && distance / _state.scale < bestT) {
                     best = GizmoHandle::RingView;
+                    bestT = distance / _state.scale;
                 }
+            }
+            // inside the rings: the trackball
+            if (best == GizmoHandle::None && raySphere(origin, direction, SPHERE_RADIUS, t)) {
+                best = GizmoHandle::Sphere;
             }
             break;
         }
@@ -535,8 +548,11 @@ void EditorGizmo::beginDrag(GizmoHandle handle, const PickRay& ray) {
     _dragOrigin = _state.position;
     _lastDelta = glm::vec3(0.0f);
     _lastAngle = 0.0f;
+    _freeRotation = glm::quat();
     _lastScale = glm::vec3(1.0f);
     switch (handle) {
+        case GizmoHandle::Sphere:
+            break;
         case GizmoHandle::AxisX:
         case GizmoHandle::AxisY:
         case GizmoHandle::AxisZ:
@@ -633,6 +649,24 @@ float EditorGizmo::dragAngle(const PickRay& ray) {
         _lastAngle = std::atan2(glm::dot(glm::cross(_dragStartVector, v), _dragAxis), glm::dot(_dragStartVector, v));
     }
     return _lastAngle;
+}
+
+glm::quat EditorGizmo::dragFree(float dx, float dy) {
+    if (!_dragging || _dragHandle != GizmoHandle::Sphere) {
+        return glm::quat();
+    }
+    // the screen's right and up, in the world; a drag to the right spins about up, a drag down tips
+    // the top towards the viewer
+    glm::vec3 forward = glm::normalize(_state.viewDirection);
+    glm::vec3 right = glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f));
+    if (glm::length(right) < 1.0e-3f) {
+        right = glm::vec3(1.0f, 0.0f, 0.0f);
+    }
+    right = glm::normalize(right);
+    glm::vec3 up = glm::normalize(glm::cross(right, forward));
+    glm::quat step = glm::angleAxis(dx * FREE_RADIANS_PER_PIXEL, up) * glm::angleAxis(dy * FREE_RADIANS_PER_PIXEL, right);
+    _freeRotation = glm::normalize(step * _freeRotation);
+    return _freeRotation;
 }
 
 glm::vec3 EditorGizmo::dragScale(const PickRay& ray) {

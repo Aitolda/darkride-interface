@@ -17,12 +17,14 @@
 #include <QtGui/QKeyEvent>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QWheelEvent>
+#include <QtCore/QEvent>
 #include <QtWidgets/QAbstractSpinBox>
 #include <QtWidgets/QAction>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QTextEdit>
+#include <QtWidgets/QTreeView>
 
 #include <EntityItem.h>
 #include <EntityScriptingInterface.h>
@@ -37,6 +39,7 @@
 
 #include "Application.h"
 #include "EntityTreeModel.h"
+#include "InterfaceLogging.h"
 #include "Menu.h"
 #include "PropertySpec.h"
 #include "ui/HierarchyPanel.h"
@@ -44,7 +47,9 @@
 
 namespace {
     const float GIZMO_PIXELS = 110.0f;      // the gizmo's size on screen
-    const int INSPECTOR_REFRESH_MS = 500;   // how often the Inspector re-reads the selection
+    const int INSPECTOR_REFRESH_MS = 100;   // how often the Inspector re-reads a small selection
+    const int INSPECTOR_REFRESH_SLOW_MS = 500;   // and a large one
+    const int INSPECTOR_FAST_LIMIT = 16;
     const int CLICK_SLOP_PIXELS = 5;        // a press that moves less than this is a click
     const int EDIT_INTERVAL_MS = 33;        // while dragging, edits go out at most this often
     const int PRUNE_EVERY_FRAMES = 30;      // how often the selection drops entities that are gone
@@ -268,6 +273,7 @@ void Editor::createPanels() {
     window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
     window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
     window->addToolBar(Qt::TopToolBarArea, _toolBar);
+    qApp->installEventFilter(this);
 
     QByteArray layout = _layoutSetting.get();
     if (!layout.isEmpty()) {
@@ -476,6 +482,7 @@ void Editor::refreshInspector(bool selectionChanged) {
         _inspector->setSummary("Nothing selected");
         return;
     }
+    _inspectorRefresh.setInterval(snapshots.size() > INSPECTOR_FAST_LIMIT ? INSPECTOR_REFRESH_SLOW_MS : INSPECTOR_REFRESH_MS);
     if (selectionChanged) {
         QString title;
         if (snapshots.size() == 1) {
@@ -746,6 +753,7 @@ void Editor::beginGizmoDrag(GizmoHandle handle, const PickRay& ray) {
     _dragDelta = glm::vec3(0.0f);
     _dragRotationDelta = glm::quat();
     _dragScale = glm::vec3(1.0f);
+    _lastDragPos = _pressPos;
     _editTimer.start();
     _gizmo.beginDrag(handle, ray);
     if (!_gizmo.isDragging()) {
@@ -753,14 +761,54 @@ void Editor::beginGizmoDrag(GizmoHandle handle, const PickRay& ray) {
     }
 }
 
-void Editor::moveGizmoDrag(const PickRay& ray) {
+bool Editor::vertexSnapTarget(const QPoint& viewportPos, glm::vec3& target) const {
+    auto entities = DependencyManager::get<EntityScriptingInterface>();
+    QVector<EntityItemID> discard;
+    for (const auto& id : _dragIds) {
+        discard << EntityItemID(id);
+    }
+    auto result = entities->evalRayIntersectionVector(pickRay(viewportPos), worldPickFilter(), QVector<EntityItemID>(), discard);
+    if (!result.intersects) {
+        return false;
+    }
+    target = result.intersection;
+    // a model pick reports the triangle it hit: take its nearest corner
+    QVariantMap triangle = result.extraInfo.value("subMeshTriangleWorld").toMap();
+    float best = FLT_MAX;
+    for (const auto& key : { "v0", "v1", "v2" }) {
+        bool valid = false;
+        glm::vec3 vertex = vec3FromVariant(triangle.value(key), valid);
+        if (valid) {
+            float distance = glm::length(vertex - result.intersection);
+            if (distance < best) {
+                best = distance;
+                target = vertex;
+            }
+        }
+    }
+    return true;
+}
+
+void Editor::moveGizmoDrag(const QPoint& viewportPos) {
+    PickRay ray = pickRay(viewportPos);
+    QPoint mouseDelta = viewportPos - _lastDragPos;
+    _lastDragPos = viewportPos;
     switch (_dragKind) {
         case DragKind::Move: {
-            glm::vec3 delta = _gizmo.dragDelta(ray);
-            _dragDelta = snapActive() ? snapVector(delta, _moveSnap) : delta;
+            glm::vec3 target;
+            if (_vertexSnap && vertexSnapTarget(viewportPos, target)) {
+                _dragDelta = target - _dragPivot;   // the pivot lands on the vertex
+            } else {
+                glm::vec3 delta = _gizmo.dragDelta(ray);
+                _dragDelta = snapActive() ? snapVector(delta, _moveSnap) : delta;
+            }
             break;
         }
         case DragKind::Rotate: {
+            if (_gizmo.dragHandle() == GizmoHandle::Sphere) {
+                _dragRotationDelta = _gizmo.dragFree((float)mouseDelta.x(), (float)mouseDelta.y());
+                break;
+            }
             float angle = _gizmo.dragAngle(ray);
             if (snapActive()) {
                 angle = glm::radians(snapValue(glm::degrees(angle), _rotateSnap));
@@ -835,14 +883,19 @@ void Editor::applyDrag(bool final) {
 // --- edits --------------------------------------------------------------------------------------
 
 void Editor::undo() {
+    auto stack = _undo.stack();
+    qCDebug(interfaceapp) << "editor undo:" << stack->undoText() << "index" << stack->index() << "of" << stack->count()
+        << "active" << _active << "dragging" << _gizmo.isDragging();
     if (_active && !_gizmo.isDragging()) {
-        _undo.stack()->undo();
+        stack->undo();
     }
 }
 
 void Editor::redo() {
+    auto stack = _undo.stack();
+    qCDebug(interfaceapp) << "editor redo:" << stack->redoText() << "index" << stack->index() << "of" << stack->count();
     if (_active && !_gizmo.isDragging()) {
-        _undo.stack()->redo();
+        stack->redo();
     }
 }
 
@@ -943,7 +996,7 @@ bool Editor::handleMouseMove(QMouseEvent* event) {
         return true;
     }
     if (_gizmo.isDragging()) {
-        moveGizmoDrag(pickRay(event->pos()));
+        moveGizmoDrag(event->pos());
         return true;
     }
     if (_marqueeActive) {
@@ -1073,8 +1126,12 @@ bool Editor::handleKeyPress(QKeyEvent* event) {
             if (command) { copySelection(); return true; }
             break;
         case Qt::Key_V:
-            if (command) { paste(); return true; }
-            break;
+            if (command) {
+                paste();
+            } else if (!event->isAutoRepeat()) {
+                _vertexSnap = true;
+            }
+            return true;
         default:
             break;
     }
@@ -1085,5 +1142,54 @@ bool Editor::handleKeyRelease(QKeyEvent* event) {
     if (!_active) {
         return false;
     }
+    if (event->key() == Qt::Key_V && !event->isAutoRepeat()) {
+        _vertexSnap = false;
+        return true;
+    }
     return _camera.keyRelease(event);
+}
+
+bool Editor::eventFilter(QObject* watched, QEvent* event) {
+    if (!_active || event->type() != QEvent::KeyPress || !_panelsCreated) {
+        return false;
+    }
+    auto widget = qobject_cast<QWidget*>(watched);
+    if (!widget) {
+        return false;
+    }
+    bool inPanels = _hierarchy->isAncestorOf(widget) || _inspector->isAncestorOf(widget) || _toolBar->isAncestorOf(widget);
+    if (!inPanels) {
+        return false;
+    }
+    auto keyEvent = static_cast<QKeyEvent*>(event);
+    bool command = keyEvent->modifiers().testFlag(Qt::ControlModifier);
+    bool shift = keyEvent->modifiers().testFlag(Qt::ShiftModifier);
+    bool typing = qobject_cast<QLineEdit*>(widget) || qobject_cast<QPlainTextEdit*>(widget) || qobject_cast<QTextEdit*>(widget)
+        || qobject_cast<QAbstractSpinBox*>(widget);
+    bool inTree = qobject_cast<QTreeView*>(widget) || (widget->parentWidget() && qobject_cast<QTreeView*>(widget->parentWidget()));
+    // text fields keep their own undo while typing; the JSON box keeps everything
+    if (qobject_cast<QPlainTextEdit*>(widget)) {
+        return false;
+    }
+    switch (keyEvent->key()) {
+        case Qt::Key_Z:
+            if (command && !typing) {
+                if (shift) { redo(); } else { undo(); }
+                return true;
+            }
+            break;
+        case Qt::Key_D:
+            if (command && !typing) { duplicateSelection(); return true; }
+            break;
+        case Qt::Key_Delete:
+        case Qt::Key_Backspace:
+            if (inTree) { deleteSelection(); return true; }
+            break;
+        case Qt::Key_F:
+            if (inTree && !command) { frameSelection(); return true; }
+            break;
+        default:
+            break;
+    }
+    return false;
 }

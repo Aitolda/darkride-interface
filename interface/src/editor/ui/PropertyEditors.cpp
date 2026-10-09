@@ -126,7 +126,11 @@ PropertyEditor* PropertyEditor::create(const PropertySpec& spec, QWidget* parent
         case PropertyKind::Bool: return new BoolEditor(spec, parent);
         case PropertyKind::Int:
         case PropertyKind::Float:
-        case PropertyKind::Degrees: return new NumberEditor(spec, parent);
+        case PropertyKind::Degrees: {
+            auto editor = new NumberEditor(spec, parent);
+            editor->setMaximumWidth(130);   // a lone number does not need the whole row
+            return editor;
+        }
         case PropertyKind::String:
         case PropertyKind::Url: return new TextEditor(spec, parent);
         case PropertyKind::Json: return new JsonEditor(spec, parent);

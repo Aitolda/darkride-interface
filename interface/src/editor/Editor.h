@@ -95,6 +95,8 @@ public:
     bool handleWheel(QWheelEvent* event);
     bool handleKeyPress(QKeyEvent* event);
     bool handleKeyRelease(QKeyEvent* event);
+    // the editor's keys when the focus is in one of its panels rather than the viewport
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
     Q_INVOKABLE void viewFromAxis(int axis, int sign);
 
@@ -162,7 +164,9 @@ private:
 
     bool snapActive() const;
     void beginGizmoDrag(GizmoHandle handle, const PickRay& ray);
-    void moveGizmoDrag(const PickRay& ray);
+    void moveGizmoDrag(const QPoint& viewportPos);
+    // V held while moving: the vertex of another object's mesh under the cursor, or its surface
+    bool vertexSnapTarget(const QPoint& viewportPos, glm::vec3& target) const;
     void applyDrag(bool final);
 
     bool _ready { false };
@@ -178,6 +182,7 @@ private:
     bool _localSpace { false };
     bool _pivotMode { false };
     bool _snapAlways { false };
+    bool _vertexSnap { false };         // V is held
     float _moveSnap { 0.25f };          // metres
     float _rotateSnap { 15.0f };        // degrees
     float _scaleSnap { 0.1f };          // of the scale factor
@@ -206,6 +211,7 @@ private:
     glm::vec3 _dragDelta;
     glm::quat _dragRotationDelta;
     glm::vec3 _dragScale { 1.0f };
+    QPoint _lastDragPos;
     QElapsedTimer _editTimer;
 
     // an edit in progress in the Inspector: the ids and the values before, for undo

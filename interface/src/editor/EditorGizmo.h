@@ -43,6 +43,7 @@ enum class GizmoHandle {
     RingY,
     RingZ,
     RingView,    // the outer ring: turns about the view direction
+    Sphere,      // inside the rings: free rotation, like a trackball
     ScaleX,
     ScaleY,
     ScaleZ,
@@ -124,6 +125,8 @@ public:
     void beginDrag(GizmoHandle handle, const PickRay& ray);
     glm::vec3 dragDelta(const PickRay& ray);
     float dragAngle(const PickRay& ray);
+    // the trackball: mouse motion in pixels turns the selection about the axis across that motion
+    glm::quat dragFree(float dx, float dy);
     glm::vec3 dragScale(const PickRay& ray);
     const glm::vec3& dragAxis() const { return _dragAxis; }
     void endDrag();
@@ -153,6 +156,7 @@ private:
     glm::vec3 _dragStartVector;
     glm::vec3 _lastDelta;
     float _lastAngle { 0.0f };
+    glm::quat _freeRotation;
     glm::vec3 _lastScale { 1.0f };
 };
 

@@ -11,6 +11,7 @@
 #include <QtCore/QSet>
 #include <QtWidgets/QUndoCommand>
 
+#include <EntitiesLogging.h>
 #include <EntityItem.h>
 #include <EntityScriptingInterface.h>
 #include <EntityTree.h>
@@ -53,9 +54,11 @@ namespace {
                 _skipFirstRedo = false;
                 return;
             }
+            qCDebug(entities) << "editor redo" << text() << "on" << _ids.size() << "entities";
             applyProperties(_undo, _ids, _after);
         }
         void undo() override {
+            qCDebug(entities) << "editor undo" << text() << "on" << _ids.size() << "entities";
             applyProperties(_undo, _ids, _before);
         }
     private:
