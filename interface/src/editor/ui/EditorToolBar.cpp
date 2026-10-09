@@ -94,6 +94,14 @@ void EditorToolBar::setTool(Tool tool) {
     }
 }
 
+void EditorToolBar::setLocalSpace(bool local) {
+    _spaceAction->setChecked(local);
+}
+
+void EditorToolBar::setPivotMode(bool pivot) {
+    _pivotAction->setChecked(pivot);
+}
+
 void EditorToolBar::setGridChecked(bool checked) {
     if (_gridAction->isChecked() != checked) {
         QSignalBlocker blocker(_gridAction);

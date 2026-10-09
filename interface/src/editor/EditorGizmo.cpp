@@ -33,9 +33,18 @@ namespace {
     const float PLANE_MAX = 0.6f;
     const float PLANE_THICKNESS = 0.012f;
     const float CENTER_RADIUS = 0.1f;
+    const float RING_RADIUS = 1.0f;
+    const float RING_WIDTH = 0.045f;
+    const float VIEW_RING_RADIUS = 1.22f;
+    const float SCALE_CUBE = 0.13f;
+    const float SCALE_CENTER_CUBE = 0.18f;
+    const int RING_SEGMENTS = 72;
+
     const float AXIS_PICK_RADIUS = 0.09f;
     const float PLANE_PICK_MARGIN = 0.04f;
     const float CENTER_PICK_RADIUS = 0.14f;
+    const float RING_PICK_WIDTH = 0.09f;
+    const float SCALE_CENTER_PICK_RADIUS = 0.17f;
 
     const glm::vec3 AXIS_COLORS[3] = {
         { 0.89f, 0.27f, 0.25f },
@@ -44,6 +53,7 @@ namespace {
     };
     const glm::vec3 HOVER_COLOR { 1.0f, 0.85f, 0.1f };
     const glm::vec3 CENTER_COLOR { 0.88f, 0.88f, 0.88f };
+    const glm::vec3 VIEW_RING_COLOR { 0.8f, 0.8f, 0.8f };
     const float DIM_FACTOR = 0.45f;
     const float PLANE_ALPHA = 0.55f;
     const float PLANE_HOVER_ALPHA = 0.85f;
@@ -63,9 +73,9 @@ namespace {
 
     int axisIndex(GizmoHandle handle) {
         switch (handle) {
-            case GizmoHandle::AxisX: case GizmoHandle::PlaneYZ: return 0;
-            case GizmoHandle::AxisY: case GizmoHandle::PlaneXZ: return 1;
-            case GizmoHandle::AxisZ: case GizmoHandle::PlaneXY: return 2;
+            case GizmoHandle::AxisX: case GizmoHandle::PlaneYZ: case GizmoHandle::RingX: case GizmoHandle::ScaleX: return 0;
+            case GizmoHandle::AxisY: case GizmoHandle::PlaneXZ: case GizmoHandle::RingY: case GizmoHandle::ScaleY: return 1;
+            case GizmoHandle::AxisZ: case GizmoHandle::PlaneXY: case GizmoHandle::RingZ: case GizmoHandle::ScaleZ: return 2;
             default: return -1;
         }
     }
@@ -74,6 +84,12 @@ namespace {
     }
     GizmoHandle planeHandle(int axis) {
         return axis == 0 ? GizmoHandle::PlaneYZ : axis == 1 ? GizmoHandle::PlaneXZ : GizmoHandle::PlaneXY;
+    }
+    GizmoHandle ringHandle(int axis) {
+        return axis == 0 ? GizmoHandle::RingX : axis == 1 ? GizmoHandle::RingY : GizmoHandle::RingZ;
+    }
+    GizmoHandle scaleHandle(int axis) {
+        return axis == 0 ? GizmoHandle::ScaleX : axis == 1 ? GizmoHandle::ScaleY : GizmoHandle::ScaleZ;
     }
     glm::vec3 unitAxis(int axis) {
         glm::vec3 v(0.0f);
@@ -87,6 +103,29 @@ namespace {
             return state.active == handle ? HOVER_COLOR : base * DIM_FACTOR;
         }
         return state.hover == handle ? HOVER_COLOR : base;
+    }
+
+    // a flat ring in the plane facing `axis` (2 = the XY plane), as a triangle strip
+    QVector<glm::vec3> ringStrip(int axis, float radius, float width) {
+        QVector<glm::vec3> points;
+        points.reserve((RING_SEGMENTS + 1) * 2);
+        for (int i = 0; i <= RING_SEGMENTS; ++i) {
+            float angle = TWO_PI * (float)i / (float)RING_SEGMENTS;
+            float c = std::cos(angle);
+            float s = std::sin(angle);
+            for (float r : { radius + width * 0.5f, radius - width * 0.5f }) {
+                glm::vec3 p;
+                if (axis == 0) {
+                    p = glm::vec3(0.0f, c * r, s * r);
+                } else if (axis == 1) {
+                    p = glm::vec3(c * r, 0.0f, s * r);
+                } else {
+                    p = glm::vec3(c * r, s * r, 0.0f);
+                }
+                points << p;
+            }
+        }
+        return points;
     }
 
     bool raySphere(const glm::vec3& origin, const glm::vec3& direction, float radius, float& t) {
@@ -126,6 +165,34 @@ namespace {
         hit = ray.origin + ray.direction * t;
         return true;
     }
+
+    // closest approach between a ray and an axis segment, in gizmo space
+    bool rayHitsSegment(const glm::vec3& origin, const glm::vec3& direction, const glm::vec3& axis,
+                        float from, float to, float radius, float& rayParam) {
+        float b = glm::dot(direction, axis);
+        float e = glm::dot(origin, direction);
+        float f = glm::dot(origin, axis);
+        float denominator = 1.0f - b * b;
+        float segmentParam;
+        if (denominator < 1.0e-5f) {
+            segmentParam = glm::clamp(f, from, to);
+            rayParam = -e + segmentParam * b;
+        } else {
+            segmentParam = glm::clamp((f - e * b) / denominator, from, to);
+            rayParam = segmentParam * b - e;
+        }
+        if (rayParam <= 0.0f) {
+            return false;
+        }
+        glm::vec3 onRay = origin + direction * rayParam;
+        glm::vec3 onAxis = axis * segmentParam;
+        return glm::length(onRay - onAxis) < radius;
+    }
+
+    // the orientation that turns +Z onto `direction`
+    glm::quat facing(const glm::vec3& direction) {
+        return rotationBetween(glm::vec3(0.0f, 0.0f, 1.0f), direction);
+    }
 }
 
 // --- render side --------------------------------------------------------------------------------
@@ -140,32 +207,46 @@ void EditorGizmoShared::setState(const EditorGizmoState& state) {
     _state = state;
 }
 
-void EditorGizmoShared::render(RenderArgs* args, bool planes) {
+void EditorGizmoShared::render(RenderArgs* args, bool translucentPass) {
     EditorGizmoState state = this->state();
     if (!state.visible || !args || !args->_batch) {
         return;
     }
     PerformanceTimer perfTimer("editorGizmo");
+    switch (state.mode) {
+        case GizmoMode::Move:
+            renderMove(args, state, translucentPass);
+            break;
+        case GizmoMode::Rotate:
+            renderRotate(args, state, translucentPass);
+            break;
+        case GizmoMode::Scale:
+            renderScale(args, state, translucentPass);
+            break;
+    }
+}
 
-    auto geometryCache = DependencyManager::get<GeometryCache>();
-    auto& batch = *args->_batch;
-    // unlit, and the front layer draws straight into the lit frame, so always the forward pipelines
-    auto pipeline = geometryCache->getShapePipelinePointer(planes, true, true);
+// the gizmo's parts are unit shapes placed by a local transform inside the gizmo's own transform
+#define GIZMO_PART_DRAW(state, translucent)                                                                   \
+    auto geometryCache = DependencyManager::get<GeometryCache>();                                            \
+    auto& batch = *args->_batch;                                                                              \
+    auto pipeline = geometryCache->getShapePipelinePointer(translucent, true, true);                          \
+    glm::mat4 gizmo = createMatFromQuatAndPos(state.rotation, state.position)                                 \
+        * glm::scale(glm::mat4(1.0f), glm::vec3(state.scale));                                                \
+    auto draw = [&](GeometryCache::Shape shape, const glm::quat& rotation, const glm::vec3& scale,            \
+                    const glm::vec3& translation, const glm::vec4& color) {                                   \
+        glm::mat4 part = createMatFromQuatAndPos(rotation, translation) * glm::scale(glm::mat4(1.0f), scale); \
+        Transform transform;                                                                                  \
+        transform.evalFromRawMatrix(gizmo * part);                                                            \
+        batch.setModelTransform(transform);                                                                   \
+        geometryCache->renderSolidShapeInstance(args, batch, shape, color, pipeline);                         \
+    }
 
-    glm::mat4 gizmo = createMatFromQuatAndPos(state.rotation, state.position)
-        * glm::scale(glm::mat4(1.0f), glm::vec3(state.scale));
-    auto draw = [&](GeometryCache::Shape shape, const glm::quat& rotation, const glm::vec3& scale,
-                    const glm::vec3& translation, const glm::vec4& color) {
-        glm::mat4 part = createMatFromQuatAndPos(rotation, translation) * glm::scale(glm::mat4(1.0f), scale);
-        Transform transform;
-        transform.evalFromRawMatrix(gizmo * part);
-        batch.setModelTransform(transform);
-        geometryCache->renderSolidShapeInstance(args, batch, shape, color, pipeline);
-    };
-
+void EditorGizmoShared::renderMove(RenderArgs* args, const EditorGizmoState& state, bool translucentPass) {
+    GIZMO_PART_DRAW(state, translucentPass);
     for (int axis = 0; axis < 3; ++axis) {
         glm::vec3 direction = unitAxis(axis);
-        if (planes) {
+        if (translucentPass) {
             int b = (axis + 1) % 3;
             int c = (axis + 2) % 3;
             glm::vec3 center = (unitAxis(b) + unitAxis(c)) * ((PLANE_MIN + PLANE_MAX) * 0.5f);
@@ -186,15 +267,66 @@ void EditorGizmoShared::render(RenderArgs* args, bool planes) {
                 direction * (AXIS_END - CONE_LENGTH * 0.5f), color);
         }
     }
-    if (!planes) {
+    if (!translucentPass) {
         glm::vec4 color(handleColor(state, GizmoHandle::Center, CENTER_COLOR), 1.0f);
         draw(GeometryCache::Sphere, glm::quat(), glm::vec3(CENTER_RADIUS * 2.0f), glm::vec3(0.0f), color);
     }
 }
 
+void EditorGizmoShared::renderRotate(RenderArgs* args, const EditorGizmoState& state, bool translucentPass) {
+    if (translucentPass) {
+        return;
+    }
+    auto geometryCache = DependencyManager::get<GeometryCache>();
+    auto& batch = *args->_batch;
+    for (int i = 0; i < 4; ++i) {
+        if (_ringIds[i] < 0) {
+            _ringIds[i] = geometryCache->allocateID();
+        }
+    }
+    // the rings are strips with their colour in the vertices, drawn two-sided
+    geometryCache->bindSimpleProgram(batch, false, false, true, false, true, true, graphics::MaterialKey::CULL_NONE);
+
+    Transform gizmo(state.rotation, glm::vec3(state.scale), state.position);
+    batch.setModelTransform(gizmo);
+    for (int axis = 0; axis < 3; ++axis) {
+        GizmoHandle handle = ringHandle(axis);
+        glm::vec4 color(handleColor(state, handle, AXIS_COLORS[axis]), 1.0f);
+        geometryCache->updateVertices(_ringIds[axis], ringStrip(axis, RING_RADIUS, RING_WIDTH), color);
+        geometryCache->renderVertices(batch, gpu::TRIANGLE_STRIP, _ringIds[axis]);
+    }
+
+    // the outer ring faces the camera
+    Transform view(facing(-state.viewDirection), glm::vec3(state.scale), state.position);
+    batch.setModelTransform(view);
+    glm::vec4 color(handleColor(state, GizmoHandle::RingView, VIEW_RING_COLOR), 1.0f);
+    geometryCache->updateVertices(_ringIds[3], ringStrip(2, VIEW_RING_RADIUS, RING_WIDTH * 0.8f), color);
+    geometryCache->renderVertices(batch, gpu::TRIANGLE_STRIP, _ringIds[3]);
+}
+
+void EditorGizmoShared::renderScale(RenderArgs* args, const EditorGizmoState& state, bool translucentPass) {
+    if (translucentPass) {
+        return;
+    }
+    GIZMO_PART_DRAW(state, false);
+    for (int axis = 0; axis < 3; ++axis) {
+        glm::vec3 direction = unitAxis(axis);
+        GizmoHandle handle = scaleHandle(axis);
+        glm::vec4 color(handleColor(state, handle, AXIS_COLORS[axis]), 1.0f);
+        float end = AXIS_END * state.stretch[axis];
+        float shaftLength = std::max(0.01f, end - SCALE_CUBE * 0.5f - AXIS_START);
+        draw(GeometryCache::Cylinder, Y_TO_AXIS[axis],
+            glm::vec3(SHAFT_RADIUS * 2.0f, shaftLength, SHAFT_RADIUS * 2.0f),
+            direction * (AXIS_START + shaftLength * 0.5f), color);
+        draw(GeometryCache::Cube, glm::quat(), glm::vec3(SCALE_CUBE), direction * end, color);
+    }
+    glm::vec4 color(handleColor(state, GizmoHandle::ScaleUniform, CENTER_COLOR), 1.0f);
+    draw(GeometryCache::Cube, glm::quat(), glm::vec3(SCALE_CENTER_CUBE), glm::vec3(0.0f), color);
+}
+
 namespace render {
     static Item::Bound gizmoBound(const EditorGizmoState& state) {
-        float half = state.scale * 1.2f;
+        float half = state.scale * 1.5f;
         return Item::Bound(state.position - glm::vec3(half), 2.0f * half);
     }
 
@@ -226,6 +358,16 @@ namespace render {
 }
 
 // --- main-thread side ---------------------------------------------------------------------------
+
+bool EditorGizmo::isRing(GizmoHandle handle) {
+    return handle == GizmoHandle::RingX || handle == GizmoHandle::RingY || handle == GizmoHandle::RingZ
+        || handle == GizmoHandle::RingView;
+}
+
+bool EditorGizmo::isScale(GizmoHandle handle) {
+    return handle == GizmoHandle::ScaleX || handle == GizmoHandle::ScaleY || handle == GizmoHandle::ScaleZ
+        || handle == GizmoHandle::ScaleUniform;
+}
 
 void EditorGizmo::ensureItems() {
     if (render::Item::isValidID(_opaqueItem)) {
@@ -259,10 +401,19 @@ void EditorGizmo::setVisible(bool visible) {
     }
 }
 
-void EditorGizmo::setTransform(const glm::vec3& position, const glm::quat& rotation, float scale) {
+void EditorGizmo::setMode(GizmoMode mode) {
+    if (_state.mode != mode) {
+        _state.mode = mode;
+        _state.hover = GizmoHandle::None;
+        publish();
+    }
+}
+
+void EditorGizmo::setTransform(const glm::vec3& position, const glm::quat& rotation, float scale, const glm::vec3& viewDirection) {
     _state.position = position;
     _state.rotation = rotation;
     _state.scale = scale;
+    _state.viewDirection = viewDirection;
     publish();
 }
 
@@ -276,6 +427,13 @@ void EditorGizmo::setHover(GizmoHandle handle) {
 void EditorGizmo::setActive(GizmoHandle handle) {
     if (_state.active != handle) {
         _state.active = handle;
+        publish();
+    }
+}
+
+void EditorGizmo::setStretch(const glm::vec3& stretch) {
+    if (_state.stretch != stretch) {
+        _state.stretch = stretch;
         publish();
     }
 }
@@ -296,68 +454,106 @@ GizmoHandle EditorGizmo::hitTest(const PickRay& ray) const {
 
     GizmoHandle best = GizmoHandle::None;
     float bestT = FLT_MAX;
-
     float t;
-    if (raySphere(origin, direction, CENTER_PICK_RADIUS, t)) {
-        best = GizmoHandle::Center;
-        bestT = t;
-    }
 
-    for (int axis = 0; axis < 3; ++axis) {
-        if (std::abs(direction[axis]) > 1.0e-5f) {
-            t = -origin[axis] / direction[axis];
-            if (t > 0.0f && t < bestT) {
-                glm::vec3 hit = origin + direction * t;
-                int b = (axis + 1) % 3;
-                int c = (axis + 2) % 3;
-                if (hit[b] >= PLANE_MIN - PLANE_PICK_MARGIN && hit[b] <= PLANE_MAX + PLANE_PICK_MARGIN &&
-                    hit[c] >= PLANE_MIN - PLANE_PICK_MARGIN && hit[c] <= PLANE_MAX + PLANE_PICK_MARGIN) {
-                    best = planeHandle(axis);
+    switch (_state.mode) {
+        case GizmoMode::Move:
+            if (raySphere(origin, direction, CENTER_PICK_RADIUS, t)) {
+                best = GizmoHandle::Center;
+                bestT = t;
+            }
+            for (int axis = 0; axis < 3; ++axis) {
+                if (std::abs(direction[axis]) > 1.0e-5f) {
+                    t = -origin[axis] / direction[axis];
+                    if (t > 0.0f && t < bestT) {
+                        glm::vec3 hit = origin + direction * t;
+                        int b = (axis + 1) % 3;
+                        int c = (axis + 2) % 3;
+                        if (hit[b] >= PLANE_MIN - PLANE_PICK_MARGIN && hit[b] <= PLANE_MAX + PLANE_PICK_MARGIN &&
+                            hit[c] >= PLANE_MIN - PLANE_PICK_MARGIN && hit[c] <= PLANE_MAX + PLANE_PICK_MARGIN) {
+                            best = planeHandle(axis);
+                            bestT = t;
+                        }
+                    }
+                }
+            }
+            for (int axis = 0; axis < 3; ++axis) {
+                if (rayHitsSegment(origin, direction, unitAxis(axis), AXIS_START, AXIS_END, AXIS_PICK_RADIUS, t) && t < bestT) {
+                    best = axisHandle(axis);
                     bestT = t;
                 }
             }
-        }
-    }
+            break;
 
-    for (int axis = 0; axis < 3; ++axis) {
-        glm::vec3 a = unitAxis(axis);
-        // closest points between the ray and the axis segment
-        float b = glm::dot(direction, a);
-        float e = glm::dot(origin, direction);
-        float f = glm::dot(origin, a);
-        float denominator = 1.0f - b * b;
-        float segmentParam;
-        float rayParam;
-        if (denominator < 1.0e-5f) {
-            segmentParam = glm::clamp(f, AXIS_START, AXIS_END);
-            rayParam = -e + segmentParam * b;
-        } else {
-            segmentParam = glm::clamp((f - e * b) / denominator, AXIS_START, AXIS_END);
-            rayParam = segmentParam * b - e;
+        case GizmoMode::Rotate: {
+            for (int axis = 0; axis < 3; ++axis) {
+                if (std::abs(direction[axis]) < 1.0e-5f) {
+                    continue;
+                }
+                t = -origin[axis] / direction[axis];
+                if (t <= 0.0f || t >= bestT) {
+                    continue;
+                }
+                glm::vec3 hit = origin + direction * t;
+                if (std::abs(glm::length(hit) - RING_RADIUS) < RING_PICK_WIDTH) {
+                    best = ringHandle(axis);
+                    bestT = t;
+                }
+            }
+            // the outer ring, in world space
+            glm::vec3 hit;
+            if (rayPlane(ray, _state.position, _state.viewDirection, hit)) {
+                float r = glm::length(hit - _state.position) / _state.scale;
+                float distance = glm::length(hit - ray.origin);
+                if (std::abs(r - VIEW_RING_RADIUS) < RING_PICK_WIDTH && distance / _state.scale < bestT) {
+                    best = GizmoHandle::RingView;
+                }
+            }
+            break;
         }
-        if (rayParam <= 0.0f || rayParam >= bestT) {
-            continue;
-        }
-        glm::vec3 onRay = origin + direction * rayParam;
-        glm::vec3 onAxis = a * segmentParam;
-        if (glm::length(onRay - onAxis) < AXIS_PICK_RADIUS) {
-            best = axisHandle(axis);
-            bestT = rayParam;
-        }
+
+        case GizmoMode::Scale:
+            if (raySphere(origin, direction, SCALE_CENTER_PICK_RADIUS, t)) {
+                best = GizmoHandle::ScaleUniform;
+                bestT = t;
+            }
+            for (int axis = 0; axis < 3; ++axis) {
+                float end = AXIS_END * _state.stretch[axis] + SCALE_CUBE * 0.5f;
+                if (rayHitsSegment(origin, direction, unitAxis(axis), AXIS_START, end, AXIS_PICK_RADIUS, t) && t < bestT) {
+                    best = scaleHandle(axis);
+                    bestT = t;
+                }
+            }
+            break;
     }
     return best;
 }
 
-void EditorGizmo::beginDrag(GizmoHandle handle, const PickRay& ray, const glm::vec3& cameraForward) {
+void EditorGizmo::beginDrag(GizmoHandle handle, const PickRay& ray) {
     _dragging = true;
     _dragHandle = handle;
     _dragOrigin = _state.position;
     _lastDelta = glm::vec3(0.0f);
+    _lastAngle = 0.0f;
+    _lastScale = glm::vec3(1.0f);
     switch (handle) {
         case GizmoHandle::AxisX:
         case GizmoHandle::AxisY:
         case GizmoHandle::AxisZ:
+        case GizmoHandle::ScaleX:
+        case GizmoHandle::ScaleY:
+        case GizmoHandle::ScaleZ:
             _dragAxis = axisOf(handle, _state.rotation);
+            if (!closestParamOnLine(ray, _dragOrigin, _dragAxis, _dragStartParam)) {
+                _dragStartParam = 0.0f;
+            }
+            break;
+        case GizmoHandle::ScaleUniform:
+            // left and right on the screen
+            _dragAxis = glm::normalize(glm::cross(_state.viewDirection, glm::vec3(0.0f, 1.0f, 0.0f)));
+            if (glm::length(_dragAxis) < 0.5f) {
+                _dragAxis = glm::vec3(1.0f, 0.0f, 0.0f);
+            }
             if (!closestParamOnLine(ray, _dragOrigin, _dragAxis, _dragStartParam)) {
                 _dragStartParam = 0.0f;
             }
@@ -371,12 +567,25 @@ void EditorGizmo::beginDrag(GizmoHandle handle, const PickRay& ray, const glm::v
             }
             break;
         case GizmoHandle::Center:
-            // slides in the plane facing the camera
-            _dragPlaneNormal = -cameraForward;
+            _dragPlaneNormal = -_state.viewDirection;
             if (!rayPlane(ray, _dragOrigin, _dragPlaneNormal, _dragStartPoint)) {
                 _dragStartPoint = _dragOrigin;
             }
             break;
+        case GizmoHandle::RingX:
+        case GizmoHandle::RingY:
+        case GizmoHandle::RingZ:
+        case GizmoHandle::RingView: {
+            _dragAxis = handle == GizmoHandle::RingView ? -_state.viewDirection : axisOf(handle, _state.rotation);
+            _dragPlaneNormal = _dragAxis;
+            glm::vec3 hit;
+            if (rayPlane(ray, _dragOrigin, _dragPlaneNormal, hit) && glm::length(hit - _dragOrigin) > 1.0e-4f) {
+                _dragStartVector = glm::normalize(hit - _dragOrigin);
+            } else {
+                _dragStartVector = glm::normalize(glm::cross(_dragAxis, glm::vec3(0.0f, 1.0f, 0.01f)));
+            }
+            break;
+        }
         default:
             _dragging = false;
             break;
@@ -398,19 +607,55 @@ glm::vec3 EditorGizmo::dragDelta(const PickRay& ray) {
             }
             break;
         }
-        default: {
+        case GizmoHandle::PlaneYZ:
+        case GizmoHandle::PlaneXZ:
+        case GizmoHandle::PlaneXY:
+        case GizmoHandle::Center: {
             glm::vec3 hit;
             if (rayPlane(ray, _dragOrigin, _dragPlaneNormal, hit)) {
                 _lastDelta = hit - _dragStartPoint;
             }
             break;
         }
+        default:
+            break;
     }
     return _lastDelta;
+}
+
+float EditorGizmo::dragAngle(const PickRay& ray) {
+    if (!_dragging || !isRing(_dragHandle)) {
+        return 0.0f;
+    }
+    glm::vec3 hit;
+    if (rayPlane(ray, _dragOrigin, _dragPlaneNormal, hit) && glm::length(hit - _dragOrigin) > 1.0e-4f) {
+        glm::vec3 v = glm::normalize(hit - _dragOrigin);
+        _lastAngle = std::atan2(glm::dot(glm::cross(_dragStartVector, v), _dragAxis), glm::dot(_dragStartVector, v));
+    }
+    return _lastAngle;
+}
+
+glm::vec3 EditorGizmo::dragScale(const PickRay& ray) {
+    if (!_dragging || !isScale(_dragHandle)) {
+        return glm::vec3(1.0f);
+    }
+    float param;
+    if (closestParamOnLine(ray, _dragOrigin, _dragAxis, param)) {
+        // dragging the handle its own length away doubles the size
+        float factor = std::max(0.01f, 1.0f + (param - _dragStartParam) / (AXIS_END * _state.scale));
+        if (_dragHandle == GizmoHandle::ScaleUniform) {
+            _lastScale = glm::vec3(factor);
+        } else {
+            _lastScale = glm::vec3(1.0f);
+            _lastScale[axisIndex(_dragHandle)] = factor;
+        }
+    }
+    return _lastScale;
 }
 
 void EditorGizmo::endDrag() {
     _dragging = false;
     _dragHandle = GizmoHandle::None;
+    setStretch(glm::vec3(1.0f));
     setActive(GizmoHandle::None);
 }

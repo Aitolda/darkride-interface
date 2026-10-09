@@ -27,6 +27,8 @@ public:
     Tool tool() const { return _tool; }
     void setTool(Tool tool);
     void setGridChecked(bool checked);
+    void setLocalSpace(bool local);
+    void setPivotMode(bool pivot);
 
 signals:
     void toolChanged(Tool tool);

@@ -2,8 +2,9 @@
 //  EditorGizmo.h
 //  interface/src/editor
 //
-//  The Move gizmo: three axis arrows, three plane squares and a centre handle, drawn by the
-//  render engine in the front layer (always on top), hit-tested and dragged in C++.
+//  The transform gizmos: Move (axis arrows, plane squares, a centre handle), Rotate (an axis
+//  ring per axis and an outer ring facing the camera) and Scale (axis cubes and a centre cube),
+//  drawn by the render engine in the front layer (always on top), hit-tested and dragged in C++.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -23,23 +24,40 @@
 #include <render/Item.h>
 #include <render/Scene.h>
 
+enum class GizmoMode {
+    Move,
+    Rotate,
+    Scale
+};
+
 enum class GizmoHandle {
     None,
     AxisX,
     AxisY,
     AxisZ,
-    PlaneYZ,   // the square facing X
-    PlaneXZ,   // the square facing Y
-    PlaneXY,   // the square facing Z
-    Center
+    PlaneYZ,     // the square facing X
+    PlaneXZ,     // the square facing Y
+    PlaneXY,     // the square facing Z
+    Center,      // moves in the plane facing the camera
+    RingX,
+    RingY,
+    RingZ,
+    RingView,    // the outer ring: turns about the view direction
+    ScaleX,
+    ScaleY,
+    ScaleZ,
+    ScaleUniform
 };
 
 // What the render thread needs: written on the main thread, read when drawing.
 struct EditorGizmoState {
     bool visible { false };
+    GizmoMode mode { GizmoMode::Move };
     glm::vec3 position;
     glm::quat rotation;
     float scale { 1.0f };
+    glm::vec3 viewDirection { 0.0f, 0.0f, -1.0f };
+    glm::vec3 stretch { 1.0f };   // the Scale gizmo's axes, stretched while dragging
     GizmoHandle hover { GizmoHandle::None };
     GizmoHandle active { GizmoHandle::None };
 };
@@ -48,14 +66,19 @@ class EditorGizmoShared {
 public:
     EditorGizmoState state() const;
     void setState(const EditorGizmoState& state);
-    void render(RenderArgs* args, bool planes);
+    void render(RenderArgs* args, bool translucentPass);
 
 private:
+    void renderMove(RenderArgs* args, const EditorGizmoState& state, bool translucentPass);
+    void renderRotate(RenderArgs* args, const EditorGizmoState& state, bool translucentPass);
+    void renderScale(RenderArgs* args, const EditorGizmoState& state, bool translucentPass);
+
     mutable std::mutex _mutex;
     EditorGizmoState _state;
+    int _ringIds[4] { -1, -1, -1, -1 };
 };
 
-// Two render items share the state: the opaque parts and the translucent plane squares.
+// Two render items share the state: the opaque parts and the translucent ones.
 class EditorGizmoRenderData {
 public:
     using Payload = render::Payload<EditorGizmoRenderData>;
@@ -86,19 +109,29 @@ class EditorGizmo {
 public:
     void setVisible(bool visible);
     bool isVisible() const { return _state.visible; }
-    void setTransform(const glm::vec3& position, const glm::quat& rotation, float scale);
+    void setMode(GizmoMode mode);
+    GizmoMode mode() const { return _state.mode; }
+    void setTransform(const glm::vec3& position, const glm::quat& rotation, float scale, const glm::vec3& viewDirection);
     void setHover(GizmoHandle handle);
     void setActive(GizmoHandle handle);
+    void setStretch(const glm::vec3& stretch);
     const glm::vec3& position() const { return _state.position; }
+    const glm::quat& rotation() const { return _state.rotation; }
 
     GizmoHandle hitTest(const PickRay& ray) const;
 
-    // a drag: the world-space translation of the handle since the drag began
-    void beginDrag(GizmoHandle handle, const PickRay& ray, const glm::vec3& cameraForward);
+    // a drag, measured from where it began: a translation, an angle about dragAxis(), or scale factors
+    void beginDrag(GizmoHandle handle, const PickRay& ray);
     glm::vec3 dragDelta(const PickRay& ray);
+    float dragAngle(const PickRay& ray);
+    glm::vec3 dragScale(const PickRay& ray);
+    const glm::vec3& dragAxis() const { return _dragAxis; }
     void endDrag();
     bool isDragging() const { return _dragging; }
+    GizmoHandle dragHandle() const { return _dragHandle; }
 
+    static bool isRing(GizmoHandle handle);
+    static bool isScale(GizmoHandle handle);
     static glm::vec3 axisOf(GizmoHandle handle, const glm::quat& rotation);
 
 private:
@@ -117,7 +150,10 @@ private:
     glm::vec3 _dragPlaneNormal;
     float _dragStartParam { 0.0f };
     glm::vec3 _dragStartPoint;
+    glm::vec3 _dragStartVector;
     glm::vec3 _lastDelta;
+    float _lastAngle { 0.0f };
+    glm::vec3 _lastScale { 1.0f };
 };
 
 #endif // hifi_EditorGizmo_h

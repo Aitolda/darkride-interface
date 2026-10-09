@@ -18,6 +18,7 @@
 #include <QtCore/QList>
 #include <QtCore/QObject>
 #include <QtCore/QPoint>
+#include <QtCore/QRectF>
 #include <QtCore/QString>
 #include <QtCore/QUuid>
 #include <QtCore/QVector>
@@ -56,6 +57,9 @@ class Editor : public QObject, public Dependency {
     Q_PROPERTY(QVector3D axisX READ axisX NOTIFY cameraChanged)
     Q_PROPERTY(QVector3D axisY READ axisY NOTIFY cameraChanged)
     Q_PROPERTY(QVector3D axisZ READ axisZ NOTIFY cameraChanged)
+    // the selection rectangle being dragged in the viewport, in viewport pixels
+    Q_PROPERTY(bool marqueeActive READ isMarqueeActive NOTIFY marqueeChanged)
+    Q_PROPERTY(QRectF marquee READ marquee NOTIFY marqueeChanged)
 
 public:
     Editor();
@@ -66,6 +70,8 @@ public:
     QVector3D axisX() const { return _axes[0]; }
     QVector3D axisY() const { return _axes[1]; }
     QVector3D axisZ() const { return _axes[2]; }
+    bool isMarqueeActive() const { return _marqueeActive; }
+    QRectF marquee() const { return _marqueeRect; }
 
     EditorCamera& camera() { return _camera; }
     EditorGrid& grid() { return _grid; }
@@ -95,6 +101,8 @@ public slots:
     void toggleActive() { setActive(!_active); }
     void setGridVisible(bool visible);
     void setTool(EditorToolBar::Tool tool);
+    void setLocalSpace(bool local);
+    void setPivotMode(bool pivot);
 
     void undo();
     void redo();
@@ -112,11 +120,15 @@ signals:
     void activeChanged(bool active);
     void gridVisibleChanged(bool visible);
     void cameraChanged();
+    void marqueeChanged();
 
 private:
+    enum class DragKind { None, Move, Rotate, Scale };
+
     void createPanels();
     void showPanels(bool show);
     void focusViewport();
+    void takeFocusUnlessTyping();
     void setMenuActionsEnabled(bool enabled);
     void updateAxes();
     void updateGizmo();
@@ -124,15 +136,25 @@ private:
     void onSelectionChanged();
     void rename(const QUuid& id, const QString& name);
 
-    void takeFocusUnlessTyping();
     PickRay pickRay(const QPoint& viewportPos) const;
     QUuid pickEntity(const QPoint& viewportPos) const;
     // where the cursor points in the world: a surface, or the grid plane; false when off the viewport
     bool cursorWorldPoint(glm::vec3& point) const;
     glm::vec3 selectionAnchor() const;
+    // the last selected entity's world transform; false when it is not in the tree
+    bool primaryTransform(glm::vec3& position, glm::quat& rotation) const;
+    glm::vec3 gizmoPosition() const;
+    glm::quat gizmoRotation() const;
+    glm::vec3 viewDirection() const;
+
     void clickSelect(const QPoint& viewportPos, Qt::KeyboardModifiers modifiers);
+    void updateMarquee(const QPoint& viewportPos);
+    void finishMarquee(Qt::KeyboardModifiers modifiers);
+    QList<QUuid> entitiesInRect(const QRectF& rect) const;
+
     bool snapActive() const;
     void beginGizmoDrag(GizmoHandle handle, const PickRay& ray);
+    void moveGizmoDrag(const PickRay& ray);
     void applyDrag(bool final);
 
     bool _ready { false };
@@ -145,25 +167,37 @@ private:
     EditorClipboard _clipboard;
     EditorGizmo _gizmo;
     EditorToolBar::Tool _tool { EditorToolBar::Tool::Move };
+    bool _localSpace { false };
+    bool _pivotMode { false };
     bool _snapAlways { false };
-    float _moveSnap { 0.25f };
+    float _moveSnap { 0.25f };          // metres
+    float _rotateSnap { 15.0f };        // degrees
+    float _scaleSnap { 0.1f };          // of the scale factor
 
     QVector3D _axes[3];
     glm::quat _axesOrientation;
     bool _axesValid { false };
     int _frameCounter { 0 };
 
-    // a click in the viewport
+    // a click or a marquee in the viewport
     bool _clickPending { false };
     QPoint _pressPos;
     Qt::KeyboardModifiers _pressModifiers;
+    bool _marqueeActive { false };
+    QRectF _marqueeRect;
 
     // a gizmo drag: the top-level selected entities and where they started
+    DragKind _dragKind { DragKind::None };
     QList<QUuid> _dragIds;
-    QVector<glm::vec3> _dragStart;
+    QVector<glm::vec3> _dragPositions;
+    QVector<glm::quat> _dragRotations;
+    QVector<glm::vec3> _dragDimensions;
     QVector<EntityItemProperties> _dragBefore;
     glm::vec3 _dragPivot;
+    glm::quat _dragGizmoRotation;
     glm::vec3 _dragDelta;
+    glm::quat _dragRotationDelta;
+    glm::vec3 _dragScale { 1.0f };
     QElapsedTimer _editTimer;
 
     bool _panelsCreated { false };

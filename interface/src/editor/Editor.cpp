@@ -33,6 +33,7 @@
 #include <MainWindow.h>
 #include <PathUtils.h>
 #include <PickFilter.h>
+#include <ViewFrustum.h>
 
 #include "Application.h"
 #include "EntityTreeModel.h"
@@ -46,6 +47,7 @@ namespace {
     const int EDIT_INTERVAL_MS = 33;        // while dragging, edits go out at most this often
     const int PRUNE_EVERY_FRAMES = 30;      // how often the selection drops entities that are gone
     const float PASTE_FALLBACK_DISTANCE = 3.0f;   // in front of the camera, when the cursor points at nothing
+    const float MIN_DIMENSION = 0.001f;
 
     // what a click or a paste can land on: the world's visible entities, picked against their meshes
     PickFilter worldPickFilter() {
@@ -69,6 +71,23 @@ namespace {
 
     glm::vec3 snapVector(const glm::vec3& v, float increment) {
         return glm::round(v / increment) * increment;
+    }
+
+    float snapValue(float v, float increment) {
+        return std::round(v / increment) * increment;
+    }
+
+    EntityTreePointer entityTree() {
+        auto renderer = qApp->getEntities();
+        return renderer ? renderer->getTree() : nullptr;
+    }
+
+    GizmoMode gizmoModeFor(EditorToolBar::Tool tool) {
+        switch (tool) {
+            case EditorToolBar::Tool::Rotate: return GizmoMode::Rotate;
+            case EditorToolBar::Tool::Scale: return GizmoMode::Scale;
+            default: return GizmoMode::Move;
+        }
     }
 }
 
@@ -109,6 +128,7 @@ void Editor::setActive(bool active) {
         if (_gizmo.isDragging()) {
             applyDrag(true);
             _gizmo.endDrag();
+            _dragKind = DragKind::None;
         }
         if (auto window = qApp->getWindow()) {
             _layoutSetting.set(window->saveState());
@@ -119,6 +139,8 @@ void Editor::setActive(bool active) {
         _gizmo.setVisible(false);
         _selection.setHighlightEnabled(false);
         _selection.clear();
+        _marqueeActive = false;
+        emit marqueeChanged();
     }
     setMenuActionsEnabled(active);
     Menu::getInstance()->setIsOptionChecked(MenuOption::BuildMode, active);
@@ -147,6 +169,28 @@ void Editor::setTool(EditorToolBar::Tool tool) {
     _tool = tool;
     if (_toolBar) {
         _toolBar->setTool(tool);
+    }
+    updateGizmo();
+}
+
+void Editor::setLocalSpace(bool local) {
+    if (_localSpace == local) {
+        return;
+    }
+    _localSpace = local;
+    if (_toolBar) {
+        _toolBar->setLocalSpace(local);
+    }
+    updateGizmo();
+}
+
+void Editor::setPivotMode(bool pivot) {
+    if (_pivotMode == pivot) {
+        return;
+    }
+    _pivotMode = pivot;
+    if (_toolBar) {
+        _toolBar->setPivotMode(pivot);
     }
     updateGizmo();
 }
@@ -200,12 +244,16 @@ void Editor::createPanels() {
     _toolBar = new EditorToolBar(window);
     _toolBar->setGridChecked(_gridVisible);
     _toolBar->setTool(_tool);
+    _toolBar->setLocalSpace(_localSpace);
+    _toolBar->setPivotMode(_pivotMode);
     connect(_toolBar, &EditorToolBar::exitRequested, this, [this] { setActive(false); });
     connect(_toolBar, &EditorToolBar::gridToggled, this, &Editor::setGridVisible);
     connect(_toolBar, &EditorToolBar::toolChanged, this, [this](EditorToolBar::Tool tool) {
         _tool = tool;
         updateGizmo();
     });
+    connect(_toolBar, &EditorToolBar::localSpaceToggled, this, &Editor::setLocalSpace);
+    connect(_toolBar, &EditorToolBar::pivotToggled, this, &Editor::setPivotMode);
     connect(_toolBar, &EditorToolBar::snapToggled, this, [this](bool on) { _snapAlways = on; });
 
     window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
@@ -224,6 +272,15 @@ void Editor::focusViewport() {
             viewport->setFocus(Qt::MouseFocusReason);
         }
     }
+}
+
+void Editor::takeFocusUnlessTyping() {
+    QWidget* focus = QApplication::focusWidget();
+    if (focus && (qobject_cast<QLineEdit*>(focus) || qobject_cast<QAbstractSpinBox*>(focus) ||
+                  qobject_cast<QTextEdit*>(focus) || qobject_cast<QPlainTextEdit*>(focus))) {
+        return;
+    }
+    focusViewport();
 }
 
 void Editor::showPanels(bool show) {
@@ -285,13 +342,65 @@ void Editor::updateAxes() {
     emit cameraChanged();
 }
 
+glm::vec3 Editor::viewDirection() const {
+    return _camera.orientation() * Vectors::FRONT;
+}
+
+bool Editor::primaryTransform(glm::vec3& position, glm::quat& rotation) const {
+    auto tree = entityTree();
+    QUuid id = _selection.primary();
+    if (!tree || id.isNull()) {
+        return false;
+    }
+    bool found = false;
+    tree->withReadLock([&] {
+        auto entity = tree->findEntityByEntityItemID(id);
+        if (entity) {
+            position = entity->getWorldPosition();
+            rotation = entity->getWorldOrientation();
+            found = true;
+        }
+    });
+    return found;
+}
+
+glm::vec3 Editor::gizmoPosition() const {
+    glm::vec3 position;
+    glm::quat rotation;
+    if (_pivotMode && primaryTransform(position, rotation)) {
+        return position;
+    }
+    return _selection.center();
+}
+
+glm::quat Editor::gizmoRotation() const {
+    // scale is always in the object's own axes; move and rotate follow the space toggle
+    if (_tool == EditorToolBar::Tool::Scale || _localSpace) {
+        glm::vec3 position;
+        glm::quat rotation;
+        if (primaryTransform(position, rotation)) {
+            return rotation;
+        }
+    }
+    return glm::quat();
+}
+
 void Editor::updateGizmo() {
-    bool show = _active && _tool == EditorToolBar::Tool::Move && !_selection.isEmpty();
+    bool show = _active && _tool != EditorToolBar::Tool::View && !_selection.isEmpty();
     if (show) {
-        glm::vec3 pivot = _gizmo.isDragging() ? _dragPivot + _dragDelta : _selection.center();
-        float distance = std::max(0.01f, glm::length(pivot - _camera.position()));
+        _gizmo.setMode(gizmoModeFor(_tool));
+        glm::vec3 position;
+        glm::quat rotation;
+        if (_gizmo.isDragging()) {
+            position = _dragPivot + (_dragKind == DragKind::Move ? _dragDelta : glm::vec3(0.0f));
+            rotation = _dragGizmoRotation;
+        } else {
+            position = gizmoPosition();
+            rotation = gizmoRotation();
+        }
+        float distance = std::max(0.01f, glm::length(position - _camera.position()));
         float scale = distance * 2.0f * tanHalfFov() * (GIZMO_PIXELS / viewportHeight());
-        _gizmo.setTransform(pivot, glm::quat(), scale);
+        _gizmo.setTransform(position, rotation, scale, viewDirection());
     }
     _gizmo.setVisible(show);
 }
@@ -381,15 +490,6 @@ glm::vec3 Editor::selectionAnchor() const {
     return glm::vec3(center.x, box.getMinimumPoint().y, center.z);
 }
 
-void Editor::takeFocusUnlessTyping() {
-    QWidget* focus = QApplication::focusWidget();
-    if (focus && (qobject_cast<QLineEdit*>(focus) || qobject_cast<QAbstractSpinBox*>(focus) ||
-                  qobject_cast<QTextEdit*>(focus) || qobject_cast<QPlainTextEdit*>(focus))) {
-        return;
-    }
-    focusViewport();
-}
-
 void Editor::clickSelect(const QPoint& viewportPos, Qt::KeyboardModifiers modifiers) {
     bool shift = modifiers.testFlag(Qt::ShiftModifier);
     bool command = modifiers.testFlag(Qt::ControlModifier);
@@ -406,6 +506,63 @@ void Editor::clickSelect(const QPoint& viewportPos, Qt::KeyboardModifiers modifi
         _selection.add(hit);
     } else {
         _selection.set({ hit });
+    }
+}
+
+void Editor::updateMarquee(const QPoint& viewportPos) {
+    _marqueeRect = QRectF(QPointF(_pressPos), QPointF(viewportPos)).normalized();
+    emit marqueeChanged();
+}
+
+QList<QUuid> Editor::entitiesInRect(const QRectF& rect) const {
+    QList<QUuid> ids;
+    auto tree = entityTree();
+    auto viewport = qApp->getPrimaryWidget();
+    if (!tree || !viewport || !_treeModel) {
+        return ids;
+    }
+    ViewFrustum frustum;
+    qApp->copyViewFrustum(frustum);
+    glm::mat4 viewProjection = frustum.getProjection() * frustum.getView();
+    float width = (float)std::max(1, viewport->width());
+    float height = (float)std::max(1, viewport->height());
+    QList<QUuid> all = _treeModel->allIds();
+    tree->withReadLock([&] {
+        for (const auto& id : all) {
+            auto entity = tree->findEntityByEntityItemID(id);
+            if (!entity || !entity->getVisible()) {
+                continue;
+            }
+            glm::vec4 clip = viewProjection * glm::vec4(entity->getWorldPosition(), 1.0f);
+            if (clip.w <= 0.0f) {
+                continue;   // behind the camera
+            }
+            float sx = (clip.x / clip.w + 1.0f) * 0.5f * width;
+            float sy = (1.0f - clip.y / clip.w) * 0.5f * height;
+            if (rect.contains(QPointF(sx, sy))) {
+                ids << id;
+            }
+        }
+    });
+    return ids;
+}
+
+void Editor::finishMarquee(Qt::KeyboardModifiers modifiers) {
+    _marqueeActive = false;
+    emit marqueeChanged();
+    QList<QUuid> inside = entitiesInRect(_marqueeRect);
+    bool shift = modifiers.testFlag(Qt::ShiftModifier);
+    bool command = modifiers.testFlag(Qt::ControlModifier);
+    if (command) {
+        for (const auto& id : inside) {
+            _selection.toggle(id);
+        }
+    } else if (shift) {
+        QList<QUuid> ids = _selection.ids();
+        ids << inside;
+        _selection.set(ids);
+    } else {
+        _selection.set(inside);
     }
 }
 
@@ -431,12 +588,16 @@ bool Editor::snapActive() const {
 
 void Editor::beginGizmoDrag(GizmoHandle handle, const PickRay& ray) {
     _dragIds.clear();
-    _dragStart.clear();
+    _dragPositions.clear();
+    _dragRotations.clear();
+    _dragDimensions.clear();
     _dragBefore.clear();
-    auto tree = qApp->getEntities() ? qApp->getEntities()->getTree() : nullptr;
+    auto tree = entityTree();
     if (!tree) {
         return;
     }
+    DragKind kind = EditorGizmo::isRing(handle) ? DragKind::Rotate
+                  : EditorGizmo::isScale(handle) ? DragKind::Scale : DragKind::Move;
     tree->withReadLock([&] {
         for (const auto& id : _selection.topLevel()) {
             auto entity = tree->findEntityByEntityItemID(id);
@@ -444,34 +605,114 @@ void Editor::beginGizmoDrag(GizmoHandle handle, const PickRay& ray) {
                 continue;
             }
             glm::vec3 position = entity->getWorldPosition();
+            glm::quat rotation = entity->getWorldOrientation();
+            glm::vec3 dimensions = entity->getScaledDimensions();
             EntityItemProperties before;
             before.setPosition(position);
+            if (kind == DragKind::Rotate) {
+                before.setRotation(rotation);
+            } else if (kind == DragKind::Scale) {
+                before.setDimensions(dimensions);
+            }
             _dragIds << id;
-            _dragStart << position;
+            _dragPositions << position;
+            _dragRotations << rotation;
+            _dragDimensions << dimensions;
             _dragBefore << before;
         }
     });
     if (_dragIds.isEmpty()) {
         return;
     }
+    _dragKind = kind;
     _dragPivot = _gizmo.position();
+    _dragGizmoRotation = _gizmo.rotation();
     _dragDelta = glm::vec3(0.0f);
+    _dragRotationDelta = glm::quat();
+    _dragScale = glm::vec3(1.0f);
     _editTimer.start();
-    _gizmo.beginDrag(handle, ray, _camera.orientation() * Vectors::FRONT);
+    _gizmo.beginDrag(handle, ray);
+    if (!_gizmo.isDragging()) {
+        _dragKind = DragKind::None;
+    }
+}
+
+void Editor::moveGizmoDrag(const PickRay& ray) {
+    switch (_dragKind) {
+        case DragKind::Move: {
+            glm::vec3 delta = _gizmo.dragDelta(ray);
+            _dragDelta = snapActive() ? snapVector(delta, _moveSnap) : delta;
+            break;
+        }
+        case DragKind::Rotate: {
+            float angle = _gizmo.dragAngle(ray);
+            if (snapActive()) {
+                angle = glm::radians(snapValue(glm::degrees(angle), _rotateSnap));
+            }
+            _dragRotationDelta = glm::angleAxis(angle, _gizmo.dragAxis());
+            break;
+        }
+        case DragKind::Scale: {
+            glm::vec3 factor = _gizmo.dragScale(ray);
+            if (snapActive()) {
+                for (int i = 0; i < 3; ++i) {
+                    factor[i] = std::max(_scaleSnap, snapValue(factor[i], _scaleSnap));
+                }
+            }
+            _dragScale = factor;
+            _gizmo.setStretch(factor);
+            break;
+        }
+        default:
+            break;
+    }
+    if (_editTimer.elapsed() >= EDIT_INTERVAL_MS) {
+        applyDrag(false);
+    }
 }
 
 void Editor::applyDrag(bool final) {
     _editTimer.restart();
     auto entities = DependencyManager::get<EntityScriptingInterface>();
     QVector<EntityItemProperties> after;
+    QString text;
     for (int i = 0; i < _dragIds.size(); ++i) {
         EntityItemProperties properties;
-        properties.setPosition(_dragStart[i] + _dragDelta);
+        switch (_dragKind) {
+            case DragKind::Move:
+                text = "Move";
+                properties.setPosition(_dragPositions[i] + _dragDelta);
+                break;
+            case DragKind::Rotate:
+                text = "Rotate";
+                properties.setRotation(_dragRotationDelta * _dragRotations[i]);
+                // around the common centre, or each about its own pivot
+                properties.setPosition(_pivotMode ? _dragPositions[i]
+                    : _dragPivot + _dragRotationDelta * (_dragPositions[i] - _dragPivot));
+                break;
+            case DragKind::Scale: {
+                text = "Scale";
+                properties.setDimensions(glm::max(_dragDimensions[i] * _dragScale, glm::vec3(MIN_DIMENSION)));
+                if (_pivotMode) {
+                    properties.setPosition(_dragPositions[i]);
+                } else {
+                    // the group grows about the pivot, along the gizmo's axes
+                    glm::vec3 local = glm::inverse(_dragGizmoRotation) * (_dragPositions[i] - _dragPivot);
+                    properties.setPosition(_dragPivot + _dragGizmoRotation * (local * _dragScale));
+                }
+                break;
+            }
+            default:
+                return;
+        }
         entities->editEntity(_dragIds[i], properties);
         after << properties;
     }
-    if (final && _dragDelta != glm::vec3(0.0f)) {
-        _undo.pushPropertyEdit("Move", _dragIds, _dragBefore, after, true);
+    bool changed = _dragKind == DragKind::Move ? _dragDelta != glm::vec3(0.0f)
+                 : _dragKind == DragKind::Rotate ? _dragRotationDelta != glm::quat()
+                 : _dragScale != glm::vec3(1.0f);
+    if (final && changed) {
+        _undo.pushPropertyEdit(text, _dragIds, _dragBefore, after, true);
     }
 }
 
@@ -542,7 +783,7 @@ void Editor::paste() {
     // the copies land where the cursor points, or a few metres in front of the camera
     glm::vec3 target;
     if (!cursorWorldPoint(target)) {
-        target = _camera.position() + _camera.orientation() * Vectors::FRONT * PASTE_FALLBACK_DISTANCE;
+        target = _camera.position() + viewDirection() * PASTE_FALLBACK_DISTANCE;
     }
     QList<QUuid> created = _clipboard.paste(_undo, "Paste", target - _clipboard.anchor());
     if (!created.isEmpty()) {
@@ -586,19 +827,19 @@ bool Editor::handleMouseMove(QMouseEvent* event) {
         return true;
     }
     if (_gizmo.isDragging()) {
-        glm::vec3 delta = _gizmo.dragDelta(pickRay(event->pos()));
-        if (snapActive()) {
-            delta = snapVector(delta, _moveSnap);
-        }
-        _dragDelta = delta;
-        if (_editTimer.elapsed() >= EDIT_INTERVAL_MS) {
-            applyDrag(false);
-        }
+        moveGizmoDrag(pickRay(event->pos()));
+        return true;
+    }
+    if (_marqueeActive) {
+        updateMarquee(event->pos());
         return true;
     }
     if (_clickPending) {
         if ((event->pos() - _pressPos).manhattanLength() > CLICK_SLOP_PIXELS) {
+            // a drag on empty space is a selection rectangle
             _clickPending = false;
+            _marqueeActive = true;
+            updateMarquee(event->pos());
         }
         return true;
     }
@@ -625,6 +866,13 @@ bool Editor::handleMouseRelease(QMouseEvent* event) {
     if (_gizmo.isDragging()) {
         applyDrag(true);
         _gizmo.endDrag();
+        _dragKind = DragKind::None;
+        updateGizmo();
+        return true;
+    }
+    if (_marqueeActive) {
+        updateMarquee(event->pos());
+        finishMarquee(_pressModifiers);
         return true;
     }
     if (_clickPending) {
@@ -689,6 +937,16 @@ bool Editor::handleKeyPress(QKeyEvent* event) {
         case Qt::Key_R:
             if (!command) { setTool(EditorToolBar::Tool::Scale); return true; }
             break;
+        case Qt::Key_X:
+            if (command) { cutSelection(); } else { setLocalSpace(!_localSpace); }
+            return true;
+        case Qt::Key_Z:
+            if (command) {
+                if (shift) { redo(); } else { undo(); }
+            } else {
+                setPivotMode(!_pivotMode);
+            }
+            return true;
         case Qt::Key_A:
             if (command) { selectAll(); return true; }
             break;
@@ -698,17 +956,8 @@ bool Editor::handleKeyPress(QKeyEvent* event) {
         case Qt::Key_C:
             if (command) { copySelection(); return true; }
             break;
-        case Qt::Key_X:
-            if (command) { cutSelection(); return true; }
-            break;
         case Qt::Key_V:
             if (command) { paste(); return true; }
-            break;
-        case Qt::Key_Z:
-            if (command) {
-                if (shift) { redo(); } else { undo(); }
-                return true;
-            }
             break;
         default:
             break;

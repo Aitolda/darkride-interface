@@ -122,6 +122,18 @@ Item {
         }
     }
 
+    // the selection rectangle while it is dragged
+    Rectangle {
+        visible: Editor.marqueeActive
+        x: Editor.marquee.x
+        y: Editor.marquee.y
+        width: Editor.marquee.width
+        height: Editor.marquee.height
+        color: Qt.rgba(0.3, 0.6, 1.0, 0.15)
+        border.color: Qt.rgba(0.5, 0.75, 1.0, 0.9)
+        border.width: 1
+    }
+
     // the view strip: readouts, bottom left of the viewport
     Rectangle {
         anchors.left: parent.left
