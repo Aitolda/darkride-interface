@@ -30,8 +30,8 @@ namespace {
         glm::vec4 axisZColor;
     };
 
-    const glm::vec4 MINOR_COLOR { 0.55f, 0.55f, 0.55f, 0.35f };
-    const glm::vec4 MAJOR_COLOR { 0.65f, 0.65f, 0.65f, 0.6f };
+    const glm::vec4 MINOR_COLOR { 0.55f, 0.55f, 0.55f, 0.28f };
+    const glm::vec4 MAJOR_COLOR { 0.68f, 0.68f, 0.68f, 0.55f };
     const glm::vec4 AXIS_X_COLOR { 0.88f, 0.26f, 0.24f, 0.9f };
     const glm::vec4 AXIS_Z_COLOR { 0.24f, 0.52f, 0.88f, 0.9f };
 

@@ -13,6 +13,7 @@
 #include <QtGui/QMouseEvent>
 #include <QtGui/QWheelEvent>
 
+#include <gl/GLWidget.h>
 #include <MainWindow.h>
 #include <PathUtils.h>
 
@@ -37,6 +38,7 @@ void Editor::setActive(bool active) {
         _grid.setVisible(_gridVisible);
         _axesValid = false;
         updateAxes();
+        focusViewport();
     } else {
         if (auto window = qApp->getWindow()) {
             _layoutSetting.set(window->saveState());
@@ -98,6 +100,14 @@ void Editor::createPanels() {
     }
 }
 
+void Editor::focusViewport() {
+    if (auto viewport = qApp->getPrimaryWidget()) {
+        if (!viewport->hasFocus()) {
+            viewport->setFocus(Qt::MouseFocusReason);
+        }
+    }
+}
+
 void Editor::showPanels(bool show) {
     if (!_panelsCreated) {
         return;
@@ -144,6 +154,8 @@ bool Editor::handleMousePress(QMouseEvent* event) {
     if (!_active) {
         return false;
     }
+    // a press in the viewport takes the keyboard back from the panels (a right click would not, on macOS)
+    focusViewport();
     if (_camera.mousePress(event)) {
         return true;
     }

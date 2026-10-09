@@ -84,6 +84,7 @@ signals:
 private:
     void createPanels();
     void showPanels(bool show);
+    void focusViewport();
     void updateAxes();
 
     bool _active { false };

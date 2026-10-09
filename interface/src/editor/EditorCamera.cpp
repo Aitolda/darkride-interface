@@ -33,6 +33,7 @@ namespace {
     const float MAX_FLY_SPEED = 500.0f;
     const float MAX_PITCH = glm::radians(89.5f);
     const float FRAME_PADDING = 1.15f;
+    const int MAX_DELTA_PIXELS = 400;
 
     // one wheel notch, or about one finger-width on a trackpad
     float wheelNotches(QWheelEvent* event) {
@@ -143,11 +144,9 @@ bool EditorCamera::mouseMove(QMouseEvent* event) {
     QPoint cursor = event->globalPos();
     QPoint delta = cursor - _lastCursor;
     _lastCursor = cursor;
-    if (_drag == Drag::Look) {
-        // the cursor is hidden and held at the drag origin, so every move is measured from there
-        delta = cursor - _dragOrigin;
-        QCursor::setPos(_dragOrigin);
-        _lastCursor = _dragOrigin;
+    // a jump this big is the cursor being moved by something other than the hand; skip it
+    if (std::abs(delta.x()) > MAX_DELTA_PIXELS || std::abs(delta.y()) > MAX_DELTA_PIXELS) {
+        return true;
     }
     float dx = (float)delta.x();
     float dy = (float)delta.y();
@@ -231,8 +230,9 @@ void EditorCamera::beginDrag(Drag drag, QMouseEvent* event) {
 
 void EditorCamera::endDrag() {
     if (_cursorHidden) {
-        QGuiApplication::restoreOverrideCursor();
+        // the hidden cursor travelled with the hand; put it back where the look started
         QCursor::setPos(_dragOrigin);
+        QGuiApplication::restoreOverrideCursor();
         _cursorHidden = false;
     }
     _drag = Drag::None;

@@ -36,18 +36,25 @@ LAYOUT(binding=0) uniform editorGridBuffer {
 
 layout(location=RENDER_UTILS_ATTR_POSITION_WS) in vec4 _positionWS;
 
-// 1 on a grid line of `widthPx` pixels, 0 away from it, anti-aliased over one pixel
-float gridLine(vec2 coord, float widthPx) {
-    vec2 dd = max(fwidth(coord), vec2(0.00001));
-    vec2 dist = abs(fract(coord - 0.5) - 0.5) / dd;   // distance to the nearest line, in pixels
-    float d = min(dist.x, dist.y);
-    return 1.0 - smoothstep(widthPx * 0.5, widthPx * 0.5 + 1.0, d);
+// how many cells one pixel covers, per axis: the true screen-space gradient of each
+// coordinate, which fwidth overestimates at grazing angles and fattens the far lines
+vec2 cellsPerPixel(vec2 coord) {
+    vec2 dx = dFdx(coord);
+    vec2 dy = dFdy(coord);
+    return max(vec2(length(vec2(dx.x, dy.x)), length(vec2(dx.y, dy.y))), vec2(0.00001));
 }
 
-// fades the lines out as their cells shrink towards a few pixels, which is what stops the moire
-float cellFade(vec2 coord) {
-    vec2 dd = fwidth(coord);
-    return 1.0 - smoothstep(0.08, 0.4, max(dd.x, dd.y));
+// 1 on a grid line of `widthPx` pixels, 0 away from it, anti-aliased over one pixel
+float gridLine(vec2 coord, vec2 dd, float widthPx) {
+    vec2 dist = abs(fract(coord - 0.5) - 0.5) / dd;   // distance to the nearest line, in pixels
+    float d = min(dist.x, dist.y);
+    float halfWidth = widthPx * 0.5;
+    return 1.0 - smoothstep(halfWidth - 0.5, halfWidth + 0.5, d);
+}
+
+// fades the lines out as their cells shrink below a few pixels, which is what stops the moire
+float cellFade(vec2 dd) {
+    return 1.0 - smoothstep(0.05, 0.22, max(dd.x, dd.y));
 }
 
 void main(void) {
@@ -55,13 +62,15 @@ void main(void) {
     vec2 minorCoord = p / params.spacing.x;
     vec2 majorCoord = p / params.spacing.y;
 
-    float minor = gridLine(minorCoord, 1.0) * cellFade(minorCoord);
-    float major = gridLine(majorCoord, 1.5) * cellFade(majorCoord);
+    vec2 minorDD = cellsPerPixel(minorCoord);
+    vec2 majorDD = cellsPerPixel(majorCoord);
+    float minor = gridLine(minorCoord, minorDD, 1.0) * cellFade(minorDD);
+    float major = gridLine(majorCoord, majorDD, 1.0) * cellFade(majorDD);
 
     // the world axes: the line along X is z == 0, the line along Z is x == 0
-    vec2 dd = max(fwidth(p), vec2(0.00001));
-    float axisX = 1.0 - smoothstep(1.0, 2.0, abs(p.y) / dd.y);
-    float axisZ = 1.0 - smoothstep(1.0, 2.0, abs(p.x) / dd.x);
+    vec2 dd = cellsPerPixel(p);
+    float axisX = 1.0 - smoothstep(0.5, 1.5, abs(p.y) / dd.y);
+    float axisZ = 1.0 - smoothstep(0.5, 1.5, abs(p.x) / dd.x);
 
     // coverage only scales alpha; the colour stays pure for straight alpha blending
     vec4 color = vec4(params.minorColor.rgb, params.minorColor.a * minor);
