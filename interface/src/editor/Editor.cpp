@@ -59,6 +59,7 @@ namespace {
     const int PRUNE_EVERY_FRAMES = 30;      // how often the selection drops entities that are gone
     const float PASTE_FALLBACK_DISTANCE = 3.0f;   // in front of the camera, when the cursor points at nothing
     const float MIN_DIMENSION = 0.001f;
+    const float BUILD_MODE_FOV = 90.0f;     // the client's units (its default is 120); less edge stretch on the gizmos
 
     // what a click or a paste can land on: the world's visible entities, picked against their meshes
     PickFilter worldPickFilter() {
@@ -119,6 +120,12 @@ Editor::Editor() : _selection(this), _undo(this) {
 
 void Editor::setReady() {
     _ready = true;
+    // the client died in build mode last time: give the field of view back
+    float stale = _fovBeforeBuild.get();
+    if (stale > 0.0f) {
+        qApp->setFieldOfView(stale);
+        _fovBeforeBuild.set(0.0f);
+    }
 }
 
 void Editor::setActive(bool active) {
@@ -134,6 +141,9 @@ void Editor::setActive(bool active) {
     if (active) {
         createPanels();
         showPanels(true);
+        _savedFov = qApp->getFieldOfView();
+        _fovBeforeBuild.set(_savedFov);
+        qApp->setFieldOfView(BUILD_MODE_FOV);
         _camera.enter();
         _grid.setVisible(_gridVisible);
         _selection.setHighlightEnabled(true);
@@ -157,6 +167,10 @@ void Editor::setActive(bool active) {
         }
         showPanels(false);
         _camera.leave();
+        if (_savedFov > 0.0f) {
+            qApp->setFieldOfView(_savedFov);
+        }
+        _fovBeforeBuild.set(0.0f);
         _grid.setVisible(false);
         _gizmo.setVisible(false);
         _selection.setHighlightEnabled(false);

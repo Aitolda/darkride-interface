@@ -227,6 +227,9 @@ private:
     EditorToolBar* _toolBar { nullptr };
     EntityTreeModel* _treeModel { nullptr };
     Setting::Handle<QByteArray> _layoutSetting { "editor/layout2", QByteArray() };   // 2: the panels no longer float
+    // build mode narrows the field of view; the user's own is kept here so it survives a crash
+    Setting::Handle<float> _fovBeforeBuild { "editor/fovBeforeBuild", 0.0f };
+    float _savedFov { 0.0f };
 };
 
 #endif // hifi_Editor_h
