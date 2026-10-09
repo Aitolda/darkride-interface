@@ -78,8 +78,17 @@ Editor::Editor() : _selection(this), _undo(this) {
 
 // --- build mode on and off ----------------------------------------------------------------------
 
+void Editor::setReady() {
+    _ready = true;
+}
+
 void Editor::setActive(bool active) {
     if (active == _active) {
+        return;
+    }
+    if (active && !_ready) {
+        // the menu's saved state, restored at startup: build mode always starts off
+        Menu::getInstance()->setIsOptionChecked(MenuOption::BuildMode, false);
         return;
     }
     _active = active;
@@ -230,6 +239,11 @@ void Editor::showPanels(bool show) {
 void Editor::update(float deltaTime) {
     if (!_active) {
         return;
+    }
+    // a teleport or a domain change puts the camera back on the avatar; take it again from there
+    if (qApp->getCamera().getMode() != CAMERA_MODE_INDEPENDENT) {
+        _camera.enter();
+        _axesValid = false;
     }
     _camera.update(deltaTime);
     updateAxes();

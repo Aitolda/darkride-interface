@@ -3595,6 +3595,7 @@ void Application::onDesktopRootItemCreated(QQuickItem* rootItem) {
     // build mode's scene gizmo and view strip; hidden until build mode is on
     offscreenUi->show(PathUtils::qmlUrl("editor/ViewportOverlay.qml"), "EditorViewportOverlay");
 #endif
+    DependencyManager::get<Editor>()->setReady();
     _desktopRootItemCreated = true;
 }
 

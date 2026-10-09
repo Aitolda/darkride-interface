@@ -72,6 +72,10 @@ public:
     EditorSelection& selection() { return _selection; }
     EditorUndo& undoStack() { return _undo; }
 
+    // Application calls this once the window, the scene and the desktop UI exist. Until then build
+    // mode cannot be entered: the menu restores its saved state at startup by triggering the item.
+    void setReady();
+
     // called by Application every frame while active, before the camera is read
     void update(float deltaTime);
 
@@ -129,6 +133,7 @@ private:
     void beginGizmoDrag(GizmoHandle handle, const PickRay& ray);
     void applyDrag(bool final);
 
+    bool _ready { false };
     bool _active { false };
     bool _gridVisible { true };
     EditorCamera _camera;
