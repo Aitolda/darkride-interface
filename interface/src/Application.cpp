@@ -2875,7 +2875,7 @@ void Application::cleanupBeforeQuit() {
     }
     DependencyManager::destroy<ScriptEngines>();
 
-    bool keepMeLoggedIn = Setting::Handle<bool>(KEEP_ME_LOGGED_IN_SETTING_NAME, false).get();
+    bool keepMeLoggedIn = Setting::Handle<bool>(KEEP_ME_LOGGED_IN_SETTING_NAME, true).get();
     if (!keepMeLoggedIn) {
         DependencyManager::get<AccountManager>()->removeAccountFromFile();
     }
