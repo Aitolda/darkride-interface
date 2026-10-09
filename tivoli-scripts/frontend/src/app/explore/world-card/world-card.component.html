@@ -28,7 +28,7 @@
 				class="banner"
 				style="background-color: #f44336"
 				*ngIf="
-					exploreService.protocol
+					exploreService.protocol && world.protocol
 						? world.protocol != exploreService.protocol
 						: false
 				"
