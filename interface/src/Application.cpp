@@ -1974,6 +1974,8 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     updateHeartbeat();
 
     loadSettings();
+    // the menu has just replayed its saved state (which build mode ignored); from here on it may be entered
+    DependencyManager::get<Editor>()->setReady();
 
     updateVerboseLogging();
 
@@ -3595,7 +3597,6 @@ void Application::onDesktopRootItemCreated(QQuickItem* rootItem) {
     // build mode's scene gizmo and view strip; hidden until build mode is on
     offscreenUi->show(PathUtils::qmlUrl("editor/ViewportOverlay.qml"), "EditorViewportOverlay");
 #endif
-    DependencyManager::get<Editor>()->setReady();
     _desktopRootItemCreated = true;
 }
 

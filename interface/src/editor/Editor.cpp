@@ -153,7 +153,8 @@ void Editor::setTool(EditorToolBar::Tool tool) {
 
 void Editor::setMenuActionsEnabled(bool enabled) {
     auto menu = Menu::getInstance();
-    for (const auto& name : { MenuOption::BuildUndo, MenuOption::BuildRedo, MenuOption::BuildDuplicate, MenuOption::BuildFrame }) {
+    for (const auto& name : { MenuOption::BuildUndo, MenuOption::BuildRedo, MenuOption::BuildDuplicate,
+                              MenuOption::BuildFrame, MenuOption::BuildResetPanels }) {
         if (auto action = menu->getActionForOption(name)) {
             action->setEnabled(enabled);
         }
@@ -232,6 +233,20 @@ void Editor::showPanels(bool show) {
     _hierarchy->setVisible(show);
     _inspector->setVisible(show);
     _toolBar->setVisible(show);
+}
+
+void Editor::resetLayout() {
+    auto window = qApp->getWindow();
+    if (!_panelsCreated || !window) {
+        return;
+    }
+    _hierarchy->setFloating(false);
+    _inspector->setFloating(false);
+    window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
+    window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
+    window->addToolBar(Qt::TopToolBarArea, _toolBar);
+    showPanels(_active);
+    _layoutSetting.set(QByteArray());
 }
 
 // --- every frame --------------------------------------------------------------------------------

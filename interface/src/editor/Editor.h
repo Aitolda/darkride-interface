@@ -98,6 +98,8 @@ public slots:
 
     void undo();
     void redo();
+    // docks the panels back where they started, for a panel that was torn off and lost
+    void resetLayout();
     void frameSelection();
     void deleteSelection();
     void duplicateSelection();

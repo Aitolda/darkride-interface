@@ -258,7 +258,9 @@ Menu::Menu() {
             addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildDuplicate, Qt::CTRL | Qt::Key_D,
                 editor.data(), SLOT(duplicateSelection())),
             addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildFrame, 0,
-                editor.data(), SLOT(frameSelection()))
+                editor.data(), SLOT(frameSelection())),
+            addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildResetPanels, 0,
+                editor.data(), SLOT(resetLayout()))
         };
         for (auto action : buildActions) {
             action->setEnabled(false);
