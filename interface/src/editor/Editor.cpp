@@ -293,6 +293,9 @@ void Editor::createPanels() {
     if (!layout.isEmpty()) {
         window->restoreState(layout);
     }
+    // a saved layout from before the panels were fixed can still float them
+    _hierarchy->setFloating(false);
+    _inspector->setFloating(false);
 }
 
 void Editor::focusViewport() {

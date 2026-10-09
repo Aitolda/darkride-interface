@@ -226,7 +226,7 @@ private:
     InspectorPanel* _inspector { nullptr };
     EditorToolBar* _toolBar { nullptr };
     EntityTreeModel* _treeModel { nullptr };
-    Setting::Handle<QByteArray> _layoutSetting { "editor/layout", QByteArray() };
+    Setting::Handle<QByteArray> _layoutSetting { "editor/layout2", QByteArray() };   // 2: the panels no longer float
 };
 
 #endif // hifi_Editor_h

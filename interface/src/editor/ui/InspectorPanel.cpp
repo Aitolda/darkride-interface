@@ -34,7 +34,7 @@ namespace {
 InspectorPanel::InspectorPanel(QWidget* parent) : QDockWidget("Inspector", parent) {
     setObjectName("EditorInspector");
     setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable);   // see HierarchyPanel
+    setFeatures(QDockWidget::DockWidgetClosable);   // fixed in place, see HierarchyPanel
     setMinimumWidth(280);
 
     _scroll = new QScrollArea(this);

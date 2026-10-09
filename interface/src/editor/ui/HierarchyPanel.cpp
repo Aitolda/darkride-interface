@@ -19,9 +19,9 @@
 HierarchyPanel::HierarchyPanel(QWidget* parent) : QDockWidget("Hierarchy", parent) {
     setObjectName("EditorHierarchy");
     setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    // no floating: docking a floating panel back reparents it across native windows, and the GL
-    // view (a native window itself) does not survive that
-    setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable);
+    // fixed in place: docking a floating panel back reparents it across native windows, and the GL
+    // view (a native window itself) does not survive that; it can be closed and reopened
+    setFeatures(QDockWidget::DockWidgetClosable);
     setMinimumWidth(220);
 
     auto body = new QWidget(this);
