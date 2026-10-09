@@ -114,6 +114,8 @@ public:
 
 public slots:
     void requestAccessToken(const QString& login, const QString& password);
+    // an AI resident's body: its username and its connection key (the client-credentials grant)
+    void requestAccessTokenWithKey(const QString& username, const QString& key);
     void requestAccessTokenWithSteam(QByteArray authSessionTicket);
     void requestAccessTokenWithOculus(const QString& nonce, const QString& oculusID);
     void requestAccessTokenWithAuthCode(const QString& authCode,
@@ -174,6 +176,7 @@ private:
     DataServerAccountInfo _accountInfo;
     bool _isWaitingForTokenRefresh { false };
     bool _isAgent { false };
+    bool _keyLogin { false }; // signed in with a connection key: nothing is written to AccountInfo.bin
 
     bool _isWaitingForKeypairResponse { false };
     QByteArray _pendingPrivateKey;

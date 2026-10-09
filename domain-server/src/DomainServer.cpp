@@ -2316,7 +2316,10 @@ bool DomainServer::handleHTTPRequest(HTTPConnection* connection, const QUrl& url
                 // create an assignment for this saved script
                 Assignment* scriptAssignment = new Assignment(Assignment::CreateCommand, Assignment::AgentType, assignmentPool);
 
-                _ephemeralACScripts[scriptAssignment->getUUID()] = formData[0].second;
+                // a deep copy: parseFormData() returns views into the request buffer (QByteArray::fromRawData),
+                // which is freed with the connection, so the stored script came back empty when the agent fetched it
+                _ephemeralACScripts[scriptAssignment->getUUID()] =
+                    QByteArray(formData[0].second.constData(), formData[0].second.size());
 
                 // add the script assignment to the assignment queue
                 SharedAssignmentPointer sharedScriptedAssignment(scriptAssignment);
