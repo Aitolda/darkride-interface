@@ -6,6 +6,7 @@ import { MaterialModule } from "../material.module";
 import { ExploreComponent } from "./explore.component";
 import { FriendsComponent } from "./friends/friends.component";
 import { HeaderComponent } from "./header/header.component";
+import { InstanceBarComponent } from "./instance-bar/instance-bar.component";
 import { WorldCardComponent } from "./world-card/world-card.component";
 import { WorldsComponent } from "./worlds/worlds.component";
 
@@ -20,6 +21,7 @@ const routes: Routes = [
 	declarations: [
 		ExploreComponent,
 		HeaderComponent,
+		InstanceBarComponent,
 		WorldsComponent,
 		WorldCardComponent,
 		FriendsComponent,

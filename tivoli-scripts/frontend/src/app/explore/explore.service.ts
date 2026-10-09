@@ -1,6 +1,7 @@
 import { HttpClient, HttpParams } from "@angular/common/http";
 import { Injectable } from "@angular/core";
-import { Subject } from "rxjs";
+import { forkJoin, Observable, of, Subject } from "rxjs";
+import { catchError } from "rxjs/operators";
 import { ScriptService } from "../script.service";
 
 export interface World {
@@ -23,6 +24,45 @@ export interface World {
 
 	path: string;
 	url: string;
+
+	// set when the world can be opened as disposable instances
+	instances?: WorldInstances;
+}
+
+export type InstanceVisibility = "public" | "friends" | "private";
+
+export interface WorldInstances {
+	access: "public" | "friends" | "private";
+	instanceOnly: boolean;
+	live: boolean; // the source of truth is an always-on domain
+	version: number;
+	savedAt: string;
+	canStart: boolean;
+	canEdit: boolean;
+	list: Instance[];
+}
+
+export interface Instance {
+	id: string;
+	world: string;
+	label: string;
+	visibility: InstanceVisibility;
+	players: number;
+	address: string;
+	startedBy: string;
+	createdAt: string;
+	version: number;
+	latest: boolean;
+	editing: boolean;
+	editors: string[];
+	canStop?: boolean;
+}
+
+// the domain the client is in, when it is an instance or a world's own domain
+export interface CurrentInstance {
+	world: World;
+	instance: Instance | null;
+	editingBy?: string;
 }
 
 export interface Friend {
@@ -72,7 +112,24 @@ export class ExploreService {
 		this.loading = true;
 		this.page = reset ? 1 : this.page + 1;
 
-		this.http
+		// worlds that can be opened as instances are listed with the online domains,
+		// whether or not anyone is in them
+		const instanceWorlds: Observable<World[]> =
+			this.type == "popular" && this.page == 1
+				? this.http
+						.get<World[]>(
+							this.scriptService.metaverseUrl + "/api/worlds",
+							{
+								params: new HttpParams().set(
+									"search",
+									this.search,
+								),
+							},
+						)
+						.pipe(catchError(() => of([] as World[])))
+				: of([] as World[]);
+
+		const domains = this.http
 			.get<World[]>(
 				this.scriptService.metaverseUrl +
 					(() => {
@@ -89,16 +146,88 @@ export class ExploreService {
 						.set("protocol", this.protocol),
 				},
 			)
-			.subscribe(
-				worlds => {
-					this.worlds = reset ? worlds : [...this.worlds, ...worlds];
-					this.loading = false;
-				},
-				err => {
-					this.worlds = reset ? [] : this.worlds;
-					this.loading = false;
-				},
-			);
+			.pipe(catchError(() => of([] as World[])));
+
+		forkJoin([domains, instanceWorlds]).subscribe(
+			([online, withInstances]) => {
+				const worlds = this.mergeWorlds(online, withInstances);
+				this.worlds = reset ? worlds : [...this.worlds, ...worlds];
+				this.loading = false;
+			},
+			err => {
+				this.worlds = reset ? [] : this.worlds;
+				this.loading = false;
+			},
+		);
+	}
+
+	private mergeWorlds(online: World[], withInstances: World[]) {
+		const byId = new Map(withInstances.map(w => [w.id, w]));
+		const merged = online.map(w => byId.get(w.id) ?? w);
+		const listed = new Set(merged.map(w => w.id));
+		const people = (w: World) =>
+			w.numUsers +
+			(w.instances?.list ?? []).reduce((n, i) => n + i.players, 0);
+		const rest = withInstances
+			.filter(w => !listed.has(w.id))
+			.sort((a, b) => people(b) - people(a));
+		// worlds with people in them first, then the rest of the instance worlds
+		return [
+			...merged,
+			...rest.filter(w => people(w) > 0),
+			...rest.filter(w => people(w) == 0),
+		];
+	}
+
+	// instances
+
+	startInstance(worldId: string, visibility: InstanceVisibility) {
+		return this.http.post<Instance>(
+			this.scriptService.metaverseUrl +
+				"/api/worlds/" +
+				worldId +
+				"/instances",
+			{ visibility },
+		);
+	}
+
+	joinInstance(instance: Instance) {
+		this.scriptService.emitEvent("explore", "joinDomain", instance.address);
+		this.scriptService.emitEvent("explore", "close");
+	}
+
+	getCurrent(domainId: string) {
+		return this.http.get<CurrentInstance>(
+			this.scriptService.metaverseUrl +
+				"/api/instances/by-domain/" +
+				domainId,
+		);
+	}
+
+	setEditMode(instanceId: string, on: boolean) {
+		return this.http.post<CurrentInstance>(
+			this.scriptService.metaverseUrl +
+				"/api/instances/" +
+				instanceId +
+				"/edit",
+			{ on },
+		);
+	}
+
+	saveInstance(instanceId: string) {
+		return this.http.post<{ version: number; entities: number }>(
+			this.scriptService.metaverseUrl +
+				"/api/instances/" +
+				instanceId +
+				"/save",
+			null,
+		);
+	}
+
+	stopInstance(instanceId: string) {
+		return this.http.delete(
+			this.scriptService.metaverseUrl + "/api/instances/" + instanceId,
+		);
 	}
 
 	likeWorld(id: string, like = true) {

@@ -1,0 +1,29 @@
+.instance-bar {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 8px 16px;
+	background: rgba(255, 255, 255, 0.06);
+	border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+
+	.text {
+		min-width: 0;
+
+		.title {
+			font-weight: 500;
+		}
+
+		.subtitle {
+			opacity: 0.8;
+			font-size: 0.9em;
+		}
+	}
+
+	.warning {
+		color: #ffb74d;
+	}
+
+	.editing {
+		color: #81c784;
+	}
+}
