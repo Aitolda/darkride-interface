@@ -39,6 +39,7 @@
 #include <MainWindow.h>
 #include <PathUtils.h>
 #include <PickFilter.h>
+#include <SimulationFlags.h>
 #include <ViewFrustum.h>
 
 #include "Application.h"
@@ -56,6 +57,7 @@ namespace {
     const int INSPECTOR_FAST_LIMIT = 16;
     const int CLICK_SLOP_PIXELS = 5;        // a press that moves less than this is a click
     const int EDIT_INTERVAL_MS = 33;        // while dragging, edits go out at most this often
+    const int SCALE_EDIT_INTERVAL_MS = 100; // scale edits are heavier for the server
     const int PRUNE_EVERY_FRAMES = 30;      // how often the selection drops entities that are gone
     const float PASTE_FALLBACK_DISTANCE = 3.0f;   // in front of the camera, when the cursor points at nothing
     const float MIN_DIMENSION = 0.001f;
@@ -863,7 +865,9 @@ void Editor::moveGizmoDrag(const QPoint& viewportPos) {
         default:
             break;
     }
-    if (_editTimer.elapsed() >= EDIT_INTERVAL_MS) {
+    // scale edits also reach the entity server, which rebuilds its own shapes: send those less often
+    int interval = _dragKind == DragKind::Scale ? SCALE_EDIT_INTERVAL_MS : EDIT_INTERVAL_MS;
+    if (_editTimer.elapsed() >= interval) {
         applyDrag(false);
     }
 }
@@ -871,6 +875,7 @@ void Editor::moveGizmoDrag(const QPoint& viewportPos) {
 void Editor::applyDrag(bool final) {
     _editTimer.restart();
     auto entities = DependencyManager::get<EntityScriptingInterface>();
+    auto tree = entityTree();
     QVector<EntityItemProperties> after;
     QString text;
     for (int i = 0; i < _dragIds.size(); ++i) {
@@ -903,6 +908,15 @@ void Editor::applyDrag(bool final) {
                 return;
         }
         entities->editEntity(_dragIds[i], properties);
+        if (_dragKind == DragKind::Scale && !final && tree) {
+            // a dimension change makes physics rebuild the collision shape from the mesh, which is
+            // slow and stalls the main thread; while the drag lasts the old shape is good enough
+            tree->withWriteLock([&] {
+                if (auto entity = tree->findEntityByEntityItemID(_dragIds[i])) {
+                    entity->clearDirtyFlags(Simulation::DIRTY_SHAPE | Simulation::DIRTY_MASS);
+                }
+            });
+        }
         after << properties;
     }
     bool changed = _dragKind == DragKind::Move ? _dragDelta != glm::vec3(0.0f)
