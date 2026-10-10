@@ -19,6 +19,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QUrl>
 #include <QtCore/QTimer>
+#include <QtCore/QMutex>
 #include <QUuid>
 
 #include <EntityEditPacketSender.h>
@@ -69,6 +70,15 @@ public slots:
 
     Q_INVOKABLE virtual void stop() override;
 
+    /*@jsdoc
+     * Takes what the agent has heard since the last call: the mixed audio the audio mixer sends this
+     * agent, as 16-bit signed mono PCM at 24,000 Hz. Empty unless <code>isListeningToAudioStream</code>
+     * is <code>true</code>. At most the last 30 s are kept between calls.
+     * @function Agent.takeHeardAudio
+     * @returns {ArrayBuffer} The audio heard since the last call.
+     */
+    Q_INVOKABLE QByteArray takeHeardAudio();
+
 private slots:
     void requestScript();
     void scriptRequestFinished();
@@ -98,6 +108,8 @@ private:
 
     MixedAudioStream _receivedAudioStream;
     float _lastReceivedAudioLoudness;
+    QByteArray _heardAudio;     // mono PCM heard since the last takeHeardAudio()
+    QMutex _heardAudioMutex;
 
     void setAvatarSound(SharedSoundPointer avatarSound) { _avatarSound = avatarSound; }
 

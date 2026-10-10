@@ -16,3 +16,13 @@
 MixedAudioStream::MixedAudioStream(int numFramesCapacity, int numStaticJitterFrames) :
     InboundAudioStream(AudioConstants::STEREO, AudioConstants::NETWORK_FRAME_SAMPLES_PER_CHANNEL,
         numFramesCapacity, numStaticJitterFrames) {}
+
+int MixedAudioStream::readAllSamples(QByteArray& out) {
+    int numSamples = _ringBuffer.samplesAvailable();
+    if (numSamples <= 0) {
+        return 0;
+    }
+    int oldSize = out.size();
+    out.resize(oldSize + numSamples * (int)sizeof(int16_t));
+    return _ringBuffer.readSamples(reinterpret_cast<int16_t*>(out.data() + oldSize), numSamples);
+}
