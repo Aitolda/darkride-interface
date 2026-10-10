@@ -190,6 +190,13 @@ void Agent::handleAudioPacket(QSharedPointer<ReceivedMessage> message) {
         // keep what was heard for the script (an AI resident's hearing): stereo to mono
         QByteArray stereo;
         int numSamples = _receivedAudioStream.readAllSamples(stereo);
+        static int heardPackets = 0, heardSamples = 0;
+        heardPackets++;
+        heardSamples += numSamples;
+        if (heardPackets % 30000 == 1) {
+            qDebug() << "Hearing:" << heardPackets << "audio packets," << heardSamples << "samples so far; type"
+                     << (int)message->getType() << "loudness" << _lastReceivedAudioLoudness;
+        }
         if (numSamples >= 2) {
             const int16_t* in = reinterpret_cast<const int16_t*>(stereo.constData());
             int numFrames = numSamples / 2;
