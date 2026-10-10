@@ -17,6 +17,7 @@
 
 #include <shared/QtHelpers.h>
 #include <AnimUtil.h>
+#include <AnimClip.h>
 #include <ClientTraitsHandler.h>
 #include <GLMHelpers.h>
 #include <ResourceRequestObserver.h>
@@ -86,7 +87,7 @@ QStringList ScriptableAvatar::getJointNames() const {
 void ScriptableAvatar::setSkeletonModelURL(const QUrl& skeletonModelURL) {
     _bind.reset();
     _animSkeleton.reset();
-    _bindJointIndices.clear();
+    _retargeted.clear();
 
     AvatarData::setSkeletonModelURL(skeletonModelURL);
     updateJointMappings();
@@ -125,13 +126,6 @@ int ScriptableAvatar::sendAvatarDataPacket(bool sendAll) {
     return bytesSent;
 }
 
-static AnimPose composeAnimPose(const HFMJoint& joint, const glm::quat rotation, const glm::vec3 translation) {
-    glm::mat4 translationMat = glm::translate(translation);
-    glm::mat4 rotationMat = glm::mat4_cast(joint.preRotation * rotation * joint.postRotation);
-    glm::mat4 finalMat = translationMat * joint.preTransform * rotationMat * joint.postTransform;
-    return AnimPose(finalMat);
-}
-
 void ScriptableAvatar::update(float deltatime) {
     // The .fst gives the skeleton's .fbx (setJointMappingsFromNetworkReply); load it once as the bind pose.
     // This line was lost when the .fst reader moved here (eb097af796), so scripted avatars never animated.
@@ -139,62 +133,46 @@ void ScriptableAvatar::update(float deltatime) {
         _bind = DependencyManager::get<AnimationCache>()->getAnimation(_skeletonFBXURL);
     }
 
-    // Run animation
+    // Run animation: the frames retargeted onto this avatar's skeleton the way a client's AnimClip does it (2026-10-10:
+    // composing the raw frames with the model's pre/post rotations and a fixed 1/100 scale crumpled the avatar)
     if (_animation && _animation->isLoaded() && _animation->getFrames().size() > 0 && !_bind.isNull() && _bind->isLoaded()) {
         if (!_animSkeleton) {
             _animSkeleton = std::make_shared<AnimSkeleton>(_bind->getHFMModel());
-            // The skeleton is read as an animation resource, whose HFMModel has no jointIndices, so getJointIndex()
-            // answered -1 for every joint and nothing moved (2026-10-10): the names come from the joints themselves.
-            _bindJointIndices.clear();
-            const auto& joints = _bind->getHFMModel().joints;
-            for (int j = 0; j < (int)joints.size(); j++) {
-                _bindJointIndices.insert(joints[j].name, j);
-            }
-            int mapped = 0;
-            for (const QString& name : _animation->getJointNames()) {
-                mapped += _bindJointIndices.contains(name) ? 1 : 0;
-            }
-            qDebug() << "Scripted avatar skeleton:" << joints.size() << "joints;" << mapped << "of"
-                     << _animation->getJointNames().size() << "animation joints map onto it";
+            _retargeted.clear();
         }
+        const QString animationKey = _animationDetails.url.toString();
+        if (!_retargeted.contains(animationKey)) {
+            _retargeted.insert(animationKey, copyAndRetargetFromNetworkAnim(_animation, _animSkeleton));
+        }
+        const std::vector<AnimPoseVec>& frames = _retargeted[animationKey];
         float currentFrame = _animationDetails.currentFrame + deltatime * _animationDetails.fps;
-        if (_animationDetails.loop || currentFrame < _animationDetails.lastFrame) {
+        if (!frames.empty() && (_animationDetails.loop || currentFrame < _animationDetails.lastFrame)) {
             while (currentFrame >= _animationDetails.lastFrame) {
                 currentFrame -= (_animationDetails.lastFrame - _animationDetails.firstFrame);
             }
             _animationDetails.currentFrame = currentFrame;
 
-            const std::vector<HFMJoint>& modelJoints = _bind->getHFMModel().joints;
-            QStringList animationJointNames = _animation->getJointNames();
+            const int nJoints = _animSkeleton->getNumJoints();
+            const int frameCount = (int)frames.size();
+            const AnimPoseVec& floorPoses = frames[(int)glm::floor(currentFrame) % frameCount];
+            const AnimPoseVec& ceilPoses = frames[(int)glm::ceil(currentFrame) % frameCount];
+            AnimPoseVec poses = _animSkeleton->getRelativeDefaultPoses();
+            if ((int)floorPoses.size() == nJoints && (int)ceilPoses.size() == nJoints) {
+                blend(nJoints, floorPoses.data(), ceilPoses.data(), glm::fract(currentFrame), poses.data());
+            }
+            for (const QString& name : _maskedJoints) {                     // a masked joint keeps its default pose
+                int j = _animSkeleton->nameToJointIndex(name);
+                if (j >= 0) {
+                    poses[j] = _animSkeleton->getRelativeDefaultPose(j);
+                }
+            }
 
-            const auto nJoints = (int)modelJoints.size();
+            AnimPoseVec absPoses = poses;
+            _animSkeleton->convertRelativePosesToAbsolute(absPoses);
+            QWriteLocker writeLock(&_jointDataLock);
             if (_jointData.size() != nJoints) {
                 _jointData.resize(nJoints);
             }
-
-            const int frameCount = _animation->getFrames().size();
-            const HFMAnimationFrame& floorFrame = _animation->getFrames().at((int)glm::floor(currentFrame) % frameCount);
-            const HFMAnimationFrame& ceilFrame = _animation->getFrames().at((int)glm::ceil(currentFrame) % frameCount);
-            const float frameFraction = glm::fract(currentFrame);
-            std::vector<AnimPose> poses = _animSkeleton->getRelativeDefaultPoses();
-
-            const float UNIT_SCALE = 0.01f;
-
-            for (int i = 0; i < animationJointNames.size(); i++) {
-                const QString& name = animationJointNames[i];
-                // As long as we need the model preRotations anyway, let's get the jointIndex from the bind skeleton rather than
-                // trusting the .fst (which is sometimes not updated to match changes to .fbx).
-                int mapping = _bindJointIndices.value(name, -1);
-                if (mapping != -1 && !_maskedJoints.contains(name)) {
-
-                    AnimPose floorPose = composeAnimPose(modelJoints[mapping], floorFrame.rotations[i], floorFrame.translations[i] * UNIT_SCALE);
-                    AnimPose ceilPose = composeAnimPose(modelJoints[mapping], ceilFrame.rotations[i], floorFrame.translations[i] * UNIT_SCALE);
-                    blend(1, &floorPose, &ceilPose, frameFraction, &poses[mapping]);
-                 }
-            }
-
-            std::vector<AnimPose> absPoses = poses;
-            _animSkeleton->convertRelativePosesToAbsolute(absPoses);
             for (int i = 0; i < nJoints; i++) {
                 JointData& data = _jointData[i];
                 AnimPose& absPose = absPoses[i];

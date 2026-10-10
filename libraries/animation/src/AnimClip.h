@@ -21,6 +21,11 @@
 // timescale can be used to speed-up or slow-down the animation.
 // loop flag, when true, will loop the animation as it reaches the end frame.
 
+// An animation's frames as relative poses of `avatarSkeleton`: joints matched by name, the animation's own
+// pre/post rotations, translations scaled by the two skeletons' heights and units. AnimClip uses it; so does
+// ScriptableAvatar (a scripted avatar plays the same animations as a client, 2026-10-10).
+std::vector<AnimPoseVec> copyAndRetargetFromNetworkAnim(AnimationPointer networkAnim, AnimSkeleton::ConstPointer avatarSkeleton);
+
 class AnimClip : public AnimNode {
 public:
     friend class AnimTests;

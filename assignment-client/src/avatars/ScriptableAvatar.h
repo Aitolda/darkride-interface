@@ -220,7 +220,7 @@ private:
     QHash<QString, int> _fstJointIndices; ///< 1-based, since zero is returned for missing keys
     QStringList _fstJointNames; ///< in order of depth-first traversal
     QUrl _skeletonFBXURL;
-    QHash<QString, int> _bindJointIndices;  // the skeleton's joint names -> indices (its HFMModel has no jointIndices)
+    QHash<QString, std::vector<AnimPoseVec>> _retargeted;  // animation URL -> its frames on this skeleton (AnimClip's retargeting)
     mutable QScriptEngine _scriptEngine;
     std::map<QUuid, EntityItemPointer> _entities;
 

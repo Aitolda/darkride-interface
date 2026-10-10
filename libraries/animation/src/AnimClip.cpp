@@ -89,7 +89,7 @@ void bakeAbsoluteDeltaAnim(std::vector<AnimPoseVec>& anim, const AnimPoseVec& ba
     }
 }
 
-static std::vector<AnimPoseVec> copyAndRetargetFromNetworkAnim(AnimationPointer networkAnim, AnimSkeleton::ConstPointer avatarSkeleton) {
+std::vector<AnimPoseVec> copyAndRetargetFromNetworkAnim(AnimationPointer networkAnim, AnimSkeleton::ConstPointer avatarSkeleton) {
     ASSERT(networkAnim && networkAnim->isLoaded() && avatarSkeleton);
     std::vector<AnimPoseVec> anim;
 
