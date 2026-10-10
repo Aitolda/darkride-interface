@@ -51,6 +51,10 @@ public:
     explicit ScrubSpinBox(QWidget* parent = nullptr);
     void showMixed();
     bool isMixedShown() const { return _mixed; }
+    // a spin box sizes itself for its widest possible value, which with a huge range is absurd;
+    // these keep it to a sensible field that the layout can stretch
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
 protected:
     void focusInEvent(QFocusEvent* event) override;
 private:
@@ -87,7 +91,8 @@ protected:
 class NumberEditor : public PropertyEditor {
     Q_OBJECT
 public:
-    NumberEditor(const PropertySpec& spec, QWidget* parent = nullptr);
+    // a component of a vector row gets no unit suffix: the unit is on the row's label
+    NumberEditor(const PropertySpec& spec, QWidget* parent = nullptr, bool component = false);
     QWidget* createLabel(QWidget* parent) override;
     void setValue(const QVariant& value, bool mixed) override;
     bool isEditing() const override;
@@ -96,6 +101,7 @@ public:
     void attachScrubLabel(ScrubLabel* label);
 private:
     ScrubSpinBox* _spin { nullptr };
+    bool _component { false };
     bool _scrubbing { false };
     double _scrubStart { 0.0 };
     double _scrubAccumulated { 0.0 };

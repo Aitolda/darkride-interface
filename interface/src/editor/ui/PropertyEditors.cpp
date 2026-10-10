@@ -104,6 +104,18 @@ void ScrubSpinBox::showMixed() {
     lineEdit()->setText(MIXED);
 }
 
+QSize ScrubSpinBox::sizeHint() const {
+    QSize size = QDoubleSpinBox::sizeHint();
+    size.setWidth(72);
+    return size;
+}
+
+QSize ScrubSpinBox::minimumSizeHint() const {
+    QSize size = QDoubleSpinBox::minimumSizeHint();
+    size.setWidth(44);
+    return size;
+}
+
 void ScrubSpinBox::focusInEvent(QFocusEvent* event) {
     if (_mixed) {
         _mixed = false;
@@ -118,7 +130,11 @@ PropertyEditor::PropertyEditor(const PropertySpec& spec, QWidget* parent) : QWid
 }
 
 QWidget* PropertyEditor::createLabel(QWidget* parent) {
-    return new QLabel(_spec.label, parent);
+    // vector rows carry their unit on the label, since their fields are too small for a suffix
+    bool vector = _spec.kind == PropertyKind::Vec2 || _spec.kind == PropertyKind::Vec3 || _spec.kind == PropertyKind::Euler
+        || _spec.kind == PropertyKind::Polar || _spec.kind == PropertyKind::Rect;
+    QString text = (vector && !_spec.unit.isEmpty()) ? _spec.label + " (" + _spec.unit + ")" : _spec.label;
+    return new QLabel(text, parent);
 }
 
 PropertyEditor* PropertyEditor::create(const PropertySpec& spec, QWidget* parent) {
@@ -149,17 +165,18 @@ PropertyEditor* PropertyEditor::create(const PropertySpec& spec, QWidget* parent
 
 // --- NumberEditor -------------------------------------------------------------------------------
 
-NumberEditor::NumberEditor(const PropertySpec& spec, QWidget* parent) : PropertyEditor(spec, parent) {
+NumberEditor::NumberEditor(const PropertySpec& spec, QWidget* parent, bool component) : PropertyEditor(spec, parent), _component(component) {
     auto layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     _spin = new ScrubSpinBox(this);
     _spin->setDecimals(spec.kind == PropertyKind::Int ? 0 : spec.decimals);
     _spin->setRange(spec.min <= -HUGE_RANGE ? -HUGE_RANGE : spec.min, spec.max >= HUGE_RANGE ? HUGE_RANGE : spec.max);
     _spin->setSingleStep(spec.step);
-    if (!spec.unit.isEmpty()) {
+    if (!spec.unit.isEmpty() && !_component) {
         _spin->setSuffix(" " + spec.unit);
     }
     _spin->setEnabled(!spec.readOnly);
+    _spin->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     layout->addWidget(_spin);
     connect(_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
         if (!_updating && !_scrubbing) {
@@ -224,7 +241,8 @@ VectorEditor::VectorEditor(const PropertySpec& spec, QWidget* parent) : Property
         PropertySpec component = spec;
         component.label = text;
         component.kind = spec.kind == PropertyKind::Rect ? PropertyKind::Int : PropertyKind::Float;
-        auto editor = new NumberEditor(component, this);
+        component.decimals = std::min(spec.decimals, 3);
+        auto editor = new NumberEditor(component, this, true);
         auto label = new ScrubLabel(text, this);
         label->setObjectName("EditorComponentLabel");
         editor->attachScrubLabel(label);
