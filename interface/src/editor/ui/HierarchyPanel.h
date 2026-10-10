@@ -37,6 +37,8 @@ public:
 signals:
     void selectionChangedByUser(const QList<QUuid>& ids);
     void frameRequested(const QUuid& id);
+    // a right click in the tree, after the row under it joined the selection
+    void contextMenuRequested(const QPoint& globalPos);
 
 private:
     QList<QUuid> selectedIds() const;

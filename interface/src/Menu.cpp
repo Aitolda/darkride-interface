@@ -40,6 +40,8 @@
 #include "avatar/AvatarPackager.h"
 #include "AvatarBookmarks.h"
 #include "editor/Editor.h"
+#include "editor/EditorCreate.h"
+#include <QtCore/QHash>
 #include "MainWindow.h"
 #include "render/DrawStatus.h"
 #include "scripting/MenuScriptingInterface.h"
@@ -247,24 +249,50 @@ Menu::Menu() {
 
     buildMenu->addSeparator();
 
-    // Build > Undo, Redo, Duplicate, Frame Selected: only while build mode is on
+    // Build > Create, Undo, Redo, ...: only while build mode is on (the editor enables them)
     {
         auto editor = DependencyManager::get<Editor>();
-        QList<QAction*> buildActions = {
-            addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildUndo, Qt::CTRL | Qt::Key_Z,
-                editor.data(), SLOT(undo())),
-            addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildRedo, Qt::CTRL | Qt::SHIFT | Qt::Key_Z,
-                editor.data(), SLOT(redo())),
-            addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildDuplicate, Qt::CTRL | Qt::Key_D,
-                editor.data(), SLOT(duplicateSelection())),
-            addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildFrame, 0,
-                editor.data(), SLOT(frameSelection())),
-            addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildResetPanels, 0,
-                editor.data(), SLOT(resetLayout()))
-        };
-        for (auto action : buildActions) {
-            action->setEnabled(false);
+
+        // Build > Create: every entity kind in the editor's catalogue, grouped as it says
+        MenuWrapper* createMenu = buildMenu->addMenu("Create");
+        QHash<QString, MenuWrapper*> groups;
+        for (const auto& item : EditorCreate::items()) {
+            MenuWrapper* target = createMenu;
+            if (!item.group.isEmpty()) {
+                if (!groups.contains(item.group)) {
+                    if (item.separatorBefore) {
+                        createMenu->addSeparator();
+                    }
+                    groups[item.group] = createMenu->addMenu(item.group);
+                }
+                target = groups[item.group];
+            } else if (item.separatorBefore) {
+                createMenu->addSeparator();
+            }
+            QAction* action = addActionToQMenuAndActionHash(target, item.label, 0, editor.data(), SLOT(createFromMenu()));
+            action->setData(item.key);
+            editor->addMenuAction(action);
         }
+        buildMenu->addSeparator();
+
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildUndo, Qt::CTRL | Qt::Key_Z,
+            editor.data(), SLOT(undo())));
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildRedo, Qt::CTRL | Qt::SHIFT | Qt::Key_Z,
+            editor.data(), SLOT(redo())));
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildDuplicate, Qt::CTRL | Qt::Key_D,
+            editor.data(), SLOT(duplicateSelection())));
+        buildMenu->addSeparator();
+        // F, Shift+F and Option+Shift+F in the viewport and the Hierarchy; no global shortcuts, so
+        // typing in chat never fires them
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildFrame, 0,
+            editor.data(), SLOT(frameSelection())));
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildGoTo, 0,
+            editor.data(), SLOT(goToSelection())));
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildBringHere, 0,
+            editor.data(), SLOT(bringSelectionHere())));
+        buildMenu->addSeparator();
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildResetPanels, 0,
+            editor.data(), SLOT(resetLayout())));
     }
 
     //TODO: Remove Navigation menu when these functions are included in GoTo menu

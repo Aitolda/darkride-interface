@@ -57,6 +57,15 @@ HierarchyPanel::HierarchyPanel(QWidget* parent) : QDockWidget("Hierarchy", paren
             emit frameRequested(id);
         }
     });
+    _tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(_tree, &QTreeView::customContextMenuRequested, this, [this](const QPoint& pos) {
+        // a right click on a row outside the selection selects that row first, as Unity does
+        QModelIndex index = _tree->indexAt(pos);
+        if (index.isValid() && !_tree->selectionModel()->isSelected(index)) {
+            _tree->setCurrentIndex(index);
+        }
+        emit contextMenuRequested(_tree->viewport()->mapToGlobal(pos));
+    });
 
     layout->addWidget(_search);
     layout->addWidget(_tree, 1);

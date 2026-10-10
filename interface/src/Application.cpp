@@ -5038,6 +5038,12 @@ void Application::wheelEvent(QWheelEvent* event) const {
 }
 
 void Application::dropEvent(QDropEvent *event) {
+    // in build mode a dropped model or image lands in the world where it was dropped
+    auto editor = DependencyManager::get<Editor>();
+    if (editor && editor->isActive() && editor->handleDrop(event)) {
+        event->acceptProposedAction();
+        return;
+    }
     const QMimeData* mimeData = event->mimeData();
     for (auto& url : mimeData->urls()) {
         QString urlString = url.toString();
@@ -5703,7 +5709,7 @@ void Application::init() {
     ShapeEntityItem::setShapeInfoCalulator(ShapeEntityItem::ShapeInfoCalculator(&shapeInfoCalculator));
 
     getEntities()->init();
-    getEntities()->setEntityLoadingPriorityFunction([this](const EntityItem& item) {
+    getEntities()->setEntityLoadingPriorityFunction([this, editor = DependencyManager::get<Editor>()](const EntityItem& item) {
         auto dims = item.getScaledDimensions();
         auto maxSize = glm::compMax(dims);
 
@@ -5712,6 +5718,10 @@ void Application::init() {
         }
 
         auto distance = glm::distance(getMyAvatar()->getWorldPosition(), item.getWorldPosition());
+        // in build mode the camera roams far from the avatar: what it looks at loads first
+        if (editor && editor->isActive()) {
+            distance = std::min(distance, glm::distance(_myCamera.getPosition(), item.getWorldPosition()));
+        }
         return atan2(maxSize, distance);
     });
 

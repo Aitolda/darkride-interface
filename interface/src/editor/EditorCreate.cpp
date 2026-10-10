@@ -1,0 +1,302 @@
+//
+//  EditorCreate.cpp
+//  interface/src/editor
+//
+//  Distributed under the Apache License, Version 2.0.
+//  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
+//
+
+#include "EditorCreate.h"
+
+#include <QtCore/QFile>
+#include <QtCore/QFileInfo>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
+#include <QtCore/QMimeDatabase>
+#include <QtCore/QRegularExpression>
+#include <QtNetwork/QHttpMultiPart>
+#include <QtNetwork/QHttpPart>
+#include <QtNetwork/QNetworkReply>
+#include <QtNetwork/QNetworkRequest>
+#include <glm/gtc/constants.hpp>
+#include <glm/gtx/quaternion.hpp>
+
+#include <AccountManager.h>
+#include <GLMHelpers.h>
+#include <NetworkAccessManager.h>
+#include <ShapeInfo.h>
+
+#include "InterfaceLogging.h"
+
+namespace {
+    const glm::u8vec3 SHAPE_COLOR { 190, 190, 190 };       // Unity's default material, more or less
+    const glm::u8vec3 WHITE { 255, 255, 255 };
+    const glm::u8vec3 BLACK { 0, 0, 0 };
+    const glm::vec3 UNIT_DIMENSIONS { 1.0f };
+    const glm::vec3 PANEL_DIMENSIONS { 1.0f, 1.0f, 0.01f };
+    const QString DEFAULT_IMAGE = "qrc:///images/empty-image-entity.png";
+    const QString DEFAULT_PARTICLE = "qrc:///images/wispy-smoke.png";
+    const QString DEFAULT_WEB_PAGE = "https://vr.darkride.ai";
+    const QString FILES_API_PATH = "/api/user/files";
+
+    glm::quat facing(float cameraYaw) {
+        // a panel's visible face is +Z: with the camera's yaw it looks back at the camera
+        return glm::angleAxis(cameraYaw, Vectors::UP);
+    }
+
+    EntityItemProperties shape(const QString& shapeName, const glm::vec3& position) {
+        EntityItemProperties p;
+        p.setType(EntityTypes::Shape);
+        p.setName(shapeName);
+        p.setShape(shapeName);
+        p.setColor(SHAPE_COLOR);
+        p.setDimensions(UNIT_DIMENSIONS);
+        p.setPosition(position);
+        return p;
+    }
+
+    QString safeFileName(const QString& name) {
+        QString s = name;
+        s.replace(QRegularExpression("[^A-Za-z0-9._-]+"), "_");
+        return s;
+    }
+}
+
+const QVector<EditorCreate::Item>& EditorCreate::items() {
+    static const QVector<Item> ITEMS {
+        { "model", "Model…", "", EntityTypes::Model },
+        { "cube", "Cube", "Shape", EntityTypes::Shape, true },
+        { "sphere", "Sphere", "Shape", EntityTypes::Shape },
+        { "cylinder", "Cylinder", "Shape", EntityTypes::Shape },
+        { "cone", "Cone", "Shape", EntityTypes::Shape },
+        { "quad", "Quad", "Shape", EntityTypes::Shape },
+        { "circle", "Circle", "Shape", EntityTypes::Shape },
+        { "hexagon", "Hexagon", "Shape", EntityTypes::Shape },
+        { "octahedron", "Octahedron", "Shape", EntityTypes::Shape },
+        { "icosahedron", "Icosahedron", "Shape", EntityTypes::Shape },
+        { "point", "Point Light", "Light", EntityTypes::Light },
+        { "spot", "Spot Light", "Light", EntityTypes::Light },
+        { "text", "Text", "", EntityTypes::Text, true },
+        { "image", "Image", "", EntityTypes::Image },
+        { "web", "Web Page", "", EntityTypes::Web },
+        { "zone", "Zone", "", EntityTypes::Zone },
+        { "particles", "Particles", "", EntityTypes::ParticleEffect },
+        { "material", "Material", "", EntityTypes::Material },
+        { "grid", "Grid", "", EntityTypes::Grid },
+    };
+    return ITEMS;
+}
+
+const EditorCreate::Item* EditorCreate::item(const QString& key) {
+    for (const auto& item : items()) {
+        if (item.key == key) {
+            return &item;
+        }
+    }
+    return nullptr;
+}
+
+EntityItemProperties EditorCreate::properties(const QString& key, const glm::vec3& position, float cameraYaw) {
+    if (key == "cube") { return shape("Cube", position); }
+    if (key == "sphere") { return shape("Sphere", position); }
+    if (key == "cylinder") { return shape("Cylinder", position); }
+    if (key == "cone") { return shape("Cone", position); }
+    if (key == "hexagon") { return shape("Hexagon", position); }
+    if (key == "octahedron") { return shape("Octahedron", position); }
+    if (key == "icosahedron") { return shape("Icosahedron", position); }
+    if (key == "quad" || key == "circle") {
+        auto p = shape(key == "quad" ? "Quad" : "Circle", position);
+        p.setDimensions(PANEL_DIMENSIONS);
+        p.setRotation(facing(cameraYaw));
+        return p;
+    }
+
+    EntityItemProperties p;
+    p.setPosition(position);
+    if (key == "point" || key == "spot") {
+        p.setType(EntityTypes::Light);
+        p.setName(key == "spot" ? "Spot Light" : "Point Light");
+        p.setDimensions(glm::vec3(20.0f));   // the light's reach
+        p.setColor(WHITE);
+        p.setIntensity(5.0f);
+        p.setFalloffRadius(1.0f);
+        p.setIsSpotlight(key == "spot");
+        p.setExponent(1.0f);
+        p.setCutoff(75.0f);
+        if (key == "spot") {
+            p.setRotation(facing(cameraYaw) * glm::angleAxis(-glm::half_pi<float>(), Vectors::RIGHT));   // down
+        }
+    } else if (key == "text") {
+        p.setType(EntityTypes::Text);
+        p.setName("Text");
+        p.setText("Text");
+        p.setDimensions(glm::vec3(0.65f, 0.3f, 0.01f));
+        p.setLineHeight(0.06f);
+        p.setTextColor(WHITE);
+        p.setBackgroundColor(BLACK);
+        p.setRotation(facing(cameraYaw));
+    } else if (key == "image") {
+        p = imageProperties(QUrl(DEFAULT_IMAGE), position, cameraYaw);
+        p.setName("Image");
+    } else if (key == "web") {
+        p.setType(EntityTypes::Web);
+        p.setName("Web Page");
+        p.setSourceUrl(DEFAULT_WEB_PAGE);
+        p.setDimensions(glm::vec3(1.6f, 0.9f, 0.01f));
+        p.setDPI(30);
+        p.setMaxFPS(30);
+        p.setRotation(facing(cameraYaw));
+    } else if (key == "zone") {
+        p.setType(EntityTypes::Zone);
+        p.setName("Zone");
+        p.setDimensions(glm::vec3(10.0f));
+        p.setShapeType(SHAPE_TYPE_BOX);
+    } else if (key == "particles") {
+        p.setType(EntityTypes::ParticleEffect);
+        p.setName("Particles");
+        p.setDimensions(UNIT_DIMENSIONS);
+        p.setTextures(DEFAULT_PARTICLE);
+        p.setLifespan(1.5f);
+        p.setMaxParticles(10);
+        p.setEmitRate(5.5f);
+        p.setEmitSpeed(0.0f);
+        p.setEmitDimensions(glm::vec3(0.0f));
+        p.setEmitterShouldTrail(true);
+        p.setParticleRadius(0.25f);
+        p.setColor(WHITE);
+        p.setAlpha(0.0f);
+        p.setAlphaStart(1.0f);
+        p.setEmitAcceleration(glm::vec3(0.0f, 2.5f, 0.0f));
+        p.setPolarFinish(glm::pi<float>());
+        p.setAzimuthStart(-glm::pi<float>());
+        p.setAzimuthFinish(glm::pi<float>());
+    } else if (key == "material") {
+        p.setType(EntityTypes::Material);
+        p.setName("Material");
+        p.setDimensions(glm::vec3(0.1f));
+        p.setMaterialURL("materialData");
+        p.setMaterialData("{\"materials\":{\"albedo\":[0.8,0.8,0.8],\"roughness\":0.9,\"metallic\":0.0}}");
+        p.setPriority(1);
+    } else if (key == "grid") {
+        p.setType(EntityTypes::Grid);
+        p.setName("Grid");
+        p.setDimensions(glm::vec3(10.0f, 10.0f, 0.01f));
+        p.setColor(WHITE);
+        p.setFollowCamera(false);
+        p.setMajorGridEvery(5);
+        p.setMinorGridEvery(1.0f);
+        p.setRotation(glm::angleAxis(-glm::half_pi<float>(), Vectors::RIGHT));   // flat on the ground
+    }
+    return p;
+}
+
+EntityItemProperties EditorCreate::modelProperties(const QUrl& url, const glm::vec3& position) {
+    EntityItemProperties p;
+    p.setType(EntityTypes::Model);
+    QString name = QFileInfo(url.path()).completeBaseName();
+    p.setName(name.isEmpty() ? "Model" : name);
+    p.setModelURL(url.toString());
+    p.setDimensions(UNIT_DIMENSIONS);   // until the model loads and reports its own
+    p.setShapeType(SHAPE_TYPE_NONE);
+    p.setPosition(position);
+    return p;
+}
+
+EntityItemProperties EditorCreate::imageProperties(const QUrl& url, const glm::vec3& position, float cameraYaw) {
+    EntityItemProperties p;
+    p.setType(EntityTypes::Image);
+    QString name = QFileInfo(url.path()).completeBaseName();
+    p.setName(name.isEmpty() ? "Image" : name);
+    p.setImageURL(url.toString());
+    p.setDimensions(PANEL_DIMENSIONS);
+    p.setKeepAspectRatio(true);
+    p.setEmissive(true);
+    p.setCollisionless(true);
+    p.setPosition(position);
+    p.setRotation(facing(cameraYaw));
+    return p;
+}
+
+float EditorCreate::lift(const EntityItemProperties& properties) {
+    switch (properties.getType()) {
+        case EntityTypes::Light: return 1.0f;
+        case EntityTypes::Material: return 0.0f;
+        case EntityTypes::Grid: return 0.02f;
+        default: return properties.getDimensions().y * 0.5f;   // resting on the surface
+    }
+}
+
+bool EditorCreate::isModelFile(const QString& name) {
+    static const QStringList EXTENSIONS { "glb", "gltf", "fbx", "obj" };
+    return EXTENSIONS.contains(QFileInfo(name).suffix().toLower());
+}
+
+bool EditorCreate::isImageFile(const QString& name) {
+    static const QStringList EXTENSIONS { "png", "jpg", "jpeg", "gif", "webp", "bmp" };
+    return EXTENSIONS.contains(QFileInfo(name).suffix().toLower());
+}
+
+// --- the upload -----------------------------------------------------------------------------------
+
+EditorUpload::EditorUpload(QObject* parent) : QObject(parent) {
+}
+
+bool EditorUpload::start(const QString& localPath, const QString& remoteFolder, QString& error) {
+    auto accountManager = DependencyManager::get<AccountManager>();
+    if (!accountManager->isLoggedIn()) {
+        error = "you are not logged in";
+        return false;
+    }
+    auto file = new QFile(localPath);
+    if (!file->open(QIODevice::ReadOnly)) {
+        error = "cannot read " + localPath;
+        delete file;
+        return false;
+    }
+    _fileName = safeFileName(QFileInfo(localPath).fileName());
+    QString remotePath = remoteFolder + "/" + _fileName;
+
+    // the server reads the path from the form before it streams the file, so the path part goes first
+    auto multiPart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
+    QHttpPart pathPart;
+    pathPart.setHeader(QNetworkRequest::ContentDispositionHeader, QVariant("form-data; name=\"path\""));
+    pathPart.setBody(remotePath.toUtf8());
+    QHttpPart filePart;
+    filePart.setHeader(QNetworkRequest::ContentDispositionHeader,
+        QVariant("form-data; name=\"file\"; filename=\"" + _fileName + "\""));
+    filePart.setHeader(QNetworkRequest::ContentTypeHeader,
+        QVariant(QMimeDatabase().mimeTypeForFile(localPath).name()));
+    filePart.setBodyDevice(file);
+    file->setParent(multiPart);
+    multiPart->append(pathPart);
+    multiPart->append(filePart);
+
+    QNetworkRequest request = accountManager->createRequest(FILES_API_PATH, AccountManagerAuth::Required);
+    if (request.url().isEmpty()) {
+        error = "no access token";
+        delete multiPart;
+        return false;
+    }
+    auto reply = NetworkAccessManager::getInstance().put(request, multiPart);
+    multiPart->setParent(reply);
+    connect(reply, &QNetworkReply::uploadProgress, this, &EditorUpload::progress);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, remotePath] {
+        reply->deleteLater();
+        QByteArray body = reply->readAll();
+        if (reply->error() != QNetworkReply::NoError) {
+            QString detail = QJsonDocument::fromJson(body).object().value("message").toString();
+            qCWarning(interfaceapp) << "editor upload failed" << remotePath << reply->errorString() << detail;
+            emit failed(detail.isEmpty() ? reply->errorString() : detail);
+            return;
+        }
+        QString url = QJsonDocument::fromJson(body).object().value("url").toString();
+        if (url.isEmpty()) {
+            qCWarning(interfaceapp) << "editor upload: no url in the reply for" << remotePath << body.left(200);
+            emit failed("the server did not return a URL");
+            return;
+        }
+        qCDebug(interfaceapp) << "editor upload done" << remotePath << "->" << url;
+        emit finished(url);
+    });
+    return true;
+}

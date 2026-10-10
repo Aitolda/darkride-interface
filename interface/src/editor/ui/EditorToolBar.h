@@ -16,6 +16,9 @@
 
 class QAction;
 class QActionGroup;
+class QLabel;
+class QMenu;
+class QToolButton;
 
 class EditorToolBar : public QToolBar {
     Q_OBJECT
@@ -29,6 +32,10 @@ public:
     void setGridChecked(bool checked);
     void setLocalSpace(bool local);
     void setPivotMode(bool pivot);
+    // the Create button's menu
+    void setCreateMenu(QMenu* menu);
+    // a short note at the right (an upload's progress); empty clears it
+    void setStatus(const QString& text);
 
 signals:
     void toolChanged(Tool tool);
@@ -46,7 +53,10 @@ private:
     QAction* _spaceAction { nullptr };
     QAction* _pivotAction { nullptr };
     QAction* _snapAction { nullptr };
+    QAction* _spacerAction { nullptr };
     QAction* _gridAction { nullptr };
+    QToolButton* _createButton { nullptr };
+    QLabel* _status { nullptr };
 };
 
 #endif // hifi_EditorToolBar_h

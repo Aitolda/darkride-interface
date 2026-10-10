@@ -10,7 +10,10 @@
 
 #include <QtWidgets/QAction>
 #include <QtWidgets/QActionGroup>
+#include <QtWidgets/QLabel>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QSizePolicy>
+#include <QtWidgets/QToolButton>
 #include <QtWidgets/QWidget>
 
 EditorToolBar::EditorToolBar(QWidget* parent) : QToolBar("Build", parent) {
@@ -54,7 +57,10 @@ EditorToolBar::EditorToolBar(QWidget* parent) : QToolBar("Build", parent) {
 
     auto spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    addWidget(spacer);
+    _spacerAction = addWidget(spacer);
+    _status = new QLabel(this);
+    _status->setObjectName("EditorStatus");
+    addWidget(_status);
 
     _gridAction = addAction("Grid");
     _gridAction->setCheckable(true);
@@ -65,6 +71,22 @@ EditorToolBar::EditorToolBar(QWidget* parent) : QToolBar("Build", parent) {
     auto exitAction = addAction("Exit Build Mode");
     exitAction->setToolTip("Back to your avatar (Cmd+B)");
     connect(exitAction, &QAction::triggered, this, &EditorToolBar::exitRequested);
+}
+
+void EditorToolBar::setCreateMenu(QMenu* menu) {
+    if (!_createButton) {
+        insertSeparator(_spacerAction);
+        _createButton = new QToolButton(this);
+        _createButton->setText("Create ▾");
+        _createButton->setToolTip("Add an entity in the middle of the view");
+        _createButton->setPopupMode(QToolButton::InstantPopup);
+        insertWidget(_spacerAction, _createButton);
+    }
+    _createButton->setMenu(menu);
+}
+
+void EditorToolBar::setStatus(const QString& text) {
+    _status->setText(text);
 }
 
 QAction* EditorToolBar::addTool(const QString& text, const QString& shortcutHint, Tool tool) {

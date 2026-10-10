@@ -179,3 +179,14 @@ QMainWindow::separator {
 QMainWindow::separator:hover {
     background: #2c5d87;
 }
+
+/* the Create button and the status note on the build toolbar */
+QToolBar#EditorToolBar QToolButton::menu-indicator {
+    image: none;
+    width: 0;
+}
+QToolBar#EditorToolBar QLabel#EditorStatus {
+    color: #9a9a9a;
+    font-size: 12px;
+    padding: 0 8px;
+}

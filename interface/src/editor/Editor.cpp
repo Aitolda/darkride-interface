@@ -12,7 +12,10 @@
 #include <cmath>
 
 #include <QtCore/QFile>
+#include <QtCore/QMimeData>
+#include <QtCore/QUrl>
 #include <QtGui/QCursor>
+#include <QtGui/QDropEvent>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QMouseEvent>
@@ -21,7 +24,9 @@
 #include <QtWidgets/QAbstractSpinBox>
 #include <QtWidgets/QAction>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QInputDialog>
 #include <QtWidgets/QLineEdit>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QTextEdit>
 #include <QtWidgets/QTreeView>
@@ -43,6 +48,9 @@
 #include <ViewFrustum.h>
 
 #include "Application.h"
+#include "avatar/AvatarManager.h"
+#include "avatar/MyAvatar.h"
+#include "EditorCreate.h"
 #include "EntityTreeModel.h"
 #include "InterfaceLogging.h"
 #include "Menu.h"
@@ -61,6 +69,11 @@ namespace {
     const int SCALE_EDIT_INTERVAL_MS = 100; // scale edits are heavier for the server
     const int PRUNE_EVERY_FRAMES = 30;      // how often the selection drops entities that are gone
     const float PASTE_FALLBACK_DISTANCE = 3.0f;   // in front of the camera, when the cursor points at nothing
+    const float MAX_PLACEMENT_DISTANCE = 200.0f;  // a grid-plane hit farther than this is not a useful spot
+    const float GO_TO_STANDOFF = 1.5f;            // the gap between the avatar and what it went to
+    const int MODEL_DIMENSIONS_POLL_MS = 500;     // how often a new model is asked for its size
+    const int MODEL_DIMENSIONS_POLL_LIMIT = 60;   // and for how long (30 s)
+    const int REFRAME_FRAMES = 180;               // how long after Shift+F a camera reset re-frames
     const float MIN_DIMENSION = 0.001f;
     const float BUILD_MODE_FOV = 90.0f;     // the client's units (its default is 120); less edge stretch on the gizmos
 
@@ -117,6 +130,8 @@ Editor::Editor() : _selection(this), _undo(this) {
     connect(&_selection, &EditorSelection::changed, this, &Editor::onSelectionChanged);
     _inspectorRefresh.setInterval(INSPECTOR_REFRESH_MS);
     connect(&_inspectorRefresh, &QTimer::timeout, this, [this] { refreshInspector(false); });
+    _modelDimensionsTimer.setInterval(MODEL_DIMENSIONS_POLL_MS);
+    connect(&_modelDimensionsTimer, &QTimer::timeout, this, &Editor::pollModelDimensions);
 }
 
 // --- build mode on and off ----------------------------------------------------------------------
@@ -241,15 +256,17 @@ void Editor::setPivotMode(bool pivot) {
 }
 
 void Editor::setMenuActionsEnabled(bool enabled) {
-    auto menu = Menu::getInstance();
-    for (const auto& name : { MenuOption::BuildUndo, MenuOption::BuildRedo, MenuOption::BuildDuplicate,
-                              MenuOption::BuildFrame, MenuOption::BuildResetPanels }) {
-        auto action = menu->getActionForOption(name);
+    for (const auto& action : _menuActions) {
         if (action) {
             action->setEnabled(enabled);
         }
-        qCDebug(interfaceapp) << "editor menu action" << name << (action ? (enabled ? "enabled" : "disabled") : "NOT FOUND")
-            << (action ? action->shortcut().toString() : QString());
+    }
+}
+
+void Editor::addMenuAction(QAction* action) {
+    if (action) {
+        action->setEnabled(_active);
+        _menuActions << action;
     }
 }
 
@@ -286,6 +303,7 @@ void Editor::createPanels() {
         _selection.set({ id });
         frameSelection();
     });
+    connect(_hierarchy, &HierarchyPanel::contextMenuRequested, this, &Editor::showHierarchyMenu);
 
     _inspector = new InspectorPanel(window);
     connect(_inspector, &InspectorPanel::editBegan, this, &Editor::onInspectorEditBegan);
@@ -306,6 +324,7 @@ void Editor::createPanels() {
     connect(_toolBar, &EditorToolBar::localSpaceToggled, this, &Editor::setLocalSpace);
     connect(_toolBar, &EditorToolBar::pivotToggled, this, &Editor::setPivotMode);
     connect(_toolBar, &EditorToolBar::snapToggled, this, [this](bool on) { _snapAlways = on; });
+    _toolBar->setCreateMenu(buildCreateMenu(_toolBar));
 
     window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
     window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
@@ -372,6 +391,13 @@ void Editor::update(float deltaTime) {
     if (qApp->getCamera().getMode() != CAMERA_MODE_INDEPENDENT) {
         _camera.enter();
         _axesValid = false;
+        if (_reframePending) {
+            _camera.frame(_reframeBox);
+            _reframePending = false;
+        }
+    }
+    if (_reframePending && --_reframeFrames <= 0) {
+        _reframePending = false;
     }
     _camera.update(deltaTime);
     updateAxes();
@@ -1015,6 +1041,336 @@ void Editor::paste() {
     }
 }
 
+// --- go to, bring here --------------------------------------------------------------------------
+
+void Editor::goToSelection() {
+    AABox box;
+    if (!_active || !_selection.bounds(box)) {
+        return;
+    }
+    _camera.frame(box);
+    updateAxes();
+    // the avatar lands a little way off the selection on the camera's side, facing it; the
+    // teleport also streams the surroundings in, which the camera alone does not
+    glm::vec3 center = box.calcCenter();
+    float radius = std::max(0.5f, glm::length(box.getScale()) * 0.5f);
+    glm::vec3 toCamera = _camera.position() - center;
+    toCamera.y = 0.0f;
+    if (glm::length(toCamera) < 1.0e-3f) {
+        toCamera = Vectors::UNIT_Z;
+    }
+    toCamera = glm::normalize(toCamera);
+    auto avatar = DependencyManager::get<AvatarManager>()->getMyAvatar();
+    glm::vec3 stand = center + toCamera * (radius + GO_TO_STANDOFF);
+    stand.y = box.getCorner().y + avatar->getHeight() * 0.5f;   // feet level with the selection's bottom
+    glm::vec3 forward = -toCamera;
+    glm::quat orientation = glm::angleAxis(std::atan2(-forward.x, -forward.z), Vectors::UP);
+    avatar->goToLocation(stand, true, orientation, false, true);
+    // the teleport may put the camera back on the avatar; when it does, frame again
+    _reframePending = true;
+    _reframeBox = box;
+    _reframeFrames = REFRAME_FRAMES;
+}
+
+void Editor::bringSelectionHere() {
+    AABox box;
+    if (!_active || !_selection.bounds(box) || _gizmo.isDragging()) {
+        return;
+    }
+    auto avatar = DependencyManager::get<AvatarManager>()->getMyAvatar();
+    glm::vec3 feet = avatar->getWorldFeetPosition();
+    glm::vec3 forward = avatar->getWorldOrientation() * Vectors::FRONT;
+    forward.y = 0.0f;
+    if (glm::length(forward) < 1.0e-3f) {
+        forward = Vectors::FRONT;
+    }
+    forward = glm::normalize(forward);
+    glm::vec3 center = box.calcCenter();
+    float radius = std::max(0.5f, glm::length(box.getScale()) * 0.5f);
+    // the selection lands in front of the avatar, its bottom at the avatar's feet
+    glm::vec3 target = feet + forward * (radius + GO_TO_STANDOFF);
+    target.y = feet.y + (center.y - box.getCorner().y);
+    glm::vec3 delta = target - center;
+
+    auto tree = entityTree();
+    if (!tree) {
+        return;
+    }
+    QList<QUuid> ids;
+    QVector<EntityItemProperties> before, after;
+    tree->withReadLock([&] {
+        for (const auto& id : _selection.topLevel()) {
+            auto entity = tree->findEntityByEntityItemID(id);
+            if (!entity || entity->getLocked()) {
+                continue;
+            }
+            EntityItemProperties was, now;
+            was.setPosition(entity->getWorldPosition());
+            now.setPosition(entity->getWorldPosition() + delta);
+            ids << id;
+            before << was;
+            after << now;
+        }
+    });
+    if (ids.isEmpty()) {
+        return;
+    }
+    _undo.pushPropertyEdit("Bring Here", ids, before, after, false);
+    frameSelection();
+}
+
+// --- create -------------------------------------------------------------------------------------
+
+QMenu* Editor::buildCreateMenu(QWidget* parent) {
+    auto menu = new QMenu("Create", parent);
+    QHash<QString, QMenu*> groups;
+    for (const auto& item : EditorCreate::items()) {
+        QMenu* target = menu;
+        if (!item.group.isEmpty()) {
+            if (!groups.contains(item.group)) {
+                if (item.separatorBefore) {
+                    menu->addSeparator();
+                }
+                groups[item.group] = menu->addMenu(item.group);
+            }
+            target = groups[item.group];
+        } else if (item.separatorBefore) {
+            menu->addSeparator();
+        }
+        QString key = item.key;
+        target->addAction(item.label, this, [this, key] { create(key); });
+    }
+    return menu;
+}
+
+void Editor::createFromMenu() {
+    auto action = qobject_cast<QAction*>(sender());
+    if (action) {
+        create(action->data().toString());
+    }
+}
+
+void Editor::create(const QString& key) {
+    if (!_active || _gizmo.isDragging()) {
+        return;
+    }
+    if (key == "model") {
+        createModel();
+        return;
+    }
+    auto item = EditorCreate::item(key);
+    if (!item) {
+        return;
+    }
+    glm::vec3 point = placementPoint();
+    EntityItemProperties properties = EditorCreate::properties(key, point, cameraYaw());
+    if (item->type == EntityTypes::Material && !_selection.isEmpty()) {
+        // a material applies to its parent: the first selected entity
+        properties.setParentID(_selection.topLevel().first());
+        properties.setPosition(glm::vec3(0.0f));
+    }
+    place(properties, "Create " + item->label, point);
+}
+
+void Editor::createModel() {
+    if (!_active) {
+        return;
+    }
+    bool ok = false;
+    QString text = QInputDialog::getText(qApp->getWindow(), "Create Model", "Model URL (.glb, .gltf, .fbx or .obj):",
+        QLineEdit::Normal, QString(), &ok).trimmed();
+    if (!ok || text.isEmpty()) {
+        return;
+    }
+    QUrl url(text);
+    if (!url.isValid() || url.scheme().isEmpty()) {
+        setStatus("Not a URL: " + text);
+        return;
+    }
+    placeModel(url, placementPoint());
+}
+
+glm::vec3 Editor::placementPoint(const QPoint* viewportPos) const {
+    // where a new entity goes: under the given viewport point (a drop), else the middle of the
+    // view; on the surface there, or on the grid plane, or a few metres out
+    auto viewport = qApp->getPrimaryWidget();
+    QPoint local = viewportPos ? *viewportPos : (viewport ? viewport->rect().center() : QPoint());
+    PickRay ray = pickRay(local);
+    auto entities = DependencyManager::get<EntityScriptingInterface>();
+    auto result = entities->evalRayIntersectionVector(ray, worldPickFilter(), QVector<EntityItemID>(), QVector<EntityItemID>());
+    if (result.intersects) {
+        return result.intersection;
+    }
+    if (std::abs(ray.direction.y) > 1.0e-4f) {
+        float t = (_grid.height() - ray.origin.y) / ray.direction.y;
+        if (t > 0.0f && t < MAX_PLACEMENT_DISTANCE) {
+            return ray.origin + ray.direction * t;
+        }
+    }
+    return ray.origin + ray.direction * PASTE_FALLBACK_DISTANCE;
+}
+
+float Editor::cameraYaw() const {
+    glm::vec3 forward = _camera.orientation() * Vectors::FRONT;
+    return std::atan2(-forward.x, -forward.z);
+}
+
+QList<QUuid> Editor::place(EntityItemProperties properties, const QString& text, const glm::vec3& point) {
+    if (properties.getParentID().isNull()) {
+        glm::vec3 position = point + Vectors::UP * EditorCreate::lift(properties);
+        if (snapActive()) {
+            position = snapVector(position, _moveSnap);
+        }
+        properties.setPosition(position);
+    }
+    QList<QUuid> ids = _undo.pushAdd(text, QVector<EntityItemProperties> { properties }, QList<QUuid>());
+    QList<QUuid> created;
+    for (const auto& id : ids) {
+        if (!id.isNull()) {
+            created << id;
+        }
+    }
+    if (!created.isEmpty()) {
+        _selection.set(created);
+        setTool(EditorToolBar::Tool::Move);
+    }
+    return created;
+}
+
+void Editor::placeModel(const QUrl& url, const glm::vec3& point) {
+    for (const auto& id : place(EditorCreate::modelProperties(url, point), "Create Model", point)) {
+        _modelsAwaitingDimensions.insert(id, 0);
+    }
+    if (!_modelsAwaitingDimensions.isEmpty() && !_modelDimensionsTimer.isActive()) {
+        _modelDimensionsTimer.start();
+    }
+}
+
+void Editor::placeImage(const QUrl& url, const glm::vec3& point) {
+    place(EditorCreate::imageProperties(url, point, cameraYaw()), "Create Image", point);
+}
+
+void Editor::pollModelDimensions() {
+    // a new model is a 1 m box until it loads; then it takes its own size, its bottom staying put
+    auto entities = DependencyManager::get<EntityScriptingInterface>();
+    for (auto it = _modelsAwaitingDimensions.begin(); it != _modelsAwaitingDimensions.end();) {
+        EntityItemProperties current = entities->getEntityProperties(it.key());
+        glm::vec3 natural = current.getNaturalDimensions();
+        bool loaded = glm::any(glm::greaterThan(natural, glm::vec3(MIN_DIMENSION)));
+        if (loaded) {
+            natural = glm::max(natural, glm::vec3(MIN_DIMENSION));
+            EntityItemProperties edit;
+            edit.setDimensions(natural);
+            glm::vec3 position = current.getPosition();
+            position.y += (natural.y - current.getDimensions().y) * 0.5f;
+            edit.setPosition(position);
+            entities->editEntity(it.key(), edit);
+        }
+        if (loaded || ++it.value() > MODEL_DIMENSIONS_POLL_LIMIT) {
+            it = _modelsAwaitingDimensions.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (_modelsAwaitingDimensions.isEmpty()) {
+        _modelDimensionsTimer.stop();
+    }
+}
+
+bool Editor::handleDrop(QDropEvent* event) {
+    if (!_active) {
+        return false;
+    }
+    auto mime = event->mimeData();
+    QList<QUrl> urls = mime->urls();
+    if (urls.isEmpty() && mime->hasText()) {
+        QUrl url(mime->text().trimmed());
+        if (url.isValid() && !url.scheme().isEmpty()) {
+            urls << url;
+        }
+    }
+    QPoint pos = event->pos();
+    bool handled = false;
+    for (const auto& url : urls) {
+        QString name = url.fileName();
+        bool model = EditorCreate::isModelFile(name);
+        bool image = EditorCreate::isImageFile(name);
+        if (!model && !image) {
+            continue;
+        }
+        glm::vec3 point = placementPoint(&pos);
+        if (url.isLocalFile()) {
+            beginUpload(url.toLocalFile(), point, image);
+        } else if (image) {
+            placeImage(url, point);
+        } else {
+            placeModel(url, point);
+        }
+        handled = true;
+    }
+    return handled;
+}
+
+void Editor::beginUpload(const QString& localPath, const glm::vec3& point, bool image) {
+    auto upload = new EditorUpload(this);
+    QString error;
+    if (!upload->start(localPath, image ? "/images" : "/models", error)) {
+        setStatus("Upload failed: " + error);
+        qCWarning(interfaceapp) << "editor upload could not start" << localPath << error;
+        upload->deleteLater();
+        return;
+    }
+    ++_uploadsActive;
+    setStatus("Uploading " + upload->fileName() + "…");
+    connect(upload, &EditorUpload::progress, this, [this, upload](qint64 sent, qint64 total) {
+        int percent = total > 0 ? (int)(sent * 100 / total) : 0;
+        setStatus(QString("Uploading %1… %2%").arg(upload->fileName()).arg(percent));
+    });
+    connect(upload, &EditorUpload::finished, this, [this, upload, point, image](const QString& url) {
+        --_uploadsActive;
+        setStatus(_uploadsActive > 0 ? QString("Uploading…") : QString());
+        if (!_active) {
+            setStatus("Uploaded " + url);   // build mode ended meanwhile: the file is up, nothing placed
+        } else if (image) {
+            placeImage(QUrl(url), point);
+        } else {
+            placeModel(QUrl(url), point);
+        }
+        upload->deleteLater();
+    });
+    connect(upload, &EditorUpload::failed, this, [this, upload](const QString& error) {
+        --_uploadsActive;
+        setStatus("Upload failed: " + error);
+        upload->deleteLater();
+    });
+}
+
+void Editor::showHierarchyMenu(const QPoint& globalPos) {
+    QMenu menu;
+    menu.addMenu(buildCreateMenu(&menu));
+    menu.addSeparator();
+    bool any = !_selection.isEmpty();
+    menu.addAction("Frame Selected", this, [this] { frameSelection(); })->setEnabled(any);
+    menu.addAction("Go to Selected", this, [this] { goToSelection(); })->setEnabled(any);
+    menu.addAction("Bring Selected Here", this, [this] { bringSelectionHere(); })->setEnabled(any);
+    menu.addSeparator();
+    menu.addAction("Rename", this, [this] {
+        if (_hierarchy) {
+            auto tree = _hierarchy->treeView();
+            tree->edit(tree->currentIndex());
+        }
+    })->setEnabled(any);
+    menu.addAction("Duplicate", this, [this] { duplicateSelection(); })->setEnabled(any);
+    menu.addAction("Delete", this, [this] { deleteSelection(); })->setEnabled(any);
+    menu.exec(globalPos);
+}
+
+void Editor::setStatus(const QString& text) {
+    if (_toolBar) {
+        _toolBar->setStatus(text);
+    }
+}
+
 // --- input --------------------------------------------------------------------------------------
 
 bool Editor::handleMousePress(QMouseEvent* event) {
@@ -1147,7 +1503,13 @@ bool Editor::handleKeyPress(QKeyEvent* event) {
             _selection.clear();
             return true;
         case Qt::Key_F:
-            frameSelection();
+            if (shift && command) {
+                bringSelectionHere();
+            } else if (shift) {
+                goToSelection();
+            } else {
+                frameSelection();
+            }
             return true;
         case Qt::Key_Q:
             if (!command) { setTool(EditorToolBar::Tool::View); return true; }
@@ -1256,7 +1618,11 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
             if (inTree) { deleteSelection(); return true; }
             break;
         case Qt::Key_F:
-            if (inTree && !command) { frameSelection(); return true; }
+            if (inTree) {
+                if (shift && command) { bringSelectionHere(); return true; }
+                if (shift) { goToSelection(); return true; }
+                if (!command) { frameSelection(); return true; }
+            }
             break;
         default:
             break;

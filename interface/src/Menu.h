@@ -53,8 +53,10 @@ namespace MenuOption {
     const QString BookmarkAvatar = "Bookmark Avatar";
     const QString BookmarkAvatarEntities = "Bookmark Avatar Entities";
     const QString BookmarkLocation = "Bookmark Location";
+    const QString BuildBringHere = "Bring Selected Here";
     const QString BuildDuplicate = "Duplicate";
     const QString BuildFrame = "Frame Selected";
+    const QString BuildGoTo = "Go to Selected";
     const QString BuildGrid = "Show Grid";
     const QString BuildMode = "Build Mode";
     const QString BuildRedo = "Redo";

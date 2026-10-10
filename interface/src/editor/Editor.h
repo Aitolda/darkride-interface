@@ -15,7 +15,9 @@
 
 #include <QtCore/QByteArray>
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QHash>
 #include <QtCore/QList>
+#include <QtCore/QPointer>
 #include <QtCore/QObject>
 #include <QtCore/QPoint>
 #include <QtCore/QRectF>
@@ -28,6 +30,7 @@
 
 #include <glm/gtc/quaternion.hpp>
 
+#include <AABox.h>
 #include <DependencyManager.h>
 #include <EntityItemProperties.h>
 #include <RegisteredMetaTypes.h>
@@ -41,8 +44,12 @@
 #include "EditorUndo.h"
 #include "ui/EditorToolBar.h"
 
+class QAction;
+class QDropEvent;
 class QKeyEvent;
+class QMenu;
 class QMouseEvent;
+class QUrl;
 class QWheelEvent;
 class EntityTreeModel;
 class HierarchyPanel;
@@ -98,6 +105,13 @@ public:
     // the editor's keys when the focus is in one of its panels rather than the viewport
     bool eventFilter(QObject* watched, QEvent* event) override;
 
+    // a Create menu with every entity kind, for the toolbar and context menus
+    QMenu* buildCreateMenu(QWidget* parent);
+    // a file or URL dropped on the viewport: models and images are placed where it landed
+    bool handleDrop(QDropEvent* event);
+    // a Build menu item that only works while build mode is on
+    void addMenuAction(QAction* action);
+
     Q_INVOKABLE void viewFromAxis(int axis, int sign);
 
 public slots:
@@ -113,6 +127,11 @@ public slots:
     // docks the panels back where they started, for a panel that was torn off and lost
     void resetLayout();
     void frameSelection();
+    void goToSelection();           // Shift+F: frame it and take the avatar there
+    void bringSelectionHere();      // Option+Shift+F: move it to the avatar
+    void create(const QString& key);
+    void createModel();             // asks for a URL
+    void createFromMenu();          // the sender's data() is the catalogue key
     void deleteSelection();
     void duplicateSelection();
     void copySelection();
@@ -169,6 +188,17 @@ private:
     bool vertexSnapTarget(const QPoint& viewportPos, glm::vec3& target) const;
     void applyDrag(bool final);
 
+    // creating
+    glm::vec3 placementPoint(const QPoint* viewportPos = nullptr) const;
+    float cameraYaw() const;
+    QList<QUuid> place(EntityItemProperties properties, const QString& text, const glm::vec3& point);
+    void placeModel(const QUrl& url, const glm::vec3& point);
+    void placeImage(const QUrl& url, const glm::vec3& point);
+    void beginUpload(const QString& localPath, const glm::vec3& point, bool image);
+    void pollModelDimensions();
+    void showHierarchyMenu(const QPoint& globalPos);
+    void setStatus(const QString& text);
+
     bool _ready { false };
     bool _active { false };
     bool _gridVisible { true };
@@ -219,6 +249,16 @@ private:
     QString _inspectorEditKey;
     QList<QUuid> _inspectorEditIds;
     QVector<EntityItemProperties> _inspectorBefore;
+
+    // a teleport puts the camera back on the avatar: what Shift+F framed is framed again
+    bool _reframePending { false };
+    AABox _reframeBox;
+    int _reframeFrames { 0 };
+    // a new model is a 1 m box until it loads and reports its size
+    QTimer _modelDimensionsTimer;
+    QHash<QUuid, int> _modelsAwaitingDimensions;   // id -> polls so far
+    QList<QPointer<QAction>> _menuActions;
+    int _uploadsActive { 0 };
 
     bool _panelsCreated { false };
     bool _syncingSelection { false };
