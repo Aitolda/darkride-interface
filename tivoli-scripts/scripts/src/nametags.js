@@ -17,7 +17,7 @@ export function initNametags(showSelf) {
 	function nametagURL(nametag, glyph) {
 		return AccountServices.metaverseServerURL+"/api/user/"+
 			nametag.username+
-			"/nametag?"+ nametag.stamp +
+			"/nametag?"+ (glyph > 0 ? nametag.stamp + "." + (nametag.frameTry || 0) : nametag.stamp) +
 			"&glyph="+ glyph +
 			(nametag.admin?"&admin":"")+
 			(nametag.connection=="friend"?"&friend":"");
@@ -291,7 +291,9 @@ export function initNametags(showSelf) {
 				var failed = (nametag.glyphResources || []).some(function(r) { return r && r.state === 4; });
 				if (failed && nametag.retriedStamp != nametag.stamp) {
 					nametag.retriedStamp = nametag.stamp;    // frames that failed (a jammed server) are asked for
-					updateNametagEntity(nametag);            // once more under a new stamp
+					nametag.frameTry = (nametag.frameTry || 0) + 1;   // once more under new addresses; the
+					nametag.prefetched = null;               // picture showing keeps its own, so it never blanks
+					prefetchGlyphs(nametag);
 				}
 				return;
 			}
