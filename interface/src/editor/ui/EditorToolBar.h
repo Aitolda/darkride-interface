@@ -36,8 +36,12 @@ public:
     void setCreateMenu(QMenu* menu);
     // a short note at the right (an upload's progress); empty clears it
     void setStatus(const QString& text);
+    // the world controls: shown for a world instance, World Edit checked while editing
+    void setWorld(bool instance, bool canEdit, bool editing, bool busy);
 
 signals:
+    void worldEditToggled(bool on);
+    void saveWorldRequested();
     void toolChanged(Tool tool);
     void localSpaceToggled(bool local);
     void pivotToggled(bool pivot);
@@ -54,6 +58,9 @@ private:
     QAction* _pivotAction { nullptr };
     QAction* _snapAction { nullptr };
     QAction* _spacerAction { nullptr };
+    QAction* _worldEditAction { nullptr };
+    QAction* _saveWorldAction { nullptr };
+    QAction* _worldSeparator { nullptr };
     QAction* _gridAction { nullptr };
     QToolButton* _createButton { nullptr };
     QLabel* _status { nullptr };

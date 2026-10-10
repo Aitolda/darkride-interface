@@ -42,6 +42,7 @@
 #include <gl/GLWidget.h>
 #include <GLMHelpers.h>
 #include <MainWindow.h>
+#include <NodeList.h>
 #include <PathUtils.h>
 #include <PickFilter.h>
 #include <SimulationFlags.h>
@@ -51,6 +52,7 @@
 #include "avatar/AvatarManager.h"
 #include "avatar/MyAvatar.h"
 #include "EditorCreate.h"
+#include "EditorWorld.h"
 #include "EntityTreeModel.h"
 #include "InterfaceLogging.h"
 #include "Menu.h"
@@ -133,12 +135,28 @@ Editor::Editor() : _selection(this), _undo(this) {
     connect(&_inspectorRefresh, &QTimer::timeout, this, [this] { refreshInspector(false); });
     _modelDimensionsTimer.setInterval(MODEL_DIMENSIONS_POLL_MS);
     connect(&_modelDimensionsTimer, &QTimer::timeout, this, &Editor::pollModelDimensions);
+    _world = new EditorWorld(this);
+    connect(_world, &EditorWorld::changed, this, &Editor::updateWorldControls);
+    connect(_world, &EditorWorld::message, this, &Editor::setStatus);
 }
 
 // --- build mode on and off ----------------------------------------------------------------------
 
 void Editor::setReady() {
     _ready = true;
+    // the world controls follow the domain: ask again whenever a connection completes, and
+    // say so when the domain grants or withdraws building rights
+    auto nodeList = DependencyManager::get<NodeList>();
+    connect(&nodeList->getDomainHandler(), &DomainHandler::connectedToDomain, this, [this] {
+        if (_active) {
+            _world->refresh();
+        }
+    });
+    connect(nodeList.data(), &NodeList::canRezChanged, this, [this](bool canRez) {
+        if (_active) {
+            setStatus(canRez ? "You can build here now" : "You can no longer build here");
+        }
+    });
     // the client died in build mode last time: give the field of view back
     float stale = _fovBeforeBuild.get();
     if (stale > 0.0f) {
@@ -174,6 +192,8 @@ void Editor::setActive(bool active) {
         refreshInspector(true);
         _inspectorRefresh.start();
         focusViewport();
+        setStatus(QString());
+        _world->refresh();
     } else {
         _inspectorRefresh.stop();
         if (_gizmo.isDragging()) {
@@ -326,6 +346,9 @@ void Editor::createPanels() {
     connect(_toolBar, &EditorToolBar::pivotToggled, this, &Editor::setPivotMode);
     connect(_toolBar, &EditorToolBar::snapToggled, this, [this](bool on) { _snapAlways = on; });
     _toolBar->setCreateMenu(buildCreateMenu(_toolBar));
+    connect(_toolBar, &EditorToolBar::worldEditToggled, this, [this](bool on) { _world->setEditing(on); });
+    connect(_toolBar, &EditorToolBar::saveWorldRequested, this, [this] { _world->save(); });
+    updateWorldControls();
 
     window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
     window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
@@ -1220,7 +1243,9 @@ QList<QUuid> Editor::place(EntityItemProperties properties, const QString& text,
     auto entities = DependencyManager::get<EntityScriptingInterface>();
     if (!entities->canRez() && !entities->canRezTmp()) {
         // the domain says so up front; an instance world is read-only until World Edit is on
-        setStatus("This world is read-only for you: turn on World Edit in Explore to create here");
+        setStatus(_world->isInstance() && _world->canEdit()
+            ? "This instance is read-only until World Edit is on (toolbar, right)"
+            : "You have no building rights in this world");
         qCWarning(interfaceapp) << "editor: no rez rights here, not creating" << text;
         return QList<QUuid>();
     }
@@ -1246,7 +1271,7 @@ QList<QUuid> Editor::place(EntityItemProperties properties, const QString& text,
         QTimer::singleShot(REJECTION_CHECK_MS, this, [this, created, text] {
             EntityItemProperties check;
             if (!EditorUndo::snapshot(created.first(), check)) {
-                setStatus("The world rejected \"" + text + "\": you may not have edit rights here (World Edit in Explore)");
+                setStatus("The world rejected \"" + text + "\": you may not have building rights here (World Edit, toolbar right)");
                 qCWarning(interfaceapp) << "editor: the server removed the new entity" << text << created.first();
             }
         });
@@ -1385,6 +1410,12 @@ void Editor::showHierarchyMenu(const QPoint& globalPos) {
 void Editor::setStatus(const QString& text) {
     if (_toolBar) {
         _toolBar->setStatus(text);
+    }
+}
+
+void Editor::updateWorldControls() {
+    if (_toolBar) {
+        _toolBar->setWorld(_world->isInstance(), _world->canEdit(), _world->isEditing(), _world->isBusy());
     }
 }
 

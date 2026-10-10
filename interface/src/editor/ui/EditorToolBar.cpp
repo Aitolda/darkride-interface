@@ -58,6 +58,18 @@ EditorToolBar::EditorToolBar(QWidget* parent) : QToolBar("Build", parent) {
     auto spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     _spacerAction = addWidget(spacer);
+
+    // a world instance is read-only until World Edit is on; Save World writes it back
+    _worldEditAction = addAction("World Edit");
+    _worldEditAction->setCheckable(true);
+    _worldEditAction->setToolTip("Turn on edit mode in this instance so your changes count");
+    connect(_worldEditAction, &QAction::triggered, this, &EditorToolBar::worldEditToggled);
+    _saveWorldAction = addAction("Save World");
+    _saveWorldAction->setToolTip("Save this instance's entities as the world");
+    connect(_saveWorldAction, &QAction::triggered, this, &EditorToolBar::saveWorldRequested);
+    _worldSeparator = addSeparator();
+    setWorld(false, false, false, false);
+
     _status = new QLabel(this);
     _status->setObjectName("EditorStatus");
     addWidget(_status);
@@ -87,6 +99,18 @@ void EditorToolBar::setCreateMenu(QMenu* menu) {
 
 void EditorToolBar::setStatus(const QString& text) {
     _status->setText(text);
+}
+
+void EditorToolBar::setWorld(bool instance, bool canEdit, bool editing, bool busy) {
+    _worldEditAction->setVisible(instance);
+    _saveWorldAction->setVisible(instance);
+    _worldSeparator->setVisible(instance);
+    _worldEditAction->setEnabled(canEdit && !busy);
+    _saveWorldAction->setEnabled(canEdit && editing && !busy);
+    if (_worldEditAction->isChecked() != editing) {
+        QSignalBlocker blocker(_worldEditAction);
+        _worldEditAction->setChecked(editing);
+    }
 }
 
 QAction* EditorToolBar::addTool(const QString& text, const QString& shortcutHint, Tool tool) {

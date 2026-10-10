@@ -51,6 +51,7 @@ class QMenu;
 class QMouseEvent;
 class QUrl;
 class QWheelEvent;
+class EditorWorld;
 class EntityTreeModel;
 class HierarchyPanel;
 class InspectorPanel;
@@ -259,6 +260,8 @@ private:
     QHash<QUuid, int> _modelsAwaitingDimensions;   // id -> polls so far
     QList<QPointer<QAction>> _menuActions;
     int _uploadsActive { 0 };
+    EditorWorld* _world { nullptr };
+    void updateWorldControls();
 
     bool _panelsCreated { false };
     bool _syncingSelection { false };
