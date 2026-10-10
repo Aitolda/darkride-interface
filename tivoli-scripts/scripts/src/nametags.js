@@ -287,7 +287,14 @@ export function initNametags(showSelf) {
 				Entities.editEntity(nametag.entity, { imageURL: nametagURL(nametag, 0) });
 				return;
 			}
-			if (!glyphsReady(nametag)) return;           // the mark stays until every frame is here
+			if (!glyphsReady(nametag)) {                 // the mark stays until every frame is here;
+				var failed = (nametag.glyphResources || []).some(function(r) { return r && r.state === 4; });
+				if (failed && nametag.retriedStamp != nametag.stamp) {
+					nametag.retriedStamp = nametag.stamp;    // frames that failed (a jammed server) are asked for
+					updateNametagEntity(nametag);            // once more under a new stamp
+				}
+				return;
+			}
 			nametag.glyphStep = ((nametag.glyphStep || 0) + 1) % GLYPH_CYCLE.length;
 			Entities.editEntity(nametag.entity, { imageURL: nametagURL(nametag, GLYPH_CYCLE[nametag.glyphStep]) });
 		});
