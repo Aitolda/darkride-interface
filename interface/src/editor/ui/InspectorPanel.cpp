@@ -35,7 +35,7 @@ InspectorPanel::InspectorPanel(QWidget* parent) : QDockWidget("Inspector", paren
     setObjectName("EditorInspector");
     setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     setFeatures(QDockWidget::DockWidgetClosable);   // fixed in place, see HierarchyPanel
-    setMinimumWidth(280);
+    setMinimumWidth(340);   // room for a label and three vector fields
 
     _scroll = new QScrollArea(this);
     _scroll->setWidgetResizable(true);

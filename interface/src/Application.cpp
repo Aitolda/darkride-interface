@@ -3952,6 +3952,20 @@ void Application::showHelp() {
 }
 
 void Application::resizeEvent(QResizeEvent* event) {
+    // build mode's panels resize the viewport continuously while a splitter is dragged, and every
+    // resize rebuilds the framebuffers under the presenting thread (a crash inside Apple's GL
+    // driver was caught doing exactly that): those resizes coalesce into one, at the drag's end
+    auto editor = DependencyManager::get<Editor>();
+    if (editor && editor->isActive()) {
+        static QTimer* coalesce = nullptr;
+        if (!coalesce) {
+            coalesce = new QTimer(this);
+            coalesce->setSingleShot(true);
+            connect(coalesce, &QTimer::timeout, this, [this] { resizeGL(); });
+        }
+        coalesce->start(150);
+        return;
+    }
     resizeGL();
 }
 
