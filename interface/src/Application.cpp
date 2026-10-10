@@ -3959,6 +3959,18 @@ void Application::resizeEvent(QResizeEvent* event) {
     resizeGL();
 }
 
+// The field-of-view setting is a horizontal angle and the vertical one is derived from the aspect
+// ratio, which runs away on a tall, narrow viewport (build mode's panels) and flips past 180
+// degrees. Build mode keeps the vertical angle at its 16:9 value, so a narrower viewport crops
+// the sides instead, as Unity's scene view does.
+static float verticalFieldOfView(float horizontalFov, float aspectRatio) {
+    auto editor = DependencyManager::get<Editor>();
+    if (editor && editor->isActive()) {
+        return horizontalFov / (16.0f / 9.0f);
+    }
+    return horizontalFov / aspectRatio;
+}
+
 void Application::resizeGL() {
     PROFILE_RANGE(render, __FUNCTION__);
     if (nullptr == _displayPlugin) {
@@ -3977,7 +3989,7 @@ void Application::resizeGL() {
 
     // FIXME the aspect ratio for stereo displays is incorrect based on this.
     float aspectRatio = displayPlugin->getRecommendedAspectRatio();
-    float fovY = _fieldOfView.get() / aspectRatio;
+    float fovY = verticalFieldOfView(_fieldOfView.get(), aspectRatio);
     _myCamera.setProjection(
         glm::perspective(
             glm::radians(fovY), aspectRatio, DEFAULT_NEAR_CLIP, getFarClip()
@@ -6905,7 +6917,7 @@ void Application::updateRenderArgs(float deltaTime) {
                 QMutexLocker viewLocker(&_viewMutex);
                 // adjust near clip plane to account for sensor scaling.
                 float aspectRatio = getActiveDisplayPlugin()->getRecommendedAspectRatio();
-                float fovY = _fieldOfView.get() / aspectRatio;
+                float fovY = verticalFieldOfView(_fieldOfView.get(), aspectRatio);
                 auto adjustedProjection = glm::perspective(
                     glm::radians(fovY), aspectRatio, DEFAULT_NEAR_CLIP * sensorToWorldScale, getFarClip()
                 );
