@@ -74,6 +74,7 @@ namespace {
     const int MODEL_DIMENSIONS_POLL_MS = 500;     // how often a new model is asked for its size
     const int MODEL_DIMENSIONS_POLL_LIMIT = 60;   // and for how long (30 s)
     const int REFRAME_FRAMES = 180;               // how long after Shift+F a camera reset re-frames
+    const int REJECTION_CHECK_MS = 3000;          // a new entity gone by then was refused by the server
     const float MIN_DIMENSION = 0.001f;
     const float BUILD_MODE_FOV = 90.0f;     // the client's units (its default is 120); less edge stretch on the gizmos
 
@@ -1216,6 +1217,13 @@ float Editor::cameraYaw() const {
 }
 
 QList<QUuid> Editor::place(EntityItemProperties properties, const QString& text, const glm::vec3& point) {
+    auto entities = DependencyManager::get<EntityScriptingInterface>();
+    if (!entities->canRez() && !entities->canRezTmp()) {
+        // the domain says so up front; an instance world is read-only until World Edit is on
+        setStatus("This world is read-only for you: turn on World Edit in Explore to create here");
+        qCWarning(interfaceapp) << "editor: no rez rights here, not creating" << text;
+        return QList<QUuid>();
+    }
     if (properties.getParentID().isNull()) {
         glm::vec3 position = point + Vectors::UP * EditorCreate::lift(properties);
         if (snapActive()) {
@@ -1233,6 +1241,15 @@ QList<QUuid> Editor::place(EntityItemProperties properties, const QString& text,
     if (!created.isEmpty()) {
         _selection.set(created);
         setTool(EditorToolBar::Tool::Move);
+        // the entity server can still refuse the add (a filter, or rights the domain did not
+        // report): the entity then vanishes a moment later, and that deserves a word
+        QTimer::singleShot(REJECTION_CHECK_MS, this, [this, created, text] {
+            EntityItemProperties check;
+            if (!EditorUndo::snapshot(created.first(), check)) {
+                setStatus("The world rejected \"" + text + "\": you may not have edit rights here (World Edit in Explore)");
+                qCWarning(interfaceapp) << "editor: the server removed the new entity" << text << created.first();
+            }
+        });
     }
     return created;
 }

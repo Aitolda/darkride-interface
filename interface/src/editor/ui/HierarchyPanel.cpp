@@ -79,7 +79,23 @@ void HierarchyPanel::setModel(EntityTreeModel* model) {
     _proxy->sort(0, Qt::AscendingOrder);
     connect(_tree->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this] {
         if (!_settingSelection) {
-            emit selectionChangedByUser(selectedIds());
+            _wantedIds = selectedIds();
+            emit selectionChangedByUser(_wantedIds);
+        }
+    });
+    // a new entity is selected before its row exists (the model adds rows a moment later):
+    // when rows arrive, a wanted one that is not yet selected gets selected
+    connect(model, &QAbstractItemModel::rowsInserted, this, [this] {
+        if (_wantedIds.isEmpty()) {
+            return;
+        }
+        auto selectionModel = _tree->selectionModel();
+        for (const auto& id : _wantedIds) {
+            QModelIndex proxyIndex = _proxy->mapFromSource(_model->indexForId(id));
+            if (proxyIndex.isValid() && !selectionModel->isSelected(proxyIndex)) {
+                selectIds(_wantedIds);
+                return;
+            }
         }
     });
 }
@@ -107,6 +123,7 @@ void HierarchyPanel::selectIds(const QList<QUuid>& ids) {
     if (!_model || !selectionModel) {
         return;
     }
+    _wantedIds = ids;
     _settingSelection = true;
     QItemSelection selection;
     QModelIndex first;

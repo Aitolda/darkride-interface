@@ -49,6 +49,7 @@ private:
     QSortFilterProxyModel* _proxy { nullptr };
     EntityTreeModel* _model { nullptr };
     bool _settingSelection { false };
+    QList<QUuid> _wantedIds;   // the last selection asked for; rows that arrive later are selected on arrival
 };
 
 #endif // hifi_HierarchyPanel_h
