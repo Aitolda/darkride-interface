@@ -83,6 +83,9 @@ private slots:
 
     void processAgentAvatarAudio();
 
+    // an AI resident signed in with its account tells the metaverse where it is, like Interface does
+    void sendPresence();
+
 private:
     void negotiateAudioFormat();
     void selectAudioFormat(const QString& selectedCodecName);
@@ -109,6 +112,7 @@ private:
     int _numAvatarSoundSentBytes = 0;
     bool _isAvatar = false;
     QTimer* _avatarQueryTimer = nullptr;
+    QTimer* _presenceTimer { nullptr };
     QHash<QUuid, quint16> _outgoingScriptAudioSequenceNumbers;
 
     AudioGate _audioGate;

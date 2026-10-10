@@ -44,6 +44,8 @@ private slots:
 
 private:
     void setUpStatusToMonitor();
+    // an AI resident's body signs in with its account's connection key from the environment
+    void signInWithConnectionKey();
 
     Assignment _requestAssignment;
     QPointer<ThreadedAssignment> _currentAssignment;

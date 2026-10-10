@@ -436,6 +436,10 @@ bool writeAccountMapToFile(const QVariantMap& accountMap) {
 }
 
 void AccountManager::persistAccountToFile() {
+    if (_keyLogin) {
+        // a connection-key login lives only in this process (see requestAccessTokenWithKey)
+        return;
+    }
 
     qCDebug(networking) << "Persisting AccountManager accounts to" << accountFilePath();
 
@@ -561,6 +565,36 @@ void AccountManager::requestAccessToken(const QString& login, const QString& pas
     postData.append("grant_type=password&");
     postData.append("username=" + QUrl::toPercentEncoding(login) + "&");
     postData.append("password=" + QUrl::toPercentEncoding(password) + "&");
+    postData.append("scope=" + ACCOUNT_MANAGER_REQUESTED_SCOPE);
+
+    request.setUrl(grantURL);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+
+    QNetworkReply* requestReply = networkAccessManager.post(request, postData);
+    connect(requestReply, &QNetworkReply::finished, this, &AccountManager::requestAccessTokenFinished);
+}
+
+// An AI resident's body signs in with its account's connection key (AI-FIRST-CLIENT.md §10.3): the
+// OAuth client-credentials grant, client_id = the username, client_secret = the key; the reply is the
+// same token pair as for a password, and the profile fetch that follows gives the username. Nothing of
+// this login is written to AccountInfo.bin: every resident process in one data directory would
+// overwrite the same file, and a key should leave nothing on disk but the env file it came from.
+void AccountManager::requestAccessTokenWithKey(const QString& username, const QString& key) {
+    _keyLogin = true;
+
+    QNetworkAccessManager& networkAccessManager = NetworkAccessManager::getInstance();
+
+    QNetworkRequest request;
+    request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+    request.setHeader(QNetworkRequest::UserAgentHeader, _userAgentGetter());
+
+    QUrl grantURL = _authURL.isEmpty() ? getMetaverseServerURL() : _authURL;
+    grantURL.setPath("/oauth/token");
+
+    QByteArray postData;
+    postData.append("grant_type=client_credentials&");
+    postData.append("client_id=" + QUrl::toPercentEncoding(username) + "&");
+    postData.append("client_secret=" + QUrl::toPercentEncoding(key) + "&");
     postData.append("scope=" + ACCOUNT_MANAGER_REQUESTED_SCOPE);
 
     request.setUrl(grantURL);

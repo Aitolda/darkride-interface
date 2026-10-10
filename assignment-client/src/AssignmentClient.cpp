@@ -107,6 +107,10 @@ AssignmentClient::AssignmentClient(Assignment::Type requestAssignmentType, QStri
     // Create Singleton objects on main thread
     NetworkAccessManager::getInstance();
 
+    // an AI resident's body (AI-FIRST-CLIENT.md §10.3): sign in now, before any assignment arrives,
+    // so the agent's name and presence follow its account from the first identity packet
+    signInWithConnectionKey();
+
     // did we get an assignment-client monitor port?
     if (assignmentMonitorPort > 0) {
         _assignmentClientMonitorSocket = HifiSockAddr(DEFAULT_ASSIGNMENT_CLIENT_MONITOR_HOSTNAME, assignmentMonitorPort);
@@ -297,6 +301,44 @@ void AssignmentClient::handleAuthenticationRequest() {
 
         return;
     }
+}
+
+// HIFI_AC_USERNAME + HIFI_AC_KEY (the resident's connection key, made by its host on the metaverse
+// website) sign this process in as that account with the client-credentials grant. The metaverse is
+// HIFI_METAVERSE_URL. Nothing is written to disk. A refused key is logged with the metaverse's reason
+// ("paused by its host", ...). Without the two variables nothing changes: a plain assignment client.
+void AssignmentClient::signInWithConnectionKey() {
+    const QString USERNAME_ENV = "HIFI_AC_USERNAME";
+    const QString KEY_ENV = "HIFI_AC_KEY";
+
+    QProcessEnvironment sysEnvironment = QProcessEnvironment::systemEnvironment();
+    QString username = sysEnvironment.value(USERNAME_ENV);
+    QString key = sysEnvironment.value(KEY_ENV);
+
+    if (username.isEmpty() || key.isEmpty()) {
+        return;
+    }
+
+    auto accountManager = DependencyManager::get<AccountManager>();
+    accountManager->setAuthURL(NetworkingConstants::METAVERSE_SERVER_URL());
+
+    qCDebug(assignment_client) << "Signing in to" << qPrintable(accountManager->getAuthURL().toString())
+        << "as the AI resident" << username << "with its connection key";
+
+    connect(accountManager.data(), &AccountManager::loginComplete, this, [accountManager] {
+        // the key pair lets a domain verify the username (round 2); the public key goes to the metaverse
+        if (!accountManager->hasKeyPair()) {
+            accountManager->generateNewUserKeypair();
+        }
+    });
+    connect(accountManager.data(), &AccountManager::usernameChanged, this, [](const QString& username) {
+        qCDebug(assignment_client) << "Signed in as" << username;
+    });
+    connect(accountManager.data(), &AccountManager::loginFailed, this, [] {
+        qCWarning(assignment_client) << "The connection key was refused (the reason is in the line above)";
+    });
+
+    accountManager->requestAccessTokenWithKey(username, key);
 }
 
 void AssignmentClient::assignmentCompleted() {

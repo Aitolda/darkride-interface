@@ -61,7 +61,14 @@
 #include "AbstractAudioInterface.h"
 #include "AgentScriptingInterface.h"
 
+#include <AccountManager.h>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
+
 static const int RECEIVED_AUDIO_STREAM_CAPACITY_FRAMES = 10;
+
+// how often a signed-in agent tells the metaverse where it is (the metaverse's session lasts 30 s)
+static const int PRESENCE_INTERVAL_MSECS = 20 * 1000;
 
 Agent::Agent(ReceivedMessage& message) :
     ThreadedAssignment(message),
@@ -387,6 +394,16 @@ void Agent::executeScript() {
         // call model URL setters with empty URLs so our avatar, if user, will have the default models
         scriptedAvatar->setSkeletonModelURL(QUrl());
 
+        // An AI resident's name is its account's. AvatarData::setDisplayName copies the AccountManager's
+        // username, so follow that username the way Interface does (Application.cpp, usernameChanged),
+        // whether the profile arrives before or after the script sets Avatar.displayName.
+        auto accountManager = DependencyManager::get<AccountManager>();
+        connect(accountManager.data(), &AccountManager::usernameChanged, scriptedAvatar.data(),
+                [scriptedAvatar](const QString& username) { scriptedAvatar->setDisplayName(username); });
+        if (!accountManager->getAccountInfo().getUsername().isEmpty()) {
+            scriptedAvatar->setDisplayName(accountManager->getAccountInfo().getUsername());
+        }
+
         // force lazy initialization of the head data for the scripted avatar
         // since it is referenced below by computeLoudness and getAudioLoudness
         scriptedAvatar->getHeadOrientation();
@@ -613,6 +630,13 @@ void Agent::setIsAvatar(bool isAvatar) {
 
             // tell the avatarAudioTimer to start ticking
             QMetaObject::invokeMethod(&_avatarAudioTimer, "start");
+
+            // a signed-in resident is "online, in this domain" on the metaverse: that is what puts
+            // it in the People list and gives it a nametag (AI-FIRST-CLIENT.md §10.3)
+            _presenceTimer = new QTimer(this);
+            connect(_presenceTimer, &QTimer::timeout, this, &Agent::sendPresence);
+            _presenceTimer->start(PRESENCE_INTERVAL_MSECS);
+            sendPresence();
         }
 
         _entityEditSender.setMyAvatar(scriptableAvatar.data());
@@ -621,6 +645,12 @@ void Agent::setIsAvatar(bool isAvatar) {
             _avatarQueryTimer->stop();
             delete _avatarQueryTimer;
             _avatarQueryTimer = nullptr;
+
+            if (_presenceTimer) {
+                _presenceTimer->stop();
+                delete _presenceTimer;
+                _presenceTimer = nullptr;
+            }
 
             // Clear the skeleton model so that if agent is set to an avatar again the skeleton model is (re)loaded.
             auto scriptedAvatar = DependencyManager::get<ScriptableAvatar>();
@@ -652,6 +682,42 @@ void Agent::setIsAvatar(bool isAvatar) {
 
         _entityEditSender.setMyAvatar(nullptr);
     }
+}
+
+// PUT /api/v1/user/location with the domain, the session id and the path, the JSON Interface's
+// DiscoverabilityManager sends; the metaverse treats it as a heartbeat too. Nothing is sent when the
+// agent is not signed in (a plain assignment script) or not yet connected.
+void Agent::sendPresence() {
+    auto accountManager = DependencyManager::get<AccountManager>();
+    if (!_isAvatar || !accountManager->isLoggedIn()) {
+        return;
+    }
+
+    auto nodeList = DependencyManager::get<NodeList>();
+    auto& domainHandler = nodeList->getDomainHandler();
+    if (!domainHandler.isConnected() || domainHandler.getUUID().isNull()) {
+        return;
+    }
+
+    auto scriptedAvatar = DependencyManager::get<ScriptableAvatar>();
+    glm::vec3 position = scriptedAvatar->getWorldPosition();
+    glm::quat orientation = scriptedAvatar->getWorldOrientation();
+
+    QJsonObject location;
+    location.insert("connected", true);
+    location.insert("availability", "all");
+    location.insert("domain_id", uuidStringWithoutCurlyBraces(domainHandler.getUUID()));
+    location.insert("node_id", uuidStringWithoutCurlyBraces(nodeList->getSessionUUID()));
+    location.insert("path", QString("/%1,%2,%3/%4,%5,%6,%7")
+                                .arg(position.x).arg(position.y).arg(position.z)
+                                .arg(orientation.x).arg(orientation.y).arg(orientation.z).arg(orientation.w));
+
+    QJsonObject root;
+    root.insert("location", location);
+
+    accountManager->sendRequest("/api/v1/user/location", AccountManagerAuth::Required,
+                                QNetworkAccessManager::PutOperation, JSONCallbackParameters(),
+                                QJsonDocument(root).toJson());
 }
 
 void Agent::queryAvatars() {

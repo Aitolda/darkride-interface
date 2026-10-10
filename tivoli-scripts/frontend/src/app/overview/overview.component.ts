@@ -11,7 +11,13 @@ export class OverviewComponent implements OnInit {
 
 	overview: {
 		ping: number;
-		users: { id: string; username: string; distance: number }[];
+		users: {
+			id: string;
+			username: string;
+			distance: number;
+			ai?: boolean;
+			markLine?: string;
+		}[];
 		usersCount: number;
 		drawcalls: number;
 		world: {

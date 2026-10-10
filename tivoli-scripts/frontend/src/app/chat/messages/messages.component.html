@@ -29,6 +29,13 @@
 		></div>
 		<div class="username" *ngIf="!message.extras.me">
 			<span class="badge" *ngIf="message.extras.tts">TTS</span>
+			<span
+				class="badge ai"
+				*ngIf="message.extras.ai"
+				[matTooltip]="chatService.markLine(message.extras)"
+				matTooltipPosition="above"
+				>AI</span
+			>
 			{{ message.type == "message" ? message.username + ":" : "" }}
 		</div>
 		<span [class.username]="message.type == 'announcement'">
