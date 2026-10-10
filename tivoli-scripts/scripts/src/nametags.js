@@ -2,6 +2,7 @@ import { usersCache } from "./users-cache";
 
 export function initNametags(showSelf) {
 	var nametags = {};
+	console.log("nametags: starting, showSelf " + showSelf);
 
 	// An AI resident's mark turns while it thinks (2026-10-10, Caitlyn: "the claude text animation ... back to star
 	// diamond when she's done"): its body says busy on AI_CHANNEL, the world stamps the sender, and the picture's
@@ -30,7 +31,22 @@ export function initNametags(showSelf) {
 	function prefetchGlyphs(nametag) {
 		if (nametag.prefetched == nametag.stamp) return;
 		nametag.prefetched = nametag.stamp;
-		for (var g = 1; g <= 5; g++) TextureCache.prefetch(nametagURL(nametag, g));
+		try {
+			nametag.glyphResources = [];
+			for (var g = 1; g <= 5; g++) nametag.glyphResources.push(TextureCache.prefetch(nametagURL(nametag, g)));
+		} catch (e) {
+			console.error("nametags: prefetch failed: " + e);
+		}
+	}
+
+	// the frames turn only once all have arrived (a resource's state: 2 loaded, 3 finished), never showing a blank
+	function glyphsReady(nametag) {
+		var r = nametag.glyphResources;
+		if (!r || r.length < 5) return false;
+		for (var i = 0; i < r.length; i++) {
+			if (!r[i] || (r[i].state !== 2 && r[i].state !== 3)) return false;
+		}
+		return true;
 	}
 
 	function updateNametagEntity(nametag) {
@@ -41,7 +57,11 @@ export function initNametags(showSelf) {
 			alpha: 1,
 			imageURL: nametagURL(nametag, 0)
 		});
-		if (isAIResident(nametag)) prefetchGlyphs(nametag);
+		try {
+			if (isAIResident(nametag)) prefetchGlyphs(nametag);
+		} catch (e) {
+			console.error("nametags: AI resident check failed: " + e);
+		}
 	}
 
 	function addNametag(id, details) {
@@ -79,8 +99,9 @@ export function initNametags(showSelf) {
 			ignorePickIntersection: true
 		}, "local");
 
-		updateNametagEntity(nametag);
 		nametags[id] = nametag;
+		updateNametagEntity(nametag);
+		console.log("nametags: added " + nametag.username + " " + nametag.entity);
 	}
 
 	function updateNametag(nametag, details) {
@@ -266,6 +287,7 @@ export function initNametags(showSelf) {
 				Entities.editEntity(nametag.entity, { imageURL: nametagURL(nametag, 0) });
 				return;
 			}
+			if (!glyphsReady(nametag)) return;           // the mark stays until every frame is here
 			nametag.glyphStep = ((nametag.glyphStep || 0) + 1) % GLYPH_CYCLE.length;
 			Entities.editEntity(nametag.entity, { imageURL: nametagURL(nametag, GLYPH_CYCLE[nametag.glyphStep]) });
 		});
