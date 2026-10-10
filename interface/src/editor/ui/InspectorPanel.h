@@ -46,6 +46,9 @@ signals:
     void liveEdit(const QString& key, const QVariant& value);
     void committed(const QString& key, const QVariant& value);
 
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+
 private:
     struct Row {
         const PropertySpec* spec { nullptr };

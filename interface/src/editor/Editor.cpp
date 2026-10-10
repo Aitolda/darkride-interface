@@ -310,7 +310,7 @@ void Editor::createPanels() {
     window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
     window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
     window->addToolBar(Qt::TopToolBarArea, _toolBar);
-    window->resizeDocks({ _hierarchy, _inspector }, { 260, 390 }, Qt::Horizontal);
+    window->resizeDocks({ _hierarchy, _inspector }, { 260, 430 }, Qt::Horizontal);
     qApp->installEventFilter(this);
 
     QByteArray layout = _layoutSetting.get();

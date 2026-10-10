@@ -9,6 +9,7 @@
 #include "InspectorPanel.h"
 
 #include <QtCore/QUuid>
+#include <QtGui/QResizeEvent>
 #include <QtWidgets/QFrame>
 #include <QtWidgets/QGridLayout>
 #include <QtWidgets/QLabel>
@@ -61,6 +62,16 @@ InspectorPanel::InspectorPanel(QWidget* parent) : QDockWidget("Inspector", paren
 
     _scroll->setWidget(_empty);
     setWidget(_scroll);
+}
+
+void InspectorPanel::resizeEvent(QResizeEvent* event) {
+    QDockWidget::resizeEvent(event);
+    // the content follows the panel's width exactly; rows compress rather than run off the edge
+    int width = _scroll->viewport()->width();
+    if (width > 0) {
+        _content->setFixedWidth(width);
+        _empty->setFixedWidth(width);
+    }
 }
 
 void InspectorPanel::setSummary(const QString& text) {
