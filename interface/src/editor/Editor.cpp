@@ -49,6 +49,7 @@
 #include "PropertySpec.h"
 #include "ui/HierarchyPanel.h"
 #include "ui/InspectorPanel.h"
+#include "ui/ViewportContainer.h"
 
 namespace {
     const float GIZMO_PIXELS = 110.0f;      // the gizmo's size on screen
@@ -179,6 +180,12 @@ void Editor::setActive(bool active) {
         _selection.clear();
         _marqueeActive = false;
         emit marqueeChanged();
+    }
+    // while the panels can be dragged, the GL view only takes a new size once the dragging stops
+    if (auto viewport = qApp->getPrimaryWidget()) {
+        if (auto container = qobject_cast<ViewportContainer*>(viewport->parentWidget())) {
+            container->setDeferResizes(active);
+        }
     }
     setMenuActionsEnabled(active);
     Menu::getInstance()->setIsOptionChecked(MenuOption::BuildMode, active);

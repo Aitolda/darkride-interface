@@ -194,6 +194,7 @@
 #include "scripting/RatesScriptingInterface.h"
 #include "scripting/SelectionScriptingInterface.h"
 #include "editor/Editor.h"
+#include "editor/ui/ViewportContainer.h"
 #include "scripting/WalletScriptingInterface.h"
 #include "scripting/TTSScriptingInterface.h"
 #include "scripting/KeyboardScriptingInterface.h"
@@ -1517,7 +1518,8 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     _glWidget = new GLCanvas();
     getApplicationCompositor().setRenderingWidget(_glWidget);
-    _window->setCentralWidget(_glWidget);
+    // the GL view sits in a container that can hold its size while build mode's panels are dragged
+    _window->setCentralWidget(new ViewportContainer(_glWidget, _window));
 
     _window->restoreGeometry();
     _window->setVisible(true);

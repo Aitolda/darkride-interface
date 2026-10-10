@@ -1,0 +1,39 @@
+//
+//  ViewportContainer.h
+//  interface/src/editor/ui
+//
+//  Holds the GL view as the main window's central widget. While build mode's panels are being
+//  resized it keeps the GL view's size fixed and applies the new size once the dragging stops:
+//  resizing the native GL view on every mouse move races the presenting thread (a crash inside
+//  Apple's GL driver was caught doing exactly that).
+//
+//  Distributed under the Apache License, Version 2.0.
+//  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
+//
+
+#ifndef hifi_ViewportContainer_h
+#define hifi_ViewportContainer_h
+
+#include <QtCore/QTimer>
+#include <QtWidgets/QWidget>
+
+class ViewportContainer : public QWidget {
+    Q_OBJECT
+public:
+    ViewportContainer(QWidget* viewport, QWidget* parent = nullptr);
+
+    // true while build mode is on: resizes of the container reach the viewport only after a pause
+    void setDeferResizes(bool defer);
+
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+
+private:
+    void applySize();
+
+    QWidget* _viewport { nullptr };
+    bool _defer { false };
+    QTimer _settle;
+};
+
+#endif // hifi_ViewportContainer_h

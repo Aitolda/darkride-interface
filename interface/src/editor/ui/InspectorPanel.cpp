@@ -51,7 +51,7 @@ InspectorPanel::InspectorPanel(QWidget* parent) : QDockWidget("Inspector", paren
 
     _content = new QWidget(_scroll);
     _contentLayout = new QVBoxLayout(_content);
-    _contentLayout->setContentsMargins(6, 6, 6, 6);
+    _contentLayout->setContentsMargins(6, 6, 18, 6);   // the overlay scroll bar draws over the right edge
     _contentLayout->setSpacing(4);
     _title = new QLabel(_content);
     _title->setObjectName("EditorInspectorTitle");
