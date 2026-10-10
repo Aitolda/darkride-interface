@@ -190,3 +190,36 @@ QToolBar#EditorToolBar QLabel#EditorStatus {
     font-size: 12px;
     padding: 0 8px;
 }
+
+/* a button that cannot be used now (Save World before World Edit is on) */
+QToolBar#EditorToolBar QToolButton:disabled {
+    color: #6a6a6a;
+}
+/* World Edit while it is on: the world is being changed, which should be impossible to miss */
+QToolBar#EditorToolBar QToolButton#EditorWorldEdit:checked {
+    background: #c76a16;
+    border-color: #7d430e;
+    color: #ffffff;
+}
+QToolBar#EditorToolBar QToolButton#EditorWorldEdit:checked:hover {
+    background: #d77b28;
+}
+
+/* read-only: a note at the top of both panels, dimmed names, greyed fields */
+#EditorHierarchy QLabel#EditorReadOnlyBanner, #EditorInspector QLabel#EditorReadOnlyBanner {
+    background: #4d3b1c;
+    color: #f2dcae;
+    padding: 5px 8px;
+    border-bottom: 1px solid #232323;
+}
+#EditorHierarchy QTreeView[readOnly="true"] {
+    color: #8a8a8a;
+}
+#EditorInspector QDoubleSpinBox:disabled, #EditorInspector QLineEdit:disabled, #EditorInspector QComboBox:disabled,
+#EditorInspector QPlainTextEdit:disabled, #EditorInspector QToolButton:disabled {
+    color: #7a7a7a;
+    background: #323232;
+}
+#EditorInspector QCheckBox:disabled {
+    color: #7a7a7a;
+}

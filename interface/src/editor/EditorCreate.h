@@ -12,6 +12,7 @@
 #ifndef hifi_EditorCreate_h
 #define hifi_EditorCreate_h
 
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QObject>
 #include <QtCore/QString>
 #include <QtCore/QUrl>
@@ -63,6 +64,7 @@ signals:
 
 private:
     QString _fileName;
+    QElapsedTimer _timer;
 };
 
 #endif // hifi_EditorCreate_h

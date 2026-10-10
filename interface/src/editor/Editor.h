@@ -36,6 +36,7 @@
 #include <RegisteredMetaTypes.h>
 #include <SettingHandle.h>
 
+#include "EditorBounds.h"
 #include "EditorCamera.h"
 #include "EditorClipboard.h"
 #include "EditorGizmo.h"
@@ -106,8 +107,9 @@ public:
     // the editor's keys when the focus is in one of its panels rather than the viewport
     bool eventFilter(QObject* watched, QEvent* event) override;
 
-    // a Create menu with every entity kind, for the toolbar and context menus
-    QMenu* buildCreateMenu(QWidget* parent);
+    // a Create menu with every entity kind, for the toolbar and context menus; with a viewport
+    // position, new entities go where that position points instead of the middle of the view
+    QMenu* buildCreateMenu(QWidget* parent, const QPoint* viewportPos = nullptr);
     // a file or URL dropped on the viewport: models and images are placed where it landed
     bool handleDrop(QDropEvent* event);
     // a Build menu item that only works while build mode is on
@@ -165,6 +167,9 @@ private:
     void onInspectorEditBegan(const QString& key);
     void onInspectorLiveEdit(const QString& key, const QVariant& value);
     void onInspectorCommitted(const QString& key, const QVariant& value);
+    void onInspectorEditCancelled(const QString& key);
+    // the edit an Inspector value amounts to for one entity: Scale is turned into dimensions
+    EntityItemProperties inspectorEdit(const QString& key, const QVariant& value, const glm::vec3& naturalSize) const;
 
     PickRay pickRay(const QPoint& viewportPos) const;
     QUuid pickEntity(const QPoint& viewportPos) const;
@@ -192,13 +197,28 @@ private:
     // creating
     glm::vec3 placementPoint(const QPoint* viewportPos = nullptr) const;
     float cameraYaw() const;
+    void createAt(const QString& key, const glm::vec3& point);
+    void createModelAt(const glm::vec3& point);
+    void pasteAt(const glm::vec3& target);
     QList<QUuid> place(EntityItemProperties properties, const QString& text, const glm::vec3& point);
     void placeModel(const QUrl& url, const glm::vec3& point);
     void placeImage(const QUrl& url, const glm::vec3& point);
     void beginUpload(const QString& localPath, const glm::vec3& point, bool image);
     void pollModelDimensions();
     void showHierarchyMenu(const QPoint& globalPos);
-    void setStatus(const QString& text);
+    void showViewportMenu(const QPoint& viewportPos, const QPoint& globalPos);
+    void addSelectionActions(QMenu& menu, const glm::vec3* pasteTarget);
+    // a note in the middle of the toolbar; one with a timeout clears itself
+    void setStatus(const QString& text, int clearAfterMs = 0);
+
+    // read-only: the domain gives no building rights (an instance before World Edit is on)
+    void updateReadOnly();
+    QString readOnlyReason() const;
+    // true when the world can be changed; otherwise says why on the toolbar and returns false
+    bool editable();
+
+    // wireframes for selected zones, lights and particle systems
+    void updateBounds();
 
     bool _ready { false };
     bool _active { false };
@@ -262,6 +282,13 @@ private:
     int _uploadsActive { 0 };
     EditorWorld* _world { nullptr };
     void updateWorldControls();
+    bool _readOnly { false };
+    QTimer _statusTimer;
+    QPoint _rightPressPos;
+    EditorBounds _bounds;
+    std::vector<EditorBoundsShape> _boundsShapes;
+    // per entity in an Inspector edit of Scale: its own size, to turn scale into dimensions
+    QVector<glm::vec3> _inspectorNatural;
 
     bool _panelsCreated { false };
     bool _syncingSelection { false };

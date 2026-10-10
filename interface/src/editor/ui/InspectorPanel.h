@@ -40,14 +40,18 @@ public:
         const QString& title);
     // fresh values for the same selection; fields being edited are left alone
     void refreshValues(const QVector<EntityItemProperties>& snapshots);
+    // the world cannot be edited: fields greyed out, with a note at the top saying why
+    void setReadOnly(bool readOnly, const QString& reason);
 
 signals:
     void editBegan(const QString& key);
     void liveEdit(const QString& key, const QVariant& value);
     void committed(const QString& key, const QVariant& value);
+    void editCancelled(const QString& key);
 
 protected:
-    void resizeEvent(QResizeEvent* event) override;
+    // the content follows the scroll area's width exactly: rows compress rather than run off the edge
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     struct Row {
@@ -62,6 +66,10 @@ private:
     bool conditionHolds(const QString& showWhen, const EntityItemProperties& first) const;
     QWidget* buildSection(const QString& sectionId, QWidget* parent);
 
+    void applyReadOnly();
+
+    QLabel* _banner { nullptr };
+    bool _readOnly { false };
     QScrollArea* _scroll { nullptr };
     QWidget* _empty { nullptr };
     QLabel* _emptyLabel { nullptr };

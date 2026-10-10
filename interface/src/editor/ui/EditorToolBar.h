@@ -34,8 +34,10 @@ public:
     void setPivotMode(bool pivot);
     // the Create button's menu
     void setCreateMenu(QMenu* menu);
-    // a short note at the right (an upload's progress); empty clears it
+    // a short note in the middle, against the world controls (an upload's progress); empty clears it
     void setStatus(const QString& text);
+    // the Create button, off while the world is read-only
+    void setCreateEnabled(bool enabled);
     // the world controls: shown for a world instance, World Edit checked while editing
     void setWorld(bool instance, bool canEdit, bool editing, bool busy);
 

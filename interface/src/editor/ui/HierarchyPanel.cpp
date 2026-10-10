@@ -10,7 +10,9 @@
 
 #include <QtCore/QItemSelectionModel>
 #include <QtCore/QSortFilterProxyModel>
+#include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
+#include <QtWidgets/QStyle>
 #include <QtWidgets/QTreeView>
 #include <QtWidgets/QVBoxLayout>
 
@@ -67,9 +69,27 @@ HierarchyPanel::HierarchyPanel(QWidget* parent) : QDockWidget("Hierarchy", paren
         emit contextMenuRequested(_tree->viewport()->mapToGlobal(pos));
     });
 
+    _banner = new QLabel(body);
+    _banner->setObjectName("EditorReadOnlyBanner");
+    _banner->setWordWrap(true);
+    _banner->hide();
+
+    layout->addWidget(_banner);
     layout->addWidget(_search);
     layout->addWidget(_tree, 1);
     setWidget(body);
+}
+
+void HierarchyPanel::setReadOnly(bool readOnly, const QString& reason) {
+    _banner->setText(reason);
+    _banner->setVisible(readOnly);
+    _tree->setEditTriggers(readOnly ? QAbstractItemView::NoEditTriggers
+                                    : QAbstractItemView::EditKeyPressed | QAbstractItemView::SelectedClicked);
+    // the style sheet dims the names through this property
+    _tree->setProperty("readOnly", readOnly);
+    _tree->style()->unpolish(_tree);
+    _tree->style()->polish(_tree);
+    _tree->viewport()->update();
 }
 
 void HierarchyPanel::setModel(EntityTreeModel* model) {

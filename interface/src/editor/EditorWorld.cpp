@@ -97,14 +97,13 @@ void EditorWorld::onEditReply(QNetworkReply* reply) {
     _busy = false;
     apply(QJsonDocument::fromJson(reply->readAll()).object());
     emit changed();
-    emit message(_editing ? "World Edit is on in " + _label + ": you can build here. Save World writes your changes to the world."
-                          : "World Edit is off");
+    emit message(QString());   // the highlighted button says it
 }
 
 void EditorWorld::onEditError(QNetworkReply* reply) {
     _busy = false;
     emit changed();
-    emit message("Could not change World Edit: " + errorText(reply));
+    emit message("World Edit: " + errorText(reply));
 }
 
 void EditorWorld::save() {
@@ -113,6 +112,7 @@ void EditorWorld::save() {
     }
     _busy = true;
     emit changed();
+    emit message("Saving…");
     JSONCallbackParameters callback(this, "onSaveReply", "onSaveError");
     DependencyManager::get<AccountManager>()->sendRequest("/api/instances/" + _instanceId + "/save",
         AccountManagerAuth::Required, QNetworkAccessManager::PostOperation, callback, QByteArray("{}"));
@@ -122,12 +122,11 @@ void EditorWorld::onSaveReply(QNetworkReply* reply) {
     _busy = false;
     QJsonObject result = QJsonDocument::fromJson(reply->readAll()).object();
     emit changed();
-    emit message(QString("Saved %1: %2 entities, version %3").arg(_label)
-        .arg(result.value("entities").toInt()).arg(result.value("version").toInt()));
+    emit message(QString("Saved (%1 entities)").arg(result.value("entities").toInt()));
 }
 
 void EditorWorld::onSaveError(QNetworkReply* reply) {
     _busy = false;
     emit changed();
-    emit message("Could not save: " + errorText(reply));
+    emit message("Save failed: " + errorText(reply));
 }

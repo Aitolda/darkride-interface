@@ -38,10 +38,21 @@ InspectorPanel::InspectorPanel(QWidget* parent) : QDockWidget("Inspector", paren
     setFeatures(QDockWidget::DockWidgetClosable);   // fixed in place, see HierarchyPanel
     setMinimumWidth(340);   // room for a label and three vector fields
 
-    _scroll = new QScrollArea(this);
+    auto body = new QWidget(this);
+    auto bodyLayout = new QVBoxLayout(body);
+    bodyLayout->setContentsMargins(0, 0, 0, 0);
+    bodyLayout->setSpacing(0);
+    _banner = new QLabel(body);
+    _banner->setObjectName("EditorReadOnlyBanner");
+    _banner->setWordWrap(true);
+    _banner->hide();
+    bodyLayout->addWidget(_banner);
+
+    _scroll = new QScrollArea(body);
     _scroll->setWidgetResizable(true);
     _scroll->setFrameShape(QFrame::NoFrame);
     _scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    bodyLayout->addWidget(_scroll, 1);
 
     _empty = new QWidget(_scroll);
     auto emptyLayout = new QVBoxLayout(_empty);
@@ -61,17 +72,33 @@ InspectorPanel::InspectorPanel(QWidget* parent) : QDockWidget("Inspector", paren
     _contentLayout->addStretch(1);
 
     _scroll->setWidget(_empty);
-    setWidget(_scroll);
+    _scroll->viewport()->installEventFilter(this);
+    setWidget(body);
 }
 
-void InspectorPanel::resizeEvent(QResizeEvent* event) {
-    QDockWidget::resizeEvent(event);
-    // the content follows the panel's width exactly; rows compress rather than run off the edge
-    int width = _scroll->viewport()->width();
-    if (width > 0) {
-        _content->setFixedWidth(width);
-        _empty->setFixedWidth(width);
+void InspectorPanel::setReadOnly(bool readOnly, const QString& reason) {
+    _readOnly = readOnly;
+    _banner->setText(reason);
+    _banner->setVisible(readOnly);
+    applyReadOnly();
+}
+
+void InspectorPanel::applyReadOnly() {
+    // the fields grey out; the labels stay live so Copy still works on them (they do not scrub)
+    for (auto& row : _rows) {
+        row.editor->setEnabled(!_readOnly);
     }
+}
+
+bool InspectorPanel::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == _scroll->viewport() && event->type() == QEvent::Resize) {
+        int width = _scroll->viewport()->width();
+        if (width > 0) {
+            _content->setFixedWidth(width);
+            _empty->setFixedWidth(width);
+        }
+    }
+    return QDockWidget::eventFilter(watched, event);
 }
 
 void InspectorPanel::setSummary(const QString& text) {
@@ -128,6 +155,7 @@ void InspectorPanel::rebuild(const QStringList& sections) {
             _contentLayout->insertWidget(position++, widget);
         }
     }
+    applyReadOnly();
 }
 
 QWidget* InspectorPanel::buildSection(const QString& sectionId, QWidget* parent) {
@@ -184,6 +212,12 @@ QWidget* InspectorPanel::buildSection(const QString& sectionId, QWidget* parent)
         connect(editor, &PropertyEditor::editBegan, this, [this, key] { emit editBegan(key); });
         connect(editor, &PropertyEditor::liveValue, this, [this, key](const QVariant& v) { emit liveEdit(key, v); });
         connect(editor, &PropertyEditor::committed, this, [this, key](const QVariant& v) { emit committed(key, v); });
+        connect(editor, &PropertyEditor::editCancelled, this, [this, key] { emit editCancelled(key); });
+        // right-click on a label: Copy and Paste the row's value, as Unity does
+        label->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(label, &QWidget::customContextMenuRequested, editor, [editor, label](const QPoint& pos) {
+            editor->showValueMenu(label->mapToGlobal(pos));
+        });
         _rows.insert(key, Row { spec, label, editor });
     }
     return frame;
@@ -196,7 +230,8 @@ void InspectorPanel::applyValues(const QVector<EntityItemProperties>& snapshots,
             continue;
         }
         QVariant first = PropertySpecs::get(it.key(), snapshots.first());
-        bool mixed = false;
+        // a value not known yet (a model's scale before the model has loaded) shows as "—"
+        bool mixed = !first.isValid();
         for (int i = 1; i < snapshots.size() && !mixed; ++i) {
             mixed = PropertySpecs::get(it.key(), snapshots[i]) != first;
         }
@@ -208,6 +243,11 @@ void InspectorPanel::applyValues(const QVector<EntityItemProperties>& snapshots,
 bool InspectorPanel::conditionHolds(const QString& showWhen, const EntityItemProperties& first) const {
     if (showWhen.isEmpty()) {
         return true;
+    }
+    int notIn = showWhen.indexOf(" not in ");
+    if (notIn > 0) {
+        QString value = valueText(PropertySpecs::get(showWhen.left(notIn), first));
+        return !showWhen.mid(notIn + 8).split(',').contains(value);
     }
     int in = showWhen.indexOf(" in ");
     if (in > 0) {

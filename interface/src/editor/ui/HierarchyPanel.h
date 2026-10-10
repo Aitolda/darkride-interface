@@ -16,6 +16,7 @@
 #include <QtWidgets/QDockWidget>
 
 class QItemSelection;
+class QLabel;
 class QLineEdit;
 class QModelIndex;
 class QSortFilterProxyModel;
@@ -33,6 +34,9 @@ public:
 
     QTreeView* treeView() const { return _tree; }
     QLineEdit* searchField() const { return _search; }
+    // the world cannot be edited: a note at the top, dimmed names, no renaming; selecting and
+    // framing still work
+    void setReadOnly(bool readOnly, const QString& reason);
 
 signals:
     void selectionChangedByUser(const QList<QUuid>& ids);
@@ -44,6 +48,7 @@ private:
     QList<QUuid> selectedIds() const;
     QUuid idAt(const QModelIndex& proxyIndex) const;
 
+    QLabel* _banner { nullptr };
     QLineEdit* _search { nullptr };
     QTreeView* _tree { nullptr };
     QSortFilterProxyModel* _proxy { nullptr };

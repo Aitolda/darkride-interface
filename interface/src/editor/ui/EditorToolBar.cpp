@@ -8,13 +8,38 @@
 
 #include "EditorToolBar.h"
 
+#include <QtGui/QPainter>
 #include <QtWidgets/QAction>
 #include <QtWidgets/QActionGroup>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QSizePolicy>
+#include <QtWidgets/QStyle>
 #include <QtWidgets/QToolButton>
 #include <QtWidgets/QWidget>
+
+namespace {
+    // The status note fills the room between the tools and the world controls, right-aligned
+    // against World Edit. Its size never depends on its text, so a changing message (an upload's
+    // percentage) never moves the buttons; a long one is shortened with an ellipsis.
+    class StatusLabel : public QLabel {
+    public:
+        explicit StatusLabel(QWidget* parent) : QLabel(parent) {
+            setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+            setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        }
+        QSize sizeHint() const override { return QSize(40, QLabel::sizeHint().height()); }
+        QSize minimumSizeHint() const override { return QSize(0, QLabel::minimumSizeHint().height()); }
+
+    protected:
+        void paintEvent(QPaintEvent*) override {
+            QPainter painter(this);
+            QRect area = contentsRect().adjusted(8, 0, -10, 0);
+            QString shown = fontMetrics().elidedText(text(), Qt::ElideMiddle, area.width());
+            style()->drawItemText(&painter, area, (int)alignment(), palette(), isEnabled(), shown, foregroundRole());
+        }
+    };
+}
 
 EditorToolBar::EditorToolBar(QWidget* parent) : QToolBar("Build", parent) {
     setObjectName("EditorToolBar");
@@ -55,24 +80,24 @@ EditorToolBar::EditorToolBar(QWidget* parent) : QToolBar("Build", parent) {
     _snapAction->setToolTip("Snap to the grid increments (hold Cmd to snap while dragging)");
     connect(_snapAction, &QAction::toggled, this, &EditorToolBar::snapToggled);
 
-    auto spacer = new QWidget(this);
-    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    _spacerAction = addWidget(spacer);
+    // the status note takes the free middle of the bar (the Create button goes in before it)
+    _status = new StatusLabel(this);
+    _status->setObjectName("EditorStatus");
+    _spacerAction = addWidget(_status);
 
     // a world instance is read-only until World Edit is on; Save World writes it back
     _worldEditAction = addAction("World Edit");
     _worldEditAction->setCheckable(true);
-    _worldEditAction->setToolTip("Turn on edit mode in this instance so your changes count");
+    _worldEditAction->setToolTip("Edit this world instance: while it is on (highlighted), your changes count");
     connect(_worldEditAction, &QAction::triggered, this, &EditorToolBar::worldEditToggled);
+    if (auto button = widgetForAction(_worldEditAction)) {
+        button->setObjectName("EditorWorldEdit");   // the style sheet highlights it while on
+    }
     _saveWorldAction = addAction("Save World");
     _saveWorldAction->setToolTip("Save this instance's entities as the world");
     connect(_saveWorldAction, &QAction::triggered, this, &EditorToolBar::saveWorldRequested);
     _worldSeparator = addSeparator();
     setWorld(false, false, false, false);
-
-    _status = new QLabel(this);
-    _status->setObjectName("EditorStatus");
-    addWidget(_status);
 
     _gridAction = addAction("Grid");
     _gridAction->setCheckable(true);
@@ -99,6 +124,13 @@ void EditorToolBar::setCreateMenu(QMenu* menu) {
 
 void EditorToolBar::setStatus(const QString& text) {
     _status->setText(text);
+    _status->setToolTip(text);   // the whole message, when the bar had to shorten it
+}
+
+void EditorToolBar::setCreateEnabled(bool enabled) {
+    if (_createButton) {
+        _createButton->setEnabled(enabled);
+    }
 }
 
 void EditorToolBar::setWorld(bool instance, bool canEdit, bool editing, bool busy) {

@@ -16,6 +16,7 @@
 
 #include <set>
 
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QPoint>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QMouseEvent>
@@ -51,6 +52,8 @@ public:
     float distance() const { return _distance; }
     float flySpeed() const { return _flySpeed; }
     bool isLooking() const { return _drag == Drag::Look; }
+    // the right button went down and up without looking around: a click, for the context menu
+    bool wasRightClick() const { return _rightClick; }
 
 private:
     enum class Drag { None, Look, Orbit, Pan, Dolly };
@@ -73,6 +76,14 @@ private:
     QPoint _lastCursor;
     bool _cursorHidden { false };
     std::set<int> _flyKeys;
+    // telling a right click from a look: how far the hand travelled, whether it flew, how long
+    int _dragTravel { 0 };
+    bool _flew { false };
+    QElapsedTimer _dragTimer;
+    float _dragStartYaw { 0.0f };
+    float _dragStartPitch { 0.0f };
+    glm::vec3 _dragStartPivot;
+    bool _rightClick { false };
 
     CameraMode _previousMode { CAMERA_MODE_LOOK_AT };
 };

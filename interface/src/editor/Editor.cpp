@@ -10,9 +10,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 #include <QtCore/QFile>
 #include <QtCore/QMimeData>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QUrl>
 #include <QtGui/QCursor>
 #include <QtGui/QDropEvent>
@@ -77,6 +79,8 @@ namespace {
     const int MODEL_DIMENSIONS_POLL_LIMIT = 60;   // and for how long (30 s)
     const int REFRAME_FRAMES = 180;               // how long after Shift+F a camera reset re-frames
     const int REJECTION_CHECK_MS = 3000;          // a new entity gone by then was refused by the server
+    const int STATUS_CLEAR_MS = 6000;             // how long a note on the toolbar stays
+    const QString SCALE_KEY = QStringLiteral("scale");
     const float MIN_DIMENSION = 0.001f;
     const float BUILD_MODE_FOV = 90.0f;     // the client's units (its default is 120); less edge stretch on the gizmos
 
@@ -136,25 +140,39 @@ Editor::Editor() : _selection(this), _undo(this) {
     _modelDimensionsTimer.setInterval(MODEL_DIMENSIONS_POLL_MS);
     connect(&_modelDimensionsTimer, &QTimer::timeout, this, &Editor::pollModelDimensions);
     _world = new EditorWorld(this);
-    connect(_world, &EditorWorld::changed, this, &Editor::updateWorldControls);
-    connect(_world, &EditorWorld::message, this, &Editor::setStatus);
+    connect(_world, &EditorWorld::changed, this, [this] {
+        updateWorldControls();
+        updateReadOnly();   // the reason given for read-only depends on what the world is
+    });
+    connect(_world, &EditorWorld::message, this, [this](const QString& text) {
+        // "Saving…" stays until the result replaces it; results clear themselves
+        setStatus(text, text.endsWith(QStringLiteral("…")) ? 0 : STATUS_CLEAR_MS);
+    });
+    _statusTimer.setSingleShot(true);
+    connect(&_statusTimer, &QTimer::timeout, this, [this] { setStatus(QString()); });
 }
 
 // --- build mode on and off ----------------------------------------------------------------------
 
 void Editor::setReady() {
     _ready = true;
-    // the world controls follow the domain: ask again whenever a connection completes, and
-    // say so when the domain grants or withdraws building rights
+    // the world controls follow the domain: ask again whenever a connection completes; the
+    // panels follow the building rights the domain grants (World Edit grants them live)
     auto nodeList = DependencyManager::get<NodeList>();
     connect(&nodeList->getDomainHandler(), &DomainHandler::connectedToDomain, this, [this] {
         if (_active) {
             _world->refresh();
+            updateReadOnly();
         }
     });
-    connect(nodeList.data(), &NodeList::canRezChanged, this, [this](bool canRez) {
+    connect(nodeList.data(), &NodeList::canRezChanged, this, [this] {
         if (_active) {
-            setStatus(canRez ? "You can build here now" : "You can no longer build here");
+            updateReadOnly();
+        }
+    });
+    connect(nodeList.data(), &NodeList::canRezTmpChanged, this, [this] {
+        if (_active) {
+            updateReadOnly();
         }
     });
     // the client died in build mode last time: give the field of view back
@@ -195,6 +213,8 @@ void Editor::setActive(bool active) {
         setStatus(QString());
         _world->refresh();
     } else {
+        _boundsShapes.clear();
+        _bounds.setShapes(_boundsShapes);
         _inspectorRefresh.stop();
         if (_gizmo.isDragging()) {
             applyDrag(true);
@@ -224,6 +244,9 @@ void Editor::setActive(bool active) {
         }
     }
     setMenuActionsEnabled(active);
+    if (active) {
+        updateReadOnly();
+    }
     Menu::getInstance()->setIsOptionChecked(MenuOption::BuildMode, active);
     emit activeChanged(active);
 }
@@ -279,9 +302,49 @@ void Editor::setPivotMode(bool pivot) {
 void Editor::setMenuActionsEnabled(bool enabled) {
     for (const auto& action : _menuActions) {
         if (action) {
-            action->setEnabled(enabled);
+            // the Create items (their data is the catalogue key) also need building rights
+            bool creates = !action->data().toString().isEmpty();
+            action->setEnabled(enabled && !(creates && _readOnly));
         }
     }
+}
+
+// --- read-only ----------------------------------------------------------------------------------
+
+QString Editor::readOnlyReason() const {
+    if (_world->isInstance() && _world->canEdit()) {
+        return "Read-only: turn on World Edit (toolbar) to change this world";
+    }
+    return "Read-only: you have no building rights in this world";
+}
+
+void Editor::updateReadOnly() {
+    auto entities = DependencyManager::get<EntityScriptingInterface>();
+    _readOnly = !entities->canRez() && !entities->canRezTmp();
+    QString reason = readOnlyReason();
+    if (_inspector) {
+        _inspector->setReadOnly(_readOnly, reason);
+    }
+    if (_hierarchy) {
+        _hierarchy->setReadOnly(_readOnly, reason);
+    }
+    if (_toolBar) {
+        _toolBar->setCreateEnabled(!_readOnly);
+    }
+    setMenuActionsEnabled(_active);
+    if (_readOnly && _gizmo.isDragging()) {
+        _gizmo.endDrag();
+        _dragKind = DragKind::None;
+    }
+    updateGizmo();
+}
+
+bool Editor::editable() {
+    if (!_readOnly) {
+        return true;
+    }
+    setStatus(readOnlyReason(), STATUS_CLEAR_MS);
+    return false;
 }
 
 void Editor::addMenuAction(QAction* action) {
@@ -330,6 +393,7 @@ void Editor::createPanels() {
     connect(_inspector, &InspectorPanel::editBegan, this, &Editor::onInspectorEditBegan);
     connect(_inspector, &InspectorPanel::liveEdit, this, &Editor::onInspectorLiveEdit);
     connect(_inspector, &InspectorPanel::committed, this, &Editor::onInspectorCommitted);
+    connect(_inspector, &InspectorPanel::editCancelled, this, &Editor::onInspectorEditCancelled);
 
     _toolBar = new EditorToolBar(window);
     _toolBar->setGridChecked(_gridVisible);
@@ -429,6 +493,55 @@ void Editor::update(float deltaTime) {
         _selection.prune();
     }
     updateGizmo();
+    updateBounds();
+}
+
+void Editor::updateBounds() {
+    // Unity's gizmo colours: trigger volumes green, lights pale yellow; particles a soft blue
+    static const glm::vec4 ZONE_COLOR(0.55f, 0.95f, 0.55f, 1.0f);
+    static const glm::vec4 LIGHT_COLOR(1.0f, 0.96f, 0.55f, 1.0f);
+    static const glm::vec4 PARTICLE_COLOR(0.55f, 0.8f, 1.0f, 1.0f);
+    std::vector<EditorBoundsShape> shapes;
+    auto tree = entityTree();
+    if (tree && !_selection.isEmpty()) {
+        tree->withReadLock([&] {
+            for (const auto& id : _selection.ids()) {
+                auto entity = tree->findEntityByEntityItemID(id);
+                if (!entity) {
+                    continue;
+                }
+                EditorBoundsShape shape;
+                switch (entity->getType()) {
+                    case EntityTypes::Zone:
+                        shape.kind = EditorBoundsShape::Box;
+                        shape.color = ZONE_COLOR;
+                        break;
+                    case EntityTypes::Light:
+                        shape.kind = EditorBoundsShape::Sphere;   // its reach
+                        shape.color = LIGHT_COLOR;
+                        break;
+                    case EntityTypes::ParticleEffect:
+                        shape.kind = EditorBoundsShape::Box;
+                        shape.color = PARTICLE_COLOR;
+                        break;
+                    default:
+                        continue;   // the selection outline shows everything else
+                }
+                // the middle of the entity, wherever its registration point puts its position
+                glm::vec3 dimensions = entity->getScaledDimensions();
+                glm::quat rotation = entity->getWorldOrientation();
+                glm::vec3 offset = (glm::vec3(0.5f) - entity->getRegistrationPoint()) * dimensions;
+                shape.position = entity->getWorldPosition() + rotation * offset;
+                shape.rotation = rotation;
+                shape.dimensions = dimensions;
+                shapes.push_back(shape);
+            }
+        });
+    }
+    if (shapes != _boundsShapes) {
+        _boundsShapes = shapes;
+        _bounds.setShapes(shapes);
+    }
 }
 
 void Editor::updateAxes() {
@@ -492,7 +605,8 @@ glm::quat Editor::gizmoRotation() const {
 }
 
 void Editor::updateGizmo() {
-    bool show = _active && _tool != EditorToolBar::Tool::View && !_selection.isEmpty();
+    // a read-only world gets no handles: nothing could be moved anyway
+    bool show = _active && !_readOnly && _tool != EditorToolBar::Tool::View && !_selection.isEmpty();
     if (show) {
         _gizmo.setMode(gizmoModeFor(_tool));
         glm::vec3 position;
@@ -591,20 +705,41 @@ void Editor::refreshInspector(bool selectionChanged) {
     }
 }
 
+EntityItemProperties Editor::inspectorEdit(const QString& key, const QVariant& value, const glm::vec3& naturalSize) const {
+    // Scale is the one Inspector property that is not stored: it becomes dimensions, the scale
+    // times the entity's own size
+    EntityItemProperties properties;
+    if (key == SCALE_KEY) {
+        QVector3D scale = value.value<QVector3D>();
+        glm::vec3 dimensions = glm::vec3(scale.x(), scale.y(), scale.z()) * naturalSize;
+        properties.setDimensions(glm::max(dimensions, glm::vec3(MIN_DIMENSION)));
+    } else {
+        PropertySpecs::set(key, properties, value);
+    }
+    return properties;
+}
+
 void Editor::onInspectorEditBegan(const QString& key) {
-    // a scrub starts: what the entities hold now is the undo point
+    // a scrub starts (or a colour picker opens): what the entities hold now is the undo point
     _inspectorEditKey = key;
     _inspectorEditIds.clear();
     _inspectorBefore.clear();
+    _inspectorNatural.clear();
+    QString stored = key == SCALE_KEY ? QStringLiteral("dimensions") : key;
     for (const auto& id : _selection.ids()) {
         EntityItemProperties snapshot;
         if (!EditorUndo::snapshot(id, snapshot) || EditorUndo::isLocked(id)) {
             continue;
         }
+        glm::vec3 naturalSize = PropertySpecs::naturalSize(snapshot);
+        if (key == SCALE_KEY && naturalSize == glm::vec3(0.0f)) {
+            continue;   // a model that has not loaded: its scale is not known yet
+        }
         EntityItemProperties before;
-        PropertySpecs::set(key, before, PropertySpecs::get(key, snapshot));
+        PropertySpecs::set(stored, before, PropertySpecs::get(stored, snapshot));
         _inspectorEditIds << id;
         _inspectorBefore << before;
+        _inspectorNatural << naturalSize;
     }
 }
 
@@ -613,45 +748,67 @@ void Editor::onInspectorLiveEdit(const QString& key, const QVariant& value) {
         return;
     }
     auto entities = DependencyManager::get<EntityScriptingInterface>();
-    for (const auto& id : _inspectorEditIds) {
-        EntityItemProperties properties;
-        PropertySpecs::set(key, properties, value);
-        entities->editEntity(id, properties);
+    for (int i = 0; i < _inspectorEditIds.size(); ++i) {
+        entities->editEntity(_inspectorEditIds[i], inspectorEdit(key, value, _inspectorNatural[i]));
     }
+}
+
+void Editor::onInspectorEditCancelled(const QString& key) {
+    if (key != _inspectorEditKey) {
+        return;
+    }
+    // the live preview goes back to what the entities held when the edit began; no undo step
+    auto entities = DependencyManager::get<EntityScriptingInterface>();
+    for (int i = 0; i < _inspectorEditIds.size(); ++i) {
+        entities->editEntity(_inspectorEditIds[i], _inspectorBefore[i]);
+    }
+    _inspectorEditKey.clear();
+    _inspectorEditIds.clear();
+    _inspectorBefore.clear();
+    _inspectorNatural.clear();
+    refreshInspector(false);
 }
 
 void Editor::onInspectorCommitted(const QString& key, const QVariant& value) {
     QList<QUuid> ids;
     QVector<EntityItemProperties> before;
+    QVector<glm::vec3> naturalSizes;
     bool alreadyApplied = key == _inspectorEditKey && !_inspectorEditIds.isEmpty();
     if (alreadyApplied) {
         // the end of a scrub: the values went out live, the undo point was taken at its start
         ids = _inspectorEditIds;
         before = _inspectorBefore;
+        naturalSizes = _inspectorNatural;
         onInspectorLiveEdit(key, value);
     } else {
+        QString stored = key == SCALE_KEY ? QStringLiteral("dimensions") : key;
         for (const auto& id : _selection.ids()) {
             EntityItemProperties snapshot;
             if (!EditorUndo::snapshot(id, snapshot) || EditorUndo::isLocked(id)) {
                 continue;
             }
+            glm::vec3 naturalSize = PropertySpecs::naturalSize(snapshot);
+            if (key == SCALE_KEY && naturalSize == glm::vec3(0.0f)) {
+                continue;
+            }
             EntityItemProperties properties;
-            PropertySpecs::set(key, properties, PropertySpecs::get(key, snapshot));
+            PropertySpecs::set(stored, properties, PropertySpecs::get(stored, snapshot));
             ids << id;
             before << properties;
+            naturalSizes << naturalSize;
         }
     }
     _inspectorEditKey.clear();
     _inspectorEditIds.clear();
     _inspectorBefore.clear();
-    if (ids.isEmpty()) {
+    _inspectorNatural.clear();
+    if (ids.isEmpty() || (!alreadyApplied && !editable())) {
+        refreshInspector(false);
         return;
     }
     QVector<EntityItemProperties> after;
     for (int i = 0; i < ids.size(); ++i) {
-        EntityItemProperties properties;
-        PropertySpecs::set(key, properties, value);
-        after << properties;
+        after << inspectorEdit(key, value, naturalSizes[i]);
     }
     auto spec = PropertySpecs::find(key);
     _undo.pushPropertyEdit(spec ? spec->label : key, ids, before, after, alreadyApplied);
@@ -991,7 +1148,7 @@ void Editor::undo() {
     auto stack = _undo.stack();
     qCDebug(interfaceapp) << "editor undo:" << stack->undoText() << "index" << stack->index() << "of" << stack->count()
         << "active" << _active << "dragging" << _gizmo.isDragging();
-    if (_active && !_gizmo.isDragging()) {
+    if (_active && !_gizmo.isDragging() && editable()) {
         stack->undo();
     }
 }
@@ -999,7 +1156,7 @@ void Editor::undo() {
 void Editor::redo() {
     auto stack = _undo.stack();
     qCDebug(interfaceapp) << "editor redo:" << stack->redoText() << "index" << stack->index() << "of" << stack->count();
-    if (_active && !_gizmo.isDragging()) {
+    if (_active && !_gizmo.isDragging() && editable()) {
         stack->redo();
     }
 }
@@ -1016,7 +1173,7 @@ void Editor::rename(const QUuid& id, const QString& name) {
 }
 
 void Editor::deleteSelection() {
-    if (!_active || _selection.isEmpty() || _gizmo.isDragging()) {
+    if (!_active || _selection.isEmpty() || _gizmo.isDragging() || !editable()) {
         return;
     }
     _undo.pushDelete("Delete", _selection.topLevel());
@@ -1024,7 +1181,7 @@ void Editor::deleteSelection() {
 }
 
 void Editor::duplicateSelection() {
-    if (!_active || _selection.isEmpty() || _gizmo.isDragging()) {
+    if (!_active || _selection.isEmpty() || _gizmo.isDragging() || !editable()) {
         return;
     }
     // in place, as Unity does; the copy is selected and the gizmo is on it
@@ -1043,7 +1200,7 @@ void Editor::copySelection() {
 }
 
 void Editor::cutSelection() {
-    if (!_active || _selection.isEmpty() || _gizmo.isDragging()) {
+    if (!_active || _selection.isEmpty() || _gizmo.isDragging() || !editable()) {
         return;
     }
     _clipboard.copy(_selection.topLevel(), selectionAnchor());
@@ -1051,13 +1208,17 @@ void Editor::cutSelection() {
 }
 
 void Editor::paste() {
-    if (!_active || _clipboard.isEmpty() || _gizmo.isDragging()) {
-        return;
-    }
     // the copies land where the cursor points, or a few metres in front of the camera
     glm::vec3 target;
     if (!cursorWorldPoint(target)) {
         target = _camera.position() + viewDirection() * PASTE_FALLBACK_DISTANCE;
+    }
+    pasteAt(target);
+}
+
+void Editor::pasteAt(const glm::vec3& target) {
+    if (!_active || _clipboard.isEmpty() || _gizmo.isDragging() || !editable()) {
+        return;
     }
     QList<QUuid> created = _clipboard.paste(_undo, "Paste", target - _clipboard.anchor());
     if (!created.isEmpty()) {
@@ -1098,7 +1259,7 @@ void Editor::goToSelection() {
 
 void Editor::bringSelectionHere() {
     AABox box;
-    if (!_active || !_selection.bounds(box) || _gizmo.isDragging()) {
+    if (!_active || !_selection.bounds(box) || _gizmo.isDragging() || !editable()) {
         return;
     }
     auto avatar = DependencyManager::get<AvatarManager>()->getMyAvatar();
@@ -1145,8 +1306,12 @@ void Editor::bringSelectionHere() {
 
 // --- create -------------------------------------------------------------------------------------
 
-QMenu* Editor::buildCreateMenu(QWidget* parent) {
+QMenu* Editor::buildCreateMenu(QWidget* parent, const QPoint* viewportPos) {
     auto menu = new QMenu("Create", parent);
+    // from a context menu, new entities go where the right click was; the point is taken now,
+    // while the cursor is still there and not over the menu
+    bool atClick = viewportPos != nullptr;
+    glm::vec3 clickPoint = atClick ? placementPoint(viewportPos) : glm::vec3(0.0f);
     QHash<QString, QMenu*> groups;
     for (const auto& item : EditorCreate::items()) {
         QMenu* target = menu;
@@ -1162,7 +1327,13 @@ QMenu* Editor::buildCreateMenu(QWidget* parent) {
             menu->addSeparator();
         }
         QString key = item.key;
-        target->addAction(item.label, this, [this, key] { create(key); });
+        target->addAction(item.label, this, [this, key, atClick, clickPoint] {
+            if (atClick) {
+                createAt(key, clickPoint);
+            } else {
+                create(key);
+            }
+        });
     }
     return menu;
 }
@@ -1175,18 +1346,21 @@ void Editor::createFromMenu() {
 }
 
 void Editor::create(const QString& key) {
-    if (!_active || _gizmo.isDragging()) {
+    createAt(key, placementPoint());
+}
+
+void Editor::createAt(const QString& key, const glm::vec3& point) {
+    if (!_active || _gizmo.isDragging() || !editable()) {
         return;
     }
     if (key == "model") {
-        createModel();
+        createModelAt(point);
         return;
     }
     auto item = EditorCreate::item(key);
     if (!item) {
         return;
     }
-    glm::vec3 point = placementPoint();
     EntityItemProperties properties = EditorCreate::properties(key, point, cameraYaw());
     if (item->type == EntityTypes::Material && !_selection.isEmpty()) {
         // a material applies to its parent: the first selected entity
@@ -1197,7 +1371,11 @@ void Editor::create(const QString& key) {
 }
 
 void Editor::createModel() {
-    if (!_active) {
+    createModelAt(placementPoint());
+}
+
+void Editor::createModelAt(const glm::vec3& point) {
+    if (!_active || !editable()) {
         return;
     }
     bool ok = false;
@@ -1208,10 +1386,10 @@ void Editor::createModel() {
     }
     QUrl url(text);
     if (!url.isValid() || url.scheme().isEmpty()) {
-        setStatus("Not a URL: " + text);
+        setStatus("Not a URL: " + text, STATUS_CLEAR_MS);
         return;
     }
-    placeModel(url, placementPoint());
+    placeModel(url, point);
 }
 
 glm::vec3 Editor::placementPoint(const QPoint* viewportPos) const {
@@ -1240,12 +1418,8 @@ float Editor::cameraYaw() const {
 }
 
 QList<QUuid> Editor::place(EntityItemProperties properties, const QString& text, const glm::vec3& point) {
-    auto entities = DependencyManager::get<EntityScriptingInterface>();
-    if (!entities->canRez() && !entities->canRezTmp()) {
+    if (!editable()) {
         // the domain says so up front; an instance world is read-only until World Edit is on
-        setStatus(_world->isInstance() && _world->canEdit()
-            ? "This instance is read-only until World Edit is on (toolbar, right)"
-            : "You have no building rights in this world");
         qCWarning(interfaceapp) << "editor: no rez rights here, not creating" << text;
         return QList<QUuid>();
     }
@@ -1267,11 +1441,13 @@ QList<QUuid> Editor::place(EntityItemProperties properties, const QString& text,
         _selection.set(created);
         setTool(EditorToolBar::Tool::Move);
         // the entity server can still refuse the add (a filter, or rights the domain did not
-        // report): the entity then vanishes a moment later, and that deserves a word
-        QTimer::singleShot(REJECTION_CHECK_MS, this, [this, created, text] {
+        // report): the entity then vanishes a moment later, and that deserves a word. An undo in
+        // the meantime is not a refusal.
+        int pushedAt = _undo.stack()->index();
+        QTimer::singleShot(REJECTION_CHECK_MS, this, [this, created, text, pushedAt] {
             EntityItemProperties check;
-            if (!EditorUndo::snapshot(created.first(), check)) {
-                setStatus("The world rejected \"" + text + "\": you may not have building rights here (World Edit, toolbar right)");
+            if (_undo.stack()->index() >= pushedAt && !EditorUndo::snapshot(_undo.resolve(created.first()), check)) {
+                setStatus("The world refused \"" + text + "\" (no building rights here?)", STATUS_CLEAR_MS);
                 qCWarning(interfaceapp) << "editor: the server removed the new entity" << text << created.first();
             }
         });
@@ -1324,92 +1500,184 @@ bool Editor::handleDrop(QDropEvent* event) {
         return false;
     }
     auto mime = event->mimeData();
-    QList<QUrl> urls = mime->urls();
-    if (urls.isEmpty() && mime->hasText()) {
-        QUrl url(mime->text().trimmed());
-        if (url.isValid() && !url.scheme().isEmpty()) {
-            urls << url;
+    QList<QUrl> remote;
+    QList<QUrl> local;
+    QList<bool> remoteIsImage;
+    QList<bool> localIsImage;
+    auto consider = [&](const QUrl& url, bool knownImage) {
+        QString name = url.fileName();
+        bool image = knownImage || EditorCreate::isImageFile(name);
+        bool model = !image && EditorCreate::isModelFile(name);
+        if (!image && !model) {
+            return;
         }
+        if (url.isLocalFile()) {
+            local << url;
+            localIsImage << image;
+        } else if (url.scheme() == "http" || url.scheme() == "https") {
+            remote << url;
+            remoteIsImage << image;
+        }
+    };
+    for (const auto& url : mime->urls()) {
+        consider(url, false);
+    }
+    // a browser drags a picture as the link around it (often an article) plus a copy of the file;
+    // the <img src> in the dragged HTML is the picture's own address, which needs no upload
+    if (mime->hasHtml()) {
+        static const QRegularExpression IMG_SRC("<img[^>]*\\ssrc\\s*=\\s*[\"']([^\"']+)[\"']",
+                                                QRegularExpression::CaseInsensitiveOption);
+        auto match = IMG_SRC.match(mime->html());
+        if (match.hasMatch()) {
+            QString src = match.captured(1);
+            src.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'");
+            consider(QUrl(src), true);
+        }
+    }
+    if (remote.isEmpty() && local.isEmpty() && mime->hasText()) {
+        consider(QUrl(mime->text().trimmed()), false);
+    }
+    if (remote.isEmpty() && local.isEmpty()) {
+        return false;
+    }
+    if (!editable()) {
+        return true;   // ours to refuse: said so on the toolbar
     }
     QPoint pos = event->pos();
-    bool handled = false;
-    for (const auto& url : urls) {
-        QString name = url.fileName();
-        bool model = EditorCreate::isModelFile(name);
-        bool image = EditorCreate::isImageFile(name);
-        if (!model && !image) {
-            continue;
+    glm::vec3 point = placementPoint(&pos);
+    if (!remote.isEmpty()) {
+        // the web address wins over a local copy of the same thing
+        for (int i = 0; i < remote.size(); ++i) {
+            if (remoteIsImage[i]) {
+                placeImage(remote[i], point);
+            } else {
+                placeModel(remote[i], point);
+            }
         }
-        glm::vec3 point = placementPoint(&pos);
-        if (url.isLocalFile()) {
-            beginUpload(url.toLocalFile(), point, image);
-        } else if (image) {
-            placeImage(url, point);
-        } else {
-            placeModel(url, point);
-        }
-        handled = true;
+        return true;
     }
-    return handled;
+    for (int i = 0; i < local.size(); ++i) {
+        beginUpload(local[i].toLocalFile(), point, localIsImage[i]);
+    }
+    return true;
 }
 
 void Editor::beginUpload(const QString& localPath, const glm::vec3& point, bool image) {
     auto upload = new EditorUpload(this);
     QString error;
     if (!upload->start(localPath, image ? "/images" : "/models", error)) {
-        setStatus("Upload failed: " + error);
+        setStatus("Upload failed: " + error, STATUS_CLEAR_MS * 2);
         qCWarning(interfaceapp) << "editor upload could not start" << localPath << error;
         upload->deleteLater();
         return;
     }
     ++_uploadsActive;
-    setStatus("Uploading " + upload->fileName() + "…");
+    setStatus("Uploading " + upload->fileName() + " 0%");
     connect(upload, &EditorUpload::progress, this, [this, upload](qint64 sent, qint64 total) {
-        int percent = total > 0 ? (int)(sent * 100 / total) : 0;
-        setStatus(QString("Uploading %1… %2%").arg(upload->fileName()).arg(percent));
+        if (total <= 0) {
+            return;
+        }
+        if (sent >= total) {
+            setStatus("Processing " + upload->fileName() + "…");   // sent; the server is storing it
+        } else {
+            setStatus(QString("Uploading %1 %2%").arg(upload->fileName()).arg((int)(sent * 100 / total)));
+        }
     });
     connect(upload, &EditorUpload::finished, this, [this, upload, point, image](const QString& url) {
         --_uploadsActive;
-        setStatus(_uploadsActive > 0 ? QString("Uploading…") : QString());
         if (!_active) {
-            setStatus("Uploaded " + url);   // build mode ended meanwhile: the file is up, nothing placed
-        } else if (image) {
-            placeImage(QUrl(url), point);
+            setStatus("Uploaded " + upload->fileName(), STATUS_CLEAR_MS);   // build mode ended meanwhile
         } else {
-            placeModel(QUrl(url), point);
+            setStatus(_uploadsActive > 0 ? QString("Uploading…") : QString());
+            if (image) {
+                placeImage(QUrl(url), point);
+            } else {
+                placeModel(QUrl(url), point);
+            }
         }
         upload->deleteLater();
     });
     connect(upload, &EditorUpload::failed, this, [this, upload](const QString& error) {
         --_uploadsActive;
-        setStatus("Upload failed: " + error);
+        setStatus("Upload of " + upload->fileName() + " failed: " + error, STATUS_CLEAR_MS * 2);
         upload->deleteLater();
     });
 }
 
+void Editor::addSelectionActions(QMenu& menu, const glm::vec3* pasteTarget) {
+    bool any = !_selection.isEmpty();
+    auto add = [&](const QString& text, const QString& keys, std::function<void()> run, bool enabled) {
+        QAction* action = menu.addAction(text, this, run);
+        if (!keys.isEmpty()) {
+            action->setShortcut(QKeySequence(keys));   // shown as a hint; the menu is gone after
+            action->setShortcutVisibleInContextMenu(true);
+        }
+        action->setEnabled(enabled);
+    };
+    add("Frame Selected", "F", [this] { frameSelection(); }, any);
+    add("Go to Selected", "Shift+F", [this] { goToSelection(); }, any);
+    add("Bring Selected Here", "Alt+Shift+F", [this] { bringSelectionHere(); }, any && !_readOnly);
+    menu.addSeparator();
+    add("Cut", "Ctrl+X", [this] { cutSelection(); }, any && !_readOnly);
+    add("Copy", "Ctrl+C", [this] { copySelection(); }, any);
+    glm::vec3 target = pasteTarget ? *pasteTarget : glm::vec3(0.0f);
+    bool atTarget = pasteTarget != nullptr;
+    add("Paste", "Ctrl+V", [this, target, atTarget] {
+        if (atTarget) {
+            pasteAt(target);
+        } else {
+            paste();
+        }
+    }, !_clipboard.isEmpty() && !_readOnly);
+    add("Duplicate", "Ctrl+D", [this] { duplicateSelection(); }, any && !_readOnly);
+    add("Delete", "Backspace", [this] { deleteSelection(); }, any && !_readOnly);
+}
+
 void Editor::showHierarchyMenu(const QPoint& globalPos) {
     QMenu menu;
-    menu.addMenu(buildCreateMenu(&menu));
+    QMenu* create = buildCreateMenu(&menu);
+    create->setEnabled(!_readOnly);
+    menu.addMenu(create);
     menu.addSeparator();
-    bool any = !_selection.isEmpty();
-    menu.addAction("Frame Selected", this, [this] { frameSelection(); })->setEnabled(any);
-    menu.addAction("Go to Selected", this, [this] { goToSelection(); })->setEnabled(any);
-    menu.addAction("Bring Selected Here", this, [this] { bringSelectionHere(); })->setEnabled(any);
+    addSelectionActions(menu, nullptr);
     menu.addSeparator();
     menu.addAction("Rename", this, [this] {
         if (_hierarchy) {
             auto tree = _hierarchy->treeView();
             tree->edit(tree->currentIndex());
         }
-    })->setEnabled(any);
-    menu.addAction("Duplicate", this, [this] { duplicateSelection(); })->setEnabled(any);
-    menu.addAction("Delete", this, [this] { deleteSelection(); })->setEnabled(any);
+    })->setEnabled(!_selection.isEmpty() && !_readOnly);
     menu.exec(globalPos);
 }
 
-void Editor::setStatus(const QString& text) {
+void Editor::showViewportMenu(const QPoint& viewportPos, const QPoint& globalPos) {
+    if (!_active) {
+        return;
+    }
+    // a right click on something outside the selection selects it first, as in the Hierarchy
+    QUuid hit = pickEntity(viewportPos);
+    if (!hit.isNull() && !_selection.ids().contains(hit)) {
+        _selection.set({ hit });
+    }
+    // new and pasted entities go where the click was
+    glm::vec3 point = placementPoint(&viewportPos);
+    QMenu menu;
+    QMenu* create = buildCreateMenu(&menu, &viewportPos);
+    create->setEnabled(!_readOnly);
+    menu.addMenu(create);
+    menu.addSeparator();
+    addSelectionActions(menu, &point);
+    menu.exec(globalPos);
+}
+
+void Editor::setStatus(const QString& text, int clearAfterMs) {
     if (_toolBar) {
         _toolBar->setStatus(text);
+    }
+    if (clearAfterMs > 0 && !text.isEmpty()) {
+        _statusTimer.start(clearAfterMs);
+    } else {
+        _statusTimer.stop();
     }
 }
 
@@ -1427,6 +1695,9 @@ bool Editor::handleMousePress(QMouseEvent* event) {
     }
     // a press in the viewport takes the keyboard back from the panels (a right click would not, on macOS)
     focusViewport();
+    if (event->button() == Qt::RightButton) {
+        _rightPressPos = event->pos();   // where the context menu opens, if this is a click
+    }
     if (_camera.mousePress(event)) {
         return true;
     }
@@ -1486,6 +1757,13 @@ bool Editor::handleMouseRelease(QMouseEvent* event) {
         return false;
     }
     if (_camera.mouseRelease(event)) {
+        // a right click without looking around opens the context menu, after this event is done
+        if (event->button() == Qt::RightButton && _camera.wasRightClick()) {
+            QPoint pos = _rightPressPos;
+            auto viewport = qApp->getPrimaryWidget();
+            QPoint global = viewport ? viewport->mapToGlobal(pos) : event->globalPos();
+            QTimer::singleShot(0, this, [this, pos, global] { showViewportMenu(pos, global); });
+        }
         return true;
     }
     if (event->button() != Qt::LeftButton) {
@@ -1617,6 +1895,9 @@ bool Editor::handleKeyRelease(QKeyEvent* event) {
 bool Editor::eventFilter(QObject* watched, QEvent* event) {
     if (!_active || event->type() != QEvent::KeyPress || !_panelsCreated) {
         return false;
+    }
+    if (QApplication::activeModalWidget()) {
+        return false;   // a dialog (the colour picker) keeps its own keys
     }
     auto widget = qobject_cast<QWidget*>(watched);
     if (!widget) {

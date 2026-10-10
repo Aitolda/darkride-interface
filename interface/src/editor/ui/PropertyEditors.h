@@ -12,9 +12,11 @@
 #ifndef hifi_PropertyEditors_h
 #define hifi_PropertyEditors_h
 
+#include <QtCore/QPointer>
 #include <QtCore/QVariant>
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
+#include <QtWidgets/QDialog>
 #include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
@@ -74,13 +76,22 @@ public:
     virtual void setValue(const QVariant& value, bool mixed) = 0;
     // the user is in the middle of it: do not refresh the value under them
     virtual bool isEditing() const { return false; }
+    // the value shown now, and whether it stands for differing values (for Copy)
+    virtual QVariant currentValue() const = 0;
+    virtual bool isMixed() const { return false; }
+    // Copy and Paste for the row, as Unity offers on a field's label
+    void showValueMenu(const QPoint& globalPos);
 
     static PropertyEditor* create(const PropertySpec& spec, QWidget* parent);
+    // a value as clipboard text, and back; false when the text is not a value of this kind
+    static QString valueToText(const PropertySpec& spec, const QVariant& value);
+    static bool textToValue(const PropertySpec& spec, const QString& text, QVariant& value);
 
 signals:
     void editBegan();                      // a scrub started: what is shown now is the undo point
     void liveValue(const QVariant& value); // while scrubbing
     void committed(const QVariant& value); // the edit is done
+    void editCancelled();                  // a live edit was abandoned: back to the undo point
 
 protected:
     PropertySpec _spec;
@@ -96,6 +107,8 @@ public:
     QWidget* createLabel(QWidget* parent) override;
     void setValue(const QVariant& value, bool mixed) override;
     bool isEditing() const override;
+    QVariant currentValue() const override { return QVariant(_spin->value()); }
+    bool isMixed() const override { return _spin->isMixedShown(); }
     double value() const { return _spin->value(); }
     // connects a scrub label to this editor's value
     void attachScrubLabel(ScrubLabel* label);
@@ -114,8 +127,9 @@ public:
     VectorEditor(const PropertySpec& spec, QWidget* parent = nullptr);
     void setValue(const QVariant& value, bool mixed) override;
     bool isEditing() const override;
+    QVariant currentValue() const override;
+    bool isMixed() const override;
 private:
-    QVariant currentValue() const;
     QVector<NumberEditor*> _components;
 };
 
@@ -124,6 +138,8 @@ class BoolEditor : public PropertyEditor {
 public:
     BoolEditor(const PropertySpec& spec, QWidget* parent = nullptr);
     void setValue(const QVariant& value, bool mixed) override;
+    QVariant currentValue() const override { return QVariant(_check->isChecked()); }
+    bool isMixed() const override { return _check->checkState() == Qt::PartiallyChecked; }
 private:
     QCheckBox* _check { nullptr };
 };
@@ -135,9 +151,12 @@ public:
     TextEditor(const PropertySpec& spec, QWidget* parent = nullptr);
     void setValue(const QVariant& value, bool mixed) override;
     bool isEditing() const override;
+    QVariant currentValue() const override { return QVariant(_edit->text()); }
+    bool isMixed() const override { return _mixed; }
 private:
     QLineEdit* _edit { nullptr };
     QString _shown;
+    bool _mixed { false };
 };
 
 class JsonEditor : public PropertyEditor {
@@ -146,25 +165,36 @@ public:
     JsonEditor(const PropertySpec& spec, QWidget* parent = nullptr);
     void setValue(const QVariant& value, bool mixed) override;
     bool isEditing() const override;
+    QVariant currentValue() const override { return QVariant(_edit->toPlainText()); }
+    bool isMixed() const override { return _mixed; }
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 private:
     void commitIfChanged();
     QPlainTextEdit* _edit { nullptr };
     QString _shown;
+    bool _mixed { false };
 };
 
-// Color, FloatColor
+// Color, FloatColor. The picker previews live in the world; OK keeps the colour as one undo step,
+// Cancel puts the old one back.
 class ColorEditor : public PropertyEditor {
     Q_OBJECT
 public:
     ColorEditor(const PropertySpec& spec, QWidget* parent = nullptr);
     void setValue(const QVariant& value, bool mixed) override;
+    bool isEditing() const override { return !_dialog.isNull(); }
+    QVariant currentValue() const override { return QVariant(_color); }
+    bool isMixed() const override { return _mixed; }
 private:
+    void openPicker();
     void updateSwatch();
     QToolButton* _button { nullptr };
+    QPointer<QDialog> _dialog;
     QColor _color;
+    QColor _original;
     bool _mixed { false };
+    bool _originalMixed { false };
 };
 
 class EnumEditor : public PropertyEditor {
@@ -172,6 +202,8 @@ class EnumEditor : public PropertyEditor {
 public:
     EnumEditor(const PropertySpec& spec, QWidget* parent = nullptr);
     void setValue(const QVariant& value, bool mixed) override;
+    QVariant currentValue() const override { return _combo->currentData(); }
+    bool isMixed() const override { return _combo->currentIndex() < 0; }
 private:
     QComboBox* _combo { nullptr };
 };
@@ -181,9 +213,12 @@ class CollisionMaskEditor : public PropertyEditor {
 public:
     CollisionMaskEditor(const PropertySpec& spec, QWidget* parent = nullptr);
     void setValue(const QVariant& value, bool mixed) override;
+    QVariant currentValue() const override { return QVariant(currentMask()); }
+    bool isMixed() const override { return _mixed; }
 private:
     QString currentMask() const;
     QVector<QCheckBox*> _checks;
+    bool _mixed { false };
 };
 
 #endif // hifi_PropertyEditors_h

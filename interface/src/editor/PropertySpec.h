@@ -81,6 +81,10 @@ namespace PropertySpecs {
     QVariant get(const QString& key, const EntityItemProperties& properties);
     // sets the property (and only it) on the properties; false when the key is unknown
     bool set(const QString& key, EntityItemProperties& properties, const QVariant& value);
+
+    // an entity's own size, what Scale 1 means: a model's natural dimensions (zero until the model
+    // has loaded), 1 m for everything else, as for Unity's primitives
+    glm::vec3 naturalSize(const EntityItemProperties& properties);
 }
 
 #endif // hifi_PropertySpec_h

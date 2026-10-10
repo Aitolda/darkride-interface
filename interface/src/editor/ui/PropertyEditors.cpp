@@ -13,6 +13,8 @@
 #include <QtCore/QEvent>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QRect>
+#include <QtCore/QRegularExpression>
+#include <QtGui/QClipboard>
 #include <QtGui/QColor>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QPainter>
@@ -22,7 +24,10 @@
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QColorDialog>
 #include <QtWidgets/QHBoxLayout>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QVBoxLayout>
+
+#include <glm/glm.hpp>
 
 namespace {
     const int SCRUB_SLOP_PIXELS = 3;
@@ -42,6 +47,170 @@ namespace {
             case PropertyKind::Rect: return { "X", "Y", "W", "H" };
             default: return { "X", "Y", "Z" };
         }
+    }
+
+    // a number as people write it: up to four decimals, no trailing zeros
+    QString formatNumber(double value) {
+        QString text = QString::number(value, 'f', 4);
+        if (text.contains('.')) {
+            while (text.endsWith('0')) {
+                text.chop(1);
+            }
+            if (text.endsWith('.')) {
+                text.chop(1);
+            }
+        }
+        return text == "-0" ? "0" : text;
+    }
+
+    // every number in a piece of text, in order: "1, 2, 3", "(1 2 3)" and {"x":1,"y":2,"z":3} all work
+    QVector<double> numbersIn(const QString& text) {
+        static const QRegularExpression NUMBER("[-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?");
+        QVector<double> numbers;
+        auto matches = NUMBER.globalMatch(text);
+        while (matches.hasNext()) {
+            numbers << matches.next().captured(0).toDouble();
+        }
+        return numbers;
+    }
+}
+
+// --- clipboard values ---------------------------------------------------------------------------
+
+QString PropertyEditor::valueToText(const PropertySpec& spec, const QVariant& value) {
+    switch (spec.kind) {
+        case PropertyKind::Vec2:
+        case PropertyKind::Polar: {
+            QVector2D v = value.value<QVector2D>();
+            return formatNumber(v.x()) + ", " + formatNumber(v.y());
+        }
+        case PropertyKind::Vec3:
+        case PropertyKind::Euler: {
+            QVector3D v = value.value<QVector3D>();
+            return formatNumber(v.x()) + ", " + formatNumber(v.y()) + ", " + formatNumber(v.z());
+        }
+        case PropertyKind::Rect: {
+            QRect r = value.toRect();
+            return QString("%1, %2, %3, %4").arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height());
+        }
+        case PropertyKind::Color:
+        case PropertyKind::FloatColor:
+            return value.value<QColor>().name().toUpper();
+        case PropertyKind::Bool:
+            return value.toBool() ? "true" : "false";
+        case PropertyKind::Int:
+        case PropertyKind::Float:
+        case PropertyKind::Degrees:
+            return formatNumber(value.toDouble());
+        default:
+            return value.toString();
+    }
+}
+
+bool PropertyEditor::textToValue(const PropertySpec& spec, const QString& text, QVariant& value) {
+    QString trimmed = text.trimmed();
+    QVector<double> numbers = numbersIn(trimmed);
+    switch (spec.kind) {
+        case PropertyKind::Vec2:
+        case PropertyKind::Polar:
+            if (numbers.size() < 2) {
+                return false;
+            }
+            value = QVariant(QVector2D((float)numbers[0], (float)numbers[1]));
+            return true;
+        case PropertyKind::Vec3:
+        case PropertyKind::Euler:
+            if (numbers.size() < 3) {
+                return false;
+            }
+            value = QVariant(QVector3D((float)numbers[0], (float)numbers[1], (float)numbers[2]));
+            return true;
+        case PropertyKind::Rect:
+            if (numbers.size() < 4) {
+                return false;
+            }
+            value = QVariant(QRect((int)numbers[0], (int)numbers[1], (int)numbers[2], (int)numbers[3]));
+            return true;
+        case PropertyKind::Color:
+        case PropertyKind::FloatColor: {
+            static const QRegularExpression HEX("^#?([0-9a-fA-F]{6})$");
+            auto hex = HEX.match(trimmed);
+            if (hex.hasMatch()) {
+                value = QVariant(QColor("#" + hex.captured(1)));
+                return true;
+            }
+            if (numbers.size() == 3) {
+                value = QVariant(QColor(glm::clamp((int)numbers[0], 0, 255), glm::clamp((int)numbers[1], 0, 255),
+                                        glm::clamp((int)numbers[2], 0, 255)));
+                return true;
+            }
+            return false;
+        }
+        case PropertyKind::Bool: {
+            QString word = trimmed.toLower();
+            if (word == "true" || word == "yes" || word == "on" || word == "1") {
+                value = QVariant(true);
+                return true;
+            }
+            if (word == "false" || word == "no" || word == "off" || word == "0") {
+                value = QVariant(false);
+                return true;
+            }
+            return false;
+        }
+        case PropertyKind::Int:
+        case PropertyKind::Float:
+        case PropertyKind::Degrees: {
+            bool ok = false;
+            double number = trimmed.toDouble(&ok);
+            if (!ok) {
+                return false;
+            }
+            value = QVariant(glm::clamp(number, spec.min, spec.max));
+            return true;
+        }
+        case PropertyKind::Enum:
+            for (const auto& entry : spec.enumValues) {
+                int colon = entry.indexOf(':');
+                QString entryValue = colon < 0 ? entry : entry.left(colon);
+                QString entryLabel = colon < 0 ? entry : entry.mid(colon + 1);
+                if (trimmed.compare(entryValue, Qt::CaseInsensitive) == 0
+                    || trimmed.compare(entryLabel, Qt::CaseInsensitive) == 0) {
+                    value = QVariant(entryValue);
+                    return true;
+                }
+            }
+            return false;
+        case PropertyKind::Json: {
+            QJsonParseError error;
+            QJsonDocument::fromJson(trimmed.toUtf8(), &error);
+            if (!trimmed.isEmpty() && error.error != QJsonParseError::NoError) {
+                return false;
+            }
+            value = QVariant(trimmed);
+            return true;
+        }
+        default:
+            value = QVariant(trimmed);
+            return true;
+    }
+}
+
+void PropertyEditor::showValueMenu(const QPoint& globalPos) {
+    QMenu menu;
+    QAction* copy = menu.addAction("Copy " + _spec.label);
+    copy->setEnabled(!isMixed());
+    QVariant pasted;
+    bool canPaste = !_spec.readOnly && isEnabled()
+        && textToValue(_spec, QApplication::clipboard()->text(), pasted);
+    QAction* paste = menu.addAction("Paste " + _spec.label);
+    paste->setEnabled(canPaste);
+    QAction* chosen = menu.exec(globalPos);
+    if (chosen == copy) {
+        QApplication::clipboard()->setText(valueToText(_spec, currentValue()));
+    } else if (chosen == paste && canPaste) {
+        setValue(pasted, false);
+        emit committed(pasted);
     }
 }
 
@@ -193,12 +362,19 @@ QWidget* NumberEditor::createLabel(QWidget* parent) {
 
 void NumberEditor::attachScrubLabel(ScrubLabel* label) {
     connect(label, &ScrubLabel::scrubBegan, this, [this] {
+        // a read-only field (the world is not editable, or the property never is) does not scrub
+        if (!isEnabled() || !_spin->isEnabled()) {
+            return;
+        }
         _scrubbing = true;
         _scrubStart = _spin->value();
         _scrubAccumulated = _scrubStart;
         emit editBegan();
     });
     connect(label, &ScrubLabel::scrubbed, this, [this](int deltaPixels, Qt::KeyboardModifiers modifiers) {
+        if (!_scrubbing) {
+            return;
+        }
         double step = _spec.step;
         if (modifiers.testFlag(Qt::ShiftModifier)) {
             step *= SCRUB_COARSE;
@@ -212,6 +388,9 @@ void NumberEditor::attachScrubLabel(ScrubLabel* label) {
         emit liveValue(QVariant(_spin->value()));
     });
     connect(label, &ScrubLabel::scrubEnded, this, [this] {
+        if (!_scrubbing) {
+            return;
+        }
         _scrubbing = false;
         emit committed(QVariant(_spin->value()));
     });
@@ -304,6 +483,15 @@ bool VectorEditor::isEditing() const {
     return false;
 }
 
+bool VectorEditor::isMixed() const {
+    for (auto component : _components) {
+        if (component->isMixed()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // --- BoolEditor ---------------------------------------------------------------------------------
 
 BoolEditor::BoolEditor(const PropertySpec& spec, QWidget* parent) : PropertyEditor(spec, parent) {
@@ -352,6 +540,7 @@ TextEditor::TextEditor(const PropertySpec& spec, QWidget* parent) : PropertyEdit
 
 void TextEditor::setValue(const QVariant& value, bool mixed) {
     _updating = true;
+    _mixed = mixed;
     _shown = mixed ? QString() : value.toString();
     _edit->setText(_shown);
     _edit->setPlaceholderText(mixed ? MIXED : (_spec.kind == PropertyKind::Url ? "URL" : QString()));
@@ -403,6 +592,7 @@ void JsonEditor::commitIfChanged() {
 
 void JsonEditor::setValue(const QVariant& value, bool mixed) {
     _updating = true;
+    _mixed = mixed;
     _shown = mixed ? QString() : value.toString();
     _edit->setPlainText(_shown);
     _edit->setPlaceholderText(mixed ? MIXED : QString());
@@ -426,16 +616,54 @@ ColorEditor::ColorEditor(const PropertySpec& spec, QWidget* parent) : PropertyEd
     _button->setMinimumWidth(120);
     layout->addWidget(_button);
     layout->addStretch(1);
-    connect(_button, &QToolButton::clicked, this, [this] {
-        QColor chosen = QColorDialog::getColor(_mixed ? Qt::white : _color, this, _spec.label);
-        if (chosen.isValid()) {
-            _color = chosen;
-            _mixed = false;
+    connect(_button, &QToolButton::clicked, this, &ColorEditor::openPicker);
+    updateSwatch();
+}
+
+void ColorEditor::openPicker() {
+    if (_dialog) {
+        _dialog->raise();
+        _dialog->activateWindow();
+        return;
+    }
+    // Qt's own picker rather than macOS's colour panel: the native panel's OK button did not
+    // register on this macOS, so every pick came back as a cancel and nothing changed
+    auto dialog = new QColorDialog(_mixed ? QColor(Qt::white) : _color, this);
+    dialog->setOption(QColorDialog::DontUseNativeDialog, true);
+    dialog->setWindowTitle(_spec.label);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    // the selection cannot change under an open picker
+    dialog->setWindowModality(Qt::ApplicationModal);
+    _dialog = dialog;
+    _original = _color;
+    _originalMixed = _mixed;
+    emit editBegan();
+    connect(dialog, &QColorDialog::currentColorChanged, this, [this](const QColor& color) {
+        if (!color.isValid()) {
+            return;
+        }
+        _color = color;
+        _mixed = false;
+        updateSwatch();
+        emit liveValue(QVariant(color));
+    });
+    connect(dialog, &QDialog::finished, this, [this, dialog](int result) {
+        if (result == QDialog::Accepted) {
+            QColor chosen = dialog->selectedColor();
+            if (chosen.isValid()) {
+                _color = chosen;
+                _mixed = false;
+            }
             updateSwatch();
-            emit committed(QVariant(chosen));
+            emit committed(QVariant(_color));
+        } else {
+            _color = _original;
+            _mixed = _originalMixed;
+            updateSwatch();
+            emit editCancelled();
         }
     });
-    updateSwatch();
+    dialog->show();
 }
 
 void ColorEditor::updateSwatch() {
@@ -450,6 +678,9 @@ void ColorEditor::updateSwatch() {
 }
 
 void ColorEditor::setValue(const QVariant& value, bool mixed) {
+    if (_dialog) {
+        return;   // the picker is open: what it shows is the truth until it closes
+    }
     _color = value.value<QColor>();
     _mixed = mixed;
     updateSwatch();
@@ -517,6 +748,7 @@ QString CollisionMaskEditor::currentMask() const {
 
 void CollisionMaskEditor::setValue(const QVariant& value, bool mixed) {
     _updating = true;
+    _mixed = mixed;
     QStringList groups = value.toString().split(',', QString::SkipEmptyParts);
     for (int i = 0; i < _checks.size(); ++i) {
         _checks[i]->setTristate(mixed);

@@ -32,6 +32,8 @@ namespace {
     const glm::u8vec3 SHAPE_COLOR { 190, 190, 190 };       // Unity's default material, more or less
     const glm::u8vec3 WHITE { 255, 255, 255 };
     const glm::u8vec3 BLACK { 0, 0, 0 };
+    // a mid grey reads on white sand and on dark grass alike, where white vanished on sand
+    const glm::u8vec3 GRID_COLOR { 110, 110, 110 };
     const glm::vec3 UNIT_DIMENSIONS { 1.0f };
     const glm::vec3 PANEL_DIMENSIONS { 1.0f, 1.0f, 0.01f };
     const QString DEFAULT_IMAGE = "qrc:///images/empty-image-entity.png";
@@ -181,7 +183,7 @@ EntityItemProperties EditorCreate::properties(const QString& key, const glm::vec
         p.setType(EntityTypes::Grid);
         p.setName("Grid");
         p.setDimensions(glm::vec3(10.0f, 10.0f, 0.01f));
-        p.setColor(WHITE);
+        p.setColor(GRID_COLOR);
         p.setFollowCamera(false);
         p.setMajorGridEvery(5);
         p.setMinorGridEvery(1.0f);
@@ -277,6 +279,8 @@ bool EditorUpload::start(const QString& localPath, const QString& remoteFolder, 
         delete multiPart;
         return false;
     }
+    _timer.start();
+    qCDebug(interfaceapp) << "editor upload started" << remotePath << QFileInfo(localPath).size() << "bytes";
     auto reply = NetworkAccessManager::getInstance().put(request, multiPart);
     multiPart->setParent(reply);
     connect(reply, &QNetworkReply::uploadProgress, this, &EditorUpload::progress);
@@ -285,7 +289,8 @@ bool EditorUpload::start(const QString& localPath, const QString& remoteFolder, 
         QByteArray body = reply->readAll();
         if (reply->error() != QNetworkReply::NoError) {
             QString detail = QJsonDocument::fromJson(body).object().value("message").toString();
-            qCWarning(interfaceapp) << "editor upload failed" << remotePath << reply->errorString() << detail;
+            qCWarning(interfaceapp) << "editor upload failed" << remotePath << "after" << _timer.elapsed() << "ms:"
+                << reply->errorString() << detail;
             emit failed(detail.isEmpty() ? reply->errorString() : detail);
             return;
         }
@@ -295,7 +300,7 @@ bool EditorUpload::start(const QString& localPath, const QString& remoteFolder, 
             emit failed("the server did not return a URL");
             return;
         }
-        qCDebug(interfaceapp) << "editor upload done" << remotePath << "->" << url;
+        qCDebug(interfaceapp) << "editor upload done" << remotePath << "->" << url << "in" << _timer.elapsed() << "ms";
         emit finished(url);
     });
     return true;

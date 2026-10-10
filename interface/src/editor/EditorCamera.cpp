@@ -34,6 +34,8 @@ namespace {
     const float MAX_PITCH = glm::radians(89.5f);
     const float FRAME_PADDING = 1.15f;
     const int MAX_DELTA_PIXELS = 400;
+    const int CLICK_TRAVEL_PIXELS = 4;     // a right press that moved less than this was a click
+    const int CLICK_MILLISECONDS = 600;   // and was not held for long
 
     // one wheel notch, or about one finger-width on a trackpad
     float wheelNotches(QWheelEvent* event) {
@@ -150,6 +152,7 @@ bool EditorCamera::mouseMove(QMouseEvent* event) {
     }
     float dx = (float)delta.x();
     float dy = (float)delta.y();
+    _dragTravel += std::abs(delta.x()) + std::abs(delta.y());
 
     switch (_drag) {
         case Drag::Look: {
@@ -184,6 +187,16 @@ bool EditorCamera::mouseRelease(QMouseEvent* event) {
         return false;
     }
     if (event->button() == _dragButton) {
+        // a right click is a short press that hardly moved and did not fly: it opens the context
+        // menu, and the few pixels of looking it did are undone
+        _rightClick = _drag == Drag::Look && _dragTravel <= CLICK_TRAVEL_PIXELS && !_flew
+            && _dragTimer.elapsed() < CLICK_MILLISECONDS;
+        if (_rightClick) {
+            _yaw = _dragStartYaw;
+            _pitch = _dragStartPitch;
+            _pivot = _dragStartPivot;
+            apply();
+        }
         endDrag();
     }
     return true;
@@ -206,6 +219,7 @@ bool EditorCamera::wheel(QWheelEvent* event) {
 bool EditorCamera::keyPress(QKeyEvent* event) {
     if (_drag == Drag::Look && isFlyKey(event->key())) {
         _flyKeys.insert(event->key());
+        _flew = true;
         return true;
     }
     return false;
@@ -222,6 +236,13 @@ void EditorCamera::beginDrag(Drag drag, QMouseEvent* event) {
     _drag = drag;
     _dragButton = event->button();
     _dragOrigin = _lastCursor = event->globalPos();
+    _dragTravel = 0;
+    _flew = false;
+    _rightClick = false;
+    _dragTimer.start();
+    _dragStartYaw = _yaw;
+    _dragStartPitch = _pitch;
+    _dragStartPivot = _pivot;
     if (drag == Drag::Look && !_cursorHidden) {
         QGuiApplication::setOverrideCursor(Qt::BlankCursor);
         _cursorHidden = true;

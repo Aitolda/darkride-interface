@@ -129,6 +129,17 @@ namespace {
         P_VEC3("position", Position);
         P_EULER("rotation", Rotation);
         P_VEC3("dimensions", Dimensions);
+        // Scale is dimensions measured in the entity's own size; it is never set directly: the
+        // editor turns an edit of it into a dimensions edit, as only it knows each entity's size
+        add("scale", [](const EP& p) {
+                glm::vec3 natural = PropertySpecs::naturalSize(p);
+                if (natural == glm::vec3(0.0f)) {
+                    return QVariant();   // a model that has not loaded yet
+                }
+                return QVariant(toQ(p.getDimensions() / natural));
+            }, [](EP&, const QVariant&) {});
+        add("type", [](const EP& p) { return QVariant(EntityTypes::getEntityTypeName(p.getType())); },
+            [](EP&, const QVariant&) {});
         P_VEC3("localPosition", LocalPosition);
         P_EULER("localRotation", LocalRotation);
         P_VEC3("localDimensions", LocalDimensions);
@@ -399,6 +410,8 @@ namespace {
         // transform
         stepping(add(spec("position", "Position", K::Vec3, "spatial")), 0.1, 3, "m");
         stepping(add(spec("rotation", "Rotation", K::Euler, "spatial")), 1.0, 2, "°");
+        // Unity's order: Position, Rotation, Scale; then the size in metres it amounts to
+        range(add(spec("scale", "Scale", K::Vec3, "spatial")), 0.0001, DBL_MAX, 0.01, 3);
         range(add(spec("dimensions", "Dimensions", K::Vec3, "spatial")), 0.001, DBL_MAX, 0.01, 3, "m");
         with(stepping(add(spec("localPosition", "Local Position", K::Vec3, "spatial")), 0.1, 3, "m"), "parentID!=");
         with(stepping(add(spec("localRotation", "Local Rotation", K::Euler, "spatial")), 1.0, 2, "°"), "parentID!=");
@@ -578,7 +591,9 @@ namespace {
         with(add(spec("cloneDynamic", "Clone Dynamic", K::Bool, "behavior")), "cloneable=true");
         with(add(spec("cloneAvatarEntity", "Clone Avatar Entity", K::Bool, "behavior")), "cloneable=true");
         with(add(spec("cloneGrabbable", "Clone Grabbable", K::Bool, "behavior")), "cloneable=true");
-        add(spec("canCastShadow", "Cast Shadows", K::Bool, "behavior"));
+        // whether the object casts a shadow from the sun; lights in this engine cast none, so on a
+        // light (or a zone, or a material) the box would only mislead
+        with(add(spec("canCastShadow", "Cast Shadows", K::Bool, "behavior")), "type not in Light,Zone,Material");
         add(spec("href", "Link", K::Url, "behavior"));
         add(spec("ignorePickIntersection", "Ignore Picking", K::Bool, "behavior"));
         add(spec("script", "Script", K::Url, "behavior"));
@@ -712,6 +727,23 @@ bool set(const QString& key, EntityItemProperties& properties, const QVariant& v
     }
     it->set(properties, value);
     return true;
+}
+
+glm::vec3 naturalSize(const EntityItemProperties& properties) {
+    if (properties.getType() != EntityTypes::Model) {
+        return glm::vec3(1.0f);
+    }
+    glm::vec3 natural = properties.getNaturalDimensions();
+    if (!glm::any(glm::greaterThan(natural, glm::vec3(1.0e-6f)))) {
+        return glm::vec3(0.0f);   // not loaded
+    }
+    // a flat model (a plane) has no thickness of its own: that axis counts in metres
+    for (int i = 0; i < 3; ++i) {
+        if (natural[i] <= 1.0e-6f) {
+            natural[i] = 1.0f;
+        }
+    }
+    return natural;
 }
 
 }
