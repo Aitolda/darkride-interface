@@ -132,6 +132,12 @@ static AnimPose composeAnimPose(const HFMJoint& joint, const glm::quat rotation,
 }
 
 void ScriptableAvatar::update(float deltatime) {
+    // The .fst gives the skeleton's .fbx (setJointMappingsFromNetworkReply); load it once as the bind pose.
+    // This line was lost when the .fst reader moved here (eb097af796), so scripted avatars never animated.
+    if (_bind.isNull() && !_skeletonFBXURL.isEmpty()) {
+        _bind = DependencyManager::get<AnimationCache>()->getAnimation(_skeletonFBXURL);
+    }
+
     // Run animation
     if (_animation && _animation->isLoaded() && _animation->getFrames().size() > 0 && !_bind.isNull() && _bind->isLoaded()) {
         if (!_animSkeleton) {
