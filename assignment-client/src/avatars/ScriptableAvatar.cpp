@@ -86,6 +86,7 @@ QStringList ScriptableAvatar::getJointNames() const {
 void ScriptableAvatar::setSkeletonModelURL(const QUrl& skeletonModelURL) {
     _bind.reset();
     _animSkeleton.reset();
+    _bindJointIndices.clear();
 
     AvatarData::setSkeletonModelURL(skeletonModelURL);
     updateJointMappings();
@@ -142,6 +143,19 @@ void ScriptableAvatar::update(float deltatime) {
     if (_animation && _animation->isLoaded() && _animation->getFrames().size() > 0 && !_bind.isNull() && _bind->isLoaded()) {
         if (!_animSkeleton) {
             _animSkeleton = std::make_shared<AnimSkeleton>(_bind->getHFMModel());
+            // The skeleton is read as an animation resource, whose HFMModel has no jointIndices, so getJointIndex()
+            // answered -1 for every joint and nothing moved (2026-10-10): the names come from the joints themselves.
+            _bindJointIndices.clear();
+            const auto& joints = _bind->getHFMModel().joints;
+            for (int j = 0; j < (int)joints.size(); j++) {
+                _bindJointIndices.insert(joints[j].name, j);
+            }
+            int mapped = 0;
+            for (const QString& name : _animation->getJointNames()) {
+                mapped += _bindJointIndices.contains(name) ? 1 : 0;
+            }
+            qDebug() << "Scripted avatar skeleton:" << joints.size() << "joints;" << mapped << "of"
+                     << _animation->getJointNames().size() << "animation joints map onto it";
         }
         float currentFrame = _animationDetails.currentFrame + deltatime * _animationDetails.fps;
         if (_animationDetails.loop || currentFrame < _animationDetails.lastFrame) {
@@ -170,7 +184,7 @@ void ScriptableAvatar::update(float deltatime) {
                 const QString& name = animationJointNames[i];
                 // As long as we need the model preRotations anyway, let's get the jointIndex from the bind skeleton rather than
                 // trusting the .fst (which is sometimes not updated to match changes to .fbx).
-                int mapping = _bind->getHFMModel().getJointIndex(name);
+                int mapping = _bindJointIndices.value(name, -1);
                 if (mapping != -1 && !_maskedJoints.contains(name)) {
 
                     AnimPose floorPose = composeAnimPose(modelJoints[mapping], floorFrame.rotations[i], floorFrame.translations[i] * UNIT_SCALE);

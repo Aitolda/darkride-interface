@@ -220,6 +220,7 @@ private:
     QHash<QString, int> _fstJointIndices; ///< 1-based, since zero is returned for missing keys
     QStringList _fstJointNames; ///< in order of depth-first traversal
     QUrl _skeletonFBXURL;
+    QHash<QString, int> _bindJointIndices;  // the skeleton's joint names -> indices (its HFMModel has no jointIndices)
     mutable QScriptEngine _scriptEngine;
     std::map<QUuid, EntityItemPointer> _entities;
 
