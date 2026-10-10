@@ -78,14 +78,15 @@ bool ScriptableAvatar::samplePoses(const AnimationPointer& animation, AnimationD
         return false;
     }
     float currentFrame = details.currentFrame + deltaTime * details.fps;
+    const float lastFrame = std::min(details.lastFrame, (float)(frames.size() - 1));   // a clip ends at its own end
     if (details.loop) {
-        while (currentFrame >= details.lastFrame) {
-            currentFrame -= (details.lastFrame - details.firstFrame);
+        while (currentFrame >= lastFrame && lastFrame > details.firstFrame) {
+            currentFrame -= (lastFrame - details.firstFrame);
         }
-    } else if (currentFrame >= details.lastFrame) {
-        currentFrame = details.lastFrame;
-        ended = true;
-    }
+    } else if (currentFrame >= lastFrame) {
+        currentFrame = lastFrame;                               // a clip that does not loop stops and holds its last
+        ended = true;                                           // frame (it wrapped round before: a nod file's later
+    }                                                           // frames moved the wrist, 2026-10-10)
     details.currentFrame = currentFrame;
     const int nJoints = _animSkeleton->getNumJoints();
     const int frameCount = (int)frames.size();
