@@ -103,6 +103,15 @@ public slots:
      */
     void playAvatarSound(SharedSoundPointer avatarSound) const { _agent->playAvatarSound(avatarSound); }
 
+    /**jsdoc
+     * Takes what the agent has heard since the last call: the mixed audio the audio mixer sends this agent,
+     * as 16-bit signed mono PCM at 24,000 Hz. Empty unless <code>isListeningToAudioStream == true</code>.
+     * At most the last 30 s are kept between calls (an AI resident's hearing).
+     * @function Agent.takeHeardAudio
+     * @returns {ArrayBuffer} The audio heard since the last call.
+     */
+    QByteArray takeHeardAudio() const { return _agent->takeHeardAudio(); }
+
 private:
     Agent* _agent;
 

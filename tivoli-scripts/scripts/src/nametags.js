@@ -2,22 +2,66 @@ import { usersCache } from "./users-cache";
 
 export function initNametags(showSelf) {
 	var nametags = {};
+	console.log("nametags: starting, showSelf " + showSelf);
+
+	// An AI resident's mark turns while it thinks (2026-10-10, Caitlyn: "the claude text animation ... back to star
+	// diamond when she's done"): its body says busy on AI_CHANNEL, the world stamps the sender, and the picture's
+	// glyph cycles through the frames the metaverse draws (glyph=1..5), then back to the mark (0).
+	var AI_CHANNEL = "tivoli.ai-resident";
+	var GLYPH_CYCLE = [1, 2, 3, 4, 5, 4, 3, 2];
+	var GLYPH_MS = 130;
+	var BUSY_TIMEOUT_MS = 15000;
+
+	// the picture is drawn by the metaverse we are on; for an AI resident it carries the mark,
+	// the resident's word and its host (AI-FIRST-CLIENT.md §10.2)
+	function nametagURL(nametag, glyph) {
+		return AccountServices.metaverseServerURL+"/api/user/"+
+			nametag.username+
+			"/nametag?"+ (glyph > 0 ? nametag.stamp + "." + (nametag.frameTry || 0) : nametag.stamp) +
+			"&glyph="+ glyph +
+			(nametag.admin?"&admin":"")+
+			(nametag.connection=="friend"?"&friend":"");
+	}
+
+	function isAIResident(nametag) {
+		var user = usersCache.get(nametag.id);
+		return !!(user && user.ai);
+	}
+
+	function prefetchGlyphs(nametag) {
+		if (nametag.prefetched == nametag.stamp) return;
+		nametag.prefetched = nametag.stamp;
+		try {
+			nametag.glyphResources = [];
+			for (var g = 1; g <= 5; g++) nametag.glyphResources.push(TextureCache.prefetch(nametagURL(nametag, g)));
+		} catch (e) {
+			console.error("nametags: prefetch failed: " + e);
+		}
+	}
+
+	// the frames turn only once all have arrived (a resource's state: 2 loaded, 3 finished), never showing a blank
+	function glyphsReady(nametag) {
+		var r = nametag.glyphResources;
+		if (!r || r.length < 5) return false;
+		for (var i = 0; i < r.length; i++) {
+			if (!r[i] || (r[i].state !== 2 && r[i].state !== 3)) return false;
+		}
+		return true;
+	}
 
 	function updateNametagEntity(nametag) {
 		if (nametag.entity==undefined) return;
 
+		nametag.stamp = Date.now(); // a new picture when the details change; its glyph frames share the stamp
 		Entities.editEntity(nametag.entity, {
 			alpha: 1,
-			imageURL: (
-				// the picture is drawn by the metaverse we are on; for an AI resident it carries
-				// the mark, the resident's word and its host (AI-FIRST-CLIENT.md §10.2)
-				AccountServices.metaverseServerURL+"/api/user/"+
-				nametag.username+
-				"/nametag?"+ Date.now() +
-				(nametag.admin?"&admin":"")+
-				(nametag.connection=="friend"?"&friend":"")
-			)
+			imageURL: nametagURL(nametag, 0)
 		});
+		try {
+			if (isAIResident(nametag)) prefetchGlyphs(nametag);
+		} catch (e) {
+			console.error("nametags: AI resident check failed: " + e);
+		}
 	}
 
 	function addNametag(id, details) {
@@ -30,6 +74,7 @@ export function initNametags(showSelf) {
 
 		if (nametags[id]!=undefined) return;
 		var nametag = details;
+		nametag.id = id;
 
 		var scale = 1.5;
 		nametag.entity = Entities.addEntity({
@@ -54,8 +99,9 @@ export function initNametags(showSelf) {
 			ignorePickIntersection: true
 		}, "local");
 
-		updateNametagEntity(nametag);
 		nametags[id] = nametag;
+		updateNametagEntity(nametag);
+		console.log("nametags: added " + nametag.username + " " + nametag.entity);
 	}
 
 	function updateNametag(nametag, details) {
@@ -214,9 +260,54 @@ export function initNametags(showSelf) {
 	location.hostChanged.connect(hostChanged);
 	Users.usernameFromIDReply.connect(usernameFromIDReply);
 
+	function onAIResidentMessage(channel, message, senderID) {
+		if (channel != AI_CHANNEL) return;
+		var nametag = nametags[senderID];
+		if (nametag==undefined || nametag.entity==undefined || !isAIResident(nametag)) return;
+		var data;
+		try { data = JSON.parse(message); } catch (e) { return; }
+		if (data && data.busy) {
+			if (!(nametag.busyUntil > Date.now())) prefetchGlyphs(nametag);
+			nametag.busyUntil = Date.now() + BUSY_TIMEOUT_MS;
+		} else if (nametag.busyUntil) {
+			nametag.busyUntil = 0;
+			Entities.editEntity(nametag.entity, { imageURL: nametagURL(nametag, 0) });
+		}
+	}
+	Messages.subscribe(AI_CHANNEL);
+	Messages.messageReceived.connect(onAIResidentMessage);
+
+	var glyphInterval = Script.setInterval(function() {
+		var now = Date.now();
+		Object.keys(nametags).forEach(function(id) {
+			var nametag = nametags[id];
+			if (!nametag.busyUntil || nametag.entity==undefined) return;
+			if (now > nametag.busyUntil) {                // no word for a while: back to the mark
+				nametag.busyUntil = 0;
+				Entities.editEntity(nametag.entity, { imageURL: nametagURL(nametag, 0) });
+				return;
+			}
+			if (!glyphsReady(nametag)) {                 // the mark stays until every frame is here;
+				var failed = (nametag.glyphResources || []).some(function(r) { return r && r.state === 4; });
+				if (failed && nametag.retriedStamp != nametag.stamp) {
+					nametag.retriedStamp = nametag.stamp;    // frames that failed (a jammed server) are asked for
+					nametag.frameTry = (nametag.frameTry || 0) + 1;   // once more under new addresses; the
+					nametag.prefetched = null;               // picture showing keeps its own, so it never blanks
+					prefetchGlyphs(nametag);
+				}
+				return;
+			}
+			nametag.glyphStep = ((nametag.glyphStep || 0) + 1) % GLYPH_CYCLE.length;
+			Entities.editEntity(nametag.entity, { imageURL: nametagURL(nametag, GLYPH_CYCLE[nametag.glyphStep]) });
+		});
+	}, GLYPH_MS);
+
 	var cleanup = function() {
 		Script.clearInterval(updateIntervalLocal);
 		Script.clearInterval(updateIntervalAPI);
+		Script.clearInterval(glyphInterval);
+		Messages.messageReceived.disconnect(onAIResidentMessage);
+		Messages.unsubscribe(AI_CHANNEL);
 
 		AvatarList.avatarAddedEvent.disconnect(avatarAddedEvent);
 		AvatarList.avatarRemovedEvent.disconnect(avatarRemovedEvent);

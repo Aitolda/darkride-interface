@@ -186,7 +186,41 @@ void Agent::handleOctreePacket(QSharedPointer<ReceivedMessage> message, SharedNo
 void Agent::handleAudioPacket(QSharedPointer<ReceivedMessage> message) {
     _receivedAudioStream.parseData(*message);
     _lastReceivedAudioLoudness = _receivedAudioStream.getNextOutputFrameLoudness();
+    if (_isListeningToAudioStream) {
+        // keep what was heard for the script (an AI resident's hearing): stereo to mono
+        QByteArray stereo;
+        int numSamples = _receivedAudioStream.readAllSamples(stereo);
+        static int heardPackets = 0, heardSamples = 0;
+        heardPackets++;
+        heardSamples += numSamples;
+        if (heardPackets % 30000 == 1) {
+            qDebug() << "Hearing:" << heardPackets << "audio packets," << heardSamples << "samples so far; type"
+                     << (int)message->getType() << "loudness" << _lastReceivedAudioLoudness;
+        }
+        if (numSamples >= 2) {
+            const int16_t* in = reinterpret_cast<const int16_t*>(stereo.constData());
+            int numFrames = numSamples / 2;
+            QByteArray mono(numFrames * (int)sizeof(int16_t), Qt::Uninitialized);
+            int16_t* out = reinterpret_cast<int16_t*>(mono.data());
+            for (int i = 0; i < numFrames; i++) {
+                out[i] = (int16_t)(((int)in[2 * i] + (int)in[2 * i + 1]) / 2);
+            }
+            static const int MAX_HEARD_BYTES = AudioConstants::SAMPLE_RATE * (int)sizeof(int16_t) * 30;
+            QMutexLocker locker(&_heardAudioMutex);
+            _heardAudio.append(mono);
+            if (_heardAudio.size() > MAX_HEARD_BYTES) {
+                _heardAudio.remove(0, _heardAudio.size() - MAX_HEARD_BYTES);
+            }
+        }
+    }
     _receivedAudioStream.clearBuffer();
+}
+
+QByteArray Agent::takeHeardAudio() {
+    QMutexLocker locker(&_heardAudioMutex);
+    QByteArray heard;
+    heard.swap(_heardAudio);
+    return heard;
 }
 
 static const QString AGENT_LOGGING_NAME = "agent";

@@ -17,6 +17,7 @@
 
 #include <shared/QtHelpers.h>
 #include <AnimUtil.h>
+#include <AnimClip.h>
 #include <ClientTraitsHandler.h>
 #include <GLMHelpers.h>
 #include <ResourceRequestObserver.h>
@@ -44,9 +45,58 @@ void ScriptableAvatar::startAnimation(const QString& url, float fps, float prior
                                   Q_ARG(float, lastFrame), Q_ARG(const QStringList&, maskedJoints));
         return;
     }
+    if (_animationFadeSeconds > 0.0f && !_lastPoses.empty()) {   // fade from what plays now
+        if (!_fading && _animation && _animationDetails.url != QUrl(url)) {
+            _fadeFromAnimation = _animation;                    // the old clip keeps playing through the fade
+            _fadeFromDetails = _animationDetails;
+            _fadeFromPoses.clear();
+        } else {
+            _fadeFromAnimation.clear();                         // mid-fade, or the same clip again: from the pose now
+            _fadeFromPoses = _lastPoses;
+        }
+        _fading = true;
+        _fadeElapsed = 0.0f;
+    }
     _animation = DependencyManager::get<AnimationCache>()->getAnimation(url);
     _animationDetails = AnimationDetails("", QUrl(url), fps, 0, loop, hold, false, firstFrame, lastFrame, true, firstFrame, false);
     _maskedJoints = maskedJoints;
+}
+
+bool ScriptableAvatar::samplePoses(const AnimationPointer& animation, AnimationDetails& details, float deltaTime,
+                                   AnimPoseVec& poses, bool& ended) {
+    ended = false;
+    if (!animation || !animation->isLoaded() || animation->getFrames().size() == 0 || !_animSkeleton) {
+        return false;
+    }
+    const QString key = details.url.toString();
+    auto found = _retargeted.find(key);
+    if (found == _retargeted.end()) {
+        found = _retargeted.insert(key, copyAndRetargetFromNetworkAnim(animation, _animSkeleton));
+    }
+    const std::vector<AnimPoseVec>& frames = found.value();
+    if (frames.empty()) {
+        return false;
+    }
+    float currentFrame = details.currentFrame + deltaTime * details.fps;
+    const float lastFrame = std::min(details.lastFrame, (float)(frames.size() - 1));   // a clip ends at its own end
+    if (details.loop) {
+        while (currentFrame >= lastFrame && lastFrame > details.firstFrame) {
+            currentFrame -= (lastFrame - details.firstFrame);
+        }
+    } else if (currentFrame >= lastFrame) {
+        currentFrame = lastFrame;                               // a clip that does not loop stops and holds its last
+        ended = true;                                           // frame (it wrapped round before: a nod file's later
+    }                                                           // frames moved the wrist, 2026-10-10)
+    details.currentFrame = currentFrame;
+    const int nJoints = _animSkeleton->getNumJoints();
+    const int frameCount = (int)frames.size();
+    const AnimPoseVec& floorPoses = frames[(int)glm::floor(currentFrame) % frameCount];
+    const AnimPoseVec& ceilPoses = frames[(int)glm::ceil(currentFrame) % frameCount];
+    poses = _animSkeleton->getRelativeDefaultPoses();
+    if ((int)floorPoses.size() == nJoints && (int)ceilPoses.size() == nJoints) {
+        blend(nJoints, floorPoses.data(), ceilPoses.data(), glm::fract(currentFrame), poses.data());
+    }
+    return true;
 }
 
 void ScriptableAvatar::stopAnimation() {
@@ -86,6 +136,7 @@ QStringList ScriptableAvatar::getJointNames() const {
 void ScriptableAvatar::setSkeletonModelURL(const QUrl& skeletonModelURL) {
     _bind.reset();
     _animSkeleton.reset();
+    _retargeted.clear();
 
     AvatarData::setSkeletonModelURL(skeletonModelURL);
     updateJointMappings();
@@ -124,58 +175,68 @@ int ScriptableAvatar::sendAvatarDataPacket(bool sendAll) {
     return bytesSent;
 }
 
-static AnimPose composeAnimPose(const HFMJoint& joint, const glm::quat rotation, const glm::vec3 translation) {
-    glm::mat4 translationMat = glm::translate(translation);
-    glm::mat4 rotationMat = glm::mat4_cast(joint.preRotation * rotation * joint.postRotation);
-    glm::mat4 finalMat = translationMat * joint.preTransform * rotationMat * joint.postTransform;
-    return AnimPose(finalMat);
-}
-
 void ScriptableAvatar::update(float deltatime) {
-    // Run animation
-    if (_animation && _animation->isLoaded() && _animation->getFrames().size() > 0 && !_bind.isNull() && _bind->isLoaded()) {
+    // The .fst gives the skeleton's .fbx (setJointMappingsFromNetworkReply); load it once as the bind pose.
+    // This line was lost when the .fst reader moved here (eb097af796), so scripted avatars never animated.
+    if (_bind.isNull() && !_skeletonFBXURL.isEmpty()) {
+        _bind = DependencyManager::get<AnimationCache>()->getAnimation(_skeletonFBXURL);
+    }
+
+    // Run animation: the frames retargeted onto this avatar's skeleton the way a client's AnimClip does it (2026-10-10:
+    // composing the raw frames with the model's pre/post rotations and a fixed 1/100 scale crumpled the avatar), with a
+    // crossfade between clips
+    if (!_bind.isNull() && _bind->isLoaded()) {
         if (!_animSkeleton) {
             _animSkeleton = std::make_shared<AnimSkeleton>(_bind->getHFMModel());
+            _retargeted.clear();
+            _lastPoses.clear();
         }
-        float currentFrame = _animationDetails.currentFrame + deltatime * _animationDetails.fps;
-        if (_animationDetails.loop || currentFrame < _animationDetails.lastFrame) {
-            while (currentFrame >= _animationDetails.lastFrame) {
-                currentFrame -= (_animationDetails.lastFrame - _animationDetails.firstFrame);
+        AnimPoseVec poses;
+        bool ended = false;
+        bool playing = samplePoses(_animation, _animationDetails, deltatime, poses, ended);
+        AnimPoseVec from;
+        bool fromEnded = false;
+        bool haveFrom = false;
+        if (_fading) {
+            if (_fadeFromAnimation) {
+                haveFrom = samplePoses(_fadeFromAnimation, _fadeFromDetails, deltatime, from, fromEnded);
+            } else if (!_fadeFromPoses.empty()) {
+                from = _fadeFromPoses;
+                haveFrom = true;
             }
-            _animationDetails.currentFrame = currentFrame;
-
-            const std::vector<HFMJoint>& modelJoints = _bind->getHFMModel().joints;
-            QStringList animationJointNames = _animation->getJointNames();
-
-            const auto nJoints = (int)modelJoints.size();
+        }
+        if (!playing && haveFrom) {
+            poses = from;                                           // the new clip is still loading: the old one goes on
+        } else if (playing && _fading) {
+            _fadeElapsed += deltatime;
+            float t = _animationFadeSeconds > 0.0f ? glm::clamp(_fadeElapsed / _animationFadeSeconds, 0.0f, 1.0f) : 1.0f;
+            float alpha = t * t * (3.0f - 2.0f * t);                // ease in and out
+            if (haveFrom && from.size() == poses.size() && alpha < 1.0f) {
+                AnimPoseVec target = poses;
+                blend(poses.size(), from.data(), target.data(), alpha, poses.data());
+            }
+            if (t >= 1.0f) {
+                _fading = false;
+                _fadeFromAnimation.clear();
+                _fadeFromPoses.clear();
+            }
+        }
+        if (playing || haveFrom) {
+            const int nJoints = _animSkeleton->getNumJoints();
+            for (const QString& name : _maskedJoints) {                 // a masked joint keeps its default pose
+                int j = _animSkeleton->nameToJointIndex(name);
+                if (j >= 0 && j < (int)poses.size()) {
+                    poses[j] = _animSkeleton->getRelativeDefaultPose(j);
+                }
+            }
+            _lastPoses = poses;
+            AnimPoseVec absPoses = poses;
+            _animSkeleton->convertRelativePosesToAbsolute(absPoses);
+            QWriteLocker writeLock(&_jointDataLock);
             if (_jointData.size() != nJoints) {
                 _jointData.resize(nJoints);
             }
-
-            const int frameCount = _animation->getFrames().size();
-            const HFMAnimationFrame& floorFrame = _animation->getFrames().at((int)glm::floor(currentFrame) % frameCount);
-            const HFMAnimationFrame& ceilFrame = _animation->getFrames().at((int)glm::ceil(currentFrame) % frameCount);
-            const float frameFraction = glm::fract(currentFrame);
-            std::vector<AnimPose> poses = _animSkeleton->getRelativeDefaultPoses();
-
-            const float UNIT_SCALE = 0.01f;
-
-            for (int i = 0; i < animationJointNames.size(); i++) {
-                const QString& name = animationJointNames[i];
-                // As long as we need the model preRotations anyway, let's get the jointIndex from the bind skeleton rather than
-                // trusting the .fst (which is sometimes not updated to match changes to .fbx).
-                int mapping = _bind->getHFMModel().getJointIndex(name);
-                if (mapping != -1 && !_maskedJoints.contains(name)) {
-
-                    AnimPose floorPose = composeAnimPose(modelJoints[mapping], floorFrame.rotations[i], floorFrame.translations[i] * UNIT_SCALE);
-                    AnimPose ceilPose = composeAnimPose(modelJoints[mapping], ceilFrame.rotations[i], floorFrame.translations[i] * UNIT_SCALE);
-                    blend(1, &floorPose, &ceilPose, frameFraction, &poses[mapping]);
-                 }
-            }
-
-            std::vector<AnimPose> absPoses = poses;
-            _animSkeleton->convertRelativePosesToAbsolute(absPoses);
-            for (int i = 0; i < nJoints; i++) {
+            for (int i = 0; i < nJoints && i < (int)poses.size(); i++) {
                 JointData& data = _jointData[i];
                 AnimPose& absPose = absPoses[i];
                 if (data.rotation != absPose.rot()) {
@@ -188,9 +249,9 @@ void ScriptableAvatar::update(float deltatime) {
                     data.translationIsDefaultPose = false;
                 }
             }
-
-        } else {
-            _animation.clear();
+        }
+        if (playing && ended && !_fading) {
+            _animation.clear();                                     // a clip that ends holds its last pose
         }
     }
 

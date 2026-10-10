@@ -19,6 +19,10 @@ public:
     MixedAudioStream(int numFramesCapacity, int numStaticJitterFrames = -1);
 
     float getNextOutputFrameLoudness() const { return _ringBuffer.getNextOutputFrameLoudness(); }
+
+    // Every sample waiting in the buffer, interleaved stereo, appended to `out`, bypassing the
+    // jitter buffer (an AI resident's hearing, AI-FIRST-CLIENT.md §11.6). Returns the number read.
+    int readAllSamples(QByteArray& out);
 };
 
 #endif // hifi_MixedAudioStream_h

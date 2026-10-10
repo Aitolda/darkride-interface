@@ -102,6 +102,7 @@
 
 class ScriptableAvatar : public AvatarData, public Dependency {
     Q_OBJECT
+    Q_PROPERTY(float animationFadeSeconds READ getAnimationFadeSeconds WRITE setAnimationFadeSeconds)
 
     using Clock = std::chrono::system_clock;
     using TimePoint = Clock::time_point;
@@ -135,6 +136,14 @@ public:
      * @function Avatar.stopAnimation
      */
     Q_INVOKABLE void stopAnimation();
+
+    /**jsdoc
+     * The crossfade between animations: when an animation starts while another plays, the old one keeps playing and the
+     * pose eases from it to the new one over this many seconds (0 switches at once). Default 0.5.
+     * @property {number} animationFadeSeconds
+     */
+    float getAnimationFadeSeconds() const { return _animationFadeSeconds; }
+    void setAnimationFadeSeconds(float seconds) { _animationFadeSeconds = glm::clamp(seconds, 0.0f, 5.0f); }
 
     /**jsdoc
      * Gets the details of the current avatar animation that is being or was recently played.
@@ -220,6 +229,18 @@ private:
     QHash<QString, int> _fstJointIndices; ///< 1-based, since zero is returned for missing keys
     QStringList _fstJointNames; ///< in order of depth-first traversal
     QUrl _skeletonFBXURL;
+    QHash<QString, std::vector<AnimPoseVec>> _retargeted;  // animation URL -> its frames on this skeleton (AnimClip's retargeting)
+    bool samplePoses(const AnimationPointer& animation, AnimationDetails& details, float deltaTime, AnimPoseVec& poses,
+                     bool& ended);
+    // the crossfade (2026-10-10, Caitlyn: "a 500ms or 1s blend between them"): the clip being faded from keeps playing,
+    // or, when a clip changes again mid-fade, the pose at that moment is faded from
+    float _animationFadeSeconds { 0.5f };
+    bool _fading { false };
+    float _fadeElapsed { 0.0f };
+    AnimationPointer _fadeFromAnimation;
+    AnimationDetails _fadeFromDetails;
+    AnimPoseVec _fadeFromPoses;
+    AnimPoseVec _lastPoses;
     mutable QScriptEngine _scriptEngine;
     std::map<QUuid, EntityItemPointer> _entities;
 
