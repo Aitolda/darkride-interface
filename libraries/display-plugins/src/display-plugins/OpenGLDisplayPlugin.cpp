@@ -657,11 +657,32 @@ void OpenGLDisplayPlugin::compositeScene() {
     render([&](gpu::Batch& batch) {
         batch.enableStereo(false);
         batch.setFramebuffer(_compositeFramebuffer);
-        batch.setViewportTransform(ivec4(uvec2(), _compositeFramebuffer->getSize()));
-        batch.setStateScissorRect(ivec4(uvec2(), _compositeFramebuffer->getSize()));
+        ivec2 size = _compositeFramebuffer->getSize();
+        ivec4 viewport(ivec2(0), size);
+        // A frame made for a view of another shape (the view has just been resized and the scene not yet caught up)
+        // is fitted in with bars rather than stretched to fill: a frame or two of bars, not a squashed picture
+        const float ASPECT_TOLERANCE = 0.02f;
+        auto sceneTexture = _currentFrame->framebuffer->getRenderBuffer(0);
+        if (sceneTexture && sceneTexture->getHeight() > 0 && size.x > 0 && size.y > 0) {
+            float sceneAspect = (float)sceneTexture->getWidth() / (float)sceneTexture->getHeight();
+            float viewAspect = (float)size.x / (float)size.y;
+            if (std::abs(sceneAspect / viewAspect - 1.0f) > ASPECT_TOLERANCE) {
+                batch.setStateScissorRect(viewport);
+                batch.clearColorFramebuffer(gpu::Framebuffer::BUFFER_COLOR0, vec4(0.0f, 0.0f, 0.0f, 1.0f));
+                if (sceneAspect > viewAspect) {
+                    int height = (int)std::round((float)size.x / sceneAspect);
+                    viewport = ivec4(0, (size.y - height) / 2, size.x, height);
+                } else {
+                    int width = (int)std::round((float)size.y * sceneAspect);
+                    viewport = ivec4((size.x - width) / 2, 0, width, size.y);
+                }
+            }
+        }
+        batch.setViewportTransform(viewport);
+        batch.setStateScissorRect(viewport);
         batch.resetViewTransform();
         batch.setProjectionTransform(mat4());
-        batch.setResourceTexture(0, _currentFrame->framebuffer->getRenderBuffer(0));
+        batch.setResourceTexture(0, sceneTexture);
         setupCompositeScenePipeline(batch);
         batch.draw(gpu::TRIANGLE_STRIP, 4);
     });

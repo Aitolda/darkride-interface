@@ -82,17 +82,12 @@ void gl::globalRelease(bool finish) {}
 static int _viewChangeDepth { 0 };
 // until when, on the steady clock in milliseconds, the presenting thread leaves the view alone
 static std::atomic<int64_t> _presentationPausedUntil { 0 };
-// the longest a pause lasts: Core Animation commits after the change, at the end of the main thread's loop pass,
-// which can be a busy one; viewChangesCommitted() ends it sooner
-static const int64_t PRESENTATION_PAUSE_MS = 250;
-// after the commit, a frame's margin before drawing again
-static const int64_t AFTER_COMMIT_PAUSE_MS = 20;
-// a change has ended and its commit has not been seen yet
-static std::atomic<bool> _awaitingCommit { false };
-// changes committed this close together (build mode toggled as fast as keys go) keep the whole pause: the early end
-// is for a change on its own, and frantic toggling still crashed with it, at about the eightieth
-static const int64_t RAPID_CHANGES_MS = 500;
-static int64_t _lastCommit { 0 };   // main thread only
+// how the app puts pending window changes in place at once (main thread only)
+static std::function<void()> _viewChangeFlush;
+// the pause after a change: a frame's margin once it is in place; with no way to put it in place at once, long enough
+// for it to settle by itself at the end of the main thread's loop pass
+static const int64_t PAUSE_AFTER_FLUSH_MS = 20;
+static const int64_t PAUSE_WITHOUT_FLUSH_MS = 250;
 
 static int64_t steadyMilliseconds() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -102,30 +97,26 @@ bool gl::isPresentationPaused() {
     return steadyMilliseconds() < _presentationPausedUntil.load();
 }
 
-void gl::viewChangesCommitted() {
-    if (_awaitingCommit.exchange(false)) {
-        int64_t now = steadyMilliseconds();
-        bool rapid = now - _lastCommit < RAPID_CHANGES_MS;
-        _lastCommit = now;
-        int64_t soon = now + AFTER_COMMIT_PAUSE_MS;
-        if (!rapid && soon < _presentationPausedUntil.load()) {
-            _presentationPausedUntil = soon;
-        }
-    }
+void gl::setViewChangeFlush(const std::function<void()>& flush) {
+    _viewChangeFlush = flush;
 }
 
 gl::ViewChangeGuard::ViewChangeGuard() {
     if (_viewChangeDepth++ == 0) {
         // the pause first: a frame waiting for the lock finds it when it gets the lock
-        _presentationPausedUntil = steadyMilliseconds() + PRESENTATION_PAUSE_MS;
+        _presentationPausedUntil = steadyMilliseconds() + PAUSE_WITHOUT_FLUSH_MS;
         globalLock();
     }
 }
 
 gl::ViewChangeGuard::~ViewChangeGuard() {
+    // the change is put in place while the presenting thread is still held off; the depth stays above zero meanwhile,
+    // so a guard made by what the flush sets off nests rather than locking again
+    if (_viewChangeDepth == 1 && _viewChangeFlush) {
+        _viewChangeFlush();
+    }
     if (--_viewChangeDepth == 0) {
-        _presentationPausedUntil = steadyMilliseconds() + PRESENTATION_PAUSE_MS;   // from the end of the change
-        _awaitingCommit = true;
+        _presentationPausedUntil = steadyMilliseconds() + (_viewChangeFlush ? PAUSE_AFTER_FLUSH_MS : PAUSE_WITHOUT_FLUSH_MS);
         globalRelease(false);   // the main thread has no context of its own to finish
     }
 }

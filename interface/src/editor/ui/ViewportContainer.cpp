@@ -13,19 +13,22 @@
 #include <gl/GLHelpers.h>
 
 #ifdef Q_OS_MACOS
-#include <CoreFoundation/CoreFoundation.h>
+#include <objc/message.h>
+#include <objc/runtime.h>
 #endif
 
 namespace {
     const int SETTLE_MS = 250;   // a splitter drag has stopped when nothing moved for this long
 
 #ifdef Q_OS_MACOS
-    // Core Animation commits a pass's view changes from a main run loop observer of order 2000000, as the loop is
-    // about to wait or exits; one just after it knows they are in place, and the pause after a change can end
-    const CFIndex AFTER_CORE_ANIMATION_COMMIT = 2000001;
-
-    void afterCoreAnimationCommit(CFRunLoopObserverRef, CFRunLoopActivity, void*) {
-        gl::viewChangesCommitted();
+    // [CATransaction flush]: Core Animation commits the window's pending layer changes now, the GL view's new surface
+    // among them, rather than at the end of the main thread's loop pass
+    void flushCoreAnimation() {
+        static Class transaction = objc_getClass("CATransaction");
+        static SEL flush = sel_registerName("flush");
+        if (transaction) {
+            ((void (*)(id, SEL))objc_msgSend)((id)transaction, flush);
+        }
     }
 #endif
 }
@@ -39,13 +42,8 @@ ViewportContainer::ViewportContainer(QWidget* viewport, QWidget* parent) : QWidg
     _settle.setInterval(SETTLE_MS);
     connect(&_settle, &QTimer::timeout, this, &ViewportContainer::applySize);
 #ifdef Q_OS_MACOS
-    static CFRunLoopObserverRef commitObserver = [] {
-        CFRunLoopObserverRef observer = CFRunLoopObserverCreate(kCFAllocatorDefault, kCFRunLoopBeforeWaiting | kCFRunLoopExit,
-            true, AFTER_CORE_ANIMATION_COMMIT, &afterCoreAnimationCommit, nullptr);
-        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, kCFRunLoopCommonModes);
-        return observer;
-    }();
-    (void)commitObserver;
+    // a change to the view is put in place before the presenting thread may draw again (see gl::ViewChangeGuard)
+    gl::setViewChangeFlush(&flushCoreAnimation);
 #endif
 }
 

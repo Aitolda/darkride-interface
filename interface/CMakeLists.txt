@@ -310,9 +310,9 @@ if (APPLE)
   # link in required OS X frameworks and include the right GL headers
   find_library(OpenGL OpenGL)
   find_library(AppKit AppKit)
-  find_library(CoreFoundation CoreFoundation)
 
-  target_link_libraries(${TARGET_NAME} ${OpenGL} ${AppKit} ${CoreFoundation})
+  # objc: the Objective-C runtime, for messages to Cocoa classes from C++ (ViewportContainer's Core Animation flush)
+  target_link_libraries(${TARGET_NAME} ${OpenGL} ${AppKit} objc)
 
   # setup install of OS X interface bundle
   install(TARGETS ${TARGET_NAME}

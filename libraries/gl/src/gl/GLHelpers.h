@@ -63,16 +63,16 @@ namespace gl {
 
     // Whether the presenting thread should leave the window's GL view alone for now (see ViewChangeGuard)
     bool isPresentationPaused();
-    // On the main thread, once macOS has put the latest view changes in place (just after Core Animation commits):
-    // the pause after a view change ends a frame later rather than at its limit
-    void viewChangesCommitted();
+    // How the main thread puts its pending window changes in place at once (on macOS, a Core Animation commit,
+    // which otherwise waits for the end of the run loop pass): set by the app, run by ViewChangeGuard
+    void setViewChangeFlush(const std::function<void()>& flush);
 
-    // While the main thread moves or resizes the window's GL view, and for a moment after, the presenting thread
-    // doesn't draw to it. The global lock, held for the change, keeps a frame from being drawn during it; a pause
-    // keeps the next frames back while macOS finishes resizing the view's surface, which it does after the change,
-    // when Core Animation commits. Toggling build mode quickly (its panels move and resize the view) crashed in
-    // Apple's GL driver, in the clear of the window's framebuffer, with the lock alone. Main thread only, nests;
-    // nothing under it may wait for the QML render thread, which takes the lock too.
+    // While the main thread moves or resizes the window's GL view, the presenting thread doesn't draw to it: the
+    // global lock is held for the change, and before it is let go the change is put in place (setViewChangeFlush);
+    // a frame's pause follows. macOS resizes a view's surface when Core Animation commits, normally at the end of
+    // the main thread's loop pass, after any lock round the change itself: toggling build mode quickly (its panels
+    // move and resize the view) crashed in Apple's GL driver, in the clear of the window's framebuffer. Main thread
+    // only, nests; nothing under it may wait for the QML render thread, which takes the lock too.
     class ViewChangeGuard {
     public:
         ViewChangeGuard();
