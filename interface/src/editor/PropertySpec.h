@@ -91,7 +91,8 @@ namespace PropertySpecs {
     // An entry of a JSON property shown as a field of its own has the key "<property>:<entry>": "userData:cookie" (a
     // light's Cookie), "materialData:smoothness" (a material's Smoothness). Its value is read from the property's
     // JSON, and set() writes it back into the JSON the properties already hold, so the entity's current value of the
-    // property must be put there first; the JSON's other entries are kept.
+    // property must be put there first; the JSON's other entries are kept. A field may also stand for part of an
+    // entry: "materialData:surfaceType" and "materialData:alphaClipping" are two fields over opacityMapMode.
     bool isEntry(const QString& key);
     bool isUserDataEntry(const QString& key);
     // the entity's property can hold the key's entry: userData that is empty or a JSON object (not a script's own

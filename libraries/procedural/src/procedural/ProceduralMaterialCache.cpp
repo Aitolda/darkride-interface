@@ -192,21 +192,25 @@ NetworkMaterialResource::ParsedMaterials NetworkMaterialResource::parseJSONMater
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
  * @property {string} albedoMap - The URL of the albedo texture image. 
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
- * @property {string} opacityMap - The URL of the opacity texture image. Set the value the same as the <code>albedoMap</code> 
- *     value for transparency. 
+ * @property {string} opacityMap - The URL of the opacity texture image. Set the value the same as the <code>albedoMap</code>
+ *     value to let the picture decide the transparency when <code>opacityMapMode</code> is not set: a picture whose alpha
+ *     is all but 0 or 1 masks, any other blends. With an <code>opacityMapMode</code>, the <code>albedoMap</code>'s alpha is
+ *     read as the mode says and <code>opacityMap</code> is not needed.
  *     <code>"hifi_pbr"</code> model only.
  * @property {string} opacityMapMode - The mode defining the interpretation of the opacity map. Values can be:
  *     <ul>
  *         <li><code>"OPACITY_MAP_OPAQUE"</code> for ignoring the opacity map information.</li>
- *         <li><code>"OPACITY_MAP_MASK"</code> for using the <code>opacityMap</code> as a mask, where only the texel greater 
+ *         <li><code>"OPACITY_MAP_MASK"</code> for using the <code>opacityMap</code> as a mask, where only the texel greater
  *         than <code>opacityCutoff</code> are visible and rendered opaque.</li>
- *         <li><code>"OPACITY_MAP_BLEND"</code> for using the <code>opacityMap</code> for alpha blending the material surface 
+ *         <li><code>"OPACITY_MAP_BLEND"</code> for using the <code>opacityMap</code> for alpha blending the material surface
  *         with the background.</li>
+ *         <li><code>"OPACITY_MAP_MASK_BLEND"</code> for both: the texels below <code>opacityCutoff</code> are cut out and
+ *         the rest alpha blended, as Unity's Transparent surface with Alpha Clipping does.</li>
  *     </ul>
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
- * @property {number|string} opacityCutoff - The opacity cutoff threshold used to determine the opaque texels of the 
- *     <code>opacityMap</code> when <code>opacityMapMode</code> is <code>"OPACITY_MAP_MASK"</code>. Range <code>0.0</code> 
- *     &ndash; <code>1.0</code>.
+ * @property {number|string} opacityCutoff=0.5 - The opacity cutoff threshold used to determine the opaque texels of the
+ *     <code>opacityMap</code> when <code>opacityMapMode</code> is <code>"OPACITY_MAP_MASK"</code> or
+ *     <code>"OPACITY_MAP_MASK_BLEND"</code>. Range <code>0.0</code> &ndash; <code>1.0</code>.
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
  * @property {string} cullFaceMode="CULL_BACK" - The mode defining which side of the geometry should be rendered. Values can be:
  *     <ul>

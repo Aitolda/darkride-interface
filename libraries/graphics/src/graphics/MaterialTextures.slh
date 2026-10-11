@@ -225,11 +225,13 @@ vec3 fetchLightMap(vec2 uv) {
 
 <@func evalMaterialOpacity(fetchedOpacity, materialOpacityCutoff, materialOpacity, matKey, opacity)@>
 {
-    // This path only valid for transparent material
-    <$opacity$> = mix(<$fetchedOpacity$>,
-                          step(<$materialOpacityCutoff$>, <$fetchedOpacity$>),
-                          float((<$matKey$> & OPACITY_MASK_MAP_BIT) != 0))
-                       * <$materialOpacity$>;
+    // This path only valid for transparent material. A mask alone cuts the surface out whole, the texels above the
+    // cutoff faded only by the material's opacity; a mask with a translucent map cuts out and then blends what is
+    // left by its alpha, as Unity's Transparent surface with Alpha Clipping does
+    float masked = step(<$materialOpacityCutoff$>, <$fetchedOpacity$>)
+                   * mix(1.0, <$fetchedOpacity$>, float((<$matKey$> & OPACITY_TRANSLUCENT_MAP_BIT) != 0));
+    <$opacity$> = mix(<$fetchedOpacity$>, masked, float((<$matKey$> & OPACITY_MASK_MAP_BIT) != 0))
+                  * <$materialOpacity$>;
 }
 <@endfunc@>
 

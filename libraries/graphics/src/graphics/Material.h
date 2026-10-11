@@ -41,7 +41,8 @@ public:
         METALLIC_VAL_BIT,
         GLOSSY_VAL_BIT,
         OPACITY_VAL_BIT,
-        OPACITY_MASK_MAP_BIT,           // Opacity Map and Opacity MASK map are mutually exclusive
+        OPACITY_MASK_MAP_BIT,           // the albedo map's alpha cuts the surface out below the cutoff; with the translucent
+                                        // map bit as well, what is left blends by its alpha (OPACITY_MAP_MASK_BLEND)
         OPACITY_TRANSLUCENT_MAP_BIT,
         OPACITY_MAP_MODE_BIT,           // Opacity map mode bit is set if the value has set explicitely and not deduced from the textures assigned 
         OPACITY_CUTOFF_VAL_BIT,
@@ -85,6 +86,8 @@ public:
         OPACITY_MAP_OPAQUE = 0,
         OPACITY_MAP_MASK,
         OPACITY_MAP_BLEND,
+        OPACITY_MAP_MASK_BLEND,     // cut out below the cutoff, then blend what is left by its alpha (Unity's Transparent
+                                    // surface with Alpha Clipping)
     };
     static std::string getOpacityMapModeName(OpacityMapMode mode);
     // find the enum value from a string, return true if match found
@@ -136,6 +139,10 @@ public:
             case OPACITY_MAP_BLEND:
                 _flags.set(OPACITY_TRANSLUCENT_MAP_BIT);
                 _flags.reset(OPACITY_MASK_MAP_BIT);
+                break;
+            case OPACITY_MAP_MASK_BLEND:
+                _flags.set(OPACITY_TRANSLUCENT_MAP_BIT);
+                _flags.set(OPACITY_MASK_MAP_BIT);
                 break;
             };
             _flags.set(OPACITY_MAP_MODE_BIT); // Intentionally set the mode!
@@ -239,11 +246,20 @@ public:
             _flags.set(OPACITY_TRANSLUCENT_MAP_BIT);
             _flags.reset(OPACITY_MASK_MAP_BIT);
             break;
+        case OPACITY_MAP_MASK_BLEND:
+            _flags.set(OPACITY_TRANSLUCENT_MAP_BIT);
+            _flags.set(OPACITY_MASK_MAP_BIT);
+            break;
         };
         _flags.set(OPACITY_MAP_MODE_BIT); // Intentionally set the mode!
     }
     bool isOpacityMapMode() const { return _flags[OPACITY_MAP_MODE_BIT]; }
-    OpacityMapMode getOpacityMapMode() const { return (isOpacityMaskMap() ? OPACITY_MAP_MASK : (isTranslucentMap() ? OPACITY_MAP_BLEND : OPACITY_MAP_OPAQUE)); }
+    OpacityMapMode getOpacityMapMode() const {
+        if (isOpacityMaskMap()) {
+            return isTranslucentMap() ? OPACITY_MAP_MASK_BLEND : OPACITY_MAP_MASK;
+        }
+        return isTranslucentMap() ? OPACITY_MAP_BLEND : OPACITY_MAP_OPAQUE;
+    }
 
     bool isTranslucent() const { return isTranslucentFactor() || isTranslucentMap(); }
     bool isOpaque() const { return !isTranslucent(); }

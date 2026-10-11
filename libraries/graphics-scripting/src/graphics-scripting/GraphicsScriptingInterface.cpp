@@ -401,6 +401,8 @@ namespace scriptable {
      *         than <code>opacityCutoff</code> are visible and rendered opaque.</li>
      *         <li><code>"OPACITY_MAP_BLEND"</code> for using the <code>opacityMap</code> for alpha blending the material surface
      *         with the background.</li>
+     *         <li><code>"OPACITY_MAP_MASK_BLEND"</code> for both: the texels below <code>opacityCutoff</code> are cut out and
+     *         the rest alpha blended.</li>
      *     </ul>
      *     If <code>"fallthrough"</code> then it falls through to the material below.
      *     <code>"hifi_pbr"</code> model only.

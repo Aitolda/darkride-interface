@@ -422,6 +422,41 @@ namespace {
         // the set's pictures are laid out, is written to every material. An entry the JSON doesn't hold shows the
         // value the material has without it. A choice or a picture set back to that is left out of the JSON; numbers
         // and colours stay as set, so that a slider passing the default doesn't make its entry come and go.
+        auto firstMaterial = [](const EP& p) -> QJsonObject {
+            QJsonValue materials = QJsonDocument::fromJson(p.getMaterialData().toUtf8()).object().value("materials");
+            if (materials.isArray()) {
+                QJsonArray array = materials.toArray();
+                return array.isEmpty() ? QJsonObject() : array.first().toObject();
+            }
+            return materials.toObject();
+        };
+        // changes the first material, or every one, by `edit`; data that isn't a set of materials is left alone
+        auto editMaterials = [](EP& p, bool everyMaterial, const std::function<void(QJsonObject&)>& edit) {
+            QString text = p.getMaterialData();
+            QJsonObject document = QJsonDocument::fromJson(text.toUtf8()).object();
+            QJsonValue materials = document.value("materials");
+            if (!text.trimmed().isEmpty() && !materials.isObject() && !materials.isArray()) {
+                return;
+            }
+            if (materials.isArray()) {
+                QJsonArray array = materials.toArray();
+                if (array.isEmpty()) {
+                    array.append(QJsonObject());
+                }
+                for (int i = 0; i < (everyMaterial ? array.size() : 1); ++i) {
+                    QJsonObject material = array[i].toObject();
+                    edit(material);
+                    array[i] = material;
+                }
+                document.insert("materials", array);
+            } else {
+                QJsonObject material = materials.toObject();
+                edit(material);
+                document.insert("materials", material);
+            }
+            p.setMaterialData(QString::fromUtf8(QJsonDocument(document).toJson(QJsonDocument::Compact)));
+        };
+
         enum class Entry { Text, Number, Bool, Color };
         struct MaterialEntry {
             const char* name;
@@ -450,7 +485,8 @@ namespace {
             { "emissiveMap", Entry::Text, "", false },
             // no emission, or with an Emission Map, the map as it is
             { "emissive", Entry::Color, QJsonArray { 0.0, 0.0, 0.0 }, false, "emissiveMap", QJsonArray { 1.0, 1.0, 1.0 } },
-            { "opacity", Entry::Number, graphics::Material::DEFAULT_OPACITY, false }
+            { "opacity", Entry::Number, graphics::Material::DEFAULT_OPACITY, false },
+            { "opacityCutoff", Entry::Number, graphics::Material::DEFAULT_OPACITY_CUTOFF, false }
         };
         for (const MaterialEntry& entry : materialEntries) {
             QString name = entry.name;
@@ -460,11 +496,8 @@ namespace {
             QJsonValue unsetWithMap = entry.unsetWithMap;
             bool everyMaterial = entry.everyMaterial;
             a.insert(QStringLiteral("materialData:") + name, Accessor {
-                [name, type, unset, map, unsetWithMap](const EP& p) {
-                    QJsonValue materials = QJsonDocument::fromJson(p.getMaterialData().toUtf8()).object().value("materials");
-                    QJsonArray array = materials.toArray();
-                    QJsonObject first = materials.isArray() ? (array.isEmpty() ? QJsonObject() : array.first().toObject())
-                                                            : materials.toObject();
+                [=](const EP& p) {
+                    QJsonObject first = firstMaterial(p);
                     QJsonValue value = first.value(name);
                     QJsonValue without = (!map.isEmpty() && !first.value(map).toString().isEmpty()) ? unsetWithMap : unset;
                     switch (type) {
@@ -479,14 +512,8 @@ namespace {
                     }
                     return QVariant();
                 },
-                [name, type, unset, everyMaterial](EP& p, const QVariant& v) {
-                    QString text = p.getMaterialData();
-                    QJsonObject document = QJsonDocument::fromJson(text.toUtf8()).object();
-                    QJsonValue materials = document.value("materials");
-                    if (!text.trimmed().isEmpty() && !materials.isObject() && !materials.isArray()) {
-                        return;   // not a set of materials: left alone
-                    }
-                    auto setEntry = [&](QJsonObject material) {
+                [=](EP& p, const QVariant& v) {
+                    editMaterials(p, everyMaterial, [&](QJsonObject& material) {
                         switch (type) {
                             case Entry::Text: {
                                 QString value = v.toString();
@@ -515,24 +542,44 @@ namespace {
                                 break;
                             }
                         }
-                        return material;
-                    };
-                    if (materials.isArray()) {
-                        QJsonArray array = materials.toArray();
-                        if (array.isEmpty()) {
-                            array.append(QJsonObject());
-                        }
-                        for (int i = 0; i < (everyMaterial ? array.size() : 1); ++i) {
-                            array[i] = setEntry(array[i].toObject());
-                        }
-                        document.insert("materials", array);
-                    } else {
-                        document.insert("materials", setEntry(materials.toObject()));
-                    }
-                    p.setMaterialData(QString::fromUtf8(QJsonDocument(document).toJson(QJsonDocument::Compact)));
+                    });
                 }
             });
         }
+
+        // Unity's Surface Type and Alpha Clipping: two fields over one entry, opacityMapMode. Transparent blends the
+        // Base Map's alpha, Alpha Clipping cuts the surface out where the alpha is below the Threshold (opacityCutoff),
+        // and together they cut out and then blend what is left. Without the entry the material is opaque, unless
+        // "opacityMap" names the Base Map, which lets the picture decide: Opaque is then written out so that it holds.
+        using Mode = graphics::MaterialKey::OpacityMapMode;
+        auto modeOf = [=](const EP& p) {
+            Mode mode = graphics::Material::DEFAULT_OPACITY_MAP_MODE;
+            Mode named;
+            if (graphics::MaterialKey::getOpacityMapModeFromName(
+                    firstMaterial(p).value("opacityMapMode").toString().toStdString(), named)) {
+                mode = named;
+            }
+            return mode;
+        };
+        auto isTransparent = [](Mode mode) { return mode == Mode::OPACITY_MAP_BLEND || mode == Mode::OPACITY_MAP_MASK_BLEND; };
+        auto isClipping = [](Mode mode) { return mode == Mode::OPACITY_MAP_MASK || mode == Mode::OPACITY_MAP_MASK_BLEND; };
+        auto setMode = [=](EP& p, bool transparent, bool clipping) {
+            Mode mode = clipping ? (transparent ? Mode::OPACITY_MAP_MASK_BLEND : Mode::OPACITY_MAP_MASK)
+                                 : (transparent ? Mode::OPACITY_MAP_BLEND : Mode::OPACITY_MAP_OPAQUE);
+            editMaterials(p, false, [&](QJsonObject& material) {
+                if (mode == Mode::OPACITY_MAP_OPAQUE && material.value("opacityMap").toString().isEmpty()) {
+                    material.remove("opacityMapMode");
+                } else {
+                    material.insert("opacityMapMode", QString::fromStdString(graphics::MaterialKey::getOpacityMapModeName(mode)));
+                }
+            });
+        };
+        add("materialData:surfaceType",
+            [=](const EP& p) { return QVariant(isTransparent(modeOf(p)) ? "transparent" : "opaque"); },
+            [=](EP& p, const QVariant& v) { setMode(p, v.toString() == "transparent", isClipping(modeOf(p))); });
+        add("materialData:alphaClipping",
+            [=](const EP& p) { return QVariant(isClipping(modeOf(p))); },
+            [=](EP& p, const QVariant& v) { setMode(p, isTransparent(modeOf(p)), v.toBool()); });
         return a;
     }
 
@@ -738,8 +785,15 @@ namespace {
         // how occlusion, roughness and metallic are packed into pictures
         en(PACKING_KEY, "Packing", "material_surface", { "unity:Unity (Metallic + Smoothness)", "orm:ORM (glTF, Unreal)",
             "custom:Custom" }, OWN_DATA);
+        // what the Base Map's alpha does: Transparent blends by it; Alpha Clipping cuts the surface out where it is
+        // below the Threshold (both: cut out, then blend the rest). Opacity, below, fades the whole surface
+        en("materialData:surfaceType", "Surface Type", "material_surface", { "opaque:Opaque", "transparent:Transparent" },
+            OWN_DATA);
         en("materialData:cullFaceMode", "Render Face", "material_surface", { "CULL_BACK:Front", "CULL_FRONT:Back",
             "CULL_NONE:Both" }, OWN_DATA);
+        with(add(spec("materialData:alphaClipping", "Alpha Clipping", K::Bool, "material_surface")), OWN_DATA);
+        with(range(add(spec("materialData:opacityCutoff", "Threshold", K::Slider, "material_surface")), 0, 1, 0.01, 2),
+            OWN_DATA " and materialData:alphaClipping=true");
         with(add(spec("materialData:unlit", "Unlit", K::Bool, "material_surface")), OWN_DATA);
         auto input = [&](const char* key, const char* label, PropertyKind kind, const char* showWhen) -> PropertySpec& {
             PropertySpec& s = with(add(spec(key, label, kind, "material_inputs")), showWhen);

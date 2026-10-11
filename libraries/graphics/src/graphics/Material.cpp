@@ -31,12 +31,12 @@ const float Material::DEFAULT_OPACITY_CUTOFF { 0.5f };
 const MaterialKey::CullFaceMode Material::DEFAULT_CULL_FACE_MODE { MaterialKey::CULL_BACK };
 
 std::string MaterialKey::getOpacityMapModeName(OpacityMapMode mode) {
-    const std::string names[3] = { "OPACITY_MAP_OPAQUE", "OPACITY_MAP_MASK", "OPACITY_MAP_BLEND" };
+    const std::string names[4] = { "OPACITY_MAP_OPAQUE", "OPACITY_MAP_MASK", "OPACITY_MAP_BLEND", "OPACITY_MAP_MASK_BLEND" };
     return names[mode];
 }
 
 bool MaterialKey::getOpacityMapModeFromName(const std::string& modeName, MaterialKey::OpacityMapMode& mode) {
-    for (int i = OPACITY_MAP_OPAQUE; i <= OPACITY_MAP_BLEND; i++) {
+    for (int i = OPACITY_MAP_OPAQUE; i <= OPACITY_MAP_MASK_BLEND; i++) {
         mode = (MaterialKey::OpacityMapMode) i;
         if (modeName == getOpacityMapModeName(mode)) {
             return true;
