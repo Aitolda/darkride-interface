@@ -89,6 +89,10 @@ static const int64_t PRESENTATION_PAUSE_MS = 250;
 static const int64_t AFTER_COMMIT_PAUSE_MS = 20;
 // a change has ended and its commit has not been seen yet
 static std::atomic<bool> _awaitingCommit { false };
+// changes committed this close together (build mode toggled as fast as keys go) keep the whole pause: the early end
+// is for a change on its own, and frantic toggling still crashed with it, at about the eightieth
+static const int64_t RAPID_CHANGES_MS = 500;
+static int64_t _lastCommit { 0 };   // main thread only
 
 static int64_t steadyMilliseconds() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -100,8 +104,11 @@ bool gl::isPresentationPaused() {
 
 void gl::viewChangesCommitted() {
     if (_awaitingCommit.exchange(false)) {
-        int64_t soon = steadyMilliseconds() + AFTER_COMMIT_PAUSE_MS;
-        if (soon < _presentationPausedUntil.load()) {
+        int64_t now = steadyMilliseconds();
+        bool rapid = now - _lastCommit < RAPID_CHANGES_MS;
+        _lastCommit = now;
+        int64_t soon = now + AFTER_COMMIT_PAUSE_MS;
+        if (!rapid && soon < _presentationPausedUntil.load()) {
             _presentationPausedUntil = soon;
         }
     }

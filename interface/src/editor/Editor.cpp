@@ -543,6 +543,7 @@ void Editor::showPanels(bool show) {
     if (!_panelsCreated) {
         return;
     }
+    gl::ViewChangeGuard guard;   // panels coming and going change the window round the GL view
     _hierarchy->setVisible(show);
     _inspector->setVisible(show);
     _toolBar->setVisible(show);
