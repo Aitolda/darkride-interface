@@ -41,6 +41,7 @@
 #include <EntityScriptingInterface.h>
 #include <EntityTree.h>
 #include <EntityTreeRenderer.h>
+#include <ParticleEffectEntityItem.h>
 #include <gl/GLWidget.h>
 #include <GLMHelpers.h>
 #include <MainWindow.h>
@@ -524,6 +525,7 @@ void Editor::updateBounds() {
     static const glm::vec4 ZONE_COLOR(0.55f, 0.95f, 0.55f, 1.0f);
     static const glm::vec4 LIGHT_COLOR(1.0f, 0.96f, 0.55f, 1.0f);
     static const glm::vec4 PARTICLE_COLOR(0.55f, 0.8f, 1.0f, 1.0f);
+    static const float MIN_EMITTER_SIZE = 0.1f;
     std::vector<EditorBoundsShape> shapes;
     auto tree = entityTree();
     if (tree && !_selection.isEmpty()) {
@@ -543,10 +545,24 @@ void Editor::updateBounds() {
                         shape.kind = EditorBoundsShape::Sphere;   // its reach
                         shape.color = LIGHT_COLOR;
                         break;
-                    case EntityTypes::ParticleEffect:
-                        shape.kind = EditorBoundsShape::Box;
+                    case EntityTypes::ParticleEffect: {
+                        // the emitter, where the particles start, as Unity draws it: the entity's own dimensions
+                        // are the whole space its particles can reach (the engine works them out from speed,
+                        // spread and lifespan), far larger than the spray you see
+                        auto particles = std::static_pointer_cast<ParticleEffectEntityItem>(entity);
+                        ShapeType emitter = particles->getShapeType();
+                        shape.kind = emitter == SHAPE_TYPE_BOX || emitter == SHAPE_TYPE_PLANE
+                            ? EditorBoundsShape::Box : EditorBoundsShape::Sphere;
                         shape.color = PARTICLE_COLOR;
-                        break;
+                        shape.position = entity->getWorldPosition();
+                        shape.rotation = entity->getWorldOrientation() * particles->getEmitOrientation();
+                        shape.dimensions = particles->getEmitDimensions();
+                        if (glm::length(shape.dimensions) < MIN_EMITTER_SIZE) {
+                            shape.dimensions = glm::vec3(MIN_EMITTER_SIZE);   // a point emitter still shows
+                        }
+                        shapes.push_back(shape);
+                        continue;
+                    }
                     default:
                         continue;   // the selection outline shows everything else
                 }
