@@ -4,7 +4,8 @@
 //  Generated on <$_SCRIBE_DATE$>
 //
 //  The build-mode grid: anti-aliased minor and major lines of constant pixel width on the
-//  world XZ plane, the X and Z axes in colour, fading with distance and as cells shrink.
+//  world XZ plane, the X and Z axes in colour, fading with distance and as cells shrink. The lines
+//  are dark with a faint light edge either side, so they show on bright ground and dark alike.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -28,6 +29,7 @@ struct EditorGridParams {
     vec4 majorColor;
     vec4 axisXColor;
     vec4 axisZColor;
+    vec4 edgeColor;    // either side of the minor and major lines
 };
 
 LAYOUT(binding=0) uniform editorGridBuffer {
@@ -64,8 +66,12 @@ void main(void) {
 
     vec2 minorDD = cellsPerPixel(minorCoord);
     vec2 majorDD = cellsPerPixel(majorCoord);
-    float minor = gridLine(minorCoord, minorDD, 1.0) * cellFade(minorDD);
-    float major = gridLine(majorCoord, majorDD, 1.0) * cellFade(majorDD);
+    float minorFade = cellFade(minorDD);
+    float majorFade = cellFade(majorDD);
+    float minor = gridLine(minorCoord, minorDD, 1.0) * minorFade;
+    float major = gridLine(majorCoord, majorDD, 1.5) * majorFade;
+    // the light edge: a pixel either side of each line
+    float edge = max(gridLine(minorCoord, minorDD, 3.0) * minorFade, gridLine(majorCoord, majorDD, 3.5) * majorFade);
 
     // the world axes: the line along X is z == 0, the line along Z is x == 0
     vec2 dd = cellsPerPixel(p);
@@ -73,7 +79,8 @@ void main(void) {
     float axisZ = 1.0 - smoothstep(0.5, 1.5, abs(p.x) / dd.x);
 
     // coverage only scales alpha; the colour stays pure for straight alpha blending
-    vec4 color = vec4(params.minorColor.rgb, params.minorColor.a * minor);
+    vec4 color = vec4(params.edgeColor.rgb, params.edgeColor.a * edge);
+    color = mix(color, params.minorColor, minor);
     color = mix(color, params.majorColor, major);
     color = mix(color, params.axisZColor, axisZ);
     color = mix(color, params.axisXColor, axisX);

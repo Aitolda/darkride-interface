@@ -407,14 +407,14 @@ namespace {
         en("renderLayer", "Render Layer", "base", { "world:World", "front:Front", "hud:HUD" });
         en("primitiveMode", "Primitive Mode", "base", { "solid:Solid", "lines:Wireframe" });
 
-        // transform
-        stepping(add(spec("position", "Position", K::Vec3, "spatial")), 0.1, 3, "m");
-        stepping(add(spec("rotation", "Rotation", K::Euler, "spatial")), 1.0, 2, "°");
+        // transform: metres and degrees go without saying here, as in Unity (no unit on the labels)
+        stepping(add(spec("position", "Position", K::Vec3, "spatial")), 0.1, 3);
+        stepping(add(spec("rotation", "Rotation", K::Euler, "spatial")), 1.0, 2);
         // Unity's order: Position, Rotation, Scale; then the size in metres it amounts to
         range(add(spec("scale", "Scale", K::Vec3, "spatial")), 0.0001, DBL_MAX, 0.01, 3);
-        range(add(spec("dimensions", "Dimensions", K::Vec3, "spatial")), 0.001, DBL_MAX, 0.01, 3, "m");
-        with(stepping(add(spec("localPosition", "Local Position", K::Vec3, "spatial")), 0.1, 3, "m"), "parentID!=");
-        with(stepping(add(spec("localRotation", "Local Rotation", K::Euler, "spatial")), 1.0, 2, "°"), "parentID!=");
+        range(add(spec("dimensions", "Dimensions", K::Vec3, "spatial")), 0.001, DBL_MAX, 0.01, 3);
+        with(stepping(add(spec("localPosition", "Local Position", K::Vec3, "spatial")), 0.1, 3), "parentID!=");
+        with(stepping(add(spec("localRotation", "Local Rotation", K::Euler, "spatial")), 1.0, 2), "parentID!=");
         range(add(spec("registrationPoint", "Pivot", K::Vec3, "spatial")), 0, 1, 0.01, 3);
 
         // shape

@@ -58,13 +58,13 @@
 #include "EntityTreeModel.h"
 #include "InterfaceLogging.h"
 #include "Menu.h"
+#include "scripting/RenderScriptingInterface.h"
 #include "PropertySpec.h"
 #include "ui/HierarchyPanel.h"
 #include "ui/InspectorPanel.h"
 #include "ui/ViewportContainer.h"
 
 namespace {
-    const float GIZMO_PIXELS = 110.0f;      // the gizmo's size on screen
     const int INSPECTOR_REFRESH_MS = 100;   // how often the Inspector re-reads a small selection
     const int INSPECTOR_REFRESH_SLOW_MS = 500;   // and a large one
     const int INSPECTOR_FAST_LIMIT = 16;
@@ -81,6 +81,7 @@ namespace {
     const int REJECTION_CHECK_MS = 3000;          // a new entity gone by then was refused by the server
     const int STATUS_CLEAR_MS = 6000;             // how long a note on the toolbar stays
     const QString SCALE_KEY = QStringLiteral("scale");
+    const QString LOCKED_KEY = QStringLiteral("locked");
     const float MIN_DIMENSION = 0.001f;
     const float BUILD_MODE_FOV = 90.0f;     // the client's units (its default is 120); less edge stretch on the gizmos
 
@@ -175,6 +176,12 @@ void Editor::setReady() {
             updateReadOnly();
         }
     });
+    // the graphics settings can switch to forward rendering while build mode is on (the Low and Potato presets do)
+    connect(RenderScriptingInterface::getInstance(), &RenderScriptingInterface::settingsChanged, this, [this] {
+        if (_active) {
+            updateRenderMethod();
+        }
+    });
     // the client died in build mode last time: give the field of view back
     float stale = _fovBeforeBuild.get();
     if (stale > 0.0f) {
@@ -202,6 +209,7 @@ void Editor::setActive(bool active) {
         _camera.enter();
         _grid.setVisible(_gridVisible);
         _selection.setHighlightEnabled(true);
+        updateRenderMethod();
         if (_treeModel) {
             _treeModel->attach();
         }
@@ -233,6 +241,7 @@ void Editor::setActive(bool active) {
         _grid.setVisible(false);
         _gizmo.setVisible(false);
         _selection.setHighlightEnabled(false);
+        updateRenderMethod();
         _selection.clear();
         _marqueeActive = false;
         emit marqueeChanged();
@@ -249,6 +258,20 @@ void Editor::setActive(bool active) {
     }
     Menu::getInstance()->setIsOptionChecked(MenuOption::BuildMode, active);
     emit activeChanged(active);
+}
+
+void Editor::updateRenderMethod() {
+    // Build mode outlines the selection, and only deferred rendering draws outlines: while build mode is on,
+    // the main view renders deferred whatever the graphics settings say (Low and Potato pick forward, to spare
+    // the GPU). The setting itself is left alone, so leaving build mode, or a crash, gives the user's own back.
+    auto engine = qApp->getRenderEngine();
+    auto config = engine ? dynamic_cast<render::SwitchConfig*>(
+        engine->getConfiguration()->getConfig("RenderMainView.DeferredForwardSwitch")) : nullptr;
+    if (!config) {
+        return;
+    }
+    int method = _active ? (int)render::Args::DEFERRED : (int)RenderScriptingInterface::getInstance()->getRenderMethod();
+    config->setBranch((uint8_t)method);
 }
 
 void Editor::setGridVisible(bool visible) {
@@ -621,8 +644,11 @@ void Editor::updateGizmo() {
         // sized by depth along the view axis, not straight-line distance, so the handles keep the
         // same projected size at the edge of the frame as in the middle (Unity does the same)
         float depth = std::max(0.01f, glm::dot(position - _camera.position(), viewDirection()));
-        float scale = depth * 2.0f * tanHalfFov() * (GIZMO_PIXELS / viewportHeight());
-        _gizmo.setTransform(position, rotation, scale, viewDirection());
+        float scale = depth * 2.0f * tanHalfFov() * (EditorGizmo::SIZE_PIXELS / viewportHeight());
+        // it faces the camera along the line of sight, so that off centre it still shows its front half
+        glm::vec3 lineOfSight = position - _camera.position();
+        _gizmo.setTransform(position, rotation, scale,
+            glm::length(lineOfSight) > 1.0e-4f ? glm::normalize(lineOfSight) : viewDirection());
     }
     _gizmo.setVisible(show);
 }
@@ -728,7 +754,7 @@ void Editor::onInspectorEditBegan(const QString& key) {
     QString stored = key == SCALE_KEY ? QStringLiteral("dimensions") : key;
     for (const auto& id : _selection.ids()) {
         EntityItemProperties snapshot;
-        if (!EditorUndo::snapshot(id, snapshot) || EditorUndo::isLocked(id)) {
+        if (!EditorUndo::snapshot(id, snapshot) || (EditorUndo::isLocked(id) && key != LOCKED_KEY)) {
             continue;
         }
         glm::vec3 naturalSize = PropertySpecs::naturalSize(snapshot);
@@ -784,7 +810,8 @@ void Editor::onInspectorCommitted(const QString& key, const QVariant& value) {
         QString stored = key == SCALE_KEY ? QStringLiteral("dimensions") : key;
         for (const auto& id : _selection.ids()) {
             EntityItemProperties snapshot;
-            if (!EditorUndo::snapshot(id, snapshot) || EditorUndo::isLocked(id)) {
+            // a locked entity takes no edits, but Locked itself: that is how it gets unlocked
+            if (!EditorUndo::snapshot(id, snapshot) || (EditorUndo::isLocked(id) && key != LOCKED_KEY)) {
                 continue;
             }
             glm::vec3 naturalSize = PropertySpecs::naturalSize(snapshot);

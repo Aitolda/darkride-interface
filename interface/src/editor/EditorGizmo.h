@@ -2,9 +2,11 @@
 //  EditorGizmo.h
 //  interface/src/editor
 //
-//  The transform gizmos: Move (axis arrows, plane squares, a centre handle), Rotate (an axis
-//  ring per axis and an outer ring facing the camera) and Scale (axis cubes and a centre cube),
-//  drawn by the render engine in the front layer (always on top), hit-tested and dragged in C++.
+//  The transform gizmos, laid out like Unity's: Move (an arrow per axis and a small square per
+//  plane, in the corner nearest the camera), Rotate (a ring per axis, of which the half facing the
+//  camera is drawn, an outer ring facing the camera and a trackball inside) and Scale (a cube per
+//  axis and one in the centre), drawn by the render engine in the front layer (always on top),
+//  hit-tested and dragged in C++.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -38,7 +40,6 @@ enum class GizmoHandle {
     PlaneYZ,     // the square facing X
     PlaneXZ,     // the square facing Y
     PlaneXY,     // the square facing Z
-    Center,      // moves in the plane facing the camera
     RingX,
     RingY,
     RingZ,
@@ -57,8 +58,9 @@ struct EditorGizmoState {
     glm::vec3 position;
     glm::quat rotation;
     float scale { 1.0f };
-    glm::vec3 viewDirection { 0.0f, 0.0f, -1.0f };
+    glm::vec3 viewDirection { 0.0f, 0.0f, -1.0f };   // the line of sight, from the camera to the gizmo
     glm::vec3 stretch { 1.0f };   // the Scale gizmo's axes, stretched while dragging
+    glm::vec3 planeSigns { 1.0f };   // per axis, the side the Move squares sit on (the camera's)
     GizmoHandle hover { GizmoHandle::None };
     GizmoHandle active { GizmoHandle::None };
 };
@@ -70,13 +72,9 @@ public:
     void render(RenderArgs* args, bool translucentPass);
 
 private:
-    void renderMove(RenderArgs* args, const EditorGizmoState& state, bool translucentPass);
-    void renderRotate(RenderArgs* args, const EditorGizmoState& state, bool translucentPass);
-    void renderScale(RenderArgs* args, const EditorGizmoState& state, bool translucentPass);
-
     mutable std::mutex _mutex;
     EditorGizmoState _state;
-    int _ringIds[4] { -1, -1, -1, -1 };
+    int _lineIds[2] { -1, -1 };   // the vertex buffers for the lines of each pass (opaque, translucent)
 };
 
 // Two render items share the state: the opaque parts and the translucent ones.
@@ -108,6 +106,10 @@ namespace render {
 // The main-thread side: placement, hit testing and the drag maths.
 class EditorGizmo {
 public:
+    // the gizmo's size on screen, in the viewport's pixels (points on a Retina display): one unit of the
+    // gizmo's own space
+    static constexpr float SIZE_PIXELS = 110.0f;
+
     void setVisible(bool visible);
     bool isVisible() const { return _state.visible; }
     void setMode(GizmoMode mode);

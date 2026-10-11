@@ -399,14 +399,16 @@ void NumberEditor::attachScrubLabel(ScrubLabel* label) {
 void NumberEditor::setValue(const QVariant& value, bool mixed) {
     _updating = true;
     _spin->setValue(value.toDouble());
-    if (mixed) {
+    if (mixed && !_spin->hasFocus()) {   // clicking in replaced the mark with a value to edit
         _spin->showMixed();
     }
     _updating = false;
 }
 
 bool NumberEditor::isEditing() const {
-    return _scrubbing || _spin->hasFocus();
+    // a field that has only been clicked into still shows changes made elsewhere (a Scale edit
+    // committed by clicking into Dimensions updates Dimensions); typing in it holds it
+    return _scrubbing || (_spin->hasFocus() && _spin->isTyping());
 }
 
 // --- VectorEditor -------------------------------------------------------------------------------

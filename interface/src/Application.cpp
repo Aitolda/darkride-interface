@@ -4485,8 +4485,12 @@ bool Application::eventFilter(QObject* object, QEvent* event) {
         (jsConsole ? !jsConsole->getActive() : true)
     ) {
         QKeyEvent* key = static_cast<QKeyEvent*>(event);
-        
-        if (key->key() == Qt::Key_Tab) {
+
+        // only while the 3D view has the keyboard: a field in a native panel (build mode's Inspector)
+        // takes Tab itself, to go on to the next field
+        QWidget* focusWidget = QApplication::focusWidget();
+        bool viewHasKeyboard = !focusWidget || focusWidget == getPrimaryWidget() || focusWidget == getWindow();
+        if (key->key() == Qt::Key_Tab && viewHasKeyboard) {
             if (key->isAutoRepeat() == false) {
                 _controllerScriptingInterface->tabKeyEvent(event->type() == QEvent::KeyPress);
             }

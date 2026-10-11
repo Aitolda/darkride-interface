@@ -158,6 +158,7 @@ private:
     void setMenuActionsEnabled(bool enabled);
     void updateAxes();
     void updateGizmo();
+    void updateRenderMethod();
     void onSelectionChanged();
     void rename(const QUuid& id, const QString& name);
 

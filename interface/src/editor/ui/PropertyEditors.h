@@ -53,6 +53,8 @@ public:
     explicit ScrubSpinBox(QWidget* parent = nullptr);
     void showMixed();
     bool isMixedShown() const { return _mixed; }
+    // something has been typed since the value was last shown
+    bool isTyping() const { return lineEdit()->isModified(); }
     // a spin box sizes itself for its widest possible value, which with a huge range is absurd;
     // these keep it to a sensible field that the layout can stretch
     QSize sizeHint() const override;

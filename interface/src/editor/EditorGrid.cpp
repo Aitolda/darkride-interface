@@ -28,10 +28,14 @@ namespace {
         glm::vec4 majorColor;
         glm::vec4 axisXColor;
         glm::vec4 axisZColor;
+        glm::vec4 edgeColor;
     };
 
-    const glm::vec4 MINOR_COLOR { 0.55f, 0.55f, 0.55f, 0.28f };
-    const glm::vec4 MAJOR_COLOR { 0.68f, 0.68f, 0.68f, 0.55f };
+    // dark lines with a faint light edge either side: the line shows on bright sand, the edge on dark grass
+    // (light grey lines alone vanished on the sand)
+    const glm::vec4 MINOR_COLOR { 0.0f, 0.0f, 0.0f, 0.3f };
+    const glm::vec4 MAJOR_COLOR { 0.0f, 0.0f, 0.0f, 0.5f };
+    const glm::vec4 EDGE_COLOR { 1.0f, 1.0f, 1.0f, 0.14f };
     const glm::vec4 AXIS_X_COLOR { 0.88f, 0.26f, 0.24f, 0.9f };
     const glm::vec4 AXIS_Z_COLOR { 0.24f, 0.52f, 0.88f, 0.9f };
 
@@ -116,6 +120,7 @@ void EditorGridRenderData::render(RenderArgs* args) {
     params.majorColor = MAJOR_COLOR;
     params.axisXColor = AXIS_X_COLOR;
     params.axisZColor = AXIS_Z_COLOR;
+    params.edgeColor = EDGE_COLOR;
     _paramsBuffer->setSubData(0, params);
     batch.setUniformBuffer(0, _paramsBuffer, 0, sizeof(EditorGridParams));
 
