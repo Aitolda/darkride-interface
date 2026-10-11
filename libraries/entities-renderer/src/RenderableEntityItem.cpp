@@ -166,7 +166,9 @@ ItemKey EntityRenderer::getKey() {
     ItemKey::Builder builder =
         ItemKey::Builder().withTypeShape().withTypeMeta().withTagBits(getTagMask()).withLayer(getHifiRenderLayer());
 
-    if (isTransparent()) {
+    bool transparent = isTransparent();
+    _keyIsTransparent = transparent;
+    if (transparent) {
         builder.withTransparent();
     } else if (_canCastShadow) {
         builder.withShadowCaster();
@@ -539,13 +541,21 @@ void EntityRenderer::onRemoveFromScene(const EntityItemPointer& entity) {
 }
 
 void EntityRenderer::addMaterial(graphics::MaterialLayer material, const std::string& parentMaterialName) {
-    std::lock_guard<std::mutex> lock(_materialsLock);
-    _materials[parentMaterialName].push(material);
+    {
+        std::lock_guard<std::mutex> lock(_materialsLock);
+        _materials[parentMaterialName].push(material);
+    }
+    // the material may change the pass this is drawn in (an opacity): the item's key is rebuilt next frame, not
+    // whenever something else happens to update this entity
+    emit requestRenderUpdate();
 }
 
 void EntityRenderer::removeMaterial(graphics::MaterialPointer material, const std::string& parentMaterialName) {
-    std::lock_guard<std::mutex> lock(_materialsLock);
-    _materials[parentMaterialName].remove(material);
+    {
+        std::lock_guard<std::mutex> lock(_materialsLock);
+        _materials[parentMaterialName].remove(material);
+    }
+    emit requestRenderUpdate();
 }
 
 glm::vec4 EntityRenderer::calculatePulseColor(const glm::vec4& color,

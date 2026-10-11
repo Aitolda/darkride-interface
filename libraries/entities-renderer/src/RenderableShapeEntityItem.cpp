@@ -200,7 +200,11 @@ ShapeKey ShapeEntityRenderer::getShapeKey() {
         RenderPipelines::updateMultiMaterial(mat->second);
     }
 
-    if (isTransparent()) {
+    // the transparency the item's key holds, not isTransparent() now: the key puts the item in the opaque or the
+    // transparent pass, and a material that turned opaque (an opacity dragged back to 1) between the key's rebuilds
+    // would be drawn in the transparent pass with the opaque pipeline, which blends nothing and shows the albedo flat
+    // and bright until the key catches up
+    if (_keyIsTransparent) {
         builder.withTranslucent();
     }
 

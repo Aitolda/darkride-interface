@@ -7,6 +7,8 @@
 #ifndef hifi_RenderableEntityItem_h
 #define hifi_RenderableEntityItem_h
 
+#include <atomic>
+
 #include <render/Scene.h>
 #include <EntityItem.h>
 #include <Sound.h>
@@ -151,6 +153,9 @@ protected:
 
     bool _isFading { EntityTreeRenderer::getEntitiesShouldFadeFunction()() };
     bool _prevIsTransparent { false };
+    // the transparency the render item's key was last built with (getKey): what a shape key must agree with, since
+    // the key decides the pass the item is drawn in and the shape key the pipeline it is drawn with
+    std::atomic<bool> _keyIsTransparent { false };
     bool _visible{ false };
     bool _previouslyVisible{ false };
     bool _isVisibleInSecondaryCamera { false };

@@ -285,7 +285,11 @@ namespace {
         P_FLOAT("cutoff", Cutoff);
 
         // material
-        P_STR("materialURL", MaterialURL);
+        // cleared, the URL goes back to the material's own data rather than to nothing applied
+        add("materialURL", [](const EP& p) { return QVariant(p.getMaterialURL()); }, [](EP& p, const QVariant& v) {
+            QString url = v.toString().trimmed();
+            p.setMaterialURL(url.isEmpty() ? QStringLiteral("materialData") : url);
+        });
         P_STR("materialData", MaterialData);
         P_STR("parentMaterialName", ParentMaterialName);
         P_INT("priority", Priority, quint16);
