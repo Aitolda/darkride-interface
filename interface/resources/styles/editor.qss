@@ -50,20 +50,19 @@ QDockWidget#EditorHierarchy::title, QDockWidget#EditorInspector::title {
     color: #ffffff;
 }
 /* styling the branch area at all replaces Qt's expander arrows, so they are drawn here: a parent's children were
-   there but unseen, with nothing to open them by */
+   there but unseen, with nothing to open them by. Only Qt's own pseudo-states may be named: an unknown one makes
+   the rule match every branch cell, arrows on everything */
 #EditorHierarchy QTreeView::branch {
     background: #383838;
 }
 #EditorHierarchy QTreeView::branch:selected {
     background: #2c5d87;
 }
-#EditorHierarchy QTreeView::branch:has-children:!has-open-children:closed,
-#EditorHierarchy QTreeView::branch:closed:has-children:has-siblings {
+#EditorHierarchy QTreeView::branch:has-children:closed {
     border-image: none;
     image: url(:/styles/branch-closed.svg);
 }
-#EditorHierarchy QTreeView::branch:open:has-children:!has-siblings,
-#EditorHierarchy QTreeView::branch:open:has-children:has-siblings {
+#EditorHierarchy QTreeView::branch:has-children:open {
     border-image: none;
     image: url(:/styles/branch-open.svg);
 }
@@ -180,13 +179,11 @@ QDockWidget#EditorHierarchy::title, QDockWidget#EditorInspector::title {
 #EditorInspector QTreeWidget#EditorUserData::branch {
     background: #383838;
 }
-#EditorInspector QTreeWidget#EditorUserData::branch:has-children:!has-open-children:closed,
-#EditorInspector QTreeWidget#EditorUserData::branch:closed:has-children:has-siblings {
+#EditorInspector QTreeWidget#EditorUserData::branch:has-children:closed {
     border-image: none;
     image: url(:/styles/branch-closed.svg);
 }
-#EditorInspector QTreeWidget#EditorUserData::branch:open:has-children:!has-siblings,
-#EditorInspector QTreeWidget#EditorUserData::branch:open:has-children:has-siblings {
+#EditorInspector QTreeWidget#EditorUserData::branch:has-children:open {
     border-image: none;
     image: url(:/styles/branch-open.svg);
 }
