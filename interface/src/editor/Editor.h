@@ -167,7 +167,7 @@ private:
     bool selectionSnapshots(QVector<EntityItemProperties>& snapshots, EntityTypes::EntityType& type, bool& multiple) const;
     void onInspectorEditBegan(const QString& key);
     void onInspectorLiveEdit(const QString& key, const QVariant& value);
-    void applyLiveEdit(const QString& key, const QVariant& value);
+    void applyLiveEdit(const QString& key, QVariant value);   // a copy: the paced send passes _liveEditValue, which this clears
     void onInspectorCommitted(const QString& key, const QVariant& value);
     void onInspectorEditCancelled(const QString& key);
     // the edit an Inspector value amounts to for one entity: Scale is turned into dimensions

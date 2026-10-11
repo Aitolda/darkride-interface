@@ -860,7 +860,7 @@ void Editor::onInspectorLiveEdit(const QString& key, const QVariant& value) {
     }
 }
 
-void Editor::applyLiveEdit(const QString& key, const QVariant& value) {
+void Editor::applyLiveEdit(const QString& key, QVariant value) {
     _liveEditClock.restart();
     _liveEditValue = QVariant();
     auto entities = DependencyManager::get<EntityScriptingInterface>();

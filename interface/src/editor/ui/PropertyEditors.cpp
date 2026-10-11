@@ -381,7 +381,8 @@ void NumberEditor::attachScrubLabel(ScrubLabel* label) {
         } else if (modifiers.testFlag(Qt::AltModifier)) {
             step *= SCRUB_FINE;
         }
-        _scrubAccumulated += deltaPixels * step;
+        // held at the field's limits, so dragging back from past one moves the value at once, as in Unity
+        _scrubAccumulated = qBound(_spin->minimum(), _scrubAccumulated + deltaPixels * step, _spin->maximum());
         _updating = true;
         _spin->setValue(_scrubAccumulated);
         _updating = false;
