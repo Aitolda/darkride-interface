@@ -164,3 +164,17 @@ void HierarchyPanel::selectIds(const QList<QUuid>& ids) {
     }
     _settingSelection = false;
 }
+
+void HierarchyPanel::reveal(const QUuid& id) {
+    if (!_model) {
+        return;
+    }
+    QModelIndex proxyIndex = _proxy->mapFromSource(_model->indexForId(id));
+    if (!proxyIndex.isValid()) {
+        return;   // not in the tree yet, or hidden by the search
+    }
+    for (QModelIndex parent = proxyIndex.parent(); parent.isValid(); parent = parent.parent()) {
+        _tree->expand(parent);
+    }
+    _tree->scrollTo(proxyIndex, QAbstractItemView::PositionAtCenter);
+}

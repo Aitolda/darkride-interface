@@ -109,6 +109,7 @@ namespace {
     const float MIN_LIGHT_RANGE = 0.01f;
     const float MIN_SPOT_CUTOFF = 1.0f;
     const float MAX_SPOT_CUTOFF = 90.0f;
+    const ulong DOUBLE_ESCAPE_MS = 400;     // two taps of Escape this close leave build mode
     const float BUILD_MODE_FOV = 90.0f;     // the client's units (its default is 120); less edge stretch on the gizmos
 
     // what a click or a paste can land on: the world's visible entities, picked against their meshes
@@ -725,6 +726,10 @@ void Editor::updateLightGizmos() {
     }
     float pixelSize = 2.0f * tanHalfFov() / viewportHeight();
     _lightGizmos.update(lights, handlesFor, cameraPosition, viewDirection(), pixelSize);
+}
+
+bool Editor::pointerOverHierarchy() const {
+    return _hierarchy && _hierarchy->isVisible() && _hierarchy->rect().contains(_hierarchy->mapFromGlobal(QCursor::pos()));
 }
 
 QUuid Editor::pickAt(const QPoint& viewportPos) const {
@@ -2362,24 +2367,51 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
     bool inTree = qobject_cast<QTreeView*>(widget) || (widget->parentWidget() && qobject_cast<QTreeView*>(widget->parentWidget()));
     bool inPanels = _hierarchy->isAncestorOf(widget) || _inspector->isAncestorOf(widget) || _toolBar->isAncestorOf(widget);
 
-    // undo and redo are taken here, ahead of everything, from any widget of the window: the menu
-    // shortcut and the viewport's key handler were never reached on macOS
-    if (command && keyEvent->key() == Qt::Key_Z && !typing) {
-        // unless a QML text field (chat, a dialog) is being typed in
-        bool qmlTyping = false;
+    // a QML text field (chat, a dialog) being typed in keeps its keys too
+    auto qmlTyping = [] {
         if (auto offscreenUi = DependencyManager::get<OffscreenUi>()) {
             if (auto window = offscreenUi->getWindow()) {
                 if (auto item = window->activeFocusItem()) {
-                    qmlTyping = item->inherits("QQuickTextInput") || item->inherits("QQuickTextEdit")
+                    return item->inherits("QQuickTextInput") || item->inherits("QQuickTextEdit")
                         || item->inherits("QQuickWebEngineView");
                 }
             }
         }
-        if (!qmlTyping) {
+        return false;
+    };
+
+    // undo and redo are taken here, ahead of everything, from any widget of the window: the menu
+    // shortcut and the viewport's key handler were never reached on macOS
+    if (command && keyEvent->key() == Qt::Key_Z && !typing) {
+        if (!qmlTyping()) {
             if (shift) { redo(); } else { undo(); }
             return true;
         }
         return false;
+    }
+
+    // Escape twice in quick succession leaves build mode, wherever the keyboard is but a text field, where
+    // Escape belongs to the field; the first still does what it did. A press passed on from a widget to its
+    // parent comes through here again, with the same time, so a press is known by its time.
+    if (keyEvent->key() == Qt::Key_Escape && !keyEvent->isAutoRepeat() && !typing && !qmlTyping()) {
+        ulong time = keyEvent->timestamp();
+        if (time != _lastEscapeTime) {
+            bool second = _lastEscapeTime != 0 && time - _lastEscapeTime < DOUBLE_ESCAPE_MS;
+            _lastEscapeTime = second ? 0 : time;
+            if (second) {
+                QTimer::singleShot(0, this, [this] { setActive(false); });
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // F with the pointer over the Hierarchy finds the selection there, rather than framing it in the viewport
+    if (keyEvent->key() == Qt::Key_F && !command && !shift && !typing && pointerOverHierarchy()) {
+        if (!_selection.isEmpty()) {
+            _hierarchy->reveal(_selection.primary());
+        }
+        return true;
     }
 
     if (!inPanels) {

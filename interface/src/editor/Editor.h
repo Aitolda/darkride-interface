@@ -228,6 +228,7 @@ private:
     void setGizmosVisible(bool visible);
     // what a click there selects: a light's icon, or else the surface under it
     QUuid pickAt(const QPoint& viewportPos) const;
+    bool pointerOverHierarchy() const;
     void beginLightHandleDrag(const EditorLightHandle& handle, const PickRay& ray);
     void moveLightHandleDrag(const QPoint& viewportPos);
     void endLightHandleDrag(bool cancel);
@@ -322,6 +323,7 @@ private:
     float _lightHandleOffset { 0.0f };  // where on the handle it was taken, so it doesn't jump to the pointer
     float _lightHandleValue { 0.0f };
     bool _lightHandleMoved { false };
+    ulong _lastEscapeTime { 0 };        // the key event time of a first Escape, waiting for a second
     // per entity in an Inspector edit of Scale: its own size, to turn scale into dimensions
     QVector<glm::vec3> _inspectorNatural;
 

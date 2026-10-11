@@ -31,6 +31,8 @@ public:
     void setModel(EntityTreeModel* model);
     // shows these as selected without reporting it back as the user's doing
     void selectIds(const QList<QUuid>& ids);
+    // opens the rows above this one and scrolls it to the middle of the panel
+    void reveal(const QUuid& id);
 
     QTreeView* treeView() const { return _tree; }
     QLineEdit* searchField() const { return _search; }
