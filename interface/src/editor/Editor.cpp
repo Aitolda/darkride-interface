@@ -2265,12 +2265,7 @@ bool Editor::handleKeyPress(QKeyEvent* event) {
             deleteSelection();
             return true;
         case Qt::Key_Escape:
-            // during a light handle's drag, it puts the light back as it was; otherwise it deselects
-            if (!_lightHandleDrag.isNone()) {
-                endLightHandleDrag(true);
-            } else {
-                _selection.clear();
-            }
+            _selection.clear();
             return true;
         case Qt::Key_F:
             if (shift && command) {
