@@ -287,6 +287,9 @@ void Editor::setActive(bool active) {
             _layoutSetting.set(window->saveState());
         }
         showPanels(false);
+        // the keyboard goes back to the world: a field that had it would keep it, hidden, and the avatar's keys
+        // with it
+        focusViewport();
         _camera.leave();
         if (_savedFov > 0.0f) {
             qApp->setFieldOfView(_savedFov);

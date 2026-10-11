@@ -30,6 +30,7 @@ class QDragEnterEvent;
 class QDropEvent;
 class QNetworkReply;
 class QSlider;
+class QTimer;
 
 // A label that scrubs a value when dragged sideways, as Unity's numeric labels do.
 class ScrubLabel : public QLabel {
@@ -51,7 +52,10 @@ private:
     int _pressX { 0 };
 };
 
-// A spin box that can show "—" for a mixed selection without losing its value.
+// A spin box that can show "—" for a mixed selection without losing its value. The wheel moves it only while it has
+// the keyboard (clicked into); over any other field the wheel scrolls the panel, so nothing changes by accident. A
+// run of steps, from the wheel or the arrow keys, is one edit: previewed live, done when the run pauses, Enter is
+// pressed or the keyboard leaves.
 class ScrubSpinBox : public QDoubleSpinBox {
     Q_OBJECT
 public:
@@ -64,10 +68,21 @@ public:
     // these keep it to a sensible field that the layout can stretch
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
+    void stepBy(int steps) override;
+signals:
+    void stepRunBegan();
+    void stepped();
+    void stepRunEnded();
 protected:
     void focusInEvent(QFocusEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 private:
+    void endStepRun();
     bool _mixed { false };
+    bool _stepping { false };
+    QTimer* _stepPause { nullptr };
 };
 
 // One editable property. The label is part of it: numeric kinds get a scrubbing label.

@@ -28,6 +28,7 @@
 #include <QtCore/QRect>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QSignalBlocker>
+#include <QtCore/QTimer>
 #include <QtGui/QClipboard>
 #include <QtGui/QColor>
 #include <QtGui/QMouseEvent>
@@ -52,6 +53,7 @@ namespace {
     const QString MIXED = QStringLiteral("—");
     const int SLIDER_MAX_STEPS = 10000;
     const int SLIDER_FIELD_PIXELS = 52;     // a Range's field beside its slider: room for "0.00"
+    const int STEP_RUN_PAUSE_MS = 500;      // a run of wheel or arrow-key steps is over when none comes for this long
 
     // the Inspector's slider: it says when the mouse goes down on it, before the press moves the value, and when it
     // comes up; the wheel scrolls the Inspector instead of changing the value under the pointer
@@ -74,6 +76,21 @@ namespace {
             }
         }
         void wheelEvent(QWheelEvent* event) override { event->ignore(); }
+    };
+
+    // Qt's combo box changes its choice as the wheel passes over it, and takes the keyboard from the wheel; here
+    // only one that has the keyboard (clicked into) does, and the wheel scrolls the Inspector over any other
+    class InspectorComboBox : public QComboBox {
+    public:
+        explicit InspectorComboBox(QWidget* parent) : QComboBox(parent) { setFocusPolicy(Qt::StrongFocus); }
+    protected:
+        void wheelEvent(QWheelEvent* event) override {
+            if (!hasFocus()) {
+                event->ignore();
+                return;
+            }
+            QComboBox::wheelEvent(event);
+        }
     };
 
     const char* const COLLISION_GROUPS[] = { "static", "dynamic", "kinematic", "myAvatar", "otherAvatar" };
@@ -308,6 +325,49 @@ ScrubSpinBox::ScrubSpinBox(QWidget* parent) : QDoubleSpinBox(parent) {
     setKeyboardTracking(false);
     setButtonSymbols(QAbstractSpinBox::NoButtons);
     setAlignment(Qt::AlignRight);
+    setFocusPolicy(Qt::StrongFocus);    // Qt's spin boxes also take the keyboard from a wheel passing over them
+    _stepPause = new QTimer(this);
+    _stepPause->setSingleShot(true);
+    _stepPause->setInterval(STEP_RUN_PAUSE_MS);
+    connect(_stepPause, &QTimer::timeout, this, &ScrubSpinBox::endStepRun);
+}
+
+void ScrubSpinBox::stepBy(int steps) {
+    if (!_stepping) {
+        _stepping = true;
+        emit stepRunBegan();
+    }
+    QDoubleSpinBox::stepBy(steps);
+    emit stepped();
+    _stepPause->start();
+}
+
+void ScrubSpinBox::endStepRun() {
+    if (_stepping) {
+        _stepping = false;
+        _stepPause->stop();
+        emit stepRunEnded();
+    }
+}
+
+void ScrubSpinBox::wheelEvent(QWheelEvent* event) {
+    if (!hasFocus()) {
+        event->ignore();    // on to the panel, which scrolls
+        return;
+    }
+    QDoubleSpinBox::wheelEvent(event);
+}
+
+void ScrubSpinBox::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        endStepRun();
+    }
+    QDoubleSpinBox::keyPressEvent(event);
+}
+
+void ScrubSpinBox::focusOutEvent(QFocusEvent* event) {
+    endStepRun();
+    QDoubleSpinBox::focusOutEvent(event);
 }
 
 void ScrubSpinBox::showMixed() {
@@ -437,6 +497,28 @@ NumberEditor::NumberEditor(const PropertySpec& spec, QWidget* parent, bool compo
             emit committed(QVariant(value));
         }
     });
+    // a run of wheel or arrow-key steps in the field is one edit, live while it goes on, as a scrub is
+    connect(_spin, &ScrubSpinBox::stepRunBegan, this, [this] {
+        _scrubbing = true;
+        _scrubStart = _spin->value();
+        emit editBegan();
+    });
+    connect(_spin, &ScrubSpinBox::stepped, this, [this] {
+        if (_scrubbing) {
+            emit liveValue(QVariant(_spin->value()));
+        }
+    });
+    connect(_spin, &ScrubSpinBox::stepRunEnded, this, [this] {
+        if (!_scrubbing) {
+            return;
+        }
+        _scrubbing = false;
+        if (_spin->value() == _scrubStart) {
+            emit editCancelled();
+        } else {
+            emit committed(QVariant(_spin->value()));
+        }
+    });
 }
 
 void NumberEditor::showOnSlider() {
@@ -526,6 +608,7 @@ VectorEditor::VectorEditor(const PropertySpec& spec, QWidget* parent) : Property
         layout->addWidget(label);
         layout->addWidget(editor, 1);
         connect(editor, &PropertyEditor::editBegan, this, &PropertyEditor::editBegan);
+        connect(editor, &PropertyEditor::editCancelled, this, &PropertyEditor::editCancelled);
         connect(editor, &PropertyEditor::liveValue, this, [this] { emit liveValue(currentValue()); });
         connect(editor, &PropertyEditor::committed, this, [this] { emit committed(currentValue()); });
         _components << editor;
@@ -964,7 +1047,7 @@ void ColorEditor::setValue(const QVariant& value, bool mixed) {
 EnumEditor::EnumEditor(const PropertySpec& spec, QWidget* parent) : PropertyEditor(spec, parent) {
     auto layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    _combo = new QComboBox(this);
+    _combo = new InspectorComboBox(this);
     _combo->setEnabled(!spec.readOnly);
     for (const auto& entry : spec.enumValues) {
         int colon = entry.indexOf(':');
