@@ -233,6 +233,11 @@ void Editor::setActive(bool active) {
         _grid.setVisible(_gridVisible);
         _selection.setHighlightEnabled(true);
         updateRenderMethod();
+        // a builder sees everything: a zone set to cull what is outside it hid new entities (a new light gave no
+        // light until the zone's list was made again) and made lights blink as they were edited
+        if (auto renderer = qApp->getEntities()) {
+            renderer->setZoneCullingSuspended(true);
+        }
         if (_treeModel) {
             _treeModel->attach();
         }
@@ -265,6 +270,9 @@ void Editor::setActive(bool active) {
         _gizmo.setVisible(false);
         _selection.setHighlightEnabled(false);
         updateRenderMethod();
+        if (auto renderer = qApp->getEntities()) {
+            renderer->setZoneCullingSuspended(false);
+        }
         _selection.clear();
         _marqueeActive = false;
         emit marqueeChanged();
@@ -838,7 +846,7 @@ void Editor::onInspectorLiveEdit(const QString& key, const QVariant& value) {
     }
     // a scrub moves with the mouse, a hundred times a second or more: send no faster than a gizmo drag (sizes
     // more slowly, being heavier for the server), the latest value going out when the wait is over
-    bool sizes = key == SCALE_KEY || key == RANGE_KEY || key == QStringLiteral("dimensions");
+    bool sizes = key == SCALE_KEY || key == QStringLiteral("dimensions");   // a light's Range has no shape to rebuild
     int interval = sizes ? SCALE_EDIT_INTERVAL_MS : EDIT_INTERVAL_MS;
     _liveEditValue = value;
     if (_liveEditTimer.isActive()) {

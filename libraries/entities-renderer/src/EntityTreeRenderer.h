@@ -78,6 +78,9 @@ public:
     bool getDisableWebEntities() { return _disableWebEntities; }
     
     void setIsEditMode(bool modeState) { _isEditMode = modeState; }
+    // while suspended nothing is zone-culled (build mode shows everything); every renderable looks again when
+    // this changes, so the culled come back, and are culled again once it ends
+    void setZoneCullingSuspended(bool suspended);
     bool getGhostingAllowed() { return _ghostingAllowed; }
 
     ReadWriteLockable _getZoneCullSkiplistGuard;
@@ -237,6 +240,8 @@ private:
 
     glm::vec3 _avatarPosition { 0.0f };
     bool _forceRecheckEntities { true };
+    bool _zoneCullingSuspended { false };
+    bool _refreshAllRenderables { false };   // the next evaluation of the zone culling updates every renderable
     bool _sceneIsReady = false;
     QSet<EntityItemID> _currentEntitiesInside;
 

@@ -727,8 +727,20 @@ void EntityTreeRenderer::findBestZoneAndMaybeContainingEntities(QSet<EntityItemI
 
 QVector<QUuid> EntityTreeRenderer::getZoneCullSkiplist() {
     QVector<QUuid> result;
+    if (_zoneCullingSuspended) {
+        return result;   // an empty list: zone culling is off
+    }
     _getZoneCullSkiplistGuard.withReadLock([&] { result = _zoneCullSkipList; });
     return result;
+}
+
+void EntityTreeRenderer::setZoneCullingSuspended(bool suspended) {
+    if (_zoneCullingSuspended == suspended) {
+        return;
+    }
+    _zoneCullingSuspended = suspended;
+    _forceRecheckEntities = true;
+    _refreshAllRenderables = true;
 }
 
 void EntityTreeRenderer::evaluateZoneCullingStack() {  
@@ -737,7 +749,7 @@ void EntityTreeRenderer::evaluateZoneCullingStack() {
     _forceRecheckEntities = false;
     _zoneCullSkipList.clear();    
 
-    for (int i = 0; i < _zoneCullingStack.size(); ++i) { // stack of zones to determine where you are. pretty small list generally.
+    for (int i = 0; !_zoneCullingSuspended && i < _zoneCullingStack.size(); ++i) { // stack of zones to determine where you are. pretty small list generally.
         auto zoneItem = std::dynamic_pointer_cast<ZoneEntityItem>(getTree()->findEntityByEntityItemID(_zoneCullingStack[i])); // Get ref to each zone entity
        
         if (!zoneItem) continue;
@@ -763,6 +775,19 @@ void EntityTreeRenderer::evaluateZoneCullingStack() {
     auto scene = _viewState->getMain3DScene();
     render::Transaction transaction;
     
+    // zone culling was suspended or resumed: every renderable looks at the skiplist again
+    if (_refreshAllRenderables) {
+        _refreshAllRenderables = false;
+        for (const auto& entry : _entitiesInScene) {
+            if (entry.second) {
+                entry.second->updateInScene(scene, transaction);
+                entry.second->getEntity()->setNeedsRenderUpdate(true);
+            }
+        }
+        scene->enqueueTransaction(transaction);
+        return;
+    }
+
     // Since statics are generally not in the update loop, force an update pass for them here
     for (const auto& renderable : _staticRenderablesToUpdate) {
         if (renderable) {
