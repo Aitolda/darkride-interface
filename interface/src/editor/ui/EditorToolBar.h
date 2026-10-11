@@ -3,7 +3,7 @@
 //  interface/src/editor/ui
 //
 //  The tool strip above the viewport: View / Move / Rotate / Scale, handle space, pivot
-//  mode, snapping, the grid, and the way out of build mode.
+//  mode, snapping, the grid, the gizmos, and the way out of build mode.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -30,6 +30,7 @@ public:
     Tool tool() const { return _tool; }
     void setTool(Tool tool);
     void setGridChecked(bool checked);
+    void setGizmosChecked(bool checked);
     void setLocalSpace(bool local);
     void setPivotMode(bool pivot);
     // the Create button's menu
@@ -49,6 +50,7 @@ signals:
     void pivotToggled(bool pivot);
     void snapToggled(bool on);
     void gridToggled(bool on);
+    void gizmosToggled(bool on);
     void exitRequested();
 
 private:
@@ -64,6 +66,7 @@ private:
     QAction* _saveWorldAction { nullptr };
     QAction* _worldSeparator { nullptr };
     QAction* _gridAction { nullptr };
+    QAction* _gizmosAction { nullptr };
     QToolButton* _createButton { nullptr };
     QLabel* _status { nullptr };
 };

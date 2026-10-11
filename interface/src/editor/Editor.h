@@ -40,6 +40,7 @@
 #include "EditorCamera.h"
 #include "EditorClipboard.h"
 #include "EditorGizmo.h"
+#include "EditorLightGizmos.h"
 #include "EditorGrid.h"
 #include "EditorSelection.h"
 #include "EditorUndo.h"
@@ -222,6 +223,17 @@ private:
     // wireframes for selected zones, lights and particle systems
     void updateBounds();
 
+    // the lights' icons, and the handles of a light selected on its own (see EditorLightGizmos.h)
+    void updateLightGizmos();
+    void setGizmosVisible(bool visible);
+    // what a click there selects: a light's icon, or else the surface under it
+    QUuid pickAt(const QPoint& viewportPos) const;
+    void beginLightHandleDrag(const EditorLightHandle& handle, const PickRay& ray);
+    void moveLightHandleDrag(const QPoint& viewportPos);
+    void endLightHandleDrag(bool cancel);
+    // the value a light handle's drag asks for, as the Inspector shows it: a range in metres, an angle in degrees
+    float lightHandleValue(const PickRay& ray) const;
+
     bool _ready { false };
     bool _active { false };
     bool _gridVisible { true };
@@ -300,6 +312,16 @@ private:
     QPoint _rightPressPos;
     EditorBounds _bounds;
     std::vector<EditorBoundsShape> _boundsShapes;
+    EditorLightGizmos _lightGizmos;
+    bool _gizmosVisible { true };       // every light's icon, not only the selected ones'
+    QVector<QUuid> _nearbyLights;       // the lights round the camera, looked for every so often
+    int _lightSearchFrame { -1 };       // when they were last looked for; -1 to look at once
+    // a light handle's drag: an Inspector edit of the handle's property, from the viewport
+    EditorLightHandle _lightHandleDrag;
+    QString _lightHandleKey;
+    float _lightHandleOffset { 0.0f };  // where on the handle it was taken, so it doesn't jump to the pointer
+    float _lightHandleValue { 0.0f };
+    bool _lightHandleMoved { false };
     // per entity in an Inspector edit of Scale: its own size, to turn scale into dimensions
     QVector<glm::vec3> _inspectorNatural;
 

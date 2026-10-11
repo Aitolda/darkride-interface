@@ -105,6 +105,12 @@ EditorToolBar::EditorToolBar(QWidget* parent) : QToolBar("Build", parent) {
     _gridAction->setToolTip("Show the grid");
     connect(_gridAction, &QAction::toggled, this, &EditorToolBar::gridToggled);
 
+    _gizmosAction = addAction("Gizmos");
+    _gizmosAction->setCheckable(true);
+    _gizmosAction->setChecked(true);
+    _gizmosAction->setToolTip("Show every light's icon, not only the selected ones'");
+    connect(_gizmosAction, &QAction::toggled, this, &EditorToolBar::gizmosToggled);
+
     auto exitAction = addAction("Exit Build Mode");
     exitAction->setToolTip("Back to your avatar (Cmd+B)");
     connect(exitAction, &QAction::triggered, this, &EditorToolBar::exitRequested);
@@ -184,5 +190,12 @@ void EditorToolBar::setGridChecked(bool checked) {
     if (_gridAction->isChecked() != checked) {
         QSignalBlocker blocker(_gridAction);
         _gridAction->setChecked(checked);
+    }
+}
+
+void EditorToolBar::setGizmosChecked(bool checked) {
+    if (_gizmosAction->isChecked() != checked) {
+        QSignalBlocker blocker(_gizmosAction);
+        _gizmosAction->setChecked(checked);
     }
 }

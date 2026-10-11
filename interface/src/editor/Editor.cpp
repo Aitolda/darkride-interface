@@ -18,6 +18,7 @@
 #include <QtCore/QHash>
 #include <QtCore/QMimeData>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QSet>
 #include <QtCore/QUrl>
 #include <QtGui/QCursor>
 #include <QtGui/QImage>
@@ -99,7 +100,15 @@ namespace {
     const QString SCALE_KEY = QStringLiteral("scale");
     const QString LOCKED_KEY = QStringLiteral("locked");
     const QString RANGE_KEY = QStringLiteral("range");
+    const QString CUTOFF_KEY = QStringLiteral("cutoff");
     const float MIN_DIMENSION = 0.001f;
+    // the lights round the camera, for their icons: looked for this often, this far out
+    const int LIGHT_SEARCH_FRAMES = 15;
+    const float LIGHT_SEARCH_RADIUS = 150.0f;
+    // what the light handles can drag to: the Inspector's own limits, and no narrower a cone than this
+    const float MIN_LIGHT_RANGE = 0.01f;
+    const float MIN_SPOT_CUTOFF = 1.0f;
+    const float MAX_SPOT_CUTOFF = 90.0f;
     const float BUILD_MODE_FOV = 90.0f;     // the client's units (its default is 120); less edge stretch on the gizmos
 
     // what a click or a paste can land on: the world's visible entities, picked against their meshes
@@ -110,6 +119,17 @@ namespace {
         flags.set(PickFilter::COLLIDABLE);
         flags.set(PickFilter::NONCOLLIDABLE);
         flags.set(PickFilter::PRECISE);
+        return PickFilter(flags);
+    }
+
+    // the world's lights, switched on or off, for their icons
+    PickFilter lightSearchFilter() {
+        PickFilter::Flags flags;
+        flags.set(PickFilter::DOMAIN_ENTITIES);
+        flags.set(PickFilter::VISIBLE);
+        flags.set(PickFilter::INVISIBLE);
+        flags.set(PickFilter::COLLIDABLE);
+        flags.set(PickFilter::NONCOLLIDABLE);
         return PickFilter(flags);
     }
 
@@ -251,6 +271,10 @@ void Editor::setActive(bool active) {
     } else {
         _boundsShapes.clear();
         _bounds.setShapes(_boundsShapes);
+        endLightHandleDrag(false);
+        _lightGizmos.clear();
+        _nearbyLights.clear();
+        _lightSearchFrame = -1;
         _inspectorRefresh.stop();
         if (_gizmo.isDragging()) {
             applyDrag(true);
@@ -390,6 +414,9 @@ void Editor::updateReadOnly() {
         _gizmo.endDrag();
         _dragKind = DragKind::None;
     }
+    if (_readOnly) {
+        endLightHandleDrag(true);
+    }
     updateGizmo();
 }
 
@@ -451,11 +478,13 @@ void Editor::createPanels() {
 
     _toolBar = new EditorToolBar(window);
     _toolBar->setGridChecked(_gridVisible);
+    _toolBar->setGizmosChecked(_gizmosVisible);
     _toolBar->setTool(_tool);
     _toolBar->setLocalSpace(_localSpace);
     _toolBar->setPivotMode(_pivotMode);
     connect(_toolBar, &EditorToolBar::exitRequested, this, [this] { setActive(false); });
     connect(_toolBar, &EditorToolBar::gridToggled, this, &Editor::setGridVisible);
+    connect(_toolBar, &EditorToolBar::gizmosToggled, this, &Editor::setGizmosVisible);
     connect(_toolBar, &EditorToolBar::toolChanged, this, [this](EditorToolBar::Tool tool) {
         _tool = tool;
         updateGizmo();
@@ -550,6 +579,7 @@ void Editor::update(float deltaTime) {
     _grid.setPixelsPerPoint((float)qApp->getDevicePixelRatio() * RenderScriptingInterface::getInstance()->getViewportResolutionScale());
     updateGizmo();
     updateBounds();
+    updateLightGizmos();
 }
 
 void Editor::updateBounds() {
@@ -623,6 +653,144 @@ void Editor::updateBounds() {
     if (shapes != _boundsShapes) {
         _boundsShapes = shapes;
         _bounds.setShapes(shapes);
+    }
+}
+
+void Editor::setGizmosVisible(bool visible) {
+    if (visible == _gizmosVisible) {
+        return;
+    }
+    _gizmosVisible = visible;
+    _lightSearchFrame = -1;   // look for the lights at once when the icons come back
+    if (_toolBar) {
+        _toolBar->setGizmosChecked(visible);
+    }
+}
+
+void Editor::updateLightGizmos() {
+    auto tree = entityTree();
+    if (!tree) {
+        _lightGizmos.clear();
+        return;
+    }
+    glm::vec3 cameraPosition = _camera.position();
+    // the lights round the camera, looked for now and then: searching the tree every frame would cost too much
+    if (_gizmosVisible && (_lightSearchFrame < 0 || _frameCounter - _lightSearchFrame >= LIGHT_SEARCH_FRAMES)) {
+        _lightSearchFrame = _frameCounter;
+        QVector<QUuid> found;
+        tree->withReadLock([&] {
+            tree->evalEntitiesInSphereWithType(cameraPosition, LIGHT_SEARCH_RADIUS, EntityTypes::Light, lightSearchFilter(), found);
+        });
+        _nearbyLights = found;
+    }
+
+    std::vector<EditorLightGizmoLight> lights;
+    QSet<QUuid> shown;
+    const auto& selected = _selection.ids();
+    tree->withReadLock([&] {
+        auto show = [&](const QUuid& id) {
+            if (shown.contains(id)) {
+                return;
+            }
+            auto entity = tree->findEntityByEntityItemID(id);
+            if (!entity || entity->getType() != EntityTypes::Light) {
+                return;
+            }
+            shown.insert(id);
+            auto light = std::static_pointer_cast<LightEntityItem>(entity);
+            EditorLightGizmoLight gizmo;
+            gizmo.id = id;
+            gizmo.spot = light->getIsSpotlight();
+            gizmo.position = entity->getWorldPosition();
+            gizmo.rotation = entity->getWorldOrientation();
+            gizmo.range = glm::compMax(entity->getScaledDimensions()) * 0.5f;   // the reach the engine uses
+            gizmo.angle = glm::radians(light->getCutoff());
+            gizmo.selected = selected.contains(id);
+            lights.push_back(gizmo);
+        };
+        for (const auto& id : selected) {
+            show(id);
+        }
+        if (_gizmosVisible) {
+            for (const auto& id : _nearbyLights) {
+                show(id);
+            }
+        }
+    });
+
+    // a light selected on its own gets handles, unless the world can't be changed
+    QUuid handlesFor;
+    if (!_readOnly && selected.size() == 1 && shown.contains(selected.first())) {
+        handlesFor = selected.first();
+    }
+    float pixelSize = 2.0f * tanHalfFov() / viewportHeight();
+    _lightGizmos.update(lights, handlesFor, cameraPosition, viewDirection(), pixelSize);
+}
+
+QUuid Editor::pickAt(const QPoint& viewportPos) const {
+    // icons are drawn over everything, so they are picked first, as in Unity
+    QUuid icon = _lightGizmos.iconAt(pickRay(viewportPos));
+    return icon.isNull() ? pickEntity(viewportPos) : icon;
+}
+
+float Editor::lightHandleValue(const PickRay& ray) const {
+    if (_lightHandleDrag.kind == EditorLightHandle::Angle) {
+        return glm::degrees(_lightGizmos.angleAt(ray, _lightHandleDrag));
+    }
+    return _lightGizmos.rangeAt(ray, _lightHandleDrag);
+}
+
+void Editor::beginLightHandleDrag(const EditorLightHandle& handle, const PickRay& ray) {
+    EditorLightGizmoLight light;
+    if (!_lightGizmos.handleLight(light) || !editable()) {
+        return;
+    }
+    // the drag is an Inspector edit of Range or Spot Cutoff, made from the viewport: paced, and one undo step
+    QString key = handle.kind == EditorLightHandle::Angle ? CUTOFF_KEY : RANGE_KEY;
+    onInspectorEditBegan(key);
+    if (_inspectorEditIds.isEmpty()) {
+        _inspectorEditKey.clear();   // locked
+        return;
+    }
+    _lightHandleDrag = handle;
+    _lightHandleKey = key;
+    float current = handle.kind == EditorLightHandle::Angle ? glm::degrees(light.angle) : light.range;
+    _lightHandleOffset = current - lightHandleValue(ray);
+    _lightHandleValue = current;
+    _lightHandleMoved = false;
+    _lightGizmos.setActive(handle);
+}
+
+void Editor::moveLightHandleDrag(const QPoint& viewportPos) {
+    float value = lightHandleValue(pickRay(viewportPos)) + _lightHandleOffset;
+    value = _lightHandleKey == RANGE_KEY ? std::max(value, MIN_LIGHT_RANGE) : glm::clamp(value, MIN_SPOT_CUTOFF, MAX_SPOT_CUTOFF);
+    if (value == _lightHandleValue) {
+        return;
+    }
+    _lightHandleValue = value;
+    _lightHandleMoved = true;
+    onInspectorLiveEdit(_lightHandleKey, QVariant((double)value));
+}
+
+void Editor::endLightHandleDrag(bool cancel) {
+    if (_lightHandleDrag.isNone()) {
+        return;
+    }
+    QString key = _lightHandleKey;
+    _lightHandleDrag = EditorLightHandle();
+    _lightHandleKey.clear();
+    _lightGizmos.setActive(EditorLightHandle());
+    if (_lightHandleMoved && !cancel) {
+        onInspectorCommitted(key, QVariant((double)_lightHandleValue));
+    } else if (_lightHandleMoved) {
+        onInspectorEditCancelled(key);   // puts back what the light had
+    } else {
+        // a click on a handle: nothing changed, so nothing to send or undo
+        _liveEditTimer.stop();
+        _inspectorEditKey.clear();
+        _inspectorEditIds.clear();
+        _inspectorBefore.clear();
+        _inspectorNatural.clear();
     }
 }
 
@@ -785,7 +953,8 @@ void Editor::refreshInspector(bool selectionChanged) {
             title = QString("%1 entities selected").arg(snapshots.size());
         }
         _inspector->showEntities(snapshots, type, multiple, title);
-    } else if (_inspectorEditKey.isEmpty()) {
+    } else if (_inspectorEditKey.isEmpty() || !_lightHandleDrag.isNone()) {
+        // a light handle's drag is an edit no field is making: the fields follow it
         _inspector->refreshValues(snapshots);
     }
 }
@@ -990,7 +1159,7 @@ glm::vec3 Editor::selectionAnchor() const {
 void Editor::clickSelect(const QPoint& viewportPos, Qt::KeyboardModifiers modifiers) {
     bool shift = modifiers.testFlag(Qt::ShiftModifier);
     bool command = modifiers.testFlag(Qt::ControlModifier);
-    QUuid hit = pickEntity(viewportPos);
+    QUuid hit = pickAt(viewportPos);
     if (hit.isNull()) {
         if (!shift && !command) {
             _selection.clear();
@@ -1908,7 +2077,7 @@ void Editor::showViewportMenu(const QPoint& viewportPos, const QPoint& globalPos
         return;
     }
     // a right click on something outside the selection selects it first, as in the Hierarchy
-    QUuid hit = pickEntity(viewportPos);
+    QUuid hit = pickAt(viewportPos);
     if (!hit.isNull() && !_selection.ids().contains(hit)) {
         _selection.set({ hit });
     }
@@ -1967,6 +2136,11 @@ bool Editor::handleMousePress(QMouseEvent* event) {
             return true;
         }
     }
+    EditorLightHandle lightHandle = _lightGizmos.handleAt(ray);
+    if (!lightHandle.isNone()) {
+        beginLightHandleDrag(lightHandle, ray);
+        return true;
+    }
     _clickPending = true;
     return true;
 }
@@ -1980,6 +2154,10 @@ bool Editor::handleMouseMove(QMouseEvent* event) {
     }
     if (_gizmo.isDragging()) {
         moveGizmoDrag(event->pos());
+        return true;
+    }
+    if (!_lightHandleDrag.isNone()) {
+        moveLightHandleDrag(event->pos());
         return true;
     }
     if (_marqueeActive) {
@@ -1998,9 +2176,13 @@ bool Editor::handleMouseMove(QMouseEvent* event) {
     if (event->buttons() == Qt::NoButton) {
         // the keys follow the mouse into the viewport, as in Unity, unless something is being typed
         takeFocusUnlessTyping();
+        PickRay ray = pickRay(event->pos());
+        GizmoHandle gizmoHover = _gizmo.isVisible() ? _gizmo.hitTest(ray) : GizmoHandle::None;
         if (_gizmo.isVisible()) {
-            _gizmo.setHover(_gizmo.hitTest(pickRay(event->pos())));
+            _gizmo.setHover(gizmoHover);
         }
+        // the transform gizmo is picked first: only one of them lights up
+        _lightGizmos.setHover(gizmoHover == GizmoHandle::None ? _lightGizmos.handleAt(ray) : EditorLightHandle());
     }
     return false;
 }
@@ -2029,6 +2211,10 @@ bool Editor::handleMouseRelease(QMouseEvent* event) {
         updateGizmo();
         return true;
     }
+    if (!_lightHandleDrag.isNone()) {
+        endLightHandleDrag(false);
+        return true;
+    }
     if (_marqueeActive) {
         updateMarquee(event->pos());
         finishMarquee(_pressModifiers);
@@ -2046,7 +2232,7 @@ bool Editor::handleMouseDoubleClick(QMouseEvent* event) {
         return false;
     }
     if (event->button() == Qt::LeftButton && !event->modifiers().testFlag(Qt::AltModifier)) {
-        QUuid hit = pickEntity(event->pos());
+        QUuid hit = pickAt(event->pos());
         if (!hit.isNull()) {
             _selection.set({ hit });
             frameSelection();
@@ -2079,7 +2265,12 @@ bool Editor::handleKeyPress(QKeyEvent* event) {
             deleteSelection();
             return true;
         case Qt::Key_Escape:
-            _selection.clear();
+            // during a light handle's drag, it puts the light back as it was; otherwise it deselects
+            if (!_lightHandleDrag.isNone()) {
+                endLightHandleDrag(true);
+            } else {
+                _selection.clear();
+            }
             return true;
         case Qt::Key_F:
             if (shift && command) {
