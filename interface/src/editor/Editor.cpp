@@ -672,7 +672,7 @@ bool Editor::selectionSnapshots(QVector<EntityItemProperties>& snapshots, Entity
             } else if (entityType != type) {
                 multiple = true;
             }
-            snapshots << entity->getProperties();
+            snapshots << EditorUndo::snapshotOf(entity);   // Position and Rotation in the world
         }
     });
     return !snapshots.isEmpty();

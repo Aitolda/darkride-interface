@@ -20,7 +20,7 @@ void EditorClipboard::copy(const QList<QUuid>& ids, const glm::vec3& anchor) {
     QSet<QUuid> inBatch(all.begin(), all.end());
     for (const auto& id : all) {
         EntityItemProperties properties;
-        if (!EditorUndo::snapshot(id, properties)) {
+        if (!EditorUndo::capture(id, properties)) {
             continue;
         }
         _properties << properties;
@@ -39,12 +39,17 @@ QList<QUuid> EditorClipboard::paste(EditorUndo& undo, const QString& text, const
     if (offset != glm::vec3(0.0f)) {
         for (int i = 0; i < properties.size(); ++i) {
             if (_topLevel.contains(_ids[i])) {
+                // moved in the world; with the local position unmarked, the add works out where that is in
+                // the parent's frame (a copy stays attached to a parent outside the copy, like a palm on the
+                // island). Children follow their copied parent and keep their local positions.
                 properties[i].setPosition(properties[i].getPosition() + offset);
+                properties[i].setLocalPositionChanged(false);
             }
         }
     }
-    // the pasted entities are new: give them no old ids to remap, so the originals keep theirs
-    QList<QUuid> newIds = undo.pushAdd(text, properties, QList<QUuid>());
+    // the originals are the sources: copied children go onto the copied parents, and the originals keep
+    // their ids (a paste makes new entities, nothing is remapped)
+    QList<QUuid> newIds = undo.pushAdd(text, properties, _ids);
     QList<QUuid> topLevel;
     for (int i = 0; i < newIds.size() && i < _ids.size(); ++i) {
         if (_topLevel.contains(_ids[i]) && !newIds[i].isNull()) {

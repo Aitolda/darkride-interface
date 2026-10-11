@@ -80,7 +80,7 @@ namespace {
             deleteEntities(_undo, _ids);
         }
         void undo() override {
-            _undo->createEntities(_properties, _ids);
+            _undo->createEntities(_properties, _ids, true);
         }
     private:
         EditorUndo* _undo;
@@ -100,7 +100,7 @@ namespace {
                 _skipFirstRedo = false;
                 return;
             }
-            _undo->createEntities(_properties, _ids);
+            _undo->createEntities(_properties, _ids, true);
         }
         void undo() override {
             deleteEntities(_undo, _ids);
@@ -143,11 +143,39 @@ bool EditorUndo::snapshot(const QUuid& id, EntityItemProperties& properties) {
     tree->withReadLock([&] {
         auto entity = tree->findEntityByEntityItemID(id);
         if (entity) {
-            properties = entity->getProperties();
+            properties = snapshotOf(entity);
             found = true;
         }
     });
     return found;
+}
+
+EntityItemProperties EditorUndo::snapshotOf(const EntityItemPointer& entity) {
+    EntityItemProperties properties = entity->getProperties();
+    // getProperties() gives position and rotation in the parent's frame, but edits take them in the world
+    // (as scripts do): for an attached entity the Inspector showed, and undo restored, the wrong values
+    properties.setPosition(entity->getWorldPosition());
+    properties.setRotation(entity->getWorldOrientation());
+    properties.setPositionChanged(false);
+    properties.setRotationChanged(false);
+    return properties;
+}
+
+bool EditorUndo::capture(const QUuid& id, EntityItemProperties& properties) {
+    if (!snapshot(id, properties)) {
+        return false;
+    }
+    // getProperties() fills every property in but marks none as set, and an add applies (and sends) only the
+    // marked ones: unmarked, a copy came out as a default entity of its type (a model with no model, drawn
+    // as a magenta box), keeping only what createEntities sets itself
+    properties.markAllChanged();
+    // placed by its position and rotation in the parent's frame, as captured (markAllChanged leaves these out,
+    // and the add would read the world values as parent-relative ones)
+    properties.setLocalPositionChanged(true);
+    properties.setLocalRotationChanged(true);
+    // the new entity's own, worked out when it is added
+    properties.setQueryAACubeChanged(false);
+    return true;
 }
 
 QList<QUuid> EditorUndo::withDescendants(const QList<QUuid>& ids) {
@@ -182,9 +210,10 @@ bool EditorUndo::isLocked(const QUuid& id) {
     return locked;
 }
 
-QList<QUuid> EditorUndo::createEntities(const QVector<EntityItemProperties>& properties, const QList<QUuid>& oldIds) {
+QList<QUuid> EditorUndo::createEntities(const QVector<EntityItemProperties>& properties, const QList<QUuid>& sourceIds,
+    bool remapSources) {
     auto entities = DependencyManager::get<EntityScriptingInterface>();
-    QHash<QUuid, QUuid> batch;   // old id to new id, within this batch
+    QHash<QUuid, QUuid> batch;   // source id to new id, within this batch
     QList<QUuid> newIds;
     for (int i = 0; i < properties.size(); ++i) {
         EntityItemProperties copy = properties[i];
@@ -200,10 +229,13 @@ QList<QUuid> EditorUndo::createEntities(const QVector<EntityItemProperties>& pro
         copy.setSimulationOwner(QUuid(), 0);
         QUuid newId = entities->addEntity(copy);
         newIds << newId;
-        QUuid oldId = i < oldIds.size() ? oldIds[i] : QUuid();
-        if (!oldId.isNull() && !newId.isNull()) {
-            batch[oldId] = newId;
-            remap(oldId, newId);
+        // a paste used to skip this (no ids to remap), so its children went back onto the originals
+        QUuid sourceId = i < sourceIds.size() ? sourceIds[i] : QUuid();
+        if (!sourceId.isNull() && !newId.isNull()) {
+            batch[sourceId] = newId;
+            if (remapSources) {
+                remap(sourceId, newId);
+            }
         }
     }
     return newIds;
@@ -225,10 +257,10 @@ QList<QUuid> EditorUndo::pushDelete(const QString& text, const QList<QUuid>& ids
         if (isLocked(id)) {
             continue;
         }
-        EntityItemProperties snapshotProperties;
-        if (snapshot(id, snapshotProperties)) {
+        EntityItemProperties capturedProperties;
+        if (capture(id, capturedProperties)) {
             captured << id;
-            properties << snapshotProperties;
+            properties << capturedProperties;
         }
     }
     if (captured.isEmpty()) {
@@ -238,17 +270,26 @@ QList<QUuid> EditorUndo::pushDelete(const QString& text, const QList<QUuid>& ids
     return captured;
 }
 
-QList<QUuid> EditorUndo::pushAdd(const QString& text, const QVector<EntityItemProperties>& properties, const QList<QUuid>& oldIds) {
+QList<QUuid> EditorUndo::pushAdd(const QString& text, const QVector<EntityItemProperties>& properties, const QList<QUuid>& sourceIds) {
     if (properties.isEmpty()) {
         return QList<QUuid>();
     }
-    QList<QUuid> newIds = createEntities(properties, oldIds);
-    // the command keeps the ids the entities were captured with, so a later re-creation remaps them
-    QList<QUuid> recordIds;
-    for (int i = 0; i < newIds.size(); ++i) {
-        QUuid oldId = i < oldIds.size() ? oldIds[i] : QUuid();
-        recordIds << (oldId.isNull() ? newIds[i] : oldId);
+    QList<QUuid> newIds = createEntities(properties, sourceIds, false);
+    // the command keeps the new ids, and properties whose parents inside the batch name those ids instead of
+    // the sources, so a redo makes the same family again and remaps the ids
+    QHash<QUuid, QUuid> made;
+    for (int i = 0; i < newIds.size() && i < sourceIds.size(); ++i) {
+        if (!sourceIds[i].isNull() && !newIds[i].isNull()) {
+            made[sourceIds[i]] = newIds[i];
+        }
     }
-    _stack.push(new AddEntitiesCommand(this, text, recordIds, properties));
+    QVector<EntityItemProperties> recorded = properties;
+    for (auto& entry : recorded) {
+        auto parent = made.constFind(entry.getParentID());
+        if (parent != made.constEnd()) {
+            entry.setParentID(parent.value());
+        }
+    }
+    _stack.push(new AddEntitiesCommand(this, text, newIds, recorded));
     return newIds;
 }

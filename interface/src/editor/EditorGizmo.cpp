@@ -394,6 +394,17 @@ void EditorGizmo::publish() {
     if (_state.visible) {
         ensureItems();
     }
+    // the scene files an item by its bound only when the item is added or updated: without this it kept
+    // culling the gizmo against the place it first appeared, so the gizmo vanished once the camera looked
+    // away from there (after framing the whole island, say)
+    if (render::Item::isValidID(_opaqueItem)) {
+        if (auto scene = qApp->getMain3DScene()) {
+            render::Transaction transaction;
+            transaction.updateItem(_opaqueItem);
+            transaction.updateItem(_planesItem);
+            scene->enqueueTransaction(transaction);
+        }
+    }
 }
 
 void EditorGizmo::setVisible(bool visible) {
