@@ -310,8 +310,9 @@ if (APPLE)
   # link in required OS X frameworks and include the right GL headers
   find_library(OpenGL OpenGL)
   find_library(AppKit AppKit)
+  find_library(CoreFoundation CoreFoundation)
 
-  target_link_libraries(${TARGET_NAME} ${OpenGL} ${AppKit})
+  target_link_libraries(${TARGET_NAME} ${OpenGL} ${AppKit} ${CoreFoundation})
 
   # setup install of OS X interface bundle
   install(TARGETS ${TARGET_NAME}

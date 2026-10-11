@@ -82,8 +82,13 @@ void gl::globalRelease(bool finish) {}
 static int _viewChangeDepth { 0 };
 // until when, on the steady clock in milliseconds, the presenting thread leaves the view alone
 static std::atomic<int64_t> _presentationPausedUntil { 0 };
-// long enough for Core Animation to commit after the change, even on a busy pass of the main thread's loop
+// the longest a pause lasts: Core Animation commits after the change, at the end of the main thread's loop pass,
+// which can be a busy one; viewChangesCommitted() ends it sooner
 static const int64_t PRESENTATION_PAUSE_MS = 250;
+// after the commit, a frame's margin before drawing again
+static const int64_t AFTER_COMMIT_PAUSE_MS = 20;
+// a change has ended and its commit has not been seen yet
+static std::atomic<bool> _awaitingCommit { false };
 
 static int64_t steadyMilliseconds() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -91,6 +96,15 @@ static int64_t steadyMilliseconds() {
 
 bool gl::isPresentationPaused() {
     return steadyMilliseconds() < _presentationPausedUntil.load();
+}
+
+void gl::viewChangesCommitted() {
+    if (_awaitingCommit.exchange(false)) {
+        int64_t soon = steadyMilliseconds() + AFTER_COMMIT_PAUSE_MS;
+        if (soon < _presentationPausedUntil.load()) {
+            _presentationPausedUntil = soon;
+        }
+    }
 }
 
 gl::ViewChangeGuard::ViewChangeGuard() {
@@ -104,6 +118,7 @@ gl::ViewChangeGuard::ViewChangeGuard() {
 gl::ViewChangeGuard::~ViewChangeGuard() {
     if (--_viewChangeDepth == 0) {
         _presentationPausedUntil = steadyMilliseconds() + PRESENTATION_PAUSE_MS;   // from the end of the change
+        _awaitingCommit = true;
         globalRelease(false);   // the main thread has no context of its own to finish
     }
 }

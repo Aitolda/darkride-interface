@@ -12,8 +12,22 @@
 
 #include <gl/GLHelpers.h>
 
+#ifdef Q_OS_MACOS
+#include <CoreFoundation/CoreFoundation.h>
+#endif
+
 namespace {
     const int SETTLE_MS = 250;   // a splitter drag has stopped when nothing moved for this long
+
+#ifdef Q_OS_MACOS
+    // Core Animation commits a pass's view changes from a main run loop observer of order 2000000, as the loop is
+    // about to wait or exits; one just after it knows they are in place, and the pause after a change can end
+    const CFIndex AFTER_CORE_ANIMATION_COMMIT = 2000001;
+
+    void afterCoreAnimationCommit(CFRunLoopObserverRef, CFRunLoopActivity, void*) {
+        gl::viewChangesCommitted();
+    }
+#endif
 }
 
 ViewportContainer::ViewportContainer(QWidget* viewport, QWidget* parent) : QWidget(parent), _viewport(viewport) {
@@ -24,6 +38,15 @@ ViewportContainer::ViewportContainer(QWidget* viewport, QWidget* parent) : QWidg
     _settle.setSingleShot(true);
     _settle.setInterval(SETTLE_MS);
     connect(&_settle, &QTimer::timeout, this, &ViewportContainer::applySize);
+#ifdef Q_OS_MACOS
+    static CFRunLoopObserverRef commitObserver = [] {
+        CFRunLoopObserverRef observer = CFRunLoopObserverCreate(kCFAllocatorDefault, kCFRunLoopBeforeWaiting | kCFRunLoopExit,
+            true, AFTER_CORE_ANIMATION_COMMIT, &afterCoreAnimationCommit, nullptr);
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, kCFRunLoopCommonModes);
+        return observer;
+    }();
+    (void)commitObserver;
+#endif
 }
 
 void ViewportContainer::setDeferResizes(bool defer) {

@@ -63,6 +63,9 @@ namespace gl {
 
     // Whether the presenting thread should leave the window's GL view alone for now (see ViewChangeGuard)
     bool isPresentationPaused();
+    // On the main thread, once macOS has put the latest view changes in place (just after Core Animation commits):
+    // the pause after a view change ends a frame later rather than at its limit
+    void viewChangesCommitted();
 
     // While the main thread moves or resizes the window's GL view, and for a moment after, the presenting thread
     // doesn't draw to it. The global lock, held for the change, keeps a frame from being drawn during it; a pause

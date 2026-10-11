@@ -72,6 +72,7 @@
 #include "ui/HierarchyPanel.h"
 #include "ui/InspectorPanel.h"
 #include "ui/ViewportContainer.h"
+#include <gl/GLHelpers.h>
 
 namespace {
     const int INSPECTOR_REFRESH_MS = 100;   // how often the Inspector re-reads a small selection
@@ -302,9 +303,17 @@ void Editor::setActive(bool active) {
         _marqueeActive = false;
         emit marqueeChanged();
     }
-    // while the panels can be dragged, the GL view only takes a new size once the dragging stops
+    // The panels take their places now, and the GL view its new size with them: left to the next layout pass, with
+    // resizes held for the splitters, the view kept its old size for a moment (a stretched picture as build mode came
+    // and went). Then, while the panels can be dragged, the view takes a new size only once the dragging stops.
     if (auto viewport = qApp->getPrimaryWidget()) {
         if (auto container = qobject_cast<ViewportContainer*>(viewport->parentWidget())) {
+            container->setDeferResizes(false);
+            auto window = qApp->getWindow();
+            if (window && window->layout()) {
+                gl::ViewChangeGuard guard;
+                window->layout()->activate();
+            }
             container->setDeferResizes(active);
         }
     }
