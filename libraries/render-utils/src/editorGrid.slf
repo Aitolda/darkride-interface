@@ -24,7 +24,7 @@
 
 // matches EditorGridParams in interface/src/editor/EditorGrid.cpp
 struct EditorGridParams {
-    vec4 spacing;      // x: minor spacing (m), y: major spacing (m), z: fade distance (m), w: unused
+    vec4 spacing;      // x: minor spacing (m), y: major spacing (m), z: fade distance (m), w: pixels per point
     vec4 minorColor;
     vec4 majorColor;
     vec4 axisXColor;
@@ -54,29 +54,32 @@ float gridLine(vec2 coord, vec2 dd, float widthPx) {
     return 1.0 - smoothstep(halfWidth - 0.5, halfWidth + 0.5, d);
 }
 
-// fades the lines out as their cells shrink below a few pixels, which is what stops the moire
+// fades the lines out as their cells shrink below a few points (dd: cells per point), which stops the moire
 float cellFade(vec2 dd) {
     return 1.0 - smoothstep(0.05, 0.22, max(dd.x, dd.y));
 }
 
 void main(void) {
+    // widths are in points, so the lines look the same on a Retina display (two pixels to the point)
+    float point = max(params.spacing.w, 1.0);
+
     vec2 p = _positionWS.xz;
     vec2 minorCoord = p / params.spacing.x;
     vec2 majorCoord = p / params.spacing.y;
 
     vec2 minorDD = cellsPerPixel(minorCoord);
     vec2 majorDD = cellsPerPixel(majorCoord);
-    float minorFade = cellFade(minorDD);
-    float majorFade = cellFade(majorDD);
-    float minor = gridLine(minorCoord, minorDD, 1.0) * minorFade;
-    float major = gridLine(majorCoord, majorDD, 1.5) * majorFade;
-    // the light edge: a pixel either side of each line
-    float edge = max(gridLine(minorCoord, minorDD, 3.0) * minorFade, gridLine(majorCoord, majorDD, 3.5) * majorFade);
+    float minorFade = cellFade(minorDD * point);
+    float majorFade = cellFade(majorDD * point);
+    float minor = gridLine(minorCoord, minorDD, 1.0 * point) * minorFade;
+    float major = gridLine(majorCoord, majorDD, 1.5 * point) * majorFade;
+    // the light edge: half a point either side of each line
+    float edge = max(gridLine(minorCoord, minorDD, 2.0 * point) * minorFade, gridLine(majorCoord, majorDD, 2.5 * point) * majorFade);
 
-    // the world axes: the line along X is z == 0, the line along Z is x == 0
+    // the world axes, two points wide: the line along X is z == 0, the line along Z is x == 0
     vec2 dd = cellsPerPixel(p);
-    float axisX = 1.0 - smoothstep(0.5, 1.5, abs(p.y) / dd.y);
-    float axisZ = 1.0 - smoothstep(0.5, 1.5, abs(p.x) / dd.x);
+    float axisX = 1.0 - smoothstep(point - 0.5, point + 0.5, abs(p.y) / dd.y);
+    float axisZ = 1.0 - smoothstep(point - 0.5, point + 0.5, abs(p.x) / dd.x);
 
     // coverage only scales alpha; the colour stays pure for straight alpha blending
     vec4 color = vec4(params.edgeColor.rgb, params.edgeColor.a * edge);

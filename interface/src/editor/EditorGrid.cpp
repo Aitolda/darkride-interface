@@ -33,9 +33,9 @@ namespace {
 
     // dark lines with a faint light edge either side: the line shows on bright sand, the edge on dark grass
     // (light grey lines alone vanished on the sand)
-    const glm::vec4 MINOR_COLOR { 0.0f, 0.0f, 0.0f, 0.3f };
-    const glm::vec4 MAJOR_COLOR { 0.0f, 0.0f, 0.0f, 0.5f };
-    const glm::vec4 EDGE_COLOR { 1.0f, 1.0f, 1.0f, 0.14f };
+    const glm::vec4 MINOR_COLOR { 0.0f, 0.0f, 0.0f, 0.5f };
+    const glm::vec4 MAJOR_COLOR { 0.0f, 0.0f, 0.0f, 0.7f };
+    const glm::vec4 EDGE_COLOR { 1.0f, 1.0f, 1.0f, 0.08f };
     const glm::vec4 AXIS_X_COLOR { 0.88f, 0.26f, 0.24f, 0.9f };
     const glm::vec4 AXIS_Z_COLOR { 0.24f, 0.52f, 0.88f, 0.9f };
 
@@ -115,7 +115,7 @@ void EditorGridRenderData::render(RenderArgs* args) {
     batch.setPipeline(forward ? _pipelineForward : _pipeline);
 
     EditorGridParams params;
-    params.spacing = glm::vec4(settings.minorSpacing, settings.majorSpacing, settings.fadeDistance, 0.0f);
+    params.spacing = glm::vec4(settings.minorSpacing, settings.majorSpacing, settings.fadeDistance, settings.pixelsPerPoint);
     params.minorColor = MINOR_COLOR;
     params.majorColor = MAJOR_COLOR;
     params.axisXColor = AXIS_X_COLOR;
@@ -158,6 +158,14 @@ void EditorGrid::setHeight(float height) {
     auto settings = _data->settings();
     settings.height = height;
     _data->setSettings(settings);
+}
+
+void EditorGrid::setPixelsPerPoint(float pixelsPerPoint) {
+    auto settings = _data->settings();
+    if (settings.pixelsPerPoint != pixelsPerPoint) {
+        settings.pixelsPerPoint = pixelsPerPoint;
+        _data->setSettings(settings);
+    }
 }
 
 void EditorGrid::ensureItem() {

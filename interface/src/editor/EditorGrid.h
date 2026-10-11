@@ -35,6 +35,7 @@ public:
         float majorSpacing { 10.0f };
         float fadeDistance { 250.0f };     // the lines are gone past this
         float height { 0.0f };             // world Y of the grid plane
+        float pixelsPerPoint { 1.0f };     // the render target's pixels per point of the view (2 on Retina)
     };
 
     Settings settings() const;
@@ -69,6 +70,7 @@ public:
     bool isVisible() const { return _data->settings().visible; }
 
     void setHeight(float height);
+    void setPixelsPerPoint(float pixelsPerPoint);
     float height() const { return _data->settings().height; }
 
     EditorGridRenderData::Settings settings() const { return _data->settings(); }

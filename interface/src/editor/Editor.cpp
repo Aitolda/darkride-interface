@@ -516,6 +516,8 @@ void Editor::update(float deltaTime) {
     if (++_frameCounter % PRUNE_EVERY_FRAMES == 0 && !_gizmo.isDragging()) {
         _selection.prune();
     }
+    // the grid's lines are a set width in points, not pixels, so they don't thin to a hair on a Retina display
+    _grid.setPixelsPerPoint((float)qApp->getDevicePixelRatio() * RenderScriptingInterface::getInstance()->getViewportResolutionScale());
     updateGizmo();
     updateBounds();
 }
@@ -1936,6 +1938,18 @@ bool Editor::handleKeyRelease(QKeyEvent* event) {
 }
 
 bool Editor::eventFilter(QObject* watched, QEvent* event) {
+    // the camera keys (1 first person, 2 selfie, 3 look at) do nothing in build mode, which has its own camera:
+    // a stray one (a number meant for a field) quietly changed the camera you came back to
+    if (_active && event->type() == QEvent::ShortcutOverride) {
+        auto keyEvent = static_cast<QKeyEvent*>(event);
+        int key = keyEvent->key();
+        bool plain = (keyEvent->modifiers() & ~Qt::KeypadModifier) == Qt::NoModifier;
+        if (plain && (key == Qt::Key_1 || key == Qt::Key_2 || key == Qt::Key_3)) {
+            event->accept();   // an ordinary key for whatever has the keyboard, not a menu shortcut
+            return true;
+        }
+        return false;
+    }
     if (!_active || event->type() != QEvent::KeyPress || !_panelsCreated) {
         return false;
     }
