@@ -19,8 +19,10 @@
 <$declareLightingPoint(supportScattering)$>
 <$declareLightingSpot(supportScattering)$>
 
-vec4 evalLocalLighting(ivec3 cluster, int numLights, vec3 fragWorldPos, SurfaceData surface,
-                       float fragMetallic, vec3 fragFresnel, vec3 fragAlbedo, float fragScattering,  
+// fragWorldPosDx and fragWorldPosDy: dFdx and dFdy of fragWorldPos, taken where control flow is uniform, for spot
+// lights' cookies
+vec4 evalLocalLighting(ivec3 cluster, int numLights, vec3 fragWorldPos, vec3 fragWorldPosDx, vec3 fragWorldPosDy,
+                       SurfaceData surface, float fragMetallic, vec3 fragFresnel, vec3 fragAlbedo, float fragScattering,
                        vec4 midNormalCurvature, vec4 lowNormalCurvature, float opacity) {
     vec4 fragColor = vec4(0.0);
     vec3 fragSpecular = vec3(0.0);
@@ -111,6 +113,10 @@ vec4 evalLocalLighting(ivec3 cluster, int numLights, vec3 fragWorldPos, SurfaceD
         if (shadow <= 0.0) {
             continue;
         }
+        vec3 cookie = evalLocalCookie(theLightIndex, fragWorldPos, fragWorldPosDx, fragWorldPosDy);
+        if (dot(cookie, vec3(1.0)) <= 0.0) {
+            continue;
+        }
 
         numLightTouching++;
 
@@ -126,7 +132,7 @@ vec4 evalLocalLighting(ivec3 cluster, int numLights, vec3 fragWorldPos, SurfaceD
         // Eval attenuation
         float radialAttenuation = lightIrradiance_evalLightAttenuation(light.irradiance, fragLightDistance);
         float angularAttenuation = lightIrradiance_evalLightSpotAttenuation(light.irradiance, cosSpotAngle);
-        vec3 lightEnergy = radialAttenuation * angularAttenuation * shadow * getLightIrradiance(light);
+        vec3 lightEnergy = radialAttenuation * angularAttenuation * shadow * cookie * getLightIrradiance(light);
 
         // Eval shading
         if (withScattering) {

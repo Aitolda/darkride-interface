@@ -11,11 +11,35 @@
 
 #include "RenderableLightEntityItem.h"
 
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
+
 #include <GLMHelpers.h>
 #include <PerfStat.h>
 
 using namespace render;
 using namespace render::entities;
+
+bool LightEntityRenderer::needsRenderUpdateFromTypedEntity(const TypedEntityPointer& entity) const {
+    // userData changes raise no flag of their own: the cookie may have changed with it
+    QString userData = entity->getUserData();
+    return resultWithReadLock<bool>([&] { return userData != _userData; });
+}
+
+void LightEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& scene, Transaction& transaction, const TypedEntityPointer& entity) {
+    QString userData = entity->getUserData();
+    withWriteLock([&] {
+        if (userData == _userData) {
+            return;
+        }
+        _userData = userData;
+        QString cookieURL = QJsonDocument::fromJson(userData.toUtf8()).object().value("cookie").toString();
+        if (cookieURL != _cookieURL) {
+            _cookieURL = cookieURL;
+            _cookie = cookieURL.isEmpty() ? NetworkTexturePointer() : DependencyManager::get<TextureCache>()->getTexture(QUrl(cookieURL));
+        }
+    });
+}
 
 void LightEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPointer& entity) {
 
@@ -55,8 +79,11 @@ void LightEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPoint
         light->setSpotAngle(cutoff);
         light->setSpotExponent(exponent);
     }
-    // the entity's Cast Shadows; spot lights' shadows are drawn by RenderLocalShadowTask
+    // the entity's Cast Shadows; spot lights' shadows are drawn by RenderLocalShadowTask, as are their cookies
     light->setCastShadows(entity->getCanCastShadow());
+    light->setCookie(resultWithReadLock<gpu::TextureSourcePointer>([&] {
+        return _cookie ? _cookie->_textureSource : gpu::TextureSourcePointer();
+    }));
 }
 
 ItemKey LightEntityRenderer::getKey() {

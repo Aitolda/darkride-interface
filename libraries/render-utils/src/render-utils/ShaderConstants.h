@@ -65,6 +65,8 @@
 // spot lights' shadow maps, in one atlas; the table that finds a light's tile in it is resource buffer 1
 #define RENDER_UTILS_TEXTURE_LOCAL_SHADOW 13
 #define RENDER_UTILS_RESOURCE_BUFFER_LOCAL_SHADOW_TABLE 1
+// spot lights' cookies, one picture to a layer of a texture array; the same table says which light has which
+#define RENDER_UTILS_TEXTURE_LOCAL_COOKIES 15
 
 #define RENDER_UTILS_BUFFER_LIGHT_CLUSTER_FRUSTUM_GRID 10
 #define RENDER_UTILS_BUFFER_LIGHT_CLUSTER_GRID 11
@@ -188,6 +190,7 @@ enum Texture {
     HazeLinearDepth = RENDER_UTILS_TEXTURE_HAZE_LINEAR_DEPTH,
     Shadow = RENDER_UTILS_TEXTURE_SHADOW,
     LocalShadow = RENDER_UTILS_TEXTURE_LOCAL_SHADOW,
+    LocalCookies = RENDER_UTILS_TEXTURE_LOCAL_COOKIES,
     TaaHistory = RENDER_UTILS_TEXTURE_TAA_HISTORY,
     TaaSource = RENDER_UTILS_TEXTURE_TAA_SOURCE,
     TaaVelocity = RENDER_UTILS_TEXTURE_TAA_VELOCITY,

@@ -15,6 +15,7 @@
 #include <glm/gtx/component_wise.hpp>
 
 #include <gpu/Context.h>
+#include <shaders/Shaders.h>
 
 #include <ViewFrustum.h>
 
@@ -30,12 +31,25 @@ extern void initZPassPipelines(ShapePlumber& plumber, gpu::StatePointer state, c
 
 const int LocalShadows::ATLAS_SIZE = 2048;
 const int LocalShadows::TILE_SIZE = 1024;
+const int LocalShadows::TILE_COUNT = 4;
 const int LocalShadows::LIGHT_COUNT = 256;
+const int LocalShadows::COOKIE_SIZE = 512;
+const int LocalShadows::COOKIE_LAYERS = 8;
+const int LocalShadows::COOKIE_LIGHT_COUNT = 16;
+
+static_assert(LocalShadows::TILE_COUNT == RenderLocalShadowTask::SLOT_COUNT, "a shadow map is drawn for each tile");
+static_assert(LocalShadows::TILE_COUNT <= (LocalShadows::ATLAS_SIZE / LocalShadows::TILE_SIZE) * (LocalShadows::ATLAS_SIZE / LocalShadows::TILE_SIZE),
+              "the tiles fit in the atlas");
 
 namespace {
-    // the table's layout, as LocalShadow.slh reads it
-    const int LIGHT_TEXELS = LocalShadows::LIGHT_COUNT / 4;   // a tile number for each light, four to a texel
+    // the table's layout, as LocalShadow.slh reads it: a tile number for each light, then each tile's entry, then a
+    // cookie number for each light, then each cookie's entry
+    const int LIGHT_TEXELS = LocalShadows::LIGHT_COUNT / 4;   // a number for each light, four to a texel
     const int TILE_TEXELS = 6;                                 // per tile: a matrix, the tile's bounds, its parameters
+    const int COOKIE_MAP_TEXEL = LIGHT_TEXELS + LocalShadows::TILE_COUNT * TILE_TEXELS;
+    const int COOKIE_TEXEL = COOKIE_MAP_TEXEL + LIGHT_TEXELS;
+    const int COOKIE_TEXELS = 5;                               // per cookie: a matrix, its layer
+    const int TABLE_TEXELS = COOKIE_TEXEL + LocalShadows::COOKIE_LIGHT_COUNT * COOKIE_TEXELS;
 
     // the lookup moves off the surface by about this many shadow map texels, along its normal and toward the light,
     // so that it doesn't shadow itself
@@ -46,6 +60,10 @@ namespace {
 
     // a wider cone would spread its shadow map too thin, and a square map can't take in 180 degrees at all
     const float MAX_SPOT_ANGLE = glm::radians(75.0f);
+    // a cookie spreads over the cone's whole width, but nothing projects to 180 degrees either
+    const float MAX_COOKIE_SPOT_ANGLE = glm::radians(85.0f);
+    // the pictures in use are copied in again this often, for the detail a picture gains as it finishes loading
+    const uint64_t COOKIE_REFRESH_FRAMES = 30;
     const float FIELD_OF_VIEW_MARGIN = glm::radians(2.0f);   // so the edge of the cone is filtered like its middle
     const float MIN_NEAR_CLIP = 0.05f;
     const float NEAR_CLIP_SCALE = 0.01f;
@@ -60,6 +78,14 @@ namespace {
     const glm::mat4 BIAS_MATRIX {
         0.5f, 0.0f, 0.0f, 0.0f,
         0.0f, 0.5f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.5f, 0.0f,
+        0.5f, 0.5f, 0.5f, 1.0f };
+
+    // from the projection's [-1, 1] square to a picture's texture coordinates; a picture's first row (t = 0) is its
+    // top, so up from the light is up in the picture: it lands as it looks to someone standing behind the light
+    const glm::mat4 COOKIE_BIAS_MATRIX {
+        0.5f, 0.0f, 0.0f, 0.0f,
+        0.0f, -0.5f, 0.0f, 0.0f,
         0.0f, 0.0f, 0.5f, 0.0f,
         0.5f, 0.5f, 0.5f, 1.0f };
 
@@ -97,17 +123,16 @@ LocalShadows::LocalShadows() {
     _framebuffer = gpu::FramebufferPointer(gpu::Framebuffer::create("Local shadow atlas"));
     _framebuffer->setDepthBuffer(_atlas, depthFormat);
 
-    int tilesPerSide = ATLAS_SIZE / TILE_SIZE;
-    int slotCount = RenderLocalShadowTask::SLOT_COUNT;
-    _tiles.resize(std::min(tilesPerSide * tilesPerSide, slotCount));
-    _tableData.resize(LIGHT_TEXELS + _tiles.size() * TILE_TEXELS, glm::vec4(0.0f));
+    _tiles.resize(TILE_COUNT);
+    _cookieLayers.resize(COOKIE_LAYERS);
+    _tableData.resize(TABLE_TEXELS, glm::vec4(0.0f));
     _table = std::make_shared<gpu::Buffer>();
     uploadTable();
 }
 
 const gpu::BufferPointer& LocalShadows::getEmptyTable() {
     static const gpu::BufferPointer EMPTY_TABLE = [] {
-        std::vector<glm::vec4> texels(LIGHT_TEXELS, glm::vec4(0.0f));
+        std::vector<glm::vec4> texels(TABLE_TEXELS, glm::vec4(0.0f));
         return std::make_shared<gpu::Buffer>(texels.size() * sizeof(glm::vec4), (const gpu::Byte*)texels.data());
     }();
     return EMPTY_TABLE;
@@ -122,12 +147,17 @@ bool LocalShadows::hasLights() const {
     return std::any_of(_tiles.begin(), _tiles.end(), [](const Tile& tile) { return (bool)tile.light; });
 }
 
-void LocalShadows::clearTiles() {
+void LocalShadows::clear() {
     for (auto& tile : _tiles) {
         tile = Tile();
     }
+    _cookieCount = 0;
+    if (++_frame % COOKIE_REFRESH_FRAMES == 0) {
+        for (auto& layer : _cookieLayers) {
+            layer.due = true;
+        }
+    }
     std::fill(_tableData.begin(), _tableData.end(), glm::vec4(0.0f));
-    uploadTable();
 }
 
 void LocalShadows::setTile(int tile, const graphics::LightPointer& light, LightStage::Index lightIndex, const ViewFrustum& frustum) {
@@ -156,7 +186,110 @@ void LocalShadows::setTile(int tile, const graphics::LightPointer& light, LightS
     }
     _tableData[texel + 4] = glm::vec4(low, high);
     _tableData[texel + 5] = glm::vec4(texelSizePerMeter, NORMAL_OFFSET_TEXELS, LIGHT_OFFSET_TEXELS, 1.0f / ATLAS_SIZE);
-    uploadTable();
+}
+
+bool LocalShadows::setCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const ViewFrustum& frustum) {
+    if (!picture || _cookieCount >= COOKIE_LIGHT_COUNT || lightIndex < 0 || lightIndex >= LIGHT_COUNT) {
+        return false;
+    }
+    int layer = cookieLayer(picture);
+    if (layer < 0) {
+        return false;
+    }
+    int cookie = _cookieCount++;
+    _tableData[COOKIE_MAP_TEXEL + lightIndex / 4][lightIndex % 4] = (float)(cookie + 1);
+
+    glm::mat4 worldToCookie = COOKIE_BIAS_MATRIX * frustum.getProjection() * glm::inverse(frustum.getView());
+    int texel = COOKIE_TEXEL + cookie * COOKIE_TEXELS;
+    for (int column = 0; column < 4; ++column) {
+        _tableData[texel + column] = worldToCookie[column];
+    }
+    _tableData[texel + 4] = glm::vec4((float)layer, 0.0f, 0.0f, 0.0f);
+    return true;
+}
+
+int LocalShadows::cookieLayer(const gpu::TexturePointer& picture) {
+    // the layer the picture is in already; else an empty one, or the one unused longest, but not one another light
+    // uses this frame
+    int chosen = -1;
+    for (int i = 0; i < (int)_cookieLayers.size(); ++i) {
+        auto& layer = _cookieLayers[i];
+        auto held = layer.picture.lock();
+        if (held == picture) {
+            layer.lastUsed = _frame;
+            return i;
+        }
+        if (held && layer.lastUsed == _frame) {
+            continue;
+        }
+        if (chosen < 0) {
+            chosen = i;
+            continue;
+        }
+        bool empty = !held;
+        bool chosenEmpty = _cookieLayers[chosen].picture.expired();
+        if ((empty && !chosenEmpty) || (empty == chosenEmpty && layer.lastUsed < _cookieLayers[chosen].lastUsed)) {
+            chosen = i;
+        }
+    }
+    if (chosen < 0) {
+        return -1;
+    }
+
+    if (!_cookies) {
+        // made when the first light has a cookie: sRGB like the pictures, with mips for seeing cookies from afar
+        gpu::Sampler::Desc samplerDesc;
+        samplerDesc._filter = gpu::Sampler::FILTER_ANISOTROPIC;
+        samplerDesc._wrapModeU = gpu::Sampler::WRAP_CLAMP;
+        samplerDesc._wrapModeV = gpu::Sampler::WRAP_CLAMP;
+        samplerDesc._maxAnisotropy = 8;
+        _cookies = gpu::Texture::createRenderBufferArray(gpu::Element::COLOR_SRGBA_32, COOKIE_SIZE, COOKIE_SIZE,
+            COOKIE_LAYERS, gpu::Texture::MAX_NUM_MIPS, gpu::Sampler(samplerDesc));
+        for (int i = 0; i < COOKIE_LAYERS; ++i) {
+            auto framebuffer = gpu::FramebufferPointer(gpu::Framebuffer::create("Spot light cookie"));
+            framebuffer->setRenderBuffer(0, _cookies, i);
+            _cookieFramebuffers.push_back(framebuffer);
+        }
+        _cookiePipeline = gpu::Pipeline::create(gpu::Shader::createProgram(shader::gpu::program::drawUnitQuatTextureOpaque),
+            std::make_shared<gpu::State>());
+    }
+    auto& layer = _cookieLayers[chosen];
+    layer.picture = picture;
+    layer.lastUsed = _frame;
+    layer.due = true;
+    return chosen;
+}
+
+bool LocalShadows::cookiesDue() const {
+    return std::any_of(_cookieLayers.begin(), _cookieLayers.end(), [this](const CookieLayer& layer) {
+        return layer.due && layer.lastUsed == _frame && !layer.picture.expired();
+    });
+}
+
+void LocalShadows::drawCookies(gpu::Batch& batch) {
+    bool drawn = false;
+    for (int i = 0; i < (int)_cookieLayers.size(); ++i) {
+        auto& layer = _cookieLayers[i];
+        auto picture = layer.picture.lock();
+        if (!layer.due || layer.lastUsed != _frame || !picture) {
+            continue;   // a layer not in use now is copied when it is next used
+        }
+        layer.due = false;
+        if (!drawn) {
+            batch.enableStereo(false);
+            batch.setPipeline(_cookiePipeline);
+            drawn = true;
+        }
+        // the whole picture, scaled to the layer
+        batch.setFramebuffer(_cookieFramebuffers[i]);
+        batch.setViewportTransform(glm::ivec4(0, 0, COOKIE_SIZE, COOKIE_SIZE));
+        batch.setResourceTexture(0, picture);
+        batch.draw(gpu::TRIANGLE_STRIP, 4);
+    }
+    if (drawn) {
+        batch.setResourceTexture(0, nullptr);
+        batch.generateTextureMips(_cookies);
+    }
 }
 
 void LocalShadows::uploadTable() {
@@ -191,22 +324,22 @@ void RenderLocalShadowTask::build(JobModel& task, const render::Varying& input, 
     // then each tile in turn: the casters its light sees, drawn into the tile
     for (int slot = 0; slot < SLOT_COUNT; ++slot) {
         char jobName[64];
-        sprintf(jobName, "LocalShadowSlotSetup%d", slot);
+        snprintf(jobName, sizeof(jobName), "LocalShadowSlotSetup%d", slot);
         const auto slotOutput = task.addJob<RenderLocalShadowSlotSetup>(jobName, localShadows, slot, casterReceiverFilter);
         const auto slotFilter = slotOutput.getN<RenderLocalShadowSlotSetup::Output>(0);
         const auto slotLight = slotOutput.getN<RenderLocalShadowSlotSetup::Output>(1);
         const auto slotCullFunctor = slotOutput.getN<RenderLocalShadowSlotSetup::Output>(2);
 
-        sprintf(jobName, "CullLocalShadowCasters%d", slot);
+        snprintf(jobName, sizeof(jobName), "CullLocalShadowCasters%d", slot);
         const auto cullInputs = CullShadowBounds::Inputs(sortedShapes, slotFilter, render::Varying(ViewFrustumPointer()),
             slotLight, slotCullFunctor).asVarying();
         const auto casters = task.addJob<CullShadowBounds>(jobName, cullInputs);
 
-        sprintf(jobName, "RenderLocalShadowMap%d", slot);
+        snprintf(jobName, sizeof(jobName), "RenderLocalShadowMap%d", slot);
         const auto renderInputs = RenderLocalShadowMap::Inputs(casters.getN<CullShadowBounds::Outputs>(0), localShadows).asVarying();
         task.addJob<RenderLocalShadowMap>(jobName, renderInputs, shapePlumber, slot);
 
-        sprintf(jobName, "LocalShadowSlotTeardown%d", slot);
+        snprintf(jobName, sizeof(jobName), "LocalShadowSlotTeardown%d", slot);
         task.addJob<RenderShadowCascadeTeardown>(jobName, slotFilter);
     }
     task.addJob<RenderLocalShadowTeardown>("LocalShadowTeardown", setupOutput);
@@ -231,44 +364,75 @@ void RenderLocalShadowSetup::run(const render::RenderContextPointer& renderConte
     for (int tile = 0; tile < _localShadows->getTileCount(); ++tile) {
         previousTiles.push_back(_localShadows->getTile(tile).light ? _localShadows->getTile(tile).lightIndex : LightStage::INVALID_INDEX);
     }
-    _localShadows->clearTiles();
+    _localShadows->clear();
     if (shadowFrame) {
         shadowFrame->_localShadows = nullptr;
     }
 
-    // the spot lights that cast shadows and reach into view, the ones that matter most first
+    // the spot lights that reach into view: those that cast shadows are candidates for a tile, those whose cookie has
+    // loaded get it; the ones that matter most first
     struct Candidate {
         LightStage::Index index;
         graphics::LightPointer light;
         float importance;
+        gpu::TexturePointer cookie;
     };
     std::vector<Candidate> candidates;
-    if (shadowFrame && lightFrame && lightStage && lightingModel &&
-        lightingModel->isShadowEnabled() && lightingModel->isSpotLightEnabled()) {
+    std::vector<Candidate> cookieLights;
+    if (shadowFrame && lightFrame && lightStage && lightingModel && lightingModel->isSpotLightEnabled()) {
         const ViewFrustum& view = args->getViewFrustum();
         for (auto index : lightFrame->_spotLights) {
             if (index < 0 || index >= LocalShadows::LIGHT_COUNT) {
                 continue;   // beyond the light array the shaders hold
             }
             auto light = lightStage->getLight(index);
-            if (!light || !light->getCastShadows() || light->getSpotAngle() > MAX_SPOT_ANGLE ||
-                !view.sphereIntersectsKeyhole(light->getPosition(), light->getMaximumRadius())) {
+            if (!light || !view.sphereIntersectsKeyhole(light->getPosition(), light->getMaximumRadius())) {
                 continue;
             }
             float rank = importance(*light, view.getPosition());
-            if (std::find(previousTiles.begin(), previousTiles.end(), index) != previousTiles.end()) {
-                rank *= KEEP_TILE_BONUS;
+            auto cookieSource = light->getCookie();
+            gpu::TexturePointer cookie = cookieSource ? cookieSource->getGPUTexture() : gpu::TexturePointer();
+            if (cookie && light->getSpotAngle() <= MAX_COOKIE_SPOT_ANGLE) {
+                cookieLights.push_back({ index, light, rank, cookie });
             }
-            candidates.push_back({ index, light, rank });
+            if (lightingModel->isShadowEnabled() && light->getCastShadows() && light->getSpotAngle() <= MAX_SPOT_ANGLE) {
+                bool hadTile = std::find(previousTiles.begin(), previousTiles.end(), index) != previousTiles.end();
+                candidates.push_back({ index, light, hadTile ? rank * KEEP_TILE_BONUS : rank, nullptr });
+            }
         }
     }
-    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+    auto byImportance = [](const Candidate& a, const Candidate& b) {
         return a.importance > b.importance;
-    });
+    };
+    std::sort(candidates.begin(), candidates.end(), byImportance);
+    std::sort(cookieLights.begin(), cookieLights.end(), byImportance);
     if (candidates.size() > (size_t)_localShadows->getTileCount()) {
         candidates.resize(_localShadows->getTileCount());
     }
+
+    // each cookie projected from its light down the light's -Z axis, exactly as wide as the cone, so that the picture
+    // fills the square the cone fits in; a light whose picture finds no layer this frame shines without it
+    ViewFrustum frustum;
+    for (const auto& cookieLight : cookieLights) {
+        const auto& light = cookieLight.light;
+        float farClip = std::max(light->getMaximumRadius(), 2.0f * MIN_NEAR_CLIP);
+        frustum.setPosition(light->getPosition());
+        frustum.setOrientation(light->getOrientation());
+        frustum.setProjection(glm::perspective(2.0f * light->getSpotAngle(), 1.0f, MIN_NEAR_CLIP, farClip));
+        frustum.calculate();
+        _localShadows->setCookie(cookieLight.index, cookieLight.cookie, frustum);
+    }
+    if (_localShadows->cookiesDue()) {
+        gpu::doInBatch("RenderLocalShadowSetup::drawCookies", args->_context, [&](gpu::Batch& batch) {
+            _localShadows->drawCookies(batch);
+        });
+    }
+
     if (candidates.empty()) {
+        _localShadows->uploadTable();
+        if (_localShadows->hasCookies()) {
+            shadowFrame->_localShadows = _localShadows;
+        }
         renderContext->taskFlow.abortTask();
         return;
     }
@@ -292,7 +456,6 @@ void RenderLocalShadowSetup::run(const render::RenderContextPointer& renderConte
 
     // each light's view: from the light down its -Z axis, wide enough for its cone, as far as it reaches
     AABox reach;
-    ViewFrustum frustum;
     for (size_t i = 0; i < candidates.size(); ++i) {
         const auto& light = candidates[i].light;
         float nearClip = std::max(MIN_NEAR_CLIP, light->getMaximumRadius() * NEAR_CLIP_SCALE);
@@ -304,6 +467,7 @@ void RenderLocalShadowSetup::run(const render::RenderContextPointer& renderConte
         _localShadows->setTile(tiles[i], light, candidates[i].index, frustum);
         reach += AABox(light->getPosition() - glm::vec3(farClip), 2.0f * farClip);
     }
+    _localShadows->uploadTable();
     shadowFrame->_localShadows = _localShadows;
 
     // a view down onto everything the lights reach, for fetching what they might shine on once for all of them

@@ -286,6 +286,9 @@ void main(void) {
                 vec3 fresnel = getFresnelF0(metallic, albedo);
 
                 vec3 fragPositionWS = _positionWS.xyz;
+                // for spot lights' cookies, taken here: inside the branch below derivatives are undefined
+                vec3 fragPositionWSDx = dFdx(fragPositionWS);
+                vec3 fragPositionWSDy = dFdy(fragPositionWS);
                 vec3 fragToEyeWS = cam._viewInverse[3].xyz - fragPositionWS;
                 vec3 fragToEyeDirWS = normalize(fragToEyeWS);
                 SurfaceData surfaceWS = initSurfaceData(roughness, fragNormalWS, fragToEyeDirWS);
@@ -293,7 +296,7 @@ void main(void) {
                 vec4 localLighting = vec4(0.0);
                 <$fetchClusterInfo(_positionWS)$>;
                 if (hasLocalLights(numLights, clusterPos, dims)) {
-                    localLighting = evalLocalLighting(cluster, numLights, fragPositionWS, surfaceWS,
+                    localLighting = evalLocalLighting(cluster, numLights, fragPositionWS, fragPositionWSDx, fragPositionWSDy, surfaceWS,
                                                       metallic, fresnel, albedo, 0.0,
                                                       vec4(0), vec4(0), opacity);
                 }

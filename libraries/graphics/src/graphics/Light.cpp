@@ -10,6 +10,8 @@
 //
 #include "Light.h"
 
+#include <memory>
+
 using namespace graphics;
 
 Light::Light() {
@@ -71,6 +73,14 @@ void Light::setCastShadows(const bool castShadows) {
 
 bool Light::getCastShadows() const {
     return _castShadows;
+}
+
+void Light::setCookie(const gpu::TextureSourcePointer& cookie) {
+    std::atomic_store(&_cookie, cookie);
+}
+
+gpu::TextureSourcePointer Light::getCookie() const {
+    return std::atomic_load(&_cookie);
 }
 
 void Light::setShadowsMaxDistance(const float maxDistance) {

@@ -15,6 +15,7 @@
 #include "RenderableEntityItem.h"
 #include <LightEntityItem.h>
 #include <LightPayload.h>
+#include <TextureCache.h>
 
 namespace render { namespace entities { 
 
@@ -26,6 +27,8 @@ public:
     LightEntityRenderer(const EntityItemPointer& entity) : Parent(entity) { }
 
 protected:
+    virtual bool needsRenderUpdateFromTypedEntity(const TypedEntityPointer& entity) const override;
+    virtual void doRenderUpdateSynchronousTyped(const ScenePointer& scene, Transaction& transaction, const TypedEntityPointer& entity) override;
     virtual void doRenderUpdateAsynchronousTyped(const TypedEntityPointer& entity) override;
 
     virtual ItemKey getKey() override;
@@ -34,6 +37,11 @@ protected:
 
 private:
     const LightPayload::Pointer _lightPayload{ std::make_shared<LightPayload>() };
+
+    // the cookie: the picture the userData's "cookie" entry names (the build mode Inspector's Cookie field)
+    QString _userData;
+    QString _cookieURL;
+    NetworkTexturePointer _cookie;
 };
 
 } } // namespace 

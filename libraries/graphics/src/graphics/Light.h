@@ -106,6 +106,11 @@ public:
     void setCastShadows(const bool castShadows);
     bool getCastShadows() const;
 
+    // a picture the light shines through, as a slide in a projector (a spot light's cookie): white lets the light
+    // through, black blocks it, colours tint it; drawn by RenderLocalShadowTask. Set and read on different threads.
+    void setCookie(const gpu::TextureSourcePointer& cookie);
+    gpu::TextureSourcePointer getCookie() const;
+
     void setShadowsMaxDistance(const float maxDistance);
     float getShadowsMaxDistance() const;
 
@@ -201,6 +206,7 @@ protected:
     float _shadowsMaxDistance { 40.0f };
     float _shadowBias { 0.5f };
     bool _castShadows{ false };
+    gpu::TextureSourcePointer _cookie;
 
     void updateLightRadius();
 };
