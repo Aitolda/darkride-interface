@@ -1,5 +1,7 @@
 #include "GLHelpers.h"
 
+#include <atomic>
+#include <chrono>
 #include <mutex>
 
 #include "Config.h"
@@ -76,17 +78,32 @@ void gl::globalRelease(bool finish) {}
 
 #endif
 
-// how deep the main thread is in MainThreadLocks (only the main thread takes them)
-static int _mainThreadLockDepth { 0 };
+// how deep the main thread is in ViewChangeGuards (only the main thread makes them)
+static int _viewChangeDepth { 0 };
+// until when, on the steady clock in milliseconds, the presenting thread leaves the view alone
+static std::atomic<int64_t> _presentationPausedUntil { 0 };
+// long enough for Core Animation to commit after the change, even on a busy pass of the main thread's loop
+static const int64_t PRESENTATION_PAUSE_MS = 250;
 
-gl::MainThreadLock::MainThreadLock() {
-    if (_mainThreadLockDepth++ == 0) {
+static int64_t steadyMilliseconds() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+bool gl::isPresentationPaused() {
+    return steadyMilliseconds() < _presentationPausedUntil.load();
+}
+
+gl::ViewChangeGuard::ViewChangeGuard() {
+    if (_viewChangeDepth++ == 0) {
+        // the pause first: a frame waiting for the lock finds it when it gets the lock
+        _presentationPausedUntil = steadyMilliseconds() + PRESENTATION_PAUSE_MS;
         globalLock();
     }
 }
 
-gl::MainThreadLock::~MainThreadLock() {
-    if (--_mainThreadLockDepth == 0) {
+gl::ViewChangeGuard::~ViewChangeGuard() {
+    if (--_viewChangeDepth == 0) {
+        _presentationPausedUntil = steadyMilliseconds() + PRESENTATION_PAUSE_MS;   // from the end of the change
         globalRelease(false);   // the main thread has no context of its own to finish
     }
 }

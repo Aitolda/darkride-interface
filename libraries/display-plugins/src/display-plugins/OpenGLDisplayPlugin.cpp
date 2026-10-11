@@ -188,10 +188,22 @@ public:
                 continue;
             }
 
-            // The whole frame, making the context current included, is drawn under the lock that a resize of the
-            // native view also takes (ViewportContainer): on macOS the context catches up with a resized view when it
-            // is made current, and a view resized in the middle of a frame crashed inside Apple's GL driver.
+            // While the main thread moves or resizes the window's view, and for a moment after, nothing is drawn to
+            // it (see gl::ViewChangeGuard): a view changed under a frame crashed inside Apple's GL driver. The frames
+            // queue meanwhile, and the next present shows the newest.
+            if (gl::isPresentationPaused()) {
+                QThread::msleep(2);
+                continue;
+            }
+            // The whole frame, making the context current included, is drawn under the lock a change of the view
+            // takes: on macOS the context catches up with a changed view when it is made current.
             gl::globalLock();
+            if (gl::isPresentationPaused()) {
+                // a change began while this waited for the lock
+                gl::globalRelease(false);
+                QThread::msleep(2);
+                continue;
+            }
 #if defined(Q_OS_MACOS)
             _context->makeCurrent();
 #endif

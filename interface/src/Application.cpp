@@ -4297,19 +4297,27 @@ bool Application::handleFileOpenEvent(QFileOpenEvent* fileEvent) {
 bool Application::notify(QObject * object, QEvent * event) {
     if (thread() == QThread::currentThread()) {
         PROFILE_RANGE_IF_LONGER(app, "notify", 2)
-        // The main window's layout passes and panel splitter drags move and resize the GL view: they run between
-        // frames (see gl::MainThreadLock). Build mode's panels showing and hiding crashed in Apple's GL driver.
+        // The main window's layout passes, its moves and resizes, and the drags of its panel splitters move or resize
+        // the GL view: no frame is drawn to it meanwhile, nor just after (see gl::ViewChangeGuard). Build mode's
+        // panels showing and hiding crashed in Apple's GL driver.
         if (object == _window) {
+            bool changesView = false;
             switch (event->type()) {
                 case QEvent::LayoutRequest:
                 case QEvent::Resize:
+                case QEvent::Move:
+                case QEvent::MouseButtonRelease:
+                    changesView = true;
+                    break;
                 case QEvent::MouseMove:
-                case QEvent::MouseButtonRelease: {
-                    gl::MainThreadLock lock;
-                    return QApplication::notify(object, event);
-                }
+                    changesView = static_cast<QMouseEvent*>(event)->buttons() != Qt::NoButton;   // a drag, not a hover
+                    break;
                 default:
                     break;
+            }
+            if (changesView) {
+                gl::ViewChangeGuard guard;
+                return QApplication::notify(object, event);
             }
         }
         return QApplication::notify(object, event);

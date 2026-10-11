@@ -61,16 +61,21 @@ namespace gl {
     void globalLock();
     void globalRelease(bool finish = true);
 
-    // Holds the global lock for a scope on the main thread, however deeply nested. On macOS the presenting thread
-    // draws to the window's GL view under that lock, and a change to the view's size or place answers at once on
-    // the main thread ([NSOpenGLContext update]): made under this, such a change falls between frames. Nothing
-    // under it may wait for the QML render thread, which takes the lock too.
-    class MainThreadLock {
+    // Whether the presenting thread should leave the window's GL view alone for now (see ViewChangeGuard)
+    bool isPresentationPaused();
+
+    // While the main thread moves or resizes the window's GL view, and for a moment after, the presenting thread
+    // doesn't draw to it. The global lock, held for the change, keeps a frame from being drawn during it; a pause
+    // keeps the next frames back while macOS finishes resizing the view's surface, which it does after the change,
+    // when Core Animation commits. Toggling build mode quickly (its panels move and resize the view) crashed in
+    // Apple's GL driver, in the clear of the window's framebuffer, with the lock alone. Main thread only, nests;
+    // nothing under it may wait for the QML render thread, which takes the lock too.
+    class ViewChangeGuard {
     public:
-        MainThreadLock();
-        ~MainThreadLock();
-        MainThreadLock(const MainThreadLock&) = delete;
-        MainThreadLock& operator=(const MainThreadLock&) = delete;
+        ViewChangeGuard();
+        ~ViewChangeGuard();
+        ViewChangeGuard(const ViewChangeGuard&) = delete;
+        ViewChangeGuard& operator=(const ViewChangeGuard&) = delete;
     };
 
     bool debugContextEnabled();

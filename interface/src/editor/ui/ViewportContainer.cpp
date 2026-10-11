@@ -45,9 +45,9 @@ void ViewportContainer::resizeEvent(QResizeEvent* event) {
 
 void ViewportContainer::applySize() {
     if (_viewport->size() != size()) {
-        // only between frames (see gl::MainThreadLock): toggling build mode, whose panels resize the view, crashed in
-        // Apple's GL driver, clearing the view while it was being resized
-        gl::MainThreadLock lock;
+        // never while a frame is drawn to it, nor just after (see gl::ViewChangeGuard): toggling build mode, whose
+        // panels resize the view, crashed in Apple's GL driver, clearing the view while it was being resized
+        gl::ViewChangeGuard guard;
         _viewport->setGeometry(0, 0, width(), height());
     }
 }
