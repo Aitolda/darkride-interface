@@ -417,8 +417,8 @@ namespace {
         stepping(add(spec("position", "Position", K::Vec3, "spatial")), 0.1, 3);
         stepping(add(spec("rotation", "Rotation", K::Euler, "spatial")), 1.0, 2);
         // Unity's order: Position, Rotation, Scale; then the size in metres it amounts to
-        range(add(spec("scale", "Scale", K::Vec3, "spatial")), 0.0001, DBL_MAX, 0.01, 3);
-        range(add(spec("dimensions", "Dimensions", K::Vec3, "spatial")), 0.001, DBL_MAX, 0.01, 3);
+        with(range(add(spec("scale", "Scale", K::Vec3, "spatial")), 0.0001, DBL_MAX, 0.01, 3), "type not in Light");
+        with(range(add(spec("dimensions", "Dimensions", K::Vec3, "spatial")), 0.001, DBL_MAX, 0.01, 3), "type not in Light");
         with(stepping(add(spec("localPosition", "Local Position", K::Vec3, "spatial")), 0.1, 3), "parentID!=");
         with(stepping(add(spec("localRotation", "Local Rotation", K::Euler, "spatial")), 1.0, 2), "parentID!=");
         range(add(spec("registrationPoint", "Pivot", K::Vec3, "spatial")), 0, 1, 0.01, 3);
@@ -525,11 +525,12 @@ namespace {
         add(spec("scriptURL", "Script URL", K::Url, "web"));
 
         // light
-        // Unity's order: Type, Range, then colour and intensity. Range is where the light ends (what its sphere or
-        // cone shows); Falloff Radius is how fast it dims within that (a quarter as bright that far out)
+        // Unity's rows, the numbers together: Type, Color, Range, Intensity. Range is where the light ends (what its
+        // sphere or cone shows) and sets its dimensions, which are not shown for a light; Falloff Radius is how fast
+        // it dims within that (a quarter as bright that far out), and an edit of Range scales it along
         en("lightType", "Type", "light", { "point:Point", "spot:Spot" });
-        range(add(spec("range", "Range", K::Float, "light")), 0.01, 5000, 0.1, 2, "m");
         add(spec("color", "Color", K::Color, "light"));
+        range(add(spec("range", "Range", K::Float, "light")), 0.01, 5000, 0.1, 2, "m");
         range(add(spec("intensity", "Intensity", K::Float, "light")), 0, 10000, 0.1, 2);
         range(add(spec("falloffRadius", "Falloff Radius", K::Float, "light")), 0, 10000, 0.1, 2, "m");
         with(range(add(spec("exponent", "Spot Exponent", K::Float, "light")), 0, DBL_MAX, 0.01, 2), "isSpotlight=true");

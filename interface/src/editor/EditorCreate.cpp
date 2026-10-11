@@ -39,7 +39,8 @@ namespace {
     // a quad or circle lies in X and Z, facing up: the engine keeps it flat in Y
     const glm::vec3 FLAT_DIMENSIONS { 1.0f, 0.0001f, 1.0f };
     const float FLAT_LIFT = 0.01f;           // just above the surface: lying on it, it would flicker with it
-    const float LIGHT_RANGE = 5.0f;          // how far a new light reaches (half its dimensions)
+    const float LIGHT_RANGE = 3.0f;          // how far a new light reaches (half its dimensions); its glow,
+                                             // with the falloff below, fills about that much
     const float POINT_LIGHT_LIFT = 1.5f;     // a lamp's height
     const float SPOT_LIGHT_LIFT = 2.5f;      // a downlight's
     const QString DEFAULT_IMAGE = "qrc:///images/empty-image-entity.png";

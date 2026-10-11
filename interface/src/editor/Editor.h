@@ -278,7 +278,14 @@ private:
     int _reframeFrames { 0 };
     // a new model is a 1 m box until it loads and reports its size
     QTimer _modelDimensionsTimer;
-    QHash<QUuid, int> _modelsAwaitingDimensions;   // id -> polls so far
+    // a new model, until it has taken its own size and kept it
+    struct AwaitedModel {
+        int polls { 0 };
+        quint64 createdAt { 0 };   // usecTimestampNow()
+        quint64 sizedAt { 0 };     // when its own size was last applied; 0 until then
+        int sizings { 0 };
+    };
+    QHash<QUuid, AwaitedModel> _modelsAwaitingDimensions;
     QList<QPointer<QAction>> _menuActions;
     int _uploadsActive { 0 };
     EditorWorld* _world { nullptr };

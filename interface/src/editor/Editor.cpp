@@ -51,7 +51,9 @@
 #include <GLMHelpers.h>
 #include <MainWindow.h>
 #include <NodeList.h>
+#include <NumericalConstants.h>
 #include <PathUtils.h>
+#include <SharedUtil.h>
 #include <PickFilter.h>
 #include <SimulationFlags.h>
 #include <ViewFrustum.h>
@@ -85,11 +87,18 @@ namespace {
     // and for how long: a big upload is downloaded and parsed again before it reports its size (a 23 MB model
     // took longer than the 30 s this used to be, and stayed a 1 m box)
     const int MODEL_DIMENSIONS_POLL_LIMIT = 1200;   // 10 minutes
+    // a model already in the cache loads at once, and its size went out before the server had the new entity:
+    // the server never took it and sent back its own 1 m box. So the size waits a moment after the creation,
+    // and is watched for a while after, to be applied again if the box comes back.
+    const quint64 MODEL_SIZE_DELAY_USECS = 1500 * USECS_PER_MSEC;
+    const quint64 MODEL_SIZE_WATCH_USECS = 5 * USECS_PER_SECOND;
+    const int MODEL_SIZE_ATTEMPTS = 3;
     const int REFRAME_FRAMES = 180;               // how long after Shift+F a camera reset re-frames
     const int REJECTION_CHECK_MS = 3000;          // a new entity gone by then was refused by the server
     const int STATUS_CLEAR_MS = 6000;             // how long a note on the toolbar stays
     const QString SCALE_KEY = QStringLiteral("scale");
     const QString LOCKED_KEY = QStringLiteral("locked");
+    const QString RANGE_KEY = QStringLiteral("range");
     const float MIN_DIMENSION = 0.001f;
     const float BUILD_MODE_FOV = 90.0f;     // the client's units (its default is 120); less edge stretch on the gizmos
 
@@ -775,6 +784,14 @@ EntityItemProperties Editor::inspectorEdit(const QString& key, const QVariant& v
         QVector3D scale = value.value<QVector3D>();
         glm::vec3 dimensions = glm::vec3(scale.x(), scale.y(), scale.z()) * naturalSize;
         properties.setDimensions(glm::max(dimensions, glm::vec3(MIN_DIMENSION)));
+    } else if (key == RANGE_KEY) {
+        // a light's range, with its falloff kept in proportion so that its glow grows and shrinks with its
+        // sphere (for Range, `naturalSize` holds the range and falloff it had: x and y)
+        float range = std::max((float)value.toDouble(), MIN_DIMENSION);
+        properties.setDimensions(glm::vec3(range * 2.0f));
+        if (naturalSize.x > 0.0f) {
+            properties.setFalloffRadius(naturalSize.y * range / naturalSize.x);
+        }
     } else {
         PropertySpecs::set(key, properties, value);
     }
@@ -799,6 +816,10 @@ void Editor::onInspectorEditBegan(const QString& key) {
         }
         EntityItemProperties before;
         PropertySpecs::set(stored, before, PropertySpecs::get(stored, snapshot));
+        if (key == RANGE_KEY) {
+            naturalSize = glm::vec3(PropertySpecs::get(RANGE_KEY, snapshot).toFloat(), snapshot.getFalloffRadius(), 0.0f);
+            before.setFalloffRadius(snapshot.getFalloffRadius());
+        }
         _inspectorEditIds << id;
         _inspectorBefore << before;
         _inspectorNatural << naturalSize;
@@ -856,6 +877,10 @@ void Editor::onInspectorCommitted(const QString& key, const QVariant& value) {
             }
             EntityItemProperties properties;
             PropertySpecs::set(stored, properties, PropertySpecs::get(stored, snapshot));
+            if (key == RANGE_KEY) {
+                naturalSize = glm::vec3(PropertySpecs::get(RANGE_KEY, snapshot).toFloat(), snapshot.getFalloffRadius(), 0.0f);
+                properties.setFalloffRadius(snapshot.getFalloffRadius());
+            }
             ids << id;
             before << properties;
             naturalSizes << naturalSize;
@@ -1520,7 +1545,9 @@ QList<QUuid> Editor::place(EntityItemProperties properties, const QString& text,
 
 void Editor::placeModel(const QUrl& url, const glm::vec3& point) {
     for (const auto& id : place(EditorCreate::modelProperties(url, point), "Create Model", point)) {
-        _modelsAwaitingDimensions.insert(id, 0);
+        AwaitedModel awaited;
+        awaited.createdAt = usecTimestampNow();
+        _modelsAwaitingDimensions.insert(id, awaited);
     }
     if (!_modelsAwaitingDimensions.isEmpty() && !_modelDimensionsTimer.isActive()) {
         _modelDimensionsTimer.start();
@@ -1534,28 +1561,42 @@ void Editor::placeImage(const QUrl& url, const glm::vec3& point) {
 void Editor::pollModelDimensions() {
     // a new model is a 1 m box until it loads; then it takes its own size, its bottom staying put
     auto entities = DependencyManager::get<EntityScriptingInterface>();
+    quint64 now = usecTimestampNow();
+    auto near = [](const glm::vec3& a, const glm::vec3& b) {
+        return !glm::any(glm::greaterThan(glm::abs(a - b), glm::vec3(MIN_DIMENSION)));
+    };
     for (auto it = _modelsAwaitingDimensions.begin(); it != _modelsAwaitingDimensions.end();) {
-        EntityItemProperties current = entities->getEntityProperties(_undo.resolve(it.key()));
-        // gone (deleted, or its creation undone), or resized by hand meanwhile: leave it be
-        bool resized = glm::any(glm::greaterThan(glm::abs(current.getDimensions() - EditorCreate::MODEL_PLACEHOLDER_DIMENSIONS),
-            glm::vec3(MIN_DIMENSION)));
-        if (current.getType() != EntityTypes::Model || resized) {
-            it = _modelsAwaitingDimensions.erase(it);
-            continue;
+        AwaitedModel& awaited = it.value();
+        QUuid id = _undo.resolve(it.key());
+        EntityItemProperties current = entities->getEntityProperties(id);
+        glm::vec3 size = current.getDimensions();
+        glm::vec3 natural = glm::max(current.getNaturalDimensions(), glm::vec3(MIN_DIMENSION));
+        bool loaded = glm::any(glm::greaterThan(current.getNaturalDimensions(), glm::vec3(MIN_DIMENSION)));
+        bool isBox = near(size, EditorCreate::MODEL_PLACEHOLDER_DIMENSIONS);
+        bool done = false;
+        if (current.getType() != EntityTypes::Model) {
+            done = true;   // gone: deleted, or its creation undone
+        } else if (!isBox && !(awaited.sizedAt > 0 && near(size, natural))) {
+            done = true;   // resized by hand meanwhile: leave it be
+        } else if (awaited.sizedAt > 0 && !isBox) {
+            done = now - awaited.sizedAt > MODEL_SIZE_WATCH_USECS;   // kept its size long enough
+        } else if (loaded && now - awaited.createdAt > MODEL_SIZE_DELAY_USECS) {
+            if (awaited.sizings >= MODEL_SIZE_ATTEMPTS) {
+                qCWarning(interfaceapp) << "editor: a new model keeps losing its size" << id;
+                done = true;
+            } else {
+                EntityItemProperties edit;
+                edit.setDimensions(natural);
+                glm::vec3 position = current.getPosition();
+                position.y += (natural.y - size.y) * 0.5f;
+                edit.setPosition(position);
+                entities->editEntity(id, edit);
+                _undo.amendCreated(it.key(), edit);   // so that a redo makes it this size, not the box
+                awaited.sizedAt = now;
+                ++awaited.sizings;
+            }
         }
-        glm::vec3 natural = current.getNaturalDimensions();
-        bool loaded = glm::any(glm::greaterThan(natural, glm::vec3(MIN_DIMENSION)));
-        if (loaded) {
-            natural = glm::max(natural, glm::vec3(MIN_DIMENSION));
-            EntityItemProperties edit;
-            edit.setDimensions(natural);
-            glm::vec3 position = current.getPosition();
-            position.y += (natural.y - current.getDimensions().y) * 0.5f;
-            edit.setPosition(position);
-            entities->editEntity(_undo.resolve(it.key()), edit);
-            _undo.amendCreated(it.key(), edit);   // so that a redo makes it this size, not the box
-        }
-        if (loaded || ++it.value() > MODEL_DIMENSIONS_POLL_LIMIT) {
+        if (done || ++awaited.polls > MODEL_DIMENSIONS_POLL_LIMIT) {
             it = _modelsAwaitingDimensions.erase(it);
         } else {
             ++it;
