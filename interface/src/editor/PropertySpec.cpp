@@ -12,6 +12,8 @@
 #include <functional>
 
 #include <QtCore/QHash>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
 #include <QtCore/QRect>
 #include <QtGui/QColor>
 #include <QtGui/QVector2D>
@@ -350,6 +352,32 @@ namespace {
 #undef G_FLOAT
 #undef G_STR
 #undef G_COLOR
+
+        // entries of userData shown as fields of their own (see PropertySpecs::isUserDataEntry)
+        for (const char* entry : { "cookie" }) {
+            QString name = entry;
+            a.insert(QStringLiteral("userData:") + name, Accessor {
+                [name](const EP& p) {
+                    return QVariant(QJsonDocument::fromJson(p.getUserData().toUtf8()).object().value(name).toString());
+                },
+                [name](EP& p, const QVariant& v) {
+                    QString text = p.getUserData();
+                    QJsonDocument document = QJsonDocument::fromJson(text.toUtf8());
+                    if (!text.trimmed().isEmpty() && !document.isObject()) {
+                        return;   // userData that isn't a set of entries (a script's own text) is left alone
+                    }
+                    QJsonObject object = document.object();
+                    QString value = v.toString();
+                    if (value.isEmpty()) {
+                        object.remove(name);
+                    } else {
+                        object.insert(name, value);
+                    }
+                    p.setUserData(object.isEmpty() ? QString()
+                        : QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)));
+                }
+            });
+        }
         return a;
     }
 
@@ -535,6 +563,8 @@ namespace {
         range(add(spec("falloffRadius", "Falloff Radius", K::Float, "light")), 0, 10000, 0.1, 2, "m");
         with(range(add(spec("exponent", "Spot Exponent", K::Float, "light")), 0, DBL_MAX, 0.01, 2), "isSpotlight=true");
         with(range(add(spec("cutoff", "Spot Cutoff", K::Float, "light")), 0, 90, 0.5, 1, "°"), "isSpotlight=true");
+        // a picture the light shines through, as a slide in a projector (Unity's cookie); kept in userData
+        with(add(spec("userData:cookie", "Cookie", K::Image, "light")), "isSpotlight=true");
 
         // material
         add(spec("materialURL", "Material URL", K::Url, "material"));
@@ -610,7 +640,7 @@ namespace {
         add(spec("script", "Script", K::Url, "behavior"));
         add(spec("serverScripts", "Server Script", K::Url, "behavior"));
         stepping(add(spec("lifetime", "Lifetime", K::Float, "behavior")), 1, 0, "s");
-        add(spec("userData", "User Data", K::Json, "behavior"));
+        add(spec("userData", "User Data", K::UserData, "userData"));
 
         // collision
         add(spec("collisionless", "Collisionless", K::Bool, "collision"));
@@ -654,7 +684,8 @@ namespace {
         { "particles_constraints", "Constraints", true },
         { "behavior", "Behavior", false },
         { "collision", "Collision", false },
-        { "physics", "Physics", false }
+        { "physics", "Physics", false },
+        { "userData", "User Data", false }
     };
 }
 
@@ -693,7 +724,8 @@ const PropertySection* section(const QString& id) {
     return nullptr;
 }
 
-QStringList sectionsForType(EntityTypes::EntityType type, bool multiple) {
+// the sections an entity type shows, User Data aside
+static QStringList typeSections(EntityTypes::EntityType type, bool multiple) {
     if (multiple) {
         return { "base", "spatial", "behavior", "collision", "physics" };
     }
@@ -726,6 +758,11 @@ QStringList sectionsForType(EntityTypes::EntityType type, bool multiple) {
     }
 }
 
+QStringList sectionsForType(EntityTypes::EntityType type, bool multiple) {
+    // every entity has User Data, last, as Unity puts what a project adds below an object's own components
+    return typeSections(type, multiple) << QStringLiteral("userData");
+}
+
 QVariant get(const QString& key, const EntityItemProperties& properties) {
     auto it = accessors().constFind(key);
     return it == accessors().constEnd() ? QVariant() : it->get(properties);
@@ -739,6 +776,23 @@ bool set(const QString& key, EntityItemProperties& properties, const QVariant& v
     it->set(properties, value);
     return true;
 }
+
+bool isUserDataEntry(const QString& key) {
+    return key.startsWith(QStringLiteral("userData:"));
+}
+
+bool takesUserDataEntries(const EntityItemProperties& properties) {
+    QString text = properties.getUserData();
+    return text.trimmed().isEmpty() || QJsonDocument::fromJson(text.toUtf8()).isObject();
+}
+
+QString storedKey(const QString& key) {
+    if (key == QStringLiteral("scale")) {
+        return QStringLiteral("dimensions");
+    }
+    return isUserDataEntry(key) ? QStringLiteral("userData") : key;
+}
+
 
 glm::vec3 naturalSize(const EntityItemProperties& properties) {
     if (properties.getType() != EntityTypes::Model) {

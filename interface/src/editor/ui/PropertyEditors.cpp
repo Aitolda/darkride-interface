@@ -10,8 +10,20 @@
 
 #include <cmath>
 
+#include <QtCore/QDir>
 #include <QtCore/QEvent>
+#include <QtCore/QFileInfo>
 #include <QtCore/QJsonDocument>
+#include <QtCore/QMimeData>
+#include <QtGui/QDragEnterEvent>
+#include <QtGui/QDropEvent>
+#include <QtNetwork/QNetworkReply>
+#include <QtNetwork/QNetworkRequest>
+#include <QtWidgets/QFileDialog>
+
+#include <NetworkAccessManager.h>
+
+#include "UserDataEditor.h"
 #include <QtCore/QRect>
 #include <QtCore/QRegularExpression>
 #include <QtGui/QClipboard>
@@ -319,6 +331,8 @@ PropertyEditor* PropertyEditor::create(const PropertySpec& spec, QWidget* parent
         case PropertyKind::String:
         case PropertyKind::Url: return new TextEditor(spec, parent);
         case PropertyKind::Json: return new JsonEditor(spec, parent);
+        case PropertyKind::Image: return new ImageEditor(spec, parent);
+        case PropertyKind::UserData: return new UserDataEditor(spec, parent);
         case PropertyKind::Color:
         case PropertyKind::FloatColor: return new ColorEditor(spec, parent);
         case PropertyKind::Vec2:
@@ -552,6 +566,174 @@ void TextEditor::setValue(const QVariant& value, bool mixed) {
 
 bool TextEditor::isEditing() const {
     return _edit->hasFocus();
+}
+
+// --- ImageEditor --------------------------------------------------------------------------------
+
+namespace {
+    const int THUMBNAIL_PIXELS = 28;
+    const QStringList PICTURE_SUFFIXES { "png", "jpg", "jpeg", "webp", "bmp", "gif", "tga", "tif", "tiff" };
+
+    bool isPictureFile(const QString& path) {
+        return PICTURE_SUFFIXES.contains(QFileInfo(path).suffix().toLower());
+    }
+
+    bool isWebAddress(const QUrl& url) {
+        return url.scheme() == QStringLiteral("http") || url.scheme() == QStringLiteral("https");
+    }
+}
+
+ImageEditor::ImageEditor(const PropertySpec& spec, QWidget* parent) : PropertyEditor(spec, parent) {
+    setAcceptDrops(!spec.readOnly);
+    auto layout = new QHBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+    _thumbnail = new QLabel(this);
+    _thumbnail->setObjectName("EditorImageThumbnail");
+    _thumbnail->setFixedSize(THUMBNAIL_PIXELS, THUMBNAIL_PIXELS);
+    _thumbnail->setAlignment(Qt::AlignCenter);
+    _thumbnail->setFrameShape(QFrame::StyledPanel);
+    layout->addWidget(_thumbnail);
+    _url = new QLineEdit(this);
+    _url->setPlaceholderText("None");
+    _url->setReadOnly(spec.readOnly);
+    layout->addWidget(_url, 1);
+    auto choose = new QToolButton(this);
+    choose->setText("Choose…");
+    choose->setToolTip("A picture on this computer, uploaded to the world's files");
+    choose->setEnabled(!spec.readOnly);
+    layout->addWidget(choose);
+    auto clear = new QToolButton(this);
+    clear->setText(QStringLiteral("×"));
+    clear->setToolTip("No picture");
+    clear->setEnabled(!spec.readOnly);
+    layout->addWidget(clear);
+
+    connect(_url, &QLineEdit::editingFinished, this, [this] {
+        QString url = _url->text().trimmed();
+        if (!_updating && url != _shown) {
+            _shown = url;
+            showThumbnail(url);
+            emit committed(QVariant(url));
+        }
+    });
+    connect(choose, &QToolButton::clicked, this, [this] {
+        QString path = QFileDialog::getOpenFileName(this, "Choose a picture", QDir::homePath(),
+            "Pictures (*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tga *.tif *.tiff)");
+        if (!path.isEmpty()) {
+            takeFile(path);
+        }
+    });
+    connect(clear, &QToolButton::clicked, this, [this] {
+        if (!_shown.isEmpty()) {
+            _shown.clear();
+            _url->clear();
+            showThumbnail(QString());
+            emit committed(QVariant(QString()));
+        }
+    });
+}
+
+void ImageEditor::setValue(const QVariant& value, bool mixed) {
+    _updating = true;
+    _mixed = mixed;
+    QString url = mixed ? QString() : value.toString();
+    _url->setPlaceholderText(mixed ? MIXED : QStringLiteral("None"));
+    // the Inspector refreshes often: the thumbnail is fetched again only for a new picture
+    if (url != _shown || _url->text() != url) {
+        _shown = url;
+        _url->setText(url);
+        showThumbnail(url);
+    }
+    _updating = false;
+}
+
+bool ImageEditor::isEditing() const {
+    return _url->hasFocus();
+}
+
+void ImageEditor::takeFile(const QString& localPath) {
+    if (isPictureFile(localPath)) {
+        emit uploadRequested(localPath);   // the toolbar shows its progress; its URL then comes back as the value
+    }
+}
+
+void ImageEditor::showThumbnail(const QString& url) {
+    if (_reply) {
+        QPointer<QNetworkReply> previous = _reply;
+        _reply = nullptr;   // so that its end, which aborting brings at once, is not taken for this picture's
+        previous->abort();
+    }
+    _thumbnail->setPixmap(QPixmap());
+    _thumbnail->setText(QString());
+    if (url.isEmpty()) {
+        return;
+    }
+    QUrl address(url);
+    if (address.isLocalFile()) {
+        QPixmap pixmap(address.toLocalFile());
+        if (pixmap.isNull()) {
+            _thumbnail->setText(QStringLiteral("?"));
+        } else {
+            _thumbnail->setPixmap(pixmap.scaled(THUMBNAIL_PIXELS - 2, THUMBNAIL_PIXELS - 2, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        }
+        return;
+    }
+    if (!isWebAddress(address)) {
+        _thumbnail->setText(QStringLiteral("?"));   // an address the thumbnail can't fetch (atp:, a typo)
+        return;
+    }
+    _thumbnail->setText(QStringLiteral("…"));
+    QNetworkRequest request(address);
+    _reply = NetworkAccessManager::getInstance().get(request);
+    QPointer<QNetworkReply> reply = _reply;
+    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        if (!reply) {
+            return;
+        }
+        reply->deleteLater();
+        if (reply != _reply) {
+            return;   // another picture has taken its place
+        }
+        _reply = nullptr;
+        QPixmap pixmap;
+        if (reply->error() == QNetworkReply::NoError && pixmap.loadFromData(reply->readAll())) {
+            _thumbnail->setText(QString());
+            _thumbnail->setPixmap(pixmap.scaled(THUMBNAIL_PIXELS - 2, THUMBNAIL_PIXELS - 2, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        } else {
+            _thumbnail->setText(QStringLiteral("?"));
+        }
+    });
+}
+
+void ImageEditor::dragEnterEvent(QDragEnterEvent* event) {
+    if (_spec.readOnly || !event->mimeData()->hasUrls()) {
+        return;
+    }
+    for (const auto& url : event->mimeData()->urls()) {
+        if ((url.isLocalFile() && isPictureFile(url.toLocalFile())) || isWebAddress(url)) {
+            event->acceptProposedAction();
+            return;
+        }
+    }
+}
+
+void ImageEditor::dropEvent(QDropEvent* event) {
+    for (const auto& url : event->mimeData()->urls()) {
+        if (url.isLocalFile() && isPictureFile(url.toLocalFile())) {
+            takeFile(url.toLocalFile());
+            event->acceptProposedAction();
+            return;
+        }
+        if (isWebAddress(url)) {
+            _shown = url.toString();
+            _url->setText(_shown);
+            showThumbnail(_shown);
+            emit committed(QVariant(_shown));
+            event->acceptProposedAction();
+            return;
+        }
+    }
 }
 
 // --- JsonEditor ---------------------------------------------------------------------------------

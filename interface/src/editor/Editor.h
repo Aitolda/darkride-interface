@@ -53,6 +53,7 @@ class QMenu;
 class QMouseEvent;
 class QUrl;
 class QWheelEvent;
+class EditorUpload;
 class EditorWorld;
 class EntityTreeModel;
 class HierarchyPanel;
@@ -170,9 +171,15 @@ private:
     void onInspectorLiveEdit(const QString& key, const QVariant& value);
     void applyLiveEdit(const QString& key, QVariant value);   // a copy: the paced send passes _liveEditValue, which this clears
     void onInspectorCommitted(const QString& key, const QVariant& value);
+    // an Inspector value for the given entities, as one undo step
+    void commitInspectorEdit(const QString& key, const QVariant& value, const QList<QUuid>& targets);
     void onInspectorEditCancelled(const QString& key);
-    // the edit an Inspector value amounts to for one entity: Scale is turned into dimensions
-    EntityItemProperties inspectorEdit(const QString& key, const QVariant& value, const glm::vec3& naturalSize) const;
+    // a picture chosen for an Inspector field (a light's Cookie): uploaded, then set on the entities selected now
+    void onInspectorUpload(const QString& key, const QString& localPath);
+    // the edit an Inspector value amounts to for one entity: Scale is turned into dimensions, an entry of
+    // userData is put into the userData the entity had (`before`, which holds it)
+    EntityItemProperties inspectorEdit(const QString& key, const QVariant& value, const glm::vec3& naturalSize,
+                                       const EntityItemProperties& before) const;
 
     PickRay pickRay(const QPoint& viewportPos) const;
     QUuid pickEntity(const QPoint& viewportPos) const;
@@ -207,6 +214,8 @@ private:
     void placeModel(const QUrl& url, const glm::vec3& point);
     void placeImage(const QUrl& url, const glm::vec3& point);
     void beginUpload(const QString& localPath, const glm::vec3& point, bool image);
+    // the toolbar follows an upload: its progress, and why it failed
+    void showUploadProgress(EditorUpload* upload);
     void pollModelDimensions();
     void showHierarchyMenu(const QPoint& globalPos);
     void showViewportMenu(const QPoint& viewportPos, const QPoint& globalPos);

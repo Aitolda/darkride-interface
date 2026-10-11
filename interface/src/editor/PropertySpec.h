@@ -26,7 +26,8 @@
 
 // How a property is edited. The QVariant carried for each kind:
 //   Bool: bool  Int, Float: double  Degrees: double degrees (stored in radians)
-//   String, Url, Json, Enum (the value name), CollisionMask (the comma list): QString
+//   String, Url, Json, Image (the picture's URL), UserData (the whole text), Enum (the value name),
+//   CollisionMask (the comma list): QString
 //   Color, FloatColor: QColor  Vec2, Polar (elevation and azimuth in degrees): QVector2D
 //   Vec3, Euler (degrees): QVector3D  Rect: QRect
 enum class PropertyKind {
@@ -37,6 +38,8 @@ enum class PropertyKind {
     String,
     Url,
     Json,
+    Image,      // a picture, by URL: a thumbnail, Choose… (uploads one from this computer) and drag and drop
+    UserData,   // userData as a list of entries, each with a field that suits its value
     Color,
     FloatColor,
     Vec2,
@@ -81,6 +84,15 @@ namespace PropertySpecs {
     QVariant get(const QString& key, const EntityItemProperties& properties);
     // sets the property (and only it) on the properties; false when the key is unknown
     bool set(const QString& key, EntityItemProperties& properties, const QVariant& value);
+
+    // An entry of userData shown as a field of its own (a light's Cookie) has the key "userData:<entry>". Its value
+    // is read from the userData JSON object, and set() writes it back into the userData the properties already hold,
+    // so the entity's current userData must be put there first; the entity's other entries are kept.
+    bool isUserDataEntry(const QString& key);
+    // the entity's userData can hold entries: it is empty, or a JSON object (not a script's own text)
+    bool takesUserDataEntries(const EntityItemProperties& properties);
+    // the property an edit of the key changes, for undo: dimensions for Scale, userData for an entry of it
+    QString storedKey(const QString& key);
 
     // an entity's own size, what Scale 1 means: a model's natural dimensions (zero until the model
     // has loaded), 1 m for everything else, as for Unity's primitives

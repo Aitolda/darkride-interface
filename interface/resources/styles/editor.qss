@@ -121,6 +121,30 @@ QDockWidget#EditorHierarchy::title, QDockWidget#EditorInspector::title {
 #EditorInspector QCheckBox {
     spacing: 6px;
 }
+#EditorInspector QLabel#EditorInspectorNote {
+    color: #8f8f8f;
+}
+#EditorInspector QLabel#EditorImageThumbnail {
+    background: #2a2a2a;
+    border: 1px solid #1f1f1f;
+    border-radius: 3px;
+    color: #8f8f8f;
+}
+
+/* User Data: its entries, folding as the Hierarchy's tree does */
+#EditorInspector QTreeWidget#EditorUserData {
+    background: #383838;
+    border: 1px solid #2b2b2b;
+    border-radius: 3px;
+    outline: 0;
+}
+#EditorInspector QTreeWidget#EditorUserData::item {
+    min-height: 24px;
+    padding-left: 2px;
+}
+#EditorInspector QTreeWidget#EditorUserData::branch {
+    background: #383838;
+}
 
 /* scroll bars */
 #EditorHierarchy QScrollBar:vertical, #EditorInspector QScrollBar:vertical {

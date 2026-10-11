@@ -19,6 +19,7 @@
 
 #include "../PropertySpec.h"
 #include "PropertyEditors.h"
+#include "UserDataEditor.h"
 
 namespace {
     const QString NULL_UUID = QUuid().toString(QUuid::WithoutBraces);
@@ -203,9 +204,14 @@ QWidget* InspectorPanel::buildSection(const QString& sectionId, QWidget* parent)
         auto editor = PropertyEditor::create(*spec, body);
         auto label = editor->createLabel(body);
         label->setObjectName("EditorInspectorLabel");
-        bool tall = spec->kind == PropertyKind::Json || spec->kind == PropertyKind::CollisionMask;
+        bool tall = spec->kind == PropertyKind::Json || spec->kind == PropertyKind::UserData
+            || spec->kind == PropertyKind::CollisionMask;
         grid->addWidget(label, rowIndex, 0, Qt::AlignLeft | (tall ? Qt::AlignTop : Qt::AlignVCenter));
-        grid->addWidget(editor, rowIndex, 1);
+        if (spec->kind == PropertyKind::UserData) {
+            grid->addWidget(editor, rowIndex, 0, 1, 2);   // its section's header names it: it takes the whole width
+        } else {
+            grid->addWidget(editor, rowIndex, 1);
+        }
         ++rowIndex;
 
         QString key = spec->key;
@@ -213,6 +219,11 @@ QWidget* InspectorPanel::buildSection(const QString& sectionId, QWidget* parent)
         connect(editor, &PropertyEditor::liveValue, this, [this, key](const QVariant& v) { emit liveEdit(key, v); });
         connect(editor, &PropertyEditor::committed, this, [this, key](const QVariant& v) { emit committed(key, v); });
         connect(editor, &PropertyEditor::editCancelled, this, [this, key] { emit editCancelled(key); });
+        if (auto image = qobject_cast<ImageEditor*>(editor)) {
+            connect(image, &ImageEditor::uploadRequested, this, [this, key](const QString& path) {
+                emit uploadRequested(key, path);
+            });
+        }
         // right-click on a label: Copy and Paste the row's value, as Unity does
         label->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(label, &QWidget::customContextMenuRequested, editor, [editor, label](const QPoint& pos) {
@@ -276,9 +287,19 @@ bool InspectorPanel::conditionHolds(const QString& showWhen, const EntityItemPro
 }
 
 void InspectorPanel::applyVisibility(const EntityItemProperties& first) {
+    QStringList claimed;
     for (auto it = _rows.begin(); it != _rows.end(); ++it) {
         bool shown = conditionHolds(it->spec->showWhen, first);
         it->label->setVisible(shown);
         it->editor->setVisible(shown);
+        if (shown && PropertySpecs::isUserDataEntry(it.key())) {
+            claimed << it.key().mid(it.key().indexOf(':') + 1);
+        }
+    }
+    // an entry of userData with a field of its own showing is left out of the User Data list; with the field
+    // hidden (a Cookie on a light made a point light), the list shows it, so that it can still be seen
+    if (auto userData = qobject_cast<UserDataEditor*>(_rows.value(QStringLiteral("userData")).editor)) {
+        claimed.sort();
+        userData->setClaimedEntries(claimed);
     }
 }

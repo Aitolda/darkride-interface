@@ -485,6 +485,7 @@ void Editor::createPanels() {
     connect(_inspector, &InspectorPanel::liveEdit, this, &Editor::onInspectorLiveEdit);
     connect(_inspector, &InspectorPanel::committed, this, &Editor::onInspectorCommitted);
     connect(_inspector, &InspectorPanel::editCancelled, this, &Editor::onInspectorEditCancelled);
+    connect(_inspector, &InspectorPanel::uploadRequested, this, &Editor::onInspectorUpload);
 
     _toolBar = new EditorToolBar(window);
     _toolBar->setGridChecked(_gridVisible);
@@ -974,11 +975,15 @@ void Editor::refreshInspector(bool selectionChanged) {
     }
 }
 
-EntityItemProperties Editor::inspectorEdit(const QString& key, const QVariant& value, const glm::vec3& naturalSize) const {
+EntityItemProperties Editor::inspectorEdit(const QString& key, const QVariant& value, const glm::vec3& naturalSize,
+                                           const EntityItemProperties& before) const {
     // Scale is the one Inspector property that is not stored: it becomes dimensions, the scale
     // times the entity's own size
     EntityItemProperties properties;
-    if (key == SCALE_KEY) {
+    if (PropertySpecs::isUserDataEntry(key)) {
+        properties.setUserData(before.getUserData());   // the entry goes in among the entity's others
+        PropertySpecs::set(key, properties, value);
+    } else if (key == SCALE_KEY) {
         QVector3D scale = value.value<QVector3D>();
         glm::vec3 dimensions = glm::vec3(scale.x(), scale.y(), scale.z()) * naturalSize;
         properties.setDimensions(glm::max(dimensions, glm::vec3(MIN_DIMENSION)));
@@ -1002,7 +1007,7 @@ void Editor::onInspectorEditBegan(const QString& key) {
     _inspectorEditIds.clear();
     _inspectorBefore.clear();
     _inspectorNatural.clear();
-    QString stored = key == SCALE_KEY ? QStringLiteral("dimensions") : key;
+    QString stored = PropertySpecs::storedKey(key);
     for (const auto& id : _selection.ids()) {
         EntityItemProperties snapshot;
         if (!EditorUndo::snapshot(id, snapshot) || (EditorUndo::isLocked(id) && key != LOCKED_KEY)) {
@@ -1049,7 +1054,7 @@ void Editor::applyLiveEdit(const QString& key, QVariant value) {
     _liveEditValue = QVariant();
     auto entities = DependencyManager::get<EntityScriptingInterface>();
     for (int i = 0; i < _inspectorEditIds.size(); ++i) {
-        entities->editEntity(_inspectorEditIds[i], inspectorEdit(key, value, _inspectorNatural[i]));
+        entities->editEntity(_inspectorEditIds[i], inspectorEdit(key, value, _inspectorNatural[i], _inspectorBefore[i]));
     }
 }
 
@@ -1072,10 +1077,15 @@ void Editor::onInspectorEditCancelled(const QString& key) {
 }
 
 void Editor::onInspectorCommitted(const QString& key, const QVariant& value) {
+    commitInspectorEdit(key, value, _selection.ids());
+}
+
+void Editor::commitInspectorEdit(const QString& key, const QVariant& value, const QList<QUuid>& targets) {
     QList<QUuid> ids;
     QVector<EntityItemProperties> before;
     QVector<glm::vec3> naturalSizes;
     bool alreadyApplied = key == _inspectorEditKey && !_inspectorEditIds.isEmpty();
+    bool entryRefused = false;   // an entry of userData, on an entity whose userData is text rather than entries
     if (alreadyApplied) {
         // the end of a scrub: the values went out live, the undo point was taken at its start
         ids = _inspectorEditIds;
@@ -1084,11 +1094,15 @@ void Editor::onInspectorCommitted(const QString& key, const QVariant& value) {
         _liveEditTimer.stop();
         applyLiveEdit(key, value);
     } else {
-        QString stored = key == SCALE_KEY ? QStringLiteral("dimensions") : key;
-        for (const auto& id : _selection.ids()) {
+        QString stored = PropertySpecs::storedKey(key);
+        for (const auto& id : targets) {
             EntityItemProperties snapshot;
             // a locked entity takes no edits, but Locked itself: that is how it gets unlocked
             if (!EditorUndo::snapshot(id, snapshot) || (EditorUndo::isLocked(id) && key != LOCKED_KEY)) {
+                continue;
+            }
+            if (PropertySpecs::isUserDataEntry(key) && !PropertySpecs::takesUserDataEntries(snapshot)) {
+                entryRefused = true;
                 continue;
             }
             glm::vec3 naturalSize = PropertySpecs::naturalSize(snapshot);
@@ -1111,12 +1125,17 @@ void Editor::onInspectorCommitted(const QString& key, const QVariant& value) {
     _inspectorBefore.clear();
     _inspectorNatural.clear();
     if (ids.isEmpty() || (!alreadyApplied && !editable())) {
+        if (entryRefused) {
+            auto spec = PropertySpecs::find(key);
+            setStatus(QString("Its User Data is plain text, not entries, so it can't hold a %1")
+                .arg(spec ? spec->label.toLower() : key), STATUS_CLEAR_MS * 2);
+        }
         refreshInspector(false);
         return;
     }
     QVector<EntityItemProperties> after;
     for (int i = 0; i < ids.size(); ++i) {
-        after << inspectorEdit(key, value, naturalSizes[i]);
+        after << inspectorEdit(key, value, naturalSizes[i], before[i]);
     }
     auto spec = PropertySpecs::find(key);
     _undo.pushPropertyEdit(spec ? spec->label : key, ids, before, after, alreadyApplied);
@@ -2008,18 +2027,7 @@ void Editor::beginUpload(const QString& localPath, const glm::vec3& point, bool 
         upload->deleteLater();
         return;
     }
-    ++_uploadsActive;
-    setStatus("Uploading " + upload->fileName() + " 0%");
-    connect(upload, &EditorUpload::progress, this, [this, upload](qint64 sent, qint64 total) {
-        if (total <= 0) {
-            return;
-        }
-        if (sent >= total) {
-            setStatus("Processing " + upload->fileName() + "…");   // sent; the server is storing it
-        } else {
-            setStatus(QString("Uploading %1 %2%").arg(upload->fileName()).arg((int)(sent * 100 / total)));
-        }
-    });
+    showUploadProgress(upload);
     connect(upload, &EditorUpload::finished, this, [this, upload, point, image](const QString& url) {
         --_uploadsActive;
         if (!_active) {
@@ -2034,9 +2042,50 @@ void Editor::beginUpload(const QString& localPath, const glm::vec3& point, bool 
         }
         upload->deleteLater();
     });
+}
+
+void Editor::showUploadProgress(EditorUpload* upload) {
+    ++_uploadsActive;
+    setStatus("Uploading " + upload->fileName() + " 0%");
+    connect(upload, &EditorUpload::progress, this, [this, upload](qint64 sent, qint64 total) {
+        if (total <= 0) {
+            return;
+        }
+        if (sent >= total) {
+            setStatus("Processing " + upload->fileName() + "…");   // sent; the server is storing it
+        } else {
+            setStatus(QString("Uploading %1 %2%").arg(upload->fileName()).arg((int)(sent * 100 / total)));
+        }
+    });
     connect(upload, &EditorUpload::failed, this, [this, upload](const QString& error) {
         --_uploadsActive;
         setStatus("Upload of " + upload->fileName() + " failed: " + error, STATUS_CLEAR_MS * 2);
+        upload->deleteLater();
+    });
+}
+
+void Editor::onInspectorUpload(const QString& key, const QString& localPath) {
+    if (!editable()) {
+        return;
+    }
+    QList<QUuid> targets = _selection.ids();   // the entities the picture was chosen for, whatever is selected later
+    auto upload = new EditorUpload(this);
+    QString error;
+    if (!upload->start(localPath, "/images", error)) {
+        setStatus("Upload failed: " + error, STATUS_CLEAR_MS * 2);
+        qCWarning(interfaceapp) << "editor upload could not start" << localPath << error;
+        upload->deleteLater();
+        return;
+    }
+    showUploadProgress(upload);
+    connect(upload, &EditorUpload::finished, this, [this, upload, key, targets](const QString& url) {
+        --_uploadsActive;
+        if (!_active) {
+            setStatus("Uploaded " + upload->fileName(), STATUS_CLEAR_MS);   // build mode ended meanwhile
+        } else {
+            setStatus(_uploadsActive > 0 ? QString("Uploading…") : QString());
+            commitInspectorEdit(key, QVariant(url), targets);
+        }
         upload->deleteLater();
     });
 }

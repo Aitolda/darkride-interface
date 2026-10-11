@@ -26,6 +26,10 @@
 
 #include "../PropertySpec.h"
 
+class QDragEnterEvent;
+class QDropEvent;
+class QNetworkReply;
+
 // A label that scrubs a value when dragged sideways, as Unity's numeric labels do.
 class ScrubLabel : public QLabel {
     Q_OBJECT
@@ -157,6 +161,36 @@ public:
     bool isMixed() const override { return _mixed; }
 private:
     QLineEdit* _edit { nullptr };
+    QString _shown;
+    bool _mixed { false };
+};
+
+// Image: a picture by URL. A thumbnail, the URL, Choose… for a picture on this computer, × to clear it; a picture
+// file or a link dropped on it does the same. A file from this computer is uploaded first (uploadRequested), so
+// that everyone sees it, and the URL it gets is what is committed.
+class ImageEditor : public PropertyEditor {
+    Q_OBJECT
+public:
+    ImageEditor(const PropertySpec& spec, QWidget* parent = nullptr);
+    void setValue(const QVariant& value, bool mixed) override;
+    bool isEditing() const override;
+    QVariant currentValue() const override { return QVariant(_url->text()); }
+    bool isMixed() const override { return _mixed; }
+
+signals:
+    void uploadRequested(const QString& localPath);
+
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
+
+private:
+    void showThumbnail(const QString& url);
+    void takeFile(const QString& localPath);
+
+    QLabel* _thumbnail { nullptr };
+    QLineEdit* _url { nullptr };
+    QPointer<QNetworkReply> _reply;
     QString _shown;
     bool _mixed { false };
 };

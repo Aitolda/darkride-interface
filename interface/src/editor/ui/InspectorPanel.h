@@ -48,6 +48,8 @@ signals:
     void liveEdit(const QString& key, const QVariant& value);
     void committed(const QString& key, const QVariant& value);
     void editCancelled(const QString& key);
+    // a picture on this computer chosen for a field (a light's Cookie): to be uploaded, its URL then set
+    void uploadRequested(const QString& key, const QString& localPath);
 
 protected:
     // the content follows the scroll area's width exactly: rows compress rather than run off the edge
