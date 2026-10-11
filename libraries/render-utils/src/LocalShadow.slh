@@ -1,0 +1,77 @@
+<!
+//  LocalShadow.slh
+//  libraries/render-utils/src
+//
+//  Shadows from spot lights: the depth atlas RenderLocalShadowTask draws each frame, and the table that says which
+//  light has which tile in it and how to project a point into that tile.
+//
+//  Distributed under the Apache License, Version 2.0.
+//  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
+!>
+<@if not LOCAL_SHADOW_SLH@>
+<@def LOCAL_SHADOW_SLH@>
+
+<@include gpu/ShaderConstants.h@>
+<@include render-utils/ShaderConstants.h@>
+
+LAYOUT(binding=RENDER_UTILS_TEXTURE_LOCAL_SHADOW) uniform sampler2DShadow localShadowAtlas;
+
+#if !defined(GPU_SSBO_TRANSFORM_OBJECT)
+LAYOUT(binding=GPU_RESOURCE_BUFFER_SLOT1_TEXTURE) uniform samplerBuffer localShadowTable;
+vec4 getLocalShadowTableTexel(int i) {
+    return texelFetch(localShadowTable, i);
+}
+#else
+LAYOUT_STD140(binding=GPU_RESOURCE_BUFFER_SLOT1_STORAGE) buffer localShadowTableBuffer {
+    vec4 localShadowTable[];
+};
+vec4 getLocalShadowTableTexel(int i) {
+    return localShadowTable[i];
+}
+#endif
+
+// The table (see LocalShadows in RenderLocalShadowTask.h): first a tile number for each of the 256 lights the light
+// array holds, four to a texel (0 for a light without a shadow, else its tile plus 1), then six texels for each tile:
+// the matrix from world space into the atlas (four columns), the tile's bounds in the atlas, and
+// { texel size per metre from the light, normal offset in texels, offset toward the light in texels, atlas texel size }
+const int LOCAL_SHADOW_LIGHT_TEXELS = 64;
+const int LOCAL_SHADOW_TILE_TEXELS = 6;
+
+int getLocalShadowTile(int lightIndex) {
+    vec4 tiles = getLocalShadowTableTexel(lightIndex >> 2);
+    return int(tiles[lightIndex & 3]) - 1;
+}
+
+// How much of a spot light reaches a point: 1 lit, 0 in shadow, in between at a shadow's edge
+float evalLocalShadow(int lightIndex, vec3 worldPosition, vec3 worldNormal, vec3 fragLightDir, float fragLightDistance) {
+    int tile = getLocalShadowTile(lightIndex);
+    if (tile < 0) {
+        return 1.0;
+    }
+    int texel = LOCAL_SHADOW_LIGHT_TEXELS + tile * LOCAL_SHADOW_TILE_TEXELS;
+    mat4 reprojection = mat4(getLocalShadowTableTexel(texel), getLocalShadowTableTexel(texel + 1),
+        getLocalShadowTableTexel(texel + 2), getLocalShadowTableTexel(texel + 3));
+    vec4 bounds = getLocalShadowTableTexel(texel + 4);
+    vec4 params = getLocalShadowTableTexel(texel + 5);
+
+    // look up a point moved off the surface, along its normal and toward the light, by about a shadow map texel at
+    // this distance, so that a surface doesn't shadow itself; the texel grows with distance from the light
+    float texelSize = params.x * fragLightDistance;
+    vec3 position = worldPosition + worldNormal * (params.y * texelSize) + fragLightDir * (params.z * texelSize);
+    vec4 shadowCoord = reprojection * vec4(position, 1.0);
+    shadowCoord.xyz /= shadowCoord.w;
+    if (any(lessThan(shadowCoord.xy, bounds.xy)) || any(greaterThan(shadowCoord.xy, bounds.zw))) {
+        return 1.0;
+    }
+
+    // four lookups, each a hardware 2x2 comparison, kept inside the tile; textureLod because this runs inside the
+    // light loop, where the derivatives a plain texture() lookup takes are undefined
+    vec2 spread = vec2(params.w);
+    float lit = textureLod(localShadowAtlas, vec3(clamp(shadowCoord.xy + vec2(-0.75, -0.75) * spread, bounds.xy, bounds.zw), shadowCoord.z), 0.0);
+    lit += textureLod(localShadowAtlas, vec3(clamp(shadowCoord.xy + vec2(0.75, -0.75) * spread, bounds.xy, bounds.zw), shadowCoord.z), 0.0);
+    lit += textureLod(localShadowAtlas, vec3(clamp(shadowCoord.xy + vec2(-0.75, 0.75) * spread, bounds.xy, bounds.zw), shadowCoord.z), 0.0);
+    lit += textureLod(localShadowAtlas, vec3(clamp(shadowCoord.xy + vec2(0.75, 0.75) * spread, bounds.xy, bounds.zw), shadowCoord.z), 0.0);
+    return 0.25 * lit;
+}
+
+<@endif@>

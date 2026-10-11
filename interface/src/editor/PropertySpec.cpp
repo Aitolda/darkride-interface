@@ -603,7 +603,8 @@ namespace {
         with(add(spec("cloneGrabbable", "Clone Grabbable", K::Bool, "behavior")), "cloneable=true");
         // whether the object casts a shadow from the sun; lights in this engine cast none, so on a
         // light (or a zone, or a material) the box would only mislead
-        with(add(spec("canCastShadow", "Cast Shadows", K::Bool, "behavior")), "type not in Light,Zone,Material");
+        // spot lights cast shadows; point lights don't yet, so they don't offer it
+        with(add(spec("canCastShadow", "Cast Shadows", K::Bool, "behavior")), "type not in Light,Zone,Material or lightType=spot");
         add(spec("href", "Link", K::Url, "behavior"));
         add(spec("ignorePickIntersection", "Ignore Picking", K::Bool, "behavior"));
         add(spec("script", "Script", K::Url, "behavior"));

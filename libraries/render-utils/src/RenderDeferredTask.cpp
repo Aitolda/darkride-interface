@@ -461,7 +461,7 @@ void RenderTransparentDeferred::run(const RenderContextPointer& renderContext, c
     const auto& lightFrame = inputs.get2();
     const auto& lightingModel = inputs.get3();
     const auto& lightClusters = inputs.get4();
-    // Not needed yet: const auto& shadowFrame = inputs.get5();
+    const auto& shadowFrame = inputs.get5();
     const auto jitter = inputs.get6();
     auto deferredLightingEffect = DependencyManager::get<DeferredLightingEffect>();
 
@@ -489,7 +489,7 @@ void RenderTransparentDeferred::run(const RenderContextPointer& renderContext, c
 
         // Set the light
         deferredLightingEffect->setupKeyLightBatch(args, batch, *lightFrame);
-        deferredLightingEffect->setupLocalLightsBatch(batch, lightClusters);
+        deferredLightingEffect->setupLocalLightsBatch(batch, lightClusters, shadowFrame ? shadowFrame->_localShadows : nullptr);
 
         // Setup haze if current zone has haze
         const auto& hazeStage = args->_scene->getStage<HazeStage>();

@@ -244,6 +244,10 @@ bool InspectorPanel::conditionHolds(const QString& showWhen, const EntityItemPro
     if (showWhen.isEmpty()) {
         return true;
     }
+    int orAt = showWhen.indexOf(" or ");
+    if (orAt > 0) {
+        return conditionHolds(showWhen.left(orAt), first) || conditionHolds(showWhen.mid(orAt + 4), first);
+    }
     int notIn = showWhen.indexOf(" not in ");
     if (notIn > 0) {
         QString value = valueText(PropertySpecs::get(showWhen.left(notIn), first));

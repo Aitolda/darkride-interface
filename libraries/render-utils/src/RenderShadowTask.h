@@ -24,6 +24,10 @@
 
 class ViewFrustum;
 
+// Draws shadow casters into the bound depth framebuffer with the shadow pipelines, each kind of shape with its own
+void renderShadowCasters(const render::RenderContextPointer& renderContext, const render::ShapePlumberPointer& shapePlumber,
+                         const render::ShapeBounds& inShapes);
+
 class RenderShadowMap {
 public:
     using Inputs = render::VaryingSet3<render::ShapeBounds, AABox, LightStage::ShadowFramePointer>;

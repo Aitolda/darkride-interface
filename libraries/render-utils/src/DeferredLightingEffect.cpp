@@ -28,6 +28,7 @@
 #include "GeometryCache.h"
 #include "TextureCache.h"
 #include "FramebufferCache.h"
+#include "RenderLocalShadowTask.h"
 
 namespace ru {
     using render_utils::slot::texture::Texture;
@@ -91,13 +92,19 @@ void DeferredLightingEffect::unsetKeyLightBatch(gpu::Batch& batch) {
     batch.setResourceTexture(ru::Texture::Skybox, nullptr);
 }
 
-void DeferredLightingEffect::setupLocalLightsBatch(gpu::Batch& batch, const LightClustersPointer& lightClusters) {
+void DeferredLightingEffect::setupLocalLightsBatch(gpu::Batch& batch, const LightClustersPointer& lightClusters,
+                                                   const LocalShadowsPointer& localShadows) {
     // Bind the global list of lights and the visible lights this frame
     batch.setUniformBuffer(gr::Buffer::Light, lightClusters->_lightStage->getLightArrayBuffer());
 
     batch.setUniformBuffer(ru::Buffer::LightClusterFrustumGrid, lightClusters->_frustumGridBuffer);
     batch.setUniformBuffer(ru::Buffer::LightClusterGrid, lightClusters->_clusterGridBuffer);
     batch.setUniformBuffer(ru::Buffer::LightClusterContent, lightClusters->_clusterContentBuffer);
+
+    // spot lights' shadow maps; with none, a table in which no light has one, so the shaders never read an empty slot
+    batch.setResourceTexture(ru::Texture::LocalShadow, localShadows ? localShadows->getAtlas() : nullptr);
+    batch.setResourceBuffer(RENDER_UTILS_RESOURCE_BUFFER_LOCAL_SHADOW_TABLE,
+        localShadows ? localShadows->getTable() : LocalShadows::getEmptyTable());
 }
 
 void DeferredLightingEffect::unsetLocalLightsBatch(gpu::Batch& batch) {
@@ -105,6 +112,8 @@ void DeferredLightingEffect::unsetLocalLightsBatch(gpu::Batch& batch) {
     batch.setUniformBuffer(ru::Buffer::LightClusterGrid, nullptr);
     batch.setUniformBuffer(ru::Buffer::LightClusterContent, nullptr);
     batch.setUniformBuffer(ru::Buffer::LightClusterFrustumGrid, nullptr);
+    batch.setResourceTexture(ru::Texture::LocalShadow, nullptr);
+    batch.setResourceBuffer(RENDER_UTILS_RESOURCE_BUFFER_LOCAL_SHADOW_TABLE, nullptr);
 }
 
 static void loadLightProgram(int programId, bool lightVolume, gpu::PipelinePointer& pipeline) {
@@ -452,8 +461,9 @@ void RenderDeferredLocals::run(const render::RenderContextPointer& renderContext
     const DeferredFrameTransformPointer& frameTransform,
     const DeferredFramebufferPointer& deferredFramebuffer,
     const LightingModelPointer& lightingModel,
-    const SurfaceGeometryFramebufferPointer& surfaceGeometryFramebuffer, 
-    const LightClustersPointer& lightClusters) {
+    const SurfaceGeometryFramebufferPointer& surfaceGeometryFramebuffer,
+    const LightClustersPointer& lightClusters,
+    const LightStage::ShadowFramePointer& shadowFrame) {
 
     bool points = lightingModel->isPointLightEnabled();
     bool spots = lightingModel->isSpotLightEnabled();
@@ -487,7 +497,7 @@ void RenderDeferredLocals::run(const render::RenderContextPointer& renderContext
 
         auto& lightIndices = lightClusters->_visibleLightIndices;
         if (!lightIndices.empty() && lightIndices[0] > 0) {
-            deferredLightingEffect->setupLocalLightsBatch(batch, lightClusters);
+            deferredLightingEffect->setupLocalLightsBatch(batch, lightClusters, shadowFrame ? shadowFrame->_localShadows : nullptr);
 
             // Local light pipeline
             batch.setPipeline(deferredLightingEffect->_localLight);
@@ -529,6 +539,8 @@ void RenderDeferredCleanup::run(const render::RenderContextPointer& renderContex
         batch.setUniformBuffer(ru::Buffer::LightClusterGrid, nullptr);
         batch.setUniformBuffer(ru::Buffer::LightClusterContent, nullptr);
 
+        batch.setResourceTexture(ru::Texture::LocalShadow, nullptr);
+        batch.setResourceBuffer(RENDER_UTILS_RESOURCE_BUFFER_LOCAL_SHADOW_TABLE, nullptr);
     }
 }
 
@@ -567,7 +579,7 @@ void RenderDeferred::run(const RenderContextPointer& renderContext, const Inputs
 
         setupJob.run(renderContext, deferredTransform, deferredFramebuffer, lightingModel, lightFrame, shadowFrame, hazeFrame, surfaceGeometryFramebuffer, ssaoFramebuffer, subsurfaceScatteringResource);
 
-        lightsJob.run(renderContext, deferredTransform, deferredFramebuffer, lightingModel, surfaceGeometryFramebuffer, lightClusters);
+        lightsJob.run(renderContext, deferredTransform, deferredFramebuffer, lightingModel, surfaceGeometryFramebuffer, lightClusters, shadowFrame);
 
         cleanupJob.run(renderContext);
 

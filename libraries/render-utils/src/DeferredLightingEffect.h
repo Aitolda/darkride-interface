@@ -48,7 +48,8 @@ public:
     static void setupKeyLightBatch(const RenderArgs* args, gpu::Batch& batch, const LightStage::Frame& lightFrame);
     static void unsetKeyLightBatch(gpu::Batch& batch);
 
-    static void setupLocalLightsBatch(gpu::Batch& batch, const LightClustersPointer& lightClusters);
+    // localShadows: the spot lights casting shadows this frame, or null for none
+    static void setupLocalLightsBatch(gpu::Batch& batch, const LightClustersPointer& lightClusters, const LocalShadowsPointer& localShadows);
     static void unsetLocalLightsBatch(gpu::Batch& batch);
 
 private:
@@ -112,7 +113,8 @@ public:
         const DeferredFramebufferPointer& deferredFramebuffer,
         const LightingModelPointer& lightingModel,
         const SurfaceGeometryFramebufferPointer& surfaceGeometryFramebuffer,
-        const LightClustersPointer& lightClusters);
+        const LightClustersPointer& lightClusters,
+        const LightStage::ShadowFramePointer& shadowFrame);
 
     gpu::BufferView _localLightsBuffer;
 

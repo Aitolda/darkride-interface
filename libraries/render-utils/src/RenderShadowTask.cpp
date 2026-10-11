@@ -253,62 +253,69 @@ void RenderShadowMap::run(const render::RenderContextPointer& renderContext, con
             batch.setProjectionTransform(projMat);
             batch.setViewTransform(viewMat, false);
 
-            const std::vector<ShapeKey::Builder> keys = {
-                ShapeKey::Builder(), ShapeKey::Builder().withFade(),
-                ShapeKey::Builder().withDeformed(), ShapeKey::Builder().withDeformed().withFade(),
-                ShapeKey::Builder().withDeformed().withDualQuatSkinned(), ShapeKey::Builder().withDeformed().withDualQuatSkinned().withFade(),
-                ShapeKey::Builder().withOwnPipeline(), ShapeKey::Builder().withOwnPipeline().withFade(),
-                ShapeKey::Builder().withDeformed().withOwnPipeline(), ShapeKey::Builder().withDeformed().withOwnPipeline().withFade(),
-                ShapeKey::Builder().withDeformed().withDualQuatSkinned().withOwnPipeline(), ShapeKey::Builder().withDeformed().withDualQuatSkinned().withOwnPipeline().withFade(),
-            };
-            std::vector<std::vector<ShapeKey>> sortedShapeKeys(keys.size());
-
-            const int OWN_PIPELINE_INDEX = 6;
-            for (const auto& items : inShapes) {
-                int index = items.first.hasOwnPipeline() ? OWN_PIPELINE_INDEX : 0;
-                if (items.first.isDeformed()) {
-                    index += 2;
-                    if (items.first.isDualQuatSkinned()) {
-                        index += 2;
-                    }
-                }
-
-                if (items.first.isFaded()) {
-                    index += 1;
-                }
-
-                sortedShapeKeys[index].push_back(items.first);
-            }
-
-            // Render non-withOwnPipeline things
-            for (size_t i = 0; i < OWN_PIPELINE_INDEX; i++) {
-                auto& shapeKeys = sortedShapeKeys[i];
-                if (shapeKeys.size() > 0) {
-                    const auto& shapePipeline = _shapePlumber->pickPipeline(args, keys[i]);
-                    args->_shapePipeline = shapePipeline;
-                    for (const auto& key : shapeKeys) {
-                        renderShapes(renderContext, _shapePlumber, inShapes.at(key));
-                    }
-                }
-            }
-
-            // Render withOwnPipeline things
-            for (size_t i = OWN_PIPELINE_INDEX; i < keys.size(); i++) {
-                auto& shapeKeys = sortedShapeKeys[i];
-                if (shapeKeys.size() > 0) {
-                    args->_shapePipeline = nullptr;
-                    for (const auto& key : shapeKeys) {
-                        args->_itemShapeKey = key._flags.to_ulong();
-                        renderShapes(renderContext, _shapePlumber, inShapes.at(key));
-                    }
-                }
-            }
-
-            args->_shapePipeline = nullptr;
+            renderShadowCasters(renderContext, _shapePlumber, inShapes);
         }
 
         args->_batch = nullptr;
     });
+}
+
+void renderShadowCasters(const render::RenderContextPointer& renderContext, const render::ShapePlumberPointer& shapePlumber,
+                         const render::ShapeBounds& inShapes) {
+    RenderArgs* args = renderContext->args;
+
+    const std::vector<ShapeKey::Builder> keys = {
+        ShapeKey::Builder(), ShapeKey::Builder().withFade(),
+        ShapeKey::Builder().withDeformed(), ShapeKey::Builder().withDeformed().withFade(),
+        ShapeKey::Builder().withDeformed().withDualQuatSkinned(), ShapeKey::Builder().withDeformed().withDualQuatSkinned().withFade(),
+        ShapeKey::Builder().withOwnPipeline(), ShapeKey::Builder().withOwnPipeline().withFade(),
+        ShapeKey::Builder().withDeformed().withOwnPipeline(), ShapeKey::Builder().withDeformed().withOwnPipeline().withFade(),
+        ShapeKey::Builder().withDeformed().withDualQuatSkinned().withOwnPipeline(), ShapeKey::Builder().withDeformed().withDualQuatSkinned().withOwnPipeline().withFade(),
+    };
+    std::vector<std::vector<ShapeKey>> sortedShapeKeys(keys.size());
+
+    const int OWN_PIPELINE_INDEX = 6;
+    for (const auto& items : inShapes) {
+        int index = items.first.hasOwnPipeline() ? OWN_PIPELINE_INDEX : 0;
+        if (items.first.isDeformed()) {
+            index += 2;
+            if (items.first.isDualQuatSkinned()) {
+                index += 2;
+            }
+        }
+
+        if (items.first.isFaded()) {
+            index += 1;
+        }
+
+        sortedShapeKeys[index].push_back(items.first);
+    }
+
+    // Render non-withOwnPipeline things
+    for (size_t i = 0; i < OWN_PIPELINE_INDEX; i++) {
+        auto& shapeKeys = sortedShapeKeys[i];
+        if (shapeKeys.size() > 0) {
+            const auto& shapePipeline = shapePlumber->pickPipeline(args, keys[i]);
+            args->_shapePipeline = shapePipeline;
+            for (const auto& key : shapeKeys) {
+                renderShapes(renderContext, shapePlumber, inShapes.at(key));
+            }
+        }
+    }
+
+    // Render withOwnPipeline things
+    for (size_t i = OWN_PIPELINE_INDEX; i < keys.size(); i++) {
+        auto& shapeKeys = sortedShapeKeys[i];
+        if (shapeKeys.size() > 0) {
+            args->_shapePipeline = nullptr;
+            for (const auto& key : shapeKeys) {
+                args->_itemShapeKey = key._flags.to_ulong();
+                renderShapes(renderContext, shapePlumber, inShapes.at(key));
+            }
+        }
+    }
+
+    args->_shapePipeline = nullptr;
 }
 
 RenderShadowSetup::RenderShadowSetup() :

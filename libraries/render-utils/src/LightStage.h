@@ -24,6 +24,8 @@
 #include <render/Engine.h>
 
 class ViewFrustum;
+class LocalShadows;
+using LocalShadowsPointer = std::shared_ptr<LocalShadows>;
 
 // Light stage to set up light-related rendering tasks
 class LightStage : public render::Stage {
@@ -179,6 +181,9 @@ public:
 
 
         Objects _objects;
+
+        // the spot lights casting shadows this frame, if any (RenderLocalShadowTask sets it every frame)
+        LocalShadowsPointer _localShadows;
     };
     using ShadowFramePointer = std::shared_ptr<ShadowFrame>;
 

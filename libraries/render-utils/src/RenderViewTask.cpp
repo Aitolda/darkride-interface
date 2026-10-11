@@ -14,6 +14,7 @@
 #include "RenderCommonTask.h"
 #include "RenderDeferredTask.h"
 #include "RenderForwardTask.h"
+#include "RenderLocalShadowTask.h"
 
 void RenderShadowsAndDeferredTask::build(JobModel& task, const render::Varying& input, render::Varying& output, render::CullFunctor cullFunctor, uint8_t tagBits, uint8_t tagMask) {
     task.addJob<SetRenderMethod>("SetRenderMethodTask", render::Args::DEFERRED);
@@ -26,6 +27,11 @@ void RenderShadowsAndDeferredTask::build(JobModel& task, const render::Varying& 
     // is performed, then casters not in the view frustum will be removed, which is not what we wish.
     const auto shadowTaskIn = RenderShadowTask::Input(lightingStageFramesAndZones.get<AssembleLightingStageTask::Output>().get0()[0], lightingModel).asVarying();
     const auto shadowTaskOut = task.addJob<RenderShadowTask>("RenderShadowTask", shadowTaskIn, cullFunctor, tagBits, tagMask);
+
+    // spot lights' shadows join the sun's in the frame's shadows, where the lighting finds them
+    const auto localShadowTaskIn = RenderLocalShadowTask::Input(lightingStageFramesAndZones.get<AssembleLightingStageTask::Output>().get0()[0],
+        lightingModel, shadowTaskOut.getN<RenderShadowTask::Output>(1)).asVarying();
+    task.addJob<RenderLocalShadowTask>("RenderLocalShadowTask", localShadowTaskIn, tagBits, tagMask);
 
     const auto renderDeferredInput = RenderDeferredTask::Input(items, lightingModel, lightingStageFramesAndZones, shadowTaskOut).asVarying();
     task.addJob<RenderDeferredTask>("RenderDeferredTask", renderDeferredInput);

@@ -13,6 +13,7 @@
 <@include LightPoint.slh@>
 <@include LightSpot.slh@>
 <@include LightClusterGrid.slh@>
+<@include LocalShadow.slh@>
 
 <$declareLightBuffer(256)$>
 <$declareLightingPoint(supportScattering)$>
@@ -106,6 +107,11 @@ vec4 evalLocalLighting(ivec3 cluster, int numLights, vec3 fragWorldPos, SurfaceD
             continue;
         }
 
+        float shadow = evalLocalShadow(theLightIndex, fragWorldPos, surface.normal, fragLightDirLen.xyz, fragLightDirLen.w);
+        if (shadow <= 0.0) {
+            continue;
+        }
+
         numLightTouching++;
 
         vec3 diffuse = vec3(1.0);
@@ -120,7 +126,7 @@ vec4 evalLocalLighting(ivec3 cluster, int numLights, vec3 fragWorldPos, SurfaceD
         // Eval attenuation
         float radialAttenuation = lightIrradiance_evalLightAttenuation(light.irradiance, fragLightDistance);
         float angularAttenuation = lightIrradiance_evalLightSpotAttenuation(light.irradiance, cosSpotAngle);
-        vec3 lightEnergy = radialAttenuation * angularAttenuation * getLightIrradiance(light);
+        vec3 lightEnergy = radialAttenuation * angularAttenuation * shadow * getLightIrradiance(light);
 
         // Eval shading
         if (withScattering) {

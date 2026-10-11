@@ -55,6 +55,8 @@ void LightEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPoint
         light->setSpotAngle(cutoff);
         light->setSpotExponent(exponent);
     }
+    // the entity's Cast Shadows; spot lights' shadows are drawn by RenderLocalShadowTask
+    light->setCastShadows(entity->getCanCastShadow());
 }
 
 ItemKey LightEntityRenderer::getKey() {

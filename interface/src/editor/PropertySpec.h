@@ -59,7 +59,7 @@ struct PropertySpec {
     int decimals { 2 };
     QString unit;
     QStringList enumValues; // "value:Label" entries
-    QString showWhen;       // "key=value", "key!=value", "key in a,b,c", or empty
+    QString showWhen;       // "key=value", "key!=value", "key in a,b,c", any of these joined by " or ", or empty
     bool readOnly { false };
 };
 
