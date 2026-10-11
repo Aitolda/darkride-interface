@@ -76,6 +76,21 @@ void gl::globalRelease(bool finish) {}
 
 #endif
 
+// how deep the main thread is in MainThreadLocks (only the main thread takes them)
+static int _mainThreadLockDepth { 0 };
+
+gl::MainThreadLock::MainThreadLock() {
+    if (_mainThreadLockDepth++ == 0) {
+        globalLock();
+    }
+}
+
+gl::MainThreadLock::~MainThreadLock() {
+    if (--_mainThreadLockDepth == 0) {
+        globalRelease(false);   // the main thread has no context of its own to finish
+    }
+}
+
 
 uint16_t gl::getTargetVersion() {
     uint8_t major = 0, minor = 0;

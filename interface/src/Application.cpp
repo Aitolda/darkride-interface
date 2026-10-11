@@ -53,6 +53,7 @@
 
 
 #include <gl/QOpenGLContextWrapper.h>
+#include <gl/GLHelpers.h>
 #include <gl/GLWindow.h>
 #include <gl/GLHelpers.h>
 
@@ -4296,6 +4297,21 @@ bool Application::handleFileOpenEvent(QFileOpenEvent* fileEvent) {
 bool Application::notify(QObject * object, QEvent * event) {
     if (thread() == QThread::currentThread()) {
         PROFILE_RANGE_IF_LONGER(app, "notify", 2)
+        // The main window's layout passes and panel splitter drags move and resize the GL view: they run between
+        // frames (see gl::MainThreadLock). Build mode's panels showing and hiding crashed in Apple's GL driver.
+        if (object == _window) {
+            switch (event->type()) {
+                case QEvent::LayoutRequest:
+                case QEvent::Resize:
+                case QEvent::MouseMove:
+                case QEvent::MouseButtonRelease: {
+                    gl::MainThreadLock lock;
+                    return QApplication::notify(object, event);
+                }
+                default:
+                    break;
+            }
+        }
         return QApplication::notify(object, event);
     }
 

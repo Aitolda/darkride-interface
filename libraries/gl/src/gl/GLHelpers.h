@@ -61,6 +61,18 @@ namespace gl {
     void globalLock();
     void globalRelease(bool finish = true);
 
+    // Holds the global lock for a scope on the main thread, however deeply nested. On macOS the presenting thread
+    // draws to the window's GL view under that lock, and a change to the view's size or place answers at once on
+    // the main thread ([NSOpenGLContext update]): made under this, such a change falls between frames. Nothing
+    // under it may wait for the QML render thread, which takes the lock too.
+    class MainThreadLock {
+    public:
+        MainThreadLock();
+        ~MainThreadLock();
+        MainThreadLock(const MainThreadLock&) = delete;
+        MainThreadLock& operator=(const MainThreadLock&) = delete;
+    };
+
     bool debugContextEnabled();
 
     bool khrDebugEnabled();

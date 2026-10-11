@@ -45,10 +45,9 @@ void ViewportContainer::resizeEvent(QResizeEvent* event) {
 
 void ViewportContainer::applySize() {
     if (_viewport->size() != size()) {
-        // only between frames: the presenting thread holds this lock for a whole frame, and toggling build mode (its
-        // panels resize the view) crashed in Apple's GL driver, clearing the view while it was being resized
-        gl::globalLock();
+        // only between frames (see gl::MainThreadLock): toggling build mode, whose panels resize the view, crashed in
+        // Apple's GL driver, clearing the view while it was being resized
+        gl::MainThreadLock lock;
         _viewport->setGeometry(0, 0, width(), height());
-        gl::globalRelease(false);
     }
 }
