@@ -2449,8 +2449,14 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
     };
 
     // undo and redo are taken here, ahead of everything, from any widget of the window: the menu
-    // shortcut and the viewport's key handler were never reached on macOS
-    if (command && keyEvent->key() == Qt::Key_Z && !typing) {
+    // shortcut and the viewport's key handler were never reached on macOS. A text field keeps them only while it
+    // holds typing not yet committed; one just clicked into, or committed with Enter, passes them on, so that an
+    // undo straight after an edit undoes the edit rather than the typing
+    auto fieldPassesUndo = [] {
+        auto line = qobject_cast<QLineEdit*>(QApplication::focusWidget());
+        return line && !line->isModified();
+    };
+    if (command && keyEvent->key() == Qt::Key_Z && (!typing || fieldPassesUndo())) {
         if (!qmlTyping()) {
             if (shift) { redo(); } else { undo(); }
             return true;

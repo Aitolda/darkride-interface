@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- the Hierarchy's expander, open: a chevron pointing down, in the panel's label grey -->
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="14px" height="14px" viewBox="0 0 14 14">
+<path fill="none" stroke="#b8b8b8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3.2,5 L7,9 L10.8,5"/>
+</svg>

@@ -49,11 +49,23 @@ QDockWidget#EditorHierarchy::title, QDockWidget#EditorInspector::title {
     background: #2c5d87;
     color: #ffffff;
 }
+/* styling the branch area at all replaces Qt's expander arrows, so they are drawn here: a parent's children were
+   there but unseen, with nothing to open them by */
 #EditorHierarchy QTreeView::branch {
     background: #383838;
 }
 #EditorHierarchy QTreeView::branch:selected {
     background: #2c5d87;
+}
+#EditorHierarchy QTreeView::branch:has-children:!has-open-children:closed,
+#EditorHierarchy QTreeView::branch:closed:has-children:has-siblings {
+    border-image: none;
+    image: url(:/styles/branch-closed.svg);
+}
+#EditorHierarchy QTreeView::branch:open:has-children:!has-siblings,
+#EditorHierarchy QTreeView::branch:open:has-children:has-siblings {
+    border-image: none;
+    image: url(:/styles/branch-open.svg);
 }
 
 /* inspector */
@@ -167,6 +179,16 @@ QDockWidget#EditorHierarchy::title, QDockWidget#EditorInspector::title {
 }
 #EditorInspector QTreeWidget#EditorUserData::branch {
     background: #383838;
+}
+#EditorInspector QTreeWidget#EditorUserData::branch:has-children:!has-open-children:closed,
+#EditorInspector QTreeWidget#EditorUserData::branch:closed:has-children:has-siblings {
+    border-image: none;
+    image: url(:/styles/branch-closed.svg);
+}
+#EditorInspector QTreeWidget#EditorUserData::branch:open:has-children:!has-siblings,
+#EditorInspector QTreeWidget#EditorUserData::branch:open:has-children:has-siblings {
+    border-image: none;
+    image: url(:/styles/branch-open.svg);
 }
 
 /* scroll bars */

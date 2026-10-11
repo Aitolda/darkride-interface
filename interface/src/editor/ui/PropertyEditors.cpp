@@ -629,6 +629,8 @@ TextEditor::TextEditor(const PropertySpec& spec, QWidget* parent) : PropertyEdit
     }
     layout->addWidget(_edit);
     connect(_edit, &QLineEdit::editingFinished, this, [this] {
+        // committed, the field takes refreshes again (an undo of this very edit) though it keeps the keyboard
+        _edit->setModified(false);
         if (!_updating && _edit->text() != _shown) {
             _shown = _edit->text();
             emit committed(QVariant(_shown));
@@ -646,7 +648,8 @@ void TextEditor::setValue(const QVariant& value, bool mixed) {
 }
 
 bool TextEditor::isEditing() const {
-    return _edit->hasFocus();
+    // typing holds the field; a field only clicked into, or committed with Enter, still shows changes made elsewhere
+    return _edit->hasFocus() && _edit->isModified();
 }
 
 // --- ImageEditor --------------------------------------------------------------------------------
@@ -691,6 +694,7 @@ ImageEditor::ImageEditor(const PropertySpec& spec, QWidget* parent) : PropertyEd
     layout->addWidget(clear);
 
     connect(_url, &QLineEdit::editingFinished, this, [this] {
+        _url->setModified(false);
         QString url = _url->text().trimmed();
         if (!_updating && url != _shown) {
             _shown = url;
@@ -730,7 +734,7 @@ void ImageEditor::setValue(const QVariant& value, bool mixed) {
 }
 
 bool ImageEditor::isEditing() const {
-    return _url->hasFocus();
+    return _url->hasFocus() && _url->isModified();
 }
 
 void ImageEditor::takeFile(const QString& localPath) {
@@ -853,6 +857,7 @@ void JsonEditor::commitIfChanged() {
     }
     _edit->setStyleSheet(QString());
     _shown = text;
+    _edit->document()->setModified(false);   // committed: refreshes reach the box again
     emit committed(QVariant(text));
 }
 
@@ -861,13 +866,15 @@ void JsonEditor::setValue(const QVariant& value, bool mixed) {
     _mixed = mixed;
     _shown = mixed ? QString() : value.toString();
     _edit->setPlainText(_shown);
+    _edit->document()->setModified(false);
     _edit->setPlaceholderText(mixed ? MIXED : QString());
     _edit->setStyleSheet(QString());
     _updating = false;
 }
 
 bool JsonEditor::isEditing() const {
-    return _edit->hasFocus();
+    // text being typed or fixed holds the box; a box only clicked into still shows changes made elsewhere
+    return _edit->hasFocus() && _edit->document()->isModified();
 }
 
 // --- ColorEditor --------------------------------------------------------------------------------
