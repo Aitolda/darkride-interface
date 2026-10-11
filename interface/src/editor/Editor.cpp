@@ -77,7 +77,9 @@ namespace {
     const float MAX_PLACEMENT_DISTANCE = 200.0f;  // a grid-plane hit farther than this is not a useful spot
     const float GO_TO_STANDOFF = 1.5f;            // the gap between the avatar and what it went to
     const int MODEL_DIMENSIONS_POLL_MS = 500;     // how often a new model is asked for its size
-    const int MODEL_DIMENSIONS_POLL_LIMIT = 60;   // and for how long (30 s)
+    // and for how long: a big upload is downloaded and parsed again before it reports its size (a 23 MB model
+    // took longer than the 30 s this used to be, and stayed a 1 m box)
+    const int MODEL_DIMENSIONS_POLL_LIMIT = 1200;   // 10 minutes
     const int REFRAME_FRAMES = 180;               // how long after Shift+F a camera reset re-frames
     const int REJECTION_CHECK_MS = 3000;          // a new entity gone by then was refused by the server
     const int STATUS_CLEAR_MS = 6000;             // how long a note on the toolbar stays
@@ -1517,7 +1519,14 @@ void Editor::pollModelDimensions() {
     // a new model is a 1 m box until it loads; then it takes its own size, its bottom staying put
     auto entities = DependencyManager::get<EntityScriptingInterface>();
     for (auto it = _modelsAwaitingDimensions.begin(); it != _modelsAwaitingDimensions.end();) {
-        EntityItemProperties current = entities->getEntityProperties(it.key());
+        EntityItemProperties current = entities->getEntityProperties(_undo.resolve(it.key()));
+        // gone (deleted, or its creation undone), or resized by hand meanwhile: leave it be
+        bool resized = glm::any(glm::greaterThan(glm::abs(current.getDimensions() - EditorCreate::MODEL_PLACEHOLDER_DIMENSIONS),
+            glm::vec3(MIN_DIMENSION)));
+        if (current.getType() != EntityTypes::Model || resized) {
+            it = _modelsAwaitingDimensions.erase(it);
+            continue;
+        }
         glm::vec3 natural = current.getNaturalDimensions();
         bool loaded = glm::any(glm::greaterThan(natural, glm::vec3(MIN_DIMENSION)));
         if (loaded) {
@@ -1527,7 +1536,8 @@ void Editor::pollModelDimensions() {
             glm::vec3 position = current.getPosition();
             position.y += (natural.y - current.getDimensions().y) * 0.5f;
             edit.setPosition(position);
-            entities->editEntity(it.key(), edit);
+            entities->editEntity(_undo.resolve(it.key()), edit);
+            _undo.amendCreated(it.key(), edit);   // so that a redo makes it this size, not the box
         }
         if (loaded || ++it.value() > MODEL_DIMENSIONS_POLL_LIMIT) {
             it = _modelsAwaitingDimensions.erase(it);

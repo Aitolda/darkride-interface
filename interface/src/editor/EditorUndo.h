@@ -61,6 +61,9 @@ public:
     // creates entities now and records it; returns the new ids in order. sourceIds: as for
     // createEntities (a paste gives the originals; a brand new entity gives none)
     QList<QUuid> pushAdd(const QString& text, const QVector<EntityItemProperties>& properties, const QList<QUuid>& sourceIds);
+    // a change made to a created entity since, which a redo of its creation should make too (a new model's own
+    // size, once it has loaded): the dimensions and position in `changes` replace the recorded ones
+    void amendCreated(const QUuid& id, const EntityItemProperties& changes);
 
 private:
     QUndoStack _stack;

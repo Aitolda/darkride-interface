@@ -36,6 +36,8 @@ namespace EditorCreate {
     // the starting properties of a new entity of this kind at position; panels (text, image, web,
     // quad, circle) turn to face the camera, whose yaw is given
     EntityItemProperties properties(const QString& key, const glm::vec3& position, float cameraYaw);
+    // a new model is a box this size until it loads and reports its own
+    const glm::vec3 MODEL_PLACEHOLDER_DIMENSIONS { 1.0f };
     EntityItemProperties modelProperties(const QUrl& url, const glm::vec3& position);
     EntityItemProperties imageProperties(const QUrl& url, const glm::vec3& position, float cameraYaw);
 

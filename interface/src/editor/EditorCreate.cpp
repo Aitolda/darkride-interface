@@ -198,7 +198,7 @@ EntityItemProperties EditorCreate::modelProperties(const QUrl& url, const glm::v
     QString name = QFileInfo(url.path()).completeBaseName();
     p.setName(name.isEmpty() ? "Model" : name);
     p.setModelURL(url.toString());
-    p.setDimensions(UNIT_DIMENSIONS);   // until the model loads and reports its own
+    p.setDimensions(MODEL_PLACEHOLDER_DIMENSIONS);   // until the model loads and reports its own
     p.setShapeType(SHAPE_TYPE_NONE);
     p.setPosition(position);
     return p;

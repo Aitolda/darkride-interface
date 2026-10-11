@@ -105,6 +105,20 @@ namespace {
         void undo() override {
             deleteEntities(_undo, _ids);
         }
+        bool amend(const QUuid& id, const EntityItemProperties& changes) {
+            for (int i = 0; i < _ids.size() && i < _properties.size(); ++i) {
+                if (_undo->resolve(_ids[i]) == id) {
+                    if (changes.dimensionsChanged()) {
+                        _properties[i].setDimensions(changes.getDimensions());
+                    }
+                    if (changes.positionChanged()) {
+                        _properties[i].setPosition(changes.getPosition());
+                    }
+                    return true;
+                }
+            }
+            return false;
+        }
     private:
         EditorUndo* _undo;
         QList<QUuid> _ids;
@@ -239,6 +253,17 @@ QList<QUuid> EditorUndo::createEntities(const QVector<EntityItemProperties>& pro
         }
     }
     return newIds;
+}
+
+void EditorUndo::amendCreated(const QUuid& id, const EntityItemProperties& changes) {
+    QUuid current = resolve(id);
+    for (int i = _stack.count() - 1; i >= 0; --i) {
+        // the stack hands its commands out read-only, but they are ours
+        auto command = dynamic_cast<AddEntitiesCommand*>(const_cast<QUndoCommand*>(_stack.command(i)));
+        if (command && command->amend(current, changes)) {
+            return;
+        }
+    }
 }
 
 void EditorUndo::pushPropertyEdit(const QString& text, const QList<QUuid>& ids, const QVector<EntityItemProperties>& before,
