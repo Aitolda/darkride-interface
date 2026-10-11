@@ -2362,8 +2362,13 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
     auto keyEvent = static_cast<QKeyEvent*>(event);
     bool command = commandModifier(keyEvent->modifiers());
     bool shift = keyEvent->modifiers().testFlag(Qt::ShiftModifier);
-    bool typing = qobject_cast<QLineEdit*>(widget) || qobject_cast<QPlainTextEdit*>(widget) || qobject_cast<QTextEdit*>(widget)
-        || qobject_cast<QAbstractSpinBox*>(widget);
+    auto isTextEntry = [](QWidget* candidate) {
+        return candidate && (qobject_cast<QLineEdit*>(candidate) || qobject_cast<QPlainTextEdit*>(candidate)
+            || qobject_cast<QTextEdit*>(candidate) || qobject_cast<QAbstractSpinBox*>(candidate));
+    };
+    // the widget with the keyboard counts, not only the one this event has reached: a key a field ignores (Escape)
+    // is passed up through the field's parents, which are not fields
+    bool typing = isTextEntry(widget) || isTextEntry(QApplication::focusWidget());
     bool inTree = qobject_cast<QTreeView*>(widget) || (widget->parentWidget() && qobject_cast<QTreeView*>(widget->parentWidget()));
     bool inPanels = _hierarchy->isAncestorOf(widget) || _inspector->isAncestorOf(widget) || _toolBar->isAncestorOf(widget);
 
