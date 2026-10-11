@@ -167,6 +167,7 @@ private:
     bool selectionSnapshots(QVector<EntityItemProperties>& snapshots, EntityTypes::EntityType& type, bool& multiple) const;
     void onInspectorEditBegan(const QString& key);
     void onInspectorLiveEdit(const QString& key, const QVariant& value);
+    void applyLiveEdit(const QString& key, const QVariant& value);
     void onInspectorCommitted(const QString& key, const QVariant& value);
     void onInspectorEditCancelled(const QString& key);
     // the edit an Inspector value amounts to for one entity: Scale is turned into dimensions
@@ -268,6 +269,10 @@ private:
 
     // an edit in progress in the Inspector: the ids and the values before, for undo
     QTimer _inspectorRefresh;
+    // a scrub in the Inspector sends its edits no faster than a gizmo drag does: the latest value waits here
+    QTimer _liveEditTimer;
+    QElapsedTimer _liveEditClock;
+    QVariant _liveEditValue;
     QString _inspectorEditKey;
     QList<QUuid> _inspectorEditIds;
     QVector<EntityItemProperties> _inspectorBefore;

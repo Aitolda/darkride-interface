@@ -753,6 +753,13 @@ QUuid EntityScriptingInterface::editEntity(const QUuid& id, const EntityItemProp
 
     EntityItemProperties properties = scriptSideProperties;
 
+    // an edit made now: a script's properties are stamped as they are read, but ones built in C++ (build mode's)
+    // were not, and an edit stamped 0 left the entity taking any update from the server over itself: a drag or
+    // a scrub kept snapping back to the older sizes the server was still sending
+    if (properties.getLastEdited() == 0) {
+        properties.setLastEdited(usecTimestampNow());
+    }
+
     EntityItemID entityID(id);
     if (!_entityTree) {
         properties.setLastEditedBy(sessionID);

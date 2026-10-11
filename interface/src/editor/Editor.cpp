@@ -155,6 +155,12 @@ Editor::Editor() : _selection(this), _undo(this) {
     connect(&_selection, &EditorSelection::changed, this, &Editor::onSelectionChanged);
     _inspectorRefresh.setInterval(INSPECTOR_REFRESH_MS);
     connect(&_inspectorRefresh, &QTimer::timeout, this, [this] { refreshInspector(false); });
+    _liveEditTimer.setSingleShot(true);
+    connect(&_liveEditTimer, &QTimer::timeout, this, [this] {
+        if (!_inspectorEditKey.isEmpty() && _liveEditValue.isValid()) {
+            applyLiveEdit(_inspectorEditKey, _liveEditValue);
+        }
+    });
     _modelDimensionsTimer.setInterval(MODEL_DIMENSIONS_POLL_MS);
     connect(&_modelDimensionsTimer, &QTimer::timeout, this, &Editor::pollModelDimensions);
     _world = new EditorWorld(this);
@@ -830,6 +836,25 @@ void Editor::onInspectorLiveEdit(const QString& key, const QVariant& value) {
     if (key != _inspectorEditKey) {
         return;
     }
+    // a scrub moves with the mouse, a hundred times a second or more: send no faster than a gizmo drag (sizes
+    // more slowly, being heavier for the server), the latest value going out when the wait is over
+    bool sizes = key == SCALE_KEY || key == RANGE_KEY || key == QStringLiteral("dimensions");
+    int interval = sizes ? SCALE_EDIT_INTERVAL_MS : EDIT_INTERVAL_MS;
+    _liveEditValue = value;
+    if (_liveEditTimer.isActive()) {
+        return;
+    }
+    qint64 elapsed = _liveEditClock.isValid() ? _liveEditClock.elapsed() : interval;
+    if (elapsed >= interval) {
+        applyLiveEdit(key, value);
+    } else {
+        _liveEditTimer.start(interval - (int)elapsed);
+    }
+}
+
+void Editor::applyLiveEdit(const QString& key, const QVariant& value) {
+    _liveEditClock.restart();
+    _liveEditValue = QVariant();
     auto entities = DependencyManager::get<EntityScriptingInterface>();
     for (int i = 0; i < _inspectorEditIds.size(); ++i) {
         entities->editEntity(_inspectorEditIds[i], inspectorEdit(key, value, _inspectorNatural[i]));
@@ -841,6 +866,8 @@ void Editor::onInspectorEditCancelled(const QString& key) {
         return;
     }
     // the live preview goes back to what the entities held when the edit began; no undo step
+    _liveEditTimer.stop();
+    _liveEditValue = QVariant();
     auto entities = DependencyManager::get<EntityScriptingInterface>();
     for (int i = 0; i < _inspectorEditIds.size(); ++i) {
         entities->editEntity(_inspectorEditIds[i], _inspectorBefore[i]);
@@ -862,7 +889,8 @@ void Editor::onInspectorCommitted(const QString& key, const QVariant& value) {
         ids = _inspectorEditIds;
         before = _inspectorBefore;
         naturalSizes = _inspectorNatural;
-        onInspectorLiveEdit(key, value);
+        _liveEditTimer.stop();
+        applyLiveEdit(key, value);
     } else {
         QString stored = key == SCALE_KEY ? QStringLiteral("dimensions") : key;
         for (const auto& id : _selection.ids()) {
