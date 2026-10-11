@@ -10,6 +10,8 @@
 
 #include <QtGui/QResizeEvent>
 
+#include <gl/GLHelpers.h>
+
 namespace {
     const int SETTLE_MS = 250;   // a splitter drag has stopped when nothing moved for this long
 }
@@ -43,6 +45,10 @@ void ViewportContainer::resizeEvent(QResizeEvent* event) {
 
 void ViewportContainer::applySize() {
     if (_viewport->size() != size()) {
+        // only between frames: the presenting thread holds this lock for a whole frame, and toggling build mode (its
+        // panels resize the view) crashed in Apple's GL driver, clearing the view while it was being resized
+        gl::globalLock();
         _viewport->setGeometry(0, 0, width(), height());
+        gl::globalRelease(false);
     }
 }

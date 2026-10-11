@@ -188,20 +188,23 @@ public:
                 continue;
             }
 
+            // The whole frame, making the context current included, is drawn under the lock that a resize of the
+            // native view also takes (ViewportContainer): on macOS the context catches up with a resized view when it
+            // is made current, and a view resized in the middle of a frame crashed inside Apple's GL driver.
+            gl::globalLock();
 #if defined(Q_OS_MACOS)
             _context->makeCurrent();
 #endif
             // Execute the frame and present it to the display device.
             {
                 PROFILE_RANGE(render, "PluginPresent")
-                gl::globalLock();
                 currentPlugin->present(_refreshRateController);
-                gl::globalRelease(false);
                 CHECK_GL_ERROR();
             }
 #if defined(Q_OS_MACOS)
             _context->doneCurrent();
 #endif
+            gl::globalRelease(false);
 
             _refreshRateController->sleepThreadIfNeeded(this, currentPlugin->isHmd());
         }
