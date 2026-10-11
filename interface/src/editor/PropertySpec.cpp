@@ -12,6 +12,7 @@
 #include <functional>
 
 #include <QtCore/QHash>
+#include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QRect>
@@ -378,6 +379,50 @@ namespace {
                 }
             });
         }
+
+        // entries of materialData's materials shown as fields of their own: read from the first material, written to
+        // all of them ("materials" is one material or an array of them); a default value is left out of the JSON
+        struct MaterialEntry { const char* name; const char* defaultValue; };
+        for (const MaterialEntry& entry : { MaterialEntry { "packing", "custom" } }) {
+            QString name = entry.name;
+            QString defaultValue = entry.defaultValue;
+            a.insert(QStringLiteral("materialData:") + name, Accessor {
+                [name, defaultValue](const EP& p) {
+                    QJsonValue materials = QJsonDocument::fromJson(p.getMaterialData().toUtf8()).object().value("materials");
+                    QJsonArray array = materials.toArray();
+                    QJsonObject first = materials.isArray() ? (array.isEmpty() ? QJsonObject() : array.first().toObject())
+                                                            : materials.toObject();
+                    return QVariant(first.value(name).toString(defaultValue));
+                },
+                [name, defaultValue](EP& p, const QVariant& v) {
+                    QString text = p.getMaterialData();
+                    QJsonObject document = QJsonDocument::fromJson(text.toUtf8()).object();
+                    QJsonValue materials = document.value("materials");
+                    if (!text.trimmed().isEmpty() && !materials.isObject() && !materials.isArray()) {
+                        return;   // not a set of materials: left alone
+                    }
+                    QString value = v.toString();
+                    auto setEntry = [&](QJsonObject material) {
+                        if (value.isEmpty() || value == defaultValue) {
+                            material.remove(name);
+                        } else {
+                            material.insert(name, value);
+                        }
+                        return material;
+                    };
+                    if (materials.isArray()) {
+                        QJsonArray array = materials.toArray();
+                        for (int i = 0; i < array.size(); ++i) {
+                            array[i] = setEntry(array[i].toObject());
+                        }
+                        document.insert("materials", array);
+                    } else {
+                        document.insert("materials", setEntry(materials.toObject()));
+                    }
+                    p.setMaterialData(QString::fromUtf8(QJsonDocument(document).toJson(QJsonDocument::Compact)));
+                }
+            });
+        }
         return a;
     }
 
@@ -568,6 +613,9 @@ namespace {
 
         // material
         add(spec("materialURL", "Material URL", K::Url, "material"));
+        // how occlusion, roughness and metallic are packed into pictures, for a material whose data is its own
+        en("materialData:packing", "Packing", "material", { "unity:Unity (Metallic + Smoothness)",
+            "orm:ORM (glTF, Unreal)", "custom:Custom" }, "materialURL=materialData");
         add(spec("materialData", "Material Data", K::Json, "material"));
         add(spec("parentMaterialName", "Target", K::String, "material"));
         add(spec("priority", "Priority", K::Int, "material"));
@@ -777,20 +825,32 @@ bool set(const QString& key, EntityItemProperties& properties, const QVariant& v
     return true;
 }
 
+bool isEntry(const QString& key) {
+    return key.contains(':');
+}
+
 bool isUserDataEntry(const QString& key) {
     return key.startsWith(QStringLiteral("userData:"));
 }
 
-bool takesUserDataEntries(const EntityItemProperties& properties) {
-    QString text = properties.getUserData();
-    return text.trimmed().isEmpty() || QJsonDocument::fromJson(text.toUtf8()).isObject();
+bool takesEntry(const QString& key, const EntityItemProperties& properties) {
+    if (isUserDataEntry(key)) {
+        QString text = properties.getUserData();
+        return text.trimmed().isEmpty() || QJsonDocument::fromJson(text.toUtf8()).isObject();
+    }
+    if (key.startsWith(QStringLiteral("materialData:"))) {
+        QString text = properties.getMaterialData();
+        QJsonValue materials = QJsonDocument::fromJson(text.toUtf8()).object().value("materials");
+        return text.trimmed().isEmpty() || materials.isObject() || materials.isArray();
+    }
+    return true;
 }
 
 QString storedKey(const QString& key) {
     if (key == QStringLiteral("scale")) {
         return QStringLiteral("dimensions");
     }
-    return isUserDataEntry(key) ? QStringLiteral("userData") : key;
+    return isEntry(key) ? key.left(key.indexOf(':')) : key;
 }
 
 

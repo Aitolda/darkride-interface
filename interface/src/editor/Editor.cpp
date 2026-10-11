@@ -980,8 +980,10 @@ EntityItemProperties Editor::inspectorEdit(const QString& key, const QVariant& v
     // Scale is the one Inspector property that is not stored: it becomes dimensions, the scale
     // times the entity's own size
     EntityItemProperties properties;
-    if (PropertySpecs::isUserDataEntry(key)) {
-        properties.setUserData(before.getUserData());   // the entry goes in among the entity's others
+    if (PropertySpecs::isEntry(key)) {
+        // the entry goes into the JSON the entity holds, among its others
+        QString stored = PropertySpecs::storedKey(key);
+        PropertySpecs::set(stored, properties, PropertySpecs::get(stored, before));
         PropertySpecs::set(key, properties, value);
     } else if (key == SCALE_KEY) {
         QVector3D scale = value.value<QVector3D>();
@@ -1085,7 +1087,7 @@ void Editor::commitInspectorEdit(const QString& key, const QVariant& value, cons
     QVector<EntityItemProperties> before;
     QVector<glm::vec3> naturalSizes;
     bool alreadyApplied = key == _inspectorEditKey && !_inspectorEditIds.isEmpty();
-    bool entryRefused = false;   // an entry of userData, on an entity whose userData is text rather than entries
+    bool entryRefused = false;   // an entry of a JSON property, on an entity whose property can't hold it
     if (alreadyApplied) {
         // the end of a scrub: the values went out live, the undo point was taken at its start
         ids = _inspectorEditIds;
@@ -1101,7 +1103,7 @@ void Editor::commitInspectorEdit(const QString& key, const QVariant& value, cons
             if (!EditorUndo::snapshot(id, snapshot) || (EditorUndo::isLocked(id) && key != LOCKED_KEY)) {
                 continue;
             }
-            if (PropertySpecs::isUserDataEntry(key) && !PropertySpecs::takesUserDataEntries(snapshot)) {
+            if (PropertySpecs::isEntry(key) && !PropertySpecs::takesEntry(key, snapshot)) {
                 entryRefused = true;
                 continue;
             }
@@ -1127,8 +1129,10 @@ void Editor::commitInspectorEdit(const QString& key, const QVariant& value, cons
     if (ids.isEmpty() || (!alreadyApplied && !editable())) {
         if (entryRefused) {
             auto spec = PropertySpecs::find(key);
-            setStatus(QString("Its User Data is plain text, not entries, so it can't hold a %1")
-                .arg(spec ? spec->label.toLower() : key), STATUS_CLEAR_MS * 2);
+            QString why = PropertySpecs::isUserDataEntry(key) ? "Its User Data is plain text, not entries"
+                                                              : "Its Material Data isn't a set of materials";
+            setStatus(QString("%1, so it can't hold a %2").arg(why, spec ? spec->label.toLower() : key),
+                      STATUS_CLEAR_MS * 2);
         }
         refreshInspector(false);
         return;

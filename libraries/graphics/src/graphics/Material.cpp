@@ -25,6 +25,7 @@ const float Material::DEFAULT_ALBEDO { 0.5f };
 const float Material::DEFAULT_METALLIC { 0.0f };
 const float Material::DEFAULT_ROUGHNESS { 1.0f };
 const float Material::DEFAULT_SCATTERING{ 0.0f };
+const float Material::DEFAULT_OCCLUSION_STRENGTH { 1.0f };
 const MaterialKey::OpacityMapMode Material::DEFAULT_OPACITY_MAP_MODE{ MaterialKey::OPACITY_MAP_OPAQUE };
 const float Material::DEFAULT_OPACITY_CUTOFF { 0.5f };
 const MaterialKey::CullFaceMode Material::DEFAULT_CULL_FACE_MODE { MaterialKey::CULL_BACK };
@@ -79,6 +80,7 @@ Material::Material(const Material& material) :
     _metallic(material._metallic),
     _scattering(material._scattering),
     _opacityCutoff(material._opacityCutoff),
+    _occlusionStrength(material._occlusionStrength),
     _texcoordTransforms(material._texcoordTransforms),
     _lightmapParams(material._lightmapParams),
     _materialParams(material._materialParams),
@@ -102,6 +104,7 @@ Material& Material::operator=(const Material& material) {
     _metallic = material._metallic;
     _scattering = material._scattering;
     _opacityCutoff = material._opacityCutoff;
+    _occlusionStrength = material._occlusionStrength;
     _texcoordTransforms = material._texcoordTransforms;
     _lightmapParams = material._lightmapParams;
     _materialParams = material._materialParams;
@@ -152,6 +155,10 @@ void Material::setScattering(float scattering) {
     scattering = glm::clamp(scattering, 0.0f, 1.0f);
     _key.setScattering(scattering > 0.0f);
     _scattering = scattering;
+}
+
+void Material::setOcclusionStrength(float occlusionStrength) {
+    _occlusionStrength = glm::clamp(occlusionStrength, 0.0f, 1.0f);
 }
 
 void Material::setOpacityCutoff(float opacityCutoff) {

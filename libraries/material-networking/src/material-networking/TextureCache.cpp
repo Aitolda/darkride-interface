@@ -305,6 +305,7 @@ gpu::TexturePointer getFallbackTextureForType(image::TextureUsage::Type type) {
         case image::TextureUsage::ALBEDO_TEXTURE:
         case image::TextureUsage::ROUGHNESS_TEXTURE:
         case image::TextureUsage::OCCLUSION_TEXTURE:
+        case image::TextureUsage::SCATTERING_TEXTURE:
             result = textureCache->getWhiteTexture();
             break;
 

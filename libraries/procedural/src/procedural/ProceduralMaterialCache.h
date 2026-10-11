@@ -26,9 +26,10 @@ public:
 
     void setAlbedoMap(const QUrl& url, bool useAlphaChannel);
     void setNormalMap(const QUrl& url, bool isBumpmap);
-    void setRoughnessMap(const QUrl& url, bool isGloss);
-    void setMetallicMap(const QUrl& url, bool isSpecular);
-    void setOcclusionMap(const QUrl& url);
+    // a map can be one channel of a picture that packs several (see the "packing" of a material's JSON)
+    void setRoughnessMap(const QUrl& url, bool isGloss, image::ColorChannel channel = image::ColorChannel::NONE);
+    void setMetallicMap(const QUrl& url, bool isSpecular, image::ColorChannel channel = image::ColorChannel::NONE);
+    void setOcclusionMap(const QUrl& url, image::ColorChannel channel = image::ColorChannel::NONE);
     void setEmissiveMap(const QUrl& url);
     void setScatteringMap(const QUrl& url);
     void setLightMap(const QUrl& url);
@@ -66,7 +67,8 @@ private:
     QUrl getTextureUrl(const QUrl& baseUrl, const HFMTexture& hfmTexture);
     graphics::TextureMapPointer fetchTextureMap(const QUrl& baseUrl, const HFMTexture& hfmTexture,
                                                 image::TextureUsage::Type type, MapChannel channel);
-    graphics::TextureMapPointer fetchTextureMap(const QUrl& url, image::TextureUsage::Type type, MapChannel channel);
+    graphics::TextureMapPointer fetchTextureMap(const QUrl& url, image::TextureUsage::Type type, MapChannel channel,
+                                                image::ColorChannel sourceChannel = image::ColorChannel::NONE);
 
     Transform _albedoTransform;
     Transform _lightmapTransform;

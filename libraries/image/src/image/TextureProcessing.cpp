@@ -125,6 +125,8 @@ TextureUsage::TextureLoader TextureUsage::getTextureLoaderForType(Type type) {
             return image::TextureUsage::createRoughnessTextureFromGlossImage;
         case SPECULAR_TEXTURE:
             return image::TextureUsage::createMetallicTextureFromImage;
+        case OCCLUSION_TEXTURE:
+            return image::TextureUsage::createOcclusionTextureFromImage;
         case STRICT_TEXTURE:
             return image::TextureUsage::createStrict2DTextureFromImage;
 
@@ -181,6 +183,11 @@ gpu::TexturePointer TextureUsage::createRoughnessTextureFromGlossImage(Image&& s
 
 gpu::TexturePointer TextureUsage::createMetallicTextureFromImage(Image&& srcImage, const std::string& srcImageName,
                                                                  bool compress, BackendTarget target, const std::atomic<bool>& abortProcessing) {
+    return process2DTextureGrayscaleFromImage(std::move(srcImage), srcImageName, compress, target, false, abortProcessing);
+}
+
+gpu::TexturePointer TextureUsage::createOcclusionTextureFromImage(Image&& srcImage, const std::string& srcImageName,
+                                                                  bool compress, BackendTarget target, const std::atomic<bool>& abortProcessing) {
     return process2DTextureGrayscaleFromImage(std::move(srcImage), srcImageName, compress, target, false, abortProcessing);
 }
 

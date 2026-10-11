@@ -145,7 +145,9 @@ void main(void) {
         <@else@>
             <$fetchMaterialTexturesCoord0(matKey, _texCoord0, albedoTex, roughnessTex, _SCRIBE_NULL, metallicTex, emissiveTex, scatteringTex)$>
         <@endif@>
-            <$fetchMaterialTexturesCoord1(matKey, _texCoord1, occlusionTex)$>
+            // a packed occlusion map shares the other maps' texture coordinates; one of its own has the lightmap's
+            vec2 occlusionTexCoord = mix(_texCoord1, _texCoord0, float((matKey & OCCLUSION_TEXCOORD0_BIT) != 0));
+            <$fetchMaterialTexturesCoord1(matKey, occlusionTexCoord, occlusionTex)$>
     <@else@>
         <@if HIFI_USE_NORMALMAP@>
             <$fetchMaterialTexturesCoord0(matKey, _texCoord0, albedoTex, roughnessTex, normalTex, metallicTex)$>

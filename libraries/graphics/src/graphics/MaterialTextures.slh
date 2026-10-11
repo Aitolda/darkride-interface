@@ -251,14 +251,21 @@ vec3 fetchLightMap(vec2 uv) {
 <@func evalMaterialRoughness(fetchedRoughness, materialRoughness, matKey, roughness)@>
 {
     // (hasTexture ?
-    //    texture * (hasFactor ? factor : 1) :
+    //    (fromSmoothness ?
+    //       1 - (1 - factor) * (1 - texture) :     // Unity's URP/Lit: 1 - smoothness scale * smoothness map
+    //       texture * (hasFactor ? factor : 1)) :
     //    factor
     // )
+    float roughnessFromSmoothness = 1.0 - (1.0 - <$materialRoughness$>) * (1.0 - <$fetchedRoughness$>);
     <$roughness$> = mix(
         <$materialRoughness$>,
-        <$fetchedRoughness$> * mix(
-            1.0, <$materialRoughness$>,
-            float((<$matKey$> & GLOSSY_VAL_BIT) != 0) // GLOSSY needs to be renamed
+        mix(
+            <$fetchedRoughness$> * mix(
+                1.0, <$materialRoughness$>,
+                float((<$matKey$> & GLOSSY_VAL_BIT) != 0) // GLOSSY needs to be renamed
+            ),
+            roughnessFromSmoothness,
+            float((<$matKey$> & ROUGHNESS_FROM_SMOOTHNESS_BIT) != 0)
         ),
         float((<$matKey$> & ROUGHNESS_MAP_BIT) != 0)
     );
@@ -293,7 +300,7 @@ vec3 fetchLightMap(vec2 uv) {
 
 <@func evalMaterialOcclusion(fetchedOcclusion, matKey, occlusion)@>
 {
-    <$occlusion$> = <$fetchedOcclusion$>;
+    <$occlusion$> = mix(1.0, <$fetchedOcclusion$>, getMaterialOcclusionStrength());
 }
 <@endfunc@>
 

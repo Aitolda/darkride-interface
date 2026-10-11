@@ -85,13 +85,16 @@ namespace PropertySpecs {
     // sets the property (and only it) on the properties; false when the key is unknown
     bool set(const QString& key, EntityItemProperties& properties, const QVariant& value);
 
-    // An entry of userData shown as a field of its own (a light's Cookie) has the key "userData:<entry>". Its value
-    // is read from the userData JSON object, and set() writes it back into the userData the properties already hold,
-    // so the entity's current userData must be put there first; the entity's other entries are kept.
+    // An entry of a JSON property shown as a field of its own has the key "<property>:<entry>": "userData:cookie" (a
+    // light's Cookie), "materialData:packing" (a material's Packing). Its value is read from the property's JSON, and
+    // set() writes it back into the JSON the properties already hold, so the entity's current value of the property
+    // must be put there first; the JSON's other entries are kept.
+    bool isEntry(const QString& key);
     bool isUserDataEntry(const QString& key);
-    // the entity's userData can hold entries: it is empty, or a JSON object (not a script's own text)
-    bool takesUserDataEntries(const EntityItemProperties& properties);
-    // the property an edit of the key changes, for undo: dimensions for Scale, userData for an entry of it
+    // the entity's property can hold the key's entry: userData that is empty or a JSON object (not a script's own
+    // text), materialData that is empty or a set of materials
+    bool takesEntry(const QString& key, const EntityItemProperties& properties);
+    // the property an edit of the key changes, for undo: dimensions for Scale, the JSON property for an entry of it
     QString storedKey(const QString& key);
 
     // an entity's own size, what Scale 1 means: a model's natural dimensions (zero until the model

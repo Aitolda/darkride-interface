@@ -57,6 +57,13 @@ public:
         LIGHT_MAP_BIT,
         SCATTERING_MAP_BIT,
 
+        // how a material's packing reads its maps (see the "packing" of NetworkMaterialResource::parseJSONMaterial);
+        // they go with the roughness map and the occlusion map, and need no fallthrough of their own
+        ROUGHNESS_FROM_SMOOTHNESS_BIT,  // the roughness map holds 1 - smoothness and the roughness 1 - the smoothness
+                                        // scale, combined as Unity's URP/Lit does: 1 - smoothness scale * smoothness map
+        OCCLUSION_TEXCOORD0_BIT,        // the occlusion map is read with the first texture coordinates, as the other
+                                        // maps are, rather than the second (lightmap) ones
+
         NUM_FLAGS,
     };
     typedef std::bitset<NUM_FLAGS> Flags;
@@ -206,6 +213,12 @@ public:
 
     void setScatteringMap(bool value) { _flags.set(SCATTERING_MAP_BIT, value); }
     bool isScatteringMap() const { return _flags[SCATTERING_MAP_BIT]; }
+
+    void setRoughnessFromSmoothness(bool value) { _flags.set(ROUGHNESS_FROM_SMOOTHNESS_BIT, value); }
+    bool isRoughnessFromSmoothness() const { return _flags[ROUGHNESS_FROM_SMOOTHNESS_BIT]; }
+
+    void setOcclusionTexcoord0(bool value) { _flags.set(OCCLUSION_TEXCOORD0_BIT, value); }
+    bool isOcclusionTexcoord0() const { return _flags[OCCLUSION_TEXCOORD0_BIT]; }
 
     void setMapChannel(MapChannel channel, bool value) { _flags.set(EMISSIVE_MAP_BIT + channel, value); }
     bool isMapChannel(MapChannel channel) const { return _flags[EMISSIVE_MAP_BIT + channel]; }
@@ -382,6 +395,15 @@ public:
     void setScattering(float scattering);
     float getScattering() const { return _scattering; }
 
+    // how much the occlusion map darkens: 0 not at all, 1 fully (glTF's occlusion strength, URP/Lit's Occlusion)
+    static const float DEFAULT_OCCLUSION_STRENGTH;
+    void setOcclusionStrength(float occlusionStrength);
+    float getOcclusionStrength() const { return _occlusionStrength; }
+
+    // see MaterialKey::ROUGHNESS_FROM_SMOOTHNESS_BIT and OCCLUSION_TEXCOORD0_BIT
+    void setRoughnessFromSmoothness(bool value) { _key.setRoughnessFromSmoothness(value); }
+    void setOcclusionTexcoord0(bool value) { _key.setOcclusionTexcoord0(value); }
+
     // The texture map to channel association
     static const int NUM_TEXCOORD_TRANSFORMS { 2 };
     void setTextureMap(MapChannel channel, const TextureMapPointer& textureMap);
@@ -448,6 +470,7 @@ private:
     float _metallic { DEFAULT_METALLIC };
     float _scattering { DEFAULT_SCATTERING };
     float _opacityCutoff { DEFAULT_OPACITY_CUTOFF };
+    float _occlusionStrength { DEFAULT_OCCLUSION_STRENGTH };
     std::array<glm::mat4, NUM_TEXCOORD_TRANSFORMS> _texcoordTransforms;
     glm::vec2 _lightmapParams { 0.0, 1.0 };
     glm::vec2 _materialParams { 0.0, 1.0 };
@@ -528,6 +551,9 @@ public:
         // x: material mode (0 for UV, 1 for PROJECTED)
         // y: 1 for texture repeat, 0 for discard outside of 0 - 1
         glm::vec2 _materialParams { 0.0, 1.0 };
+
+        float _occlusionStrength { Material::DEFAULT_OCCLUSION_STRENGTH };
+        glm::vec3 _spare { 0.0f };
 
         Schema() {
             for (auto& transform : _texcoordTransforms) {

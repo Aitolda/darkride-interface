@@ -184,7 +184,9 @@ EntityItemProperties EditorCreate::properties(const QString& key, const glm::vec
         p.setName("Material");
         p.setDimensions(glm::vec3(0.1f));
         p.setMaterialURL("materialData");
-        p.setMaterialData("{\"materials\":{\"albedo\":[0.8,0.8,0.8],\"roughness\":0.9,\"metallic\":0.0}}");
+        // as a new URP/Lit material starts in Unity: maps packed its way, Smoothness 0.5, Metallic 0
+        p.setMaterialData("{\"materials\":{\"packing\":\"unity\",\"albedo\":[0.8,0.8,0.8],\"smoothness\":0.5,"
+                          "\"metallic\":0.0}}");
         p.setPriority(1);
     } else if (key == "grid") {
         p.setType(EntityTypes::Grid);

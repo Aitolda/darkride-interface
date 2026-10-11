@@ -71,6 +71,25 @@ bool NetworkMaterialResource::parseJSONColor(const QJsonValue& array, glm::vec3&
     return false;
 }
 
+// URP/Lit's Smoothness when a material doesn't give one
+static const float UNITY_DEFAULT_SMOOTHNESS { 0.5f };
+
+// the channel of a packed picture a map is read from: "r", "g", "b" or "a" (or "red", "green", "blue", "alpha");
+// anything else reads the picture as it is
+static image::ColorChannel parseJSONChannel(const QJsonValue& value) {
+    QString name = value.toString().toLower();
+    if (name == "r" || name == "red") {
+        return image::ColorChannel::RED;
+    } else if (name == "g" || name == "green") {
+        return image::ColorChannel::GREEN;
+    } else if (name == "b" || name == "blue") {
+        return image::ColorChannel::BLUE;
+    } else if (name == "a" || name == "alpha") {
+        return image::ColorChannel::ALPHA;
+    }
+    return image::ColorChannel::NONE;
+}
+
 /**jsdoc
  * A material or set of materials used by a {@link Entities.EntityType|Material entity}.
  * @typedef {object} Entities.MaterialResource
@@ -134,7 +153,39 @@ NetworkMaterialResource::ParsedMaterials NetworkMaterialResource::parseJSONMater
  * @property {number|string} roughness - The roughness, range <code>0.0</code> &ndash; <code>1.0</code>. 
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
  * @property {number|string} metallic - The metallicness, range <code>0.0</code> &ndash; <code>1.0</code>. 
+ *     With a <code>"unity"</code> packing and a <code>metallicMap</code>, or an <code>"orm"</code> packing and an
+ *     <code>ormMap</code>, it goes unused.
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
+ * @property {string} packing="custom" - How occlusion, roughness and metallic are packed into pictures:
+ *     <ul>
+ *         <li><code>"unity"</code>: as Unity's URP/Lit packs them. <code>metallicMap</code> holds metallic in red and 
+ *         smoothness in alpha, <code>smoothness</code> scales the smoothness, and <code>occlusionMap</code> is read from
+ *         green.</li>
+ *         <li><code>"orm"</code>: as glTF and Unreal pack them. <code>ormMap</code> holds occlusion, roughness and metallic
+ *         in red, green and blue.</li>
+ *         <li><code>"custom"</code> (the default): each map is a picture of its own, read from red unless its 
+ *         <code>&lt;map&gt;Channel</code> says otherwise.</li>
+ *     </ul>
+ *     Each packing ignores the others' keys, so a material can keep the maps of several and switch between them.
+ *     <code>"hifi_pbr"</code> model only.
+ * @property {number|string} smoothness=0.5 - With a <code>"unity"</code> packing, the smoothness, range <code>0.0</code>
+ *     &ndash; <code>1.0</code>, used instead of <code>roughness</code>; with a <code>metallicMap</code>, it scales the map's
+ *     smoothness, as URP/Lit's Smoothness does.
+ *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
+ * @property {string} smoothnessSource="metallicAlpha" - With a <code>"unity"</code> packing, where smoothness comes from:
+ *     <code>"metallicAlpha"</code>, the <code>metallicMap</code>'s alpha, or <code>"albedoAlpha"</code>, the
+ *     <code>albedoMap</code>'s alpha (which then isn't opacity). <code>"hifi_pbr"</code> model only.
+ * @property {string} ormMap - With an <code>"orm"</code> packing, the URL of the picture holding occlusion, roughness and
+ *     metallic in red, green and blue. Its values are used as they are: <code>roughness</code> and <code>metallic</code>
+ *     apply only without it.
+ *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
+ * @property {number} occlusionStrength=1.0 - How much the occlusion map darkens, range <code>0.0</code> (not at all)
+ *     &ndash; <code>1.0</code> (fully). <code>"hifi_pbr"</code> model only.
+ * @property {string} roughnessMapChannel - With a <code>"custom"</code> packing, the channel of <code>roughnessMap</code>'s
+ *     picture to read: <code>"r"</code>, <code>"g"</code>, <code>"b"</code> or <code>"a"</code>. So are 
+ *     <code>glossMapChannel</code>, <code>metallicMapChannel</code>, <code>specularMapChannel</code> and
+ *     <code>occlusionMapChannel</code> for their maps. Without one, a map is read from red.
+ *     <code>"hifi_pbr"</code> model only.
  * @property {number|string} scattering - The scattering, range <code>0.0</code> &ndash; <code>1.0</code>. 
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
  * @property {string} emissiveMap - The URL of the emissive texture image. 
@@ -171,7 +222,7 @@ NetworkMaterialResource::ParsedMaterials NetworkMaterialResource::parseJSONMater
  *     both. 
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
  * @property {string} metallicMap - The URL of the metallic texture image. You can use this or <code>specularMap</code>, but 
- *     not both. 
+ *     not both. With a <code>"unity"</code> packing, it holds metallic in red and smoothness in alpha. 
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
  * @property {string} specularMap - The URL of the specular texture image. You can use this or <code>metallicMap</code>, but 
  *     not both. 
@@ -180,7 +231,8 @@ NetworkMaterialResource::ParsedMaterials NetworkMaterialResource::parseJSONMater
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
  * @property {string} bumpMap - The URL of the bump texture image. You can use this or <code>normalMap</code>, but not both. 
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
- * @property {string} occlusionMap - The URL of the occlusion texture image. 
+ * @property {string} occlusionMap - The URL of the occlusion texture image. With a <code>"unity"</code> packing, it is read
+ *     from green, with the other maps' texture coordinates rather than the lightmap's.
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
  * @property {string} scatteringMap - The URL of the scattering texture image. Only used if <code>normalMap</code> or 
  *     <code>bumpMap</code> is specified. 
@@ -221,6 +273,21 @@ std::pair<std::string, std::shared_ptr<NetworkMaterial>> NetworkMaterialResource
     const QString FALLTHROUGH("fallthrough");
     if (modelString == graphics::Material::HIFI_PBR) {
         auto material = std::make_shared<NetworkMaterial>();
+
+        // How occlusion, roughness and metallic are packed into pictures (see "packing" above). Each packing reads
+        // its own keys and leaves the others' alone, so that switching between them loses nothing.
+        const QString packing = materialJSON.value("packing").toString();
+        const bool unityPacking = packing == "unity";
+        const bool ormPacking = packing == "orm";
+        const bool customPacking = !unityPacking && !ormPacking;
+        // Unity's URP/Lit reads smoothness from the metallic map's alpha, or from the albedo map's
+        const bool smoothnessFromAlbedo = unityPacking && materialJSON.value("smoothnessSource").toString() == "albedoAlpha";
+        // and with a metallic map, its Metallic value goes unused; an ORM map is used as it is, as in Unreal, so that
+        // switching a material between the packings needs nothing else changed
+        const bool unityMetallicMap = unityPacking && !materialJSON.value("metallicMap").toString().isEmpty();
+        const bool ormMap = ormPacking && !materialJSON.value("ormMap").toString().isEmpty();
+        bool smoothnessSet = false;
+
         for (auto& key : materialJSON.keys()) {
             if (key == "name") {
                 auto nameJSON = materialJSON.value(key);
@@ -266,19 +333,33 @@ std::pair<std::string, std::shared_ptr<NetworkMaterial>> NetworkMaterialResource
                         material->setAlbedo(color, isSRGB);
                     }
                 }
-            } else if (key == "roughness") {
+            } else if (key == "roughness" && !unityPacking && !ormMap) {
                 auto value = materialJSON.value(key);
                 if (value.isString() && value.toString() == FALLTHROUGH) {
                     material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::GLOSSY_VAL_BIT);
                 } else if (value.isDouble()) {
                     material->setRoughness(value.toDouble());
                 }
-            } else if (key == "metallic") {
+            } else if (key == "metallic" && !unityMetallicMap && !ormMap) {
                 auto value = materialJSON.value(key);
                 if (value.isString() && value.toString() == FALLTHROUGH) {
                     material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::METALLIC_VAL_BIT);
                 } else if (value.isDouble()) {
                     material->setMetallic(value.toDouble());
+                }
+            } else if (key == "smoothness" && unityPacking) {
+                auto value = materialJSON.value(key);
+                if (value.isString() && value.toString() == FALLTHROUGH) {
+                    material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::GLOSSY_VAL_BIT);
+                    smoothnessSet = true;
+                } else if (value.isDouble()) {
+                    material->setRoughness(1.0f - glm::clamp((float)value.toDouble(), 0.0f, 1.0f));
+                    smoothnessSet = true;
+                }
+            } else if (key == "occlusionStrength") {
+                auto value = materialJSON.value(key);
+                if (value.isDouble()) {
+                    material->setOcclusionStrength(value.toDouble());
                 }
             } else if (key == "opacityMapMode") {
                 auto value = materialJSON.value(key);
@@ -336,6 +417,9 @@ std::pair<std::string, std::shared_ptr<NetworkMaterial>> NetworkMaterialResource
                     QString valueString = value.toString();
                     if (valueString == FALLTHROUGH) {
                         material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::ALBEDO_MAP_BIT);
+                        if (smoothnessFromAlbedo) {
+                            material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::ROUGHNESS_MAP_BIT);
+                        }
                     } else {
                         bool useAlphaChannel = false;
                         auto opacityMap = materialJSON.find("opacityMap");
@@ -344,46 +428,83 @@ std::pair<std::string, std::shared_ptr<NetworkMaterial>> NetworkMaterialResource
                             useAlphaChannel = true;
                         }
                         material->setAlbedoMap(baseUrl.resolved(valueString), useAlphaChannel);
+                        if (smoothnessFromAlbedo) {
+                            material->setRoughnessMap(baseUrl.resolved(valueString), true, image::ColorChannel::ALPHA);
+                            material->setRoughnessFromSmoothness(true);
+                            // its alpha is smoothness, not opacity (an "opacityMapMode" of the material's own still wins)
+                            material->setOpacityMapMode(graphics::MaterialKey::OPACITY_MAP_OPAQUE);
+                        }
                     }
                 }
-            } else if (key == "roughnessMap") {
+            } else if (key == "roughnessMap" && customPacking) {
                 auto value = materialJSON.value(key);
                 if (value.isString()) {
                     auto valueString = value.toString();
                     if (valueString == FALLTHROUGH) {
                         material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::ROUGHNESS_MAP_BIT);
                     } else {
-                        material->setRoughnessMap(baseUrl.resolved(valueString), false);
+                        material->setRoughnessMap(baseUrl.resolved(valueString), false,
+                                                  parseJSONChannel(materialJSON.value("roughnessMapChannel")));
                     }
                 }
-            } else if (key == "glossMap") {
+            } else if (key == "glossMap" && customPacking) {
                 auto value = materialJSON.value(key);
                 if (value.isString()) {
                     auto valueString = value.toString();
                     if (valueString == FALLTHROUGH) {
                         material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::ROUGHNESS_MAP_BIT);
                     } else {
-                        material->setRoughnessMap(baseUrl.resolved(valueString), true);
+                        material->setRoughnessMap(baseUrl.resolved(valueString), true,
+                                                  parseJSONChannel(materialJSON.value("glossMapChannel")));
                     }
                 }
-            } else if (key == "metallicMap") {
+            } else if (key == "metallicMap" && !ormPacking) {
+                auto value = materialJSON.value(key);
+                if (value.isString()) {
+                    auto valueString = value.toString();
+                    if (valueString == FALLTHROUGH) {
+                        material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::METALLIC_MAP_BIT);
+                        if (unityPacking && !smoothnessFromAlbedo) {
+                            material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::ROUGHNESS_MAP_BIT);
+                        }
+                    } else if (unityPacking) {
+                        // URP/Lit's Metallic Map: metallic in red, smoothness in alpha
+                        material->setMetallicMap(baseUrl.resolved(valueString), false, image::ColorChannel::RED);
+                        if (!smoothnessFromAlbedo) {
+                            material->setRoughnessMap(baseUrl.resolved(valueString), true, image::ColorChannel::ALPHA);
+                            material->setRoughnessFromSmoothness(true);
+                        }
+                    } else {
+                        material->setMetallicMap(baseUrl.resolved(valueString), false,
+                                                 parseJSONChannel(materialJSON.value("metallicMapChannel")));
+                    }
+                }
+            } else if (key == "specularMap" && customPacking) {
                 auto value = materialJSON.value(key);
                 if (value.isString()) {
                     auto valueString = value.toString();
                     if (valueString == FALLTHROUGH) {
                         material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::METALLIC_MAP_BIT);
                     } else {
-                        material->setMetallicMap(baseUrl.resolved(valueString), false);
+                        material->setMetallicMap(baseUrl.resolved(valueString), true,
+                                                 parseJSONChannel(materialJSON.value("specularMapChannel")));
                     }
                 }
-            } else if (key == "specularMap") {
+            } else if (key == "ormMap" && ormPacking) {
+                // glTF's and Unreal's: occlusion, roughness and metallic in red, green and blue
                 auto value = materialJSON.value(key);
                 if (value.isString()) {
                     auto valueString = value.toString();
                     if (valueString == FALLTHROUGH) {
+                        material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::OCCLUSION_MAP_BIT);
+                        material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::ROUGHNESS_MAP_BIT);
                         material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::METALLIC_MAP_BIT);
                     } else {
-                        material->setMetallicMap(baseUrl.resolved(valueString), true);
+                        QUrl url = baseUrl.resolved(valueString);
+                        material->setOcclusionMap(url, image::ColorChannel::RED);
+                        material->setOcclusionTexcoord0(true);
+                        material->setRoughnessMap(url, false, image::ColorChannel::GREEN);
+                        material->setMetallicMap(url, false, image::ColorChannel::BLUE);
                     }
                 }
             } else if (key == "normalMap") {
@@ -406,14 +527,19 @@ std::pair<std::string, std::shared_ptr<NetworkMaterial>> NetworkMaterialResource
                         material->setNormalMap(baseUrl.resolved(valueString), true);
                     }
                 }
-            } else if (key == "occlusionMap") {
+            } else if (key == "occlusionMap" && !ormPacking) {
                 auto value = materialJSON.value(key);
                 if (value.isString()) {
                     auto valueString = value.toString();
                     if (valueString == FALLTHROUGH) {
                         material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::OCCLUSION_MAP_BIT);
+                    } else if (unityPacking) {
+                        // URP/Lit's Occlusion Map: green, with the other maps' texture coordinates
+                        material->setOcclusionMap(baseUrl.resolved(valueString), image::ColorChannel::GREEN);
+                        material->setOcclusionTexcoord0(true);
                     } else {
-                        material->setOcclusionMap(baseUrl.resolved(valueString));
+                        material->setOcclusionMap(baseUrl.resolved(valueString),
+                                                  parseJSONChannel(materialJSON.value("occlusionMapChannel")));
                     }
                 }
             } else if (key == "scatteringMap") {
@@ -484,6 +610,10 @@ std::pair<std::string, std::shared_ptr<NetworkMaterial>> NetworkMaterialResource
                     material->setDefaultFallthrough(value.toBool());
                 }
             }
+        }
+
+        if (unityPacking && !smoothnessSet) {
+            material->setRoughness(1.0f - UNITY_DEFAULT_SMOOTHNESS);
         }
 
         // Do this after the texture maps are defined, so it overrides the default transforms
@@ -610,10 +740,12 @@ graphics::TextureMapPointer NetworkMaterial::fetchTextureMap(const QUrl& baseUrl
 
 graphics::TextureMapPointer NetworkMaterial::fetchTextureMap(const QUrl& url,
                                                              image::TextureUsage::Type type,
-                                                             MapChannel channel) {
+                                                             MapChannel channel,
+                                                             image::ColorChannel sourceChannel) {
     auto textureCache = DependencyManager::get<TextureCache>();
     if (textureCache && !url.isEmpty()) {
-        auto texture = textureCache->getTexture(url, type);
+        // a channel of a packed picture is copied into a texture of its own as it loads, as glTF's are
+        auto texture = textureCache->getTexture(url, type, QByteArray(), ABSOLUTE_MAX_TEXTURE_NUM_PIXELS, sourceChannel);
         _textures[channel].texture = texture;
 
         auto map = std::make_shared<graphics::TextureMap>();
@@ -642,24 +774,24 @@ void NetworkMaterial::setNormalMap(const QUrl& url, bool isBumpmap) {
     }
 }
 
-void NetworkMaterial::setRoughnessMap(const QUrl& url, bool isGloss) {
+void NetworkMaterial::setRoughnessMap(const QUrl& url, bool isGloss, image::ColorChannel channel) {
     auto map = fetchTextureMap(url, isGloss ? image::TextureUsage::GLOSS_TEXTURE : image::TextureUsage::ROUGHNESS_TEXTURE,
-                               MapChannel::ROUGHNESS_MAP);
+                               MapChannel::ROUGHNESS_MAP, channel);
     if (map) {
         setTextureMap(MapChannel::ROUGHNESS_MAP, map);
     }
 }
 
-void NetworkMaterial::setMetallicMap(const QUrl& url, bool isSpecular) {
+void NetworkMaterial::setMetallicMap(const QUrl& url, bool isSpecular, image::ColorChannel channel) {
     auto map = fetchTextureMap(url, isSpecular ? image::TextureUsage::SPECULAR_TEXTURE : image::TextureUsage::METALLIC_TEXTURE,
-                               MapChannel::METALLIC_MAP);
+                               MapChannel::METALLIC_MAP, channel);
     if (map) {
         setTextureMap(MapChannel::METALLIC_MAP, map);
     }
 }
 
-void NetworkMaterial::setOcclusionMap(const QUrl& url) {
-    auto map = fetchTextureMap(url, image::TextureUsage::OCCLUSION_TEXTURE, MapChannel::OCCLUSION_MAP);
+void NetworkMaterial::setOcclusionMap(const QUrl& url, image::ColorChannel channel) {
+    auto map = fetchTextureMap(url, image::TextureUsage::OCCLUSION_TEXTURE, MapChannel::OCCLUSION_MAP, channel);
     if (map) {
         setTextureMap(MapChannel::OCCLUSION_MAP, map);
     }

@@ -384,11 +384,14 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
     static std::once_flag once;
     std::call_once(once, [] {
         for (int i = 0; i < graphics::Material::NUM_TOTAL_FLAGS; i++) {
-            // The opacity mask/map are derived from the albedo map
+            // The opacity mask/map are derived from the albedo map, and how the roughness and occlusion maps
+            // are read comes with those maps
             // FIXME: OPACITY_MAP_MODE_BIT is supposed to support fallthrough
             if (i != graphics::MaterialKey::OPACITY_MASK_MAP_BIT &&
                     i != graphics::MaterialKey::OPACITY_TRANSLUCENT_MAP_BIT &&
-                    i != graphics::MaterialKey::OPACITY_MAP_MODE_BIT) {
+                    i != graphics::MaterialKey::OPACITY_MAP_MODE_BIT &&
+                    i != graphics::MaterialKey::ROUGHNESS_FROM_SMOOTHNESS_BIT &&
+                    i != graphics::MaterialKey::OCCLUSION_TEXCOORD0_BIT) {
                 allFlags.insert(i);
             }
         }
@@ -527,6 +530,7 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
                             forceDefault = true;
                         }
                         schemaKey.setRoughnessMap(true);
+                        schemaKey.setRoughnessFromSmoothness(materialKey.isRoughnessFromSmoothness());
                     }
                     break;
                 case graphics::MaterialKey::NORMAL_MAP_BIT:
@@ -561,6 +565,8 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
                             forceDefault = true;
                         }
                         schemaKey.setOcclusionMap(true);
+                        schemaKey.setOcclusionTexcoord0(materialKey.isOcclusionTexcoord0());
+                        schema._occlusionStrength = material->getOcclusionStrength();
                     }
                     break;
                 case graphics::MaterialKey::SCATTERING_MAP_BIT:

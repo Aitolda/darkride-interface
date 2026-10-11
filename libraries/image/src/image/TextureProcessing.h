@@ -49,9 +49,12 @@ namespace TextureUsage {
  *     <tr><td><code>7</code></td><td>Gloss</td><td>Gloss or shine.</td></tr>
  *     <tr><td><code>8</code></td><td>Emissive</td><td>The amount of light reflected.</td></tr>
  *     <tr><td><code>9</code></td><td>Cube</td><td>Cubic image for sky boxes.</td></tr>
- *     <tr><td><code>10</code></td><td>Occlusion or scattering</td><td>How objects or human skin interact with light.</td></tr>
- *     <tr><td><code>11</code></td><td>Lightmap</td><td>Light map.</td></tr>
- *     <tr><td><code>12</code></td><td>Unused</td><td>Texture is not currently used.</td></tr>
+ *     <tr><td><code>10</code></td><td>Ambient</td><td>Cubic image for ambient light.</td></tr>
+ *     <tr><td><code>11</code></td><td>Scattering</td><td>How human skin interacts with light. Occlusion maps used this type
+ *       until they had their own.</td></tr>
+ *     <tr><td><code>12</code></td><td>Lightmap</td><td>Light map.</td></tr>
+ *     <tr><td><code>13</code></td><td>Unused</td><td>Texture is not currently used.</td></tr>
+ *     <tr><td><code>14</code></td><td>Occlusion</td><td>How much ambient light reaches the surface: data, not colour.</td></tr>
  *   </tbody>
  * </table>
  * @typedef {number} TextureCache.TextureType
@@ -70,10 +73,10 @@ enum Type {
     EMISSIVE_TEXTURE,
     SKY_TEXTURE,
     AMBIENT_TEXTURE,
-    OCCLUSION_TEXTURE,
-    SCATTERING_TEXTURE = OCCLUSION_TEXTURE,
+    SCATTERING_TEXTURE,     // occlusion maps had this type too, read as sRGB colour, until they had their own below
     LIGHTMAP_TEXTURE,
-    UNUSED_TEXTURE
+    UNUSED_TEXTURE,
+    OCCLUSION_TEXTURE,      // one channel of linear data, as glTF and Unity's URP read it
 };
 
 using TextureLoader = std::function<gpu::TexturePointer(Image&&, const std::string&, bool, gpu::BackendTarget, const std::atomic<bool>&)>;
@@ -95,6 +98,8 @@ gpu::TexturePointer createRoughnessTextureFromImage(Image&& image, const std::st
                                                     bool compress, gpu::BackendTarget target, const std::atomic<bool>& abortProcessing);
 gpu::TexturePointer createRoughnessTextureFromGlossImage(Image&& image, const std::string& srcImageName,
                                                          bool compress, gpu::BackendTarget target, const std::atomic<bool>& abortProcessing);
+gpu::TexturePointer createOcclusionTextureFromImage(Image&& image, const std::string& srcImageName,
+                                                    bool compress, gpu::BackendTarget target, const std::atomic<bool>& abortProcessing);
 gpu::TexturePointer createMetallicTextureFromImage(Image&& image, const std::string& srcImageName,
                                                    bool compress, gpu::BackendTarget target, const std::atomic<bool>& abortProcessing);
 gpu::TexturePointer createCubeTextureFromImage(Image&& image, const std::string& srcImageName,
