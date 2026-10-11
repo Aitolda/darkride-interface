@@ -121,6 +121,29 @@ QDockWidget#EditorHierarchy::title, QDockWidget#EditorInspector::title {
 #EditorInspector QCheckBox {
     spacing: 6px;
 }
+/* a Range's slider, as Unity draws one: a thin groove and a small round handle */
+#EditorInspector QSlider {
+    min-height: 18px;
+}
+#EditorInspector QSlider::groove:horizontal {
+    height: 3px;
+    background: #2a2a2a;
+    border: 1px solid #1f1f1f;
+    border-radius: 2px;
+}
+#EditorInspector QSlider::handle:horizontal {
+    background: #9a9a9a;
+    border: 1px solid #1f1f1f;
+    width: 10px;
+    margin: -4px 0;
+    border-radius: 6px;
+}
+#EditorInspector QSlider::handle:horizontal:hover {
+    background: #c4c4c4;
+}
+#EditorInspector QSlider::handle:horizontal:disabled {
+    background: #555555;
+}
 #EditorInspector QLabel#EditorInspectorNote {
     color: #8f8f8f;
 }

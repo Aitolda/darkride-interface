@@ -29,6 +29,7 @@
 class QDragEnterEvent;
 class QDropEvent;
 class QNetworkReply;
+class QSlider;
 
 // A label that scrubs a value when dragged sideways, as Unity's numeric labels do.
 class ScrubLabel : public QLabel {
@@ -104,7 +105,8 @@ protected:
     bool _updating { false };              // setValue in progress: widget signals are not the user's
 };
 
-// Int, Float, Degrees
+// Int, Float, Degrees; Slider, with a slider beside the field (Unity's Range): dragging it previews live and its
+// release is the one undo step, as a scrub's is
 class NumberEditor : public PropertyEditor {
     Q_OBJECT
 public:
@@ -119,7 +121,9 @@ public:
     // connects a scrub label to this editor's value
     void attachScrubLabel(ScrubLabel* label);
 private:
+    void showOnSlider();
     ScrubSpinBox* _spin { nullptr };
+    QSlider* _slider { nullptr };
     bool _component { false };
     bool _scrubbing { false };
     double _scrubStart { 0.0 };

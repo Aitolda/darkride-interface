@@ -25,7 +25,7 @@
 #include <EntityTypes.h>
 
 // How a property is edited. The QVariant carried for each kind:
-//   Bool: bool  Int, Float: double  Degrees: double degrees (stored in radians)
+//   Bool: bool  Int, Float, Slider: double  Degrees: double degrees (stored in radians)
 //   String, Url, Json, Image (the picture's URL), UserData (the whole text), Enum (the value name),
 //   CollisionMask (the comma list): QString
 //   Color, FloatColor: QColor  Vec2, Polar (elevation and azimuth in degrees): QVector2D
@@ -34,6 +34,7 @@ enum class PropertyKind {
     Bool,
     Int,
     Float,
+    Slider,     // a number in a range, with a slider beside its field, as Unity shows a shader's Range
     Degrees,
     String,
     Url,
@@ -62,7 +63,9 @@ struct PropertySpec {
     int decimals { 2 };
     QString unit;
     QStringList enumValues; // "value:Label" entries
-    QString showWhen;       // "key=value", "key!=value", "key in a,b,c", any of these joined by " or ", or empty
+    // "key=value", "key!=value", "key in a,b,c", "key not in a,b,c", any of these joined by " and " and then by " or "
+    // (no brackets: "a and b or c" is a and b, or c), or empty
+    QString showWhen;
     bool readOnly { false };
 };
 
@@ -86,9 +89,9 @@ namespace PropertySpecs {
     bool set(const QString& key, EntityItemProperties& properties, const QVariant& value);
 
     // An entry of a JSON property shown as a field of its own has the key "<property>:<entry>": "userData:cookie" (a
-    // light's Cookie), "materialData:packing" (a material's Packing). Its value is read from the property's JSON, and
-    // set() writes it back into the JSON the properties already hold, so the entity's current value of the property
-    // must be put there first; the JSON's other entries are kept.
+    // light's Cookie), "materialData:smoothness" (a material's Smoothness). Its value is read from the property's
+    // JSON, and set() writes it back into the JSON the properties already hold, so the entity's current value of the
+    // property must be put there first; the JSON's other entries are kept.
     bool isEntry(const QString& key);
     bool isUserDataEntry(const QString& key);
     // the entity's property can hold the key's entry: userData that is empty or a JSON object (not a script's own

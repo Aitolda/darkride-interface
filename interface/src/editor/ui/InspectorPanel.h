@@ -80,6 +80,7 @@ private:
     QLabel* _title { nullptr };
     QString _layoutKey;
     QHash<QString, Row> _rows;
+    QHash<QString, QWidget*> _sections;     // each section's header and body, by id
     QHash<QString, bool> _collapsed;
 };
 

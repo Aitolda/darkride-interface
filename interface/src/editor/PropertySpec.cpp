@@ -20,8 +20,10 @@
 #include <QtGui/QVector2D>
 #include <QtGui/QVector3D>
 
+#include <ColorUtils.h>
 #include <GLMHelpers.h>
 #include <PhysicsCollisionGroups.h>
+#include <graphics/Material.h>
 
 namespace {
     using EP = EntityItemProperties;
@@ -46,6 +48,36 @@ namespace {
     glm::vec2 fromQ(const QVector2D& v) { return glm::vec2(v.x(), v.y()); }
     QVector3D toEuler(const glm::quat& q) { return toQ(glm::degrees(safeEulerAngles(q))); }
     glm::quat fromEuler(const QVector3D& e) { return glm::quat(glm::radians(fromQ(e))); }
+
+    // a material's colour as its JSON holds it: [r, g, b] or {"red": r, "green": g, "blue": b}, from 0 to 1, sRGB
+    // unless an array's fourth element is false (as the material's parser reads it); `unset` when there is none
+    QColor jsonColor(const QJsonValue& value, const QJsonValue& unset) {
+        glm::vec3 color;
+        bool sRGB = true;
+        if (value.isArray() && value.toArray().size() >= 3) {
+            QJsonArray array = value.toArray();
+            color = glm::vec3(array[0].toDouble(), array[1].toDouble(), array[2].toDouble());
+            sRGB = array.size() < 4 || !array[3].isBool() || array[3].toBool();
+        } else if (value.isObject()) {
+            QJsonObject object = value.toObject();
+            auto component = [&object](std::initializer_list<const char*> names) {
+                for (const char* name : names) {
+                    if (object.contains(name)) {
+                        return object.value(name).toDouble();
+                    }
+                }
+                return 0.0;
+            };
+            color = glm::vec3(component({ "red", "r", "x" }), component({ "green", "g", "y" }), component({ "blue", "b", "z" }));
+        } else {
+            return unset.isUndefined() ? QColor() : jsonColor(unset, QJsonValue::Undefined);
+        }
+        if (!sRGB) {
+            color = ColorUtils::tosRGBVec3(color);
+        }
+        color = glm::clamp(color, 0.0f, 1.0f);
+        return QColor::fromRgbF(color.r, color.g, color.b);
+    }
 
     // the key light's direction, as the old panel showed it: elevation and azimuth (Vec3.toPolar)
     QVector2D toPolar(const glm::vec3& v) {
@@ -380,39 +412,113 @@ namespace {
             });
         }
 
-        // entries of materialData's materials shown as fields of their own: read from the first material, written to
-        // all of them ("materials" is one material or an array of them); a default value is left out of the JSON
-        struct MaterialEntry { const char* name; const char* defaultValue; };
-        for (const MaterialEntry& entry : { MaterialEntry { "packing", "custom" } }) {
+        // entries of materialData shown as fields of their own, as Unity's material Inspector shows a shader's
+        // properties. A material entity whose URL is "materialData" uses the first of its materials ("materials" is one
+        // material or an array of them), so an entry is read from that one and written to it; Packing, which says how
+        // the set's pictures are laid out, is written to every material. An entry the JSON doesn't hold shows the
+        // value the material has without it. A choice or a picture set back to that is left out of the JSON; numbers
+        // and colours stay as set, so that a slider passing the default doesn't make its entry come and go.
+        enum class Entry { Text, Number, Bool, Color };
+        struct MaterialEntry {
+            const char* name;
+            Entry type;
+            QJsonValue unset;       // the material's value without the entry
+            bool everyMaterial;
+            const char* map { nullptr };    // a picture that changes what the material has without the entry, to:
+            QJsonValue unsetWithMap {};
+        };
+        const QVector<MaterialEntry> materialEntries = {
+            { "packing", Entry::Text, "custom", true },
+            { "cullFaceMode", Entry::Text, "CULL_BACK", false },
+            { "unlit", Entry::Bool, false, false },
+            { "albedoMap", Entry::Text, "", false },
+            { "albedo", Entry::Color, QJsonArray { 1.0, 1.0, 1.0 }, false },    // no albedo: the Base Map as it is
+            { "metallicMap", Entry::Text, "", false },
+            { "ormMap", Entry::Text, "", false },
+            { "metallic", Entry::Number, graphics::Material::DEFAULT_METALLIC, false },
+            { "smoothness", Entry::Number, 0.5, false },    // URP's default, as the material's parser has it
+            { "smoothnessSource", Entry::Text, "metallicAlpha", false },
+            { "roughnessMap", Entry::Text, "", false },
+            { "roughness", Entry::Number, graphics::Material::DEFAULT_ROUGHNESS, false },
+            { "normalMap", Entry::Text, "", false },
+            { "occlusionMap", Entry::Text, "", false },
+            { "occlusionStrength", Entry::Number, graphics::Material::DEFAULT_OCCLUSION_STRENGTH, false },
+            { "emissiveMap", Entry::Text, "", false },
+            // no emission, or with an Emission Map, the map as it is
+            { "emissive", Entry::Color, QJsonArray { 0.0, 0.0, 0.0 }, false, "emissiveMap", QJsonArray { 1.0, 1.0, 1.0 } },
+            { "opacity", Entry::Number, graphics::Material::DEFAULT_OPACITY, false }
+        };
+        for (const MaterialEntry& entry : materialEntries) {
             QString name = entry.name;
-            QString defaultValue = entry.defaultValue;
+            Entry type = entry.type;
+            QJsonValue unset = entry.unset;
+            QString map = entry.map;
+            QJsonValue unsetWithMap = entry.unsetWithMap;
+            bool everyMaterial = entry.everyMaterial;
             a.insert(QStringLiteral("materialData:") + name, Accessor {
-                [name, defaultValue](const EP& p) {
+                [name, type, unset, map, unsetWithMap](const EP& p) {
                     QJsonValue materials = QJsonDocument::fromJson(p.getMaterialData().toUtf8()).object().value("materials");
                     QJsonArray array = materials.toArray();
                     QJsonObject first = materials.isArray() ? (array.isEmpty() ? QJsonObject() : array.first().toObject())
                                                             : materials.toObject();
-                    return QVariant(first.value(name).toString(defaultValue));
+                    QJsonValue value = first.value(name);
+                    QJsonValue without = (!map.isEmpty() && !first.value(map).toString().isEmpty()) ? unsetWithMap : unset;
+                    switch (type) {
+                        case Entry::Text:
+                            return QVariant(value.toString(without.toString()));
+                        case Entry::Number:
+                            return QVariant(value.isDouble() ? value.toDouble() : without.toDouble());
+                        case Entry::Bool:
+                            return QVariant(value.isBool() ? value.toBool() : without.toBool());
+                        case Entry::Color:
+                            return QVariant(jsonColor(value, without));
+                    }
+                    return QVariant();
                 },
-                [name, defaultValue](EP& p, const QVariant& v) {
+                [name, type, unset, everyMaterial](EP& p, const QVariant& v) {
                     QString text = p.getMaterialData();
                     QJsonObject document = QJsonDocument::fromJson(text.toUtf8()).object();
                     QJsonValue materials = document.value("materials");
                     if (!text.trimmed().isEmpty() && !materials.isObject() && !materials.isArray()) {
                         return;   // not a set of materials: left alone
                     }
-                    QString value = v.toString();
                     auto setEntry = [&](QJsonObject material) {
-                        if (value.isEmpty() || value == defaultValue) {
-                            material.remove(name);
-                        } else {
-                            material.insert(name, value);
+                        switch (type) {
+                            case Entry::Text: {
+                                QString value = v.toString();
+                                if (value.isEmpty() || value == unset.toString()) {
+                                    material.remove(name);
+                                } else {
+                                    material.insert(name, value);
+                                }
+                                break;
+                            }
+                            case Entry::Number:
+                                material.insert(name, std::round(v.toDouble() * 10000.0) / 10000.0);
+                                break;
+                            case Entry::Bool:
+                                if (v.toBool() == unset.toBool()) {
+                                    material.remove(name);
+                                } else {
+                                    material.insert(name, v.toBool());
+                                }
+                                break;
+                            case Entry::Color: {
+                                QColor color = v.value<QColor>();
+                                auto channel = [](double c) { return std::round(c * 1000.0) / 1000.0; };
+                                material.insert(name, QJsonArray { channel(color.redF()), channel(color.greenF()),
+                                                                   channel(color.blueF()) });
+                                break;
+                            }
                         }
                         return material;
                     };
                     if (materials.isArray()) {
                         QJsonArray array = materials.toArray();
-                        for (int i = 0; i < array.size(); ++i) {
+                        if (array.isEmpty()) {
+                            array.append(QJsonObject());
+                        }
+                        for (int i = 0; i < (everyMaterial ? array.size() : 1); ++i) {
                             array[i] = setEntry(array[i].toObject());
                         }
                         document.insert("materials", array);
@@ -611,12 +717,8 @@ namespace {
         // a picture the light shines through, as a slide in a projector (Unity's cookie); kept in userData
         with(add(spec("userData:cookie", "Cookie", K::Image, "light")), "isSpotlight=true");
 
-        // material
+        // material: where it comes from and how it lies on what it's applied to
         add(spec("materialURL", "Material URL", K::Url, "material"));
-        // how occlusion, roughness and metallic are packed into pictures, for a material whose data is its own
-        en("materialData:packing", "Packing", "material", { "unity:Unity (Metallic + Smoothness)",
-            "orm:ORM (glTF, Unreal)", "custom:Custom" }, "materialURL=materialData");
-        add(spec("materialData", "Material Data", K::Json, "material"));
         add(spec("parentMaterialName", "Target", K::String, "material"));
         add(spec("priority", "Priority", K::Int, "material"));
         en("materialMappingMode", "Mapping", "material", { "uv:UV space", "projected:3D projected" });
@@ -624,6 +726,48 @@ namespace {
         range(add(spec("materialMappingScale", "Scale", K::Vec2, "material")), 0, DBL_MAX, 0.1, 3);
         stepping(add(spec("materialMappingRot", "Rotation", K::Float, "material")), 1, 1, "°");
         add(spec("materialRepeat", "Repeat", K::Bool, "material"));
+
+        // a material whose data is its own, laid out as Unity's URP/Lit Inspector: its options, then its inputs, each
+        // shown where it applies (Metallic only without a Metallic Map, as in Unity; each packing its own maps)
+#define OWN_DATA "materialURL=materialData"
+#define PACKING_KEY "materialData:packing"
+        // how occlusion, roughness and metallic are packed into pictures
+        en(PACKING_KEY, "Packing", "material_surface", { "unity:Unity (Metallic + Smoothness)", "orm:ORM (glTF, Unreal)",
+            "custom:Custom" }, OWN_DATA);
+        en("materialData:cullFaceMode", "Render Face", "material_surface", { "CULL_BACK:Front", "CULL_FRONT:Back",
+            "CULL_NONE:Both" }, OWN_DATA);
+        with(add(spec("materialData:unlit", "Unlit", K::Bool, "material_surface")), OWN_DATA);
+        auto input = [&](const char* key, const char* label, PropertyKind kind, const char* showWhen) -> PropertySpec& {
+            PropertySpec& s = with(add(spec(key, label, kind, "material_inputs")), showWhen);
+            return kind == K::Slider ? range(s, 0, 1, 0.01, 2) : s;
+        };
+        input("materialData:albedoMap", "Base Map", K::Image, OWN_DATA);
+        input("materialData:albedo", "Base Color", K::Color, OWN_DATA);
+        input("materialData:metallicMap", "Metallic Map", K::Image, OWN_DATA " and " PACKING_KEY " in unity,custom");
+        input("materialData:ormMap", "ORM Map", K::Image, OWN_DATA " and " PACKING_KEY "=orm");
+        input("materialData:metallic", "Metallic", K::Slider,
+            OWN_DATA " and " PACKING_KEY "=custom or "
+            OWN_DATA " and " PACKING_KEY "=unity and materialData:metallicMap= or "
+            OWN_DATA " and " PACKING_KEY "=orm and materialData:ormMap=");
+        input("materialData:smoothness", "Smoothness", K::Slider, OWN_DATA " and " PACKING_KEY "=unity");
+        en("materialData:smoothnessSource", "Smoothness Source", "material_inputs", { "metallicAlpha:Metallic Alpha",
+            "albedoAlpha:Albedo Alpha" }, OWN_DATA " and " PACKING_KEY "=unity");
+        input("materialData:roughnessMap", "Roughness Map", K::Image, OWN_DATA " and " PACKING_KEY "=custom");
+        input("materialData:roughness", "Roughness", K::Slider,
+            OWN_DATA " and " PACKING_KEY "=custom or "
+            OWN_DATA " and " PACKING_KEY "=orm and materialData:ormMap=");
+        input("materialData:normalMap", "Normal Map", K::Image, OWN_DATA);
+        input("materialData:occlusionMap", "Occlusion Map", K::Image, OWN_DATA " and " PACKING_KEY " in unity,custom");
+        input("materialData:occlusionStrength", "Occlusion Strength", K::Slider,
+            OWN_DATA " and " PACKING_KEY " in unity,custom and materialData:occlusionMap!= or "
+            OWN_DATA " and " PACKING_KEY "=orm and materialData:ormMap!=");
+        input("materialData:emissiveMap", "Emission Map", K::Image, OWN_DATA);
+        input("materialData:emissive", "Emission Color", K::Color, OWN_DATA);
+        input("materialData:opacity", "Opacity", K::Slider, OWN_DATA);
+#undef OWN_DATA
+#undef PACKING_KEY
+        // all of it as JSON, for scripters and for what has no field of its own
+        add(spec("materialData", "Material Data", K::Json, "material_data"));
 
         // grid
         add(spec("color", "Color", K::Color, "grid"));
@@ -721,6 +865,9 @@ namespace {
         { "web", "Web", false },
         { "light", "Light", false },
         { "material", "Material", false },
+        { "material_surface", "Surface Options", true },
+        { "material_inputs", "Surface Inputs", true },
+        { "material_data", "Material Data", true },
         { "grid", "Grid", false },
         { "particles", "Particles", false },
         { "particles_emit", "Emit", true },
@@ -795,7 +942,7 @@ static QStringList typeSections(EntityTypes::EntityType type, bool multiple) {
         case EntityTypes::Light:
             return { "base", "spatial", "light", "behavior", "collision", "physics" };
         case EntityTypes::Material:
-            return { "base", "spatial", "material", "behavior" };
+            return { "base", "spatial", "material", "material_surface", "material_inputs", "material_data", "behavior" };
         case EntityTypes::ParticleEffect:
             return { "base", "spatial", "particles", "particles_emit", "particles_size", "particles_color", "particles_alpha",
                      "particles_acceleration", "particles_spin", "particles_constraints", "behavior", "physics" };

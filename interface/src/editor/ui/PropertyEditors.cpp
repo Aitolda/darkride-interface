@@ -9,6 +9,7 @@
 #include "PropertyEditors.h"
 
 #include <cmath>
+#include <functional>
 
 #include <QtCore/QDir>
 #include <QtCore/QEvent>
@@ -26,6 +27,7 @@
 #include "UserDataEditor.h"
 #include <QtCore/QRect>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QSignalBlocker>
 #include <QtGui/QClipboard>
 #include <QtGui/QColor>
 #include <QtGui/QMouseEvent>
@@ -37,6 +39,7 @@
 #include <QtWidgets/QColorDialog>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QMenu>
+#include <QtWidgets/QSlider>
 #include <QtWidgets/QVBoxLayout>
 
 #include <glm/glm.hpp>
@@ -47,6 +50,31 @@ namespace {
     const double SCRUB_COARSE = 10.0;   // Shift
     const double HUGE_RANGE = 1.0e9;
     const QString MIXED = QStringLiteral("—");
+    const int SLIDER_MAX_STEPS = 10000;
+    const int SLIDER_FIELD_PIXELS = 52;     // a Range's field beside its slider: room for "0.00"
+
+    // the Inspector's slider: it says when the mouse goes down on it, before the press moves the value, and when it
+    // comes up; the wheel scrolls the Inspector instead of changing the value under the pointer
+    class InspectorSlider : public QSlider {
+    public:
+        explicit InspectorSlider(QWidget* parent) : QSlider(Qt::Horizontal, parent) {}
+        std::function<void()> pressed;
+        std::function<void()> released;
+    protected:
+        void mousePressEvent(QMouseEvent* event) override {
+            if (event->button() == Qt::LeftButton && pressed) {
+                pressed();
+            }
+            QSlider::mousePressEvent(event);
+        }
+        void mouseReleaseEvent(QMouseEvent* event) override {
+            QSlider::mouseReleaseEvent(event);
+            if (event->button() == Qt::LeftButton && released) {
+                released();
+            }
+        }
+        void wheelEvent(QWheelEvent* event) override { event->ignore(); }
+    };
 
     const char* const COLLISION_GROUPS[] = { "static", "dynamic", "kinematic", "myAvatar", "otherAvatar" };
     const char* const COLLISION_LABELS[] = { "Static", "Dynamic", "Kinematic", "My Avatar", "Other Avatars" };
@@ -112,6 +140,7 @@ QString PropertyEditor::valueToText(const PropertySpec& spec, const QVariant& va
             return value.toBool() ? "true" : "false";
         case PropertyKind::Int:
         case PropertyKind::Float:
+        case PropertyKind::Slider:
         case PropertyKind::Degrees:
             return formatNumber(value.toDouble());
         default:
@@ -172,6 +201,7 @@ bool PropertyEditor::textToValue(const PropertySpec& spec, const QString& text, 
         }
         case PropertyKind::Int:
         case PropertyKind::Float:
+        case PropertyKind::Slider:
         case PropertyKind::Degrees: {
             bool ok = false;
             double number = trimmed.toDouble(&ok);
@@ -328,6 +358,7 @@ PropertyEditor* PropertyEditor::create(const PropertySpec& spec, QWidget* parent
             editor->setMaximumWidth(130);   // a lone number does not need the whole row
             return editor;
         }
+        case PropertyKind::Slider: return new NumberEditor(spec, parent);
         case PropertyKind::String:
         case PropertyKind::Url: return new TextEditor(spec, parent);
         case PropertyKind::Json: return new JsonEditor(spec, parent);
@@ -360,12 +391,61 @@ NumberEditor::NumberEditor(const PropertySpec& spec, QWidget* parent, bool compo
     }
     _spin->setEnabled(!spec.readOnly);
     _spin->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    if (spec.kind == PropertyKind::Slider) {
+        // one step of the slider is one step of the field's last decimal, so the two always agree
+        auto slider = new InspectorSlider(this);
+        _slider = slider;
+        double span = spec.max - spec.min;
+        _slider->setRange(0, qBound(1, (int)std::lround(span * std::pow(10.0, spec.decimals)), SLIDER_MAX_STEPS));
+        _slider->setEnabled(!spec.readOnly);
+        layout->addWidget(_slider, 1);
+        _spin->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        _spin->setFixedWidth(SLIDER_FIELD_PIXELS);
+        // the edit begins as the mouse goes down, before the press moves the value (a click on the groove jumps
+        // there); dragging previews live, and the release is the one undo step, or none if the value is where it was
+        slider->pressed = [this] {
+            _scrubbing = true;
+            _scrubStart = _spin->value();
+            emit editBegan();
+        };
+        slider->released = [this] {
+            if (!_scrubbing) {
+                return;
+            }
+            _scrubbing = false;
+            if (_spin->value() == _scrubStart) {
+                emit editCancelled();
+            } else {
+                emit committed(QVariant(_spin->value()));
+            }
+        };
+        connect(_slider, &QSlider::valueChanged, this, [this](int position) {
+            _updating = true;
+            _spin->setValue(_spec.min + (_spec.max - _spec.min) * position / _slider->maximum());
+            _updating = false;
+            if (_scrubbing) {
+                emit liveValue(QVariant(_spin->value()));
+            } else {
+                emit committed(QVariant(_spin->value()));   // the arrow keys
+            }
+        });
+    }
     layout->addWidget(_spin);
     connect(_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+        showOnSlider();
         if (!_updating && !_scrubbing) {
             emit committed(QVariant(value));
         }
     });
+}
+
+void NumberEditor::showOnSlider() {
+    if (!_slider) {
+        return;
+    }
+    double span = _spec.max - _spec.min;
+    QSignalBlocker blocker(_slider);
+    _slider->setValue(span > 0.0 ? (int)std::lround((_spin->value() - _spec.min) / span * _slider->maximum()) : 0);
 }
 
 QWidget* NumberEditor::createLabel(QWidget* parent) {
@@ -414,6 +494,7 @@ void NumberEditor::attachScrubLabel(ScrubLabel* label) {
 void NumberEditor::setValue(const QVariant& value, bool mixed) {
     _updating = true;
     _spin->setValue(value.toDouble());
+    showOnSlider();
     if (mixed && !_spin->hasFocus()) {   // clicking in replaced the mark with a value to edit
         _spin->showMixed();
     }

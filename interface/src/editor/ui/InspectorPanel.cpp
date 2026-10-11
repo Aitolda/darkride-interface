@@ -8,6 +8,7 @@
 
 #include "InspectorPanel.h"
 
+#include <QtCore/QSet>
 #include <QtCore/QUuid>
 #include <QtGui/QResizeEvent>
 #include <QtWidgets/QFrame>
@@ -143,6 +144,7 @@ void InspectorPanel::rebuild(const QStringList& sections) {
         delete row.editor;
     }
     _rows.clear();
+    _sections.clear();
     while (_contentLayout->count() > 2) {
         auto item = _contentLayout->takeAt(1);
         if (item->widget()) {
@@ -231,6 +233,7 @@ QWidget* InspectorPanel::buildSection(const QString& sectionId, QWidget* parent)
         });
         _rows.insert(key, Row { spec, label, editor });
     }
+    _sections.insert(sectionId, frame);
     return frame;
 }
 
@@ -258,6 +261,10 @@ bool InspectorPanel::conditionHolds(const QString& showWhen, const EntityItemPro
     int orAt = showWhen.indexOf(" or ");
     if (orAt > 0) {
         return conditionHolds(showWhen.left(orAt), first) || conditionHolds(showWhen.mid(orAt + 4), first);
+    }
+    int andAt = showWhen.indexOf(" and ");
+    if (andAt > 0) {
+        return conditionHolds(showWhen.left(andAt), first) && conditionHolds(showWhen.mid(andAt + 5), first);
     }
     int notIn = showWhen.indexOf(" not in ");
     if (notIn > 0) {
@@ -288,13 +295,21 @@ bool InspectorPanel::conditionHolds(const QString& showWhen, const EntityItemPro
 
 void InspectorPanel::applyVisibility(const EntityItemProperties& first) {
     QStringList claimed;
+    QSet<QString> sectionsShown;
     for (auto it = _rows.begin(); it != _rows.end(); ++it) {
         bool shown = conditionHolds(it->spec->showWhen, first);
         it->label->setVisible(shown);
         it->editor->setVisible(shown);
+        if (shown) {
+            sectionsShown.insert(it->spec->section);
+        }
         if (shown && PropertySpecs::isUserDataEntry(it.key())) {
             claimed << it.key().mid(it.key().indexOf(':') + 1);
         }
+    }
+    // a section with nothing to show goes, header and all (a material's Surface Inputs when it comes from a URL)
+    for (auto it = _sections.begin(); it != _sections.end(); ++it) {
+        it.value()->setVisible(sectionsShown.contains(it.key()));
     }
     // an entry of userData with a field of its own showing is left out of the User Data list; with the field
     // hidden (a Cookie on a light made a point light), the list shows it, so that it can still be seen
