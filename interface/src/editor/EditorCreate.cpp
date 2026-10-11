@@ -36,6 +36,12 @@ namespace {
     const glm::u8vec3 GRID_COLOR { 110, 110, 110 };
     const glm::vec3 UNIT_DIMENSIONS { 1.0f };
     const glm::vec3 PANEL_DIMENSIONS { 1.0f, 1.0f, 0.01f };
+    // a quad or circle lies in X and Z, facing up: the engine keeps it flat in Y
+    const glm::vec3 FLAT_DIMENSIONS { 1.0f, 0.0001f, 1.0f };
+    const float FLAT_LIFT = 0.01f;           // just above the surface: lying on it, it would flicker with it
+    const float LIGHT_RANGE = 5.0f;          // how far a new light reaches (half its dimensions)
+    const float POINT_LIGHT_LIFT = 1.5f;     // a lamp's height
+    const float SPOT_LIGHT_LIFT = 2.5f;      // a downlight's
     const QString DEFAULT_IMAGE = "qrc:///images/empty-image-entity.png";
     const QString DEFAULT_PARTICLE = "qrc:///images/wispy-smoke.png";
     const QString DEFAULT_WEB_PAGE = "https://vr.darkride.ai";
@@ -108,7 +114,7 @@ EntityItemProperties EditorCreate::properties(const QString& key, const glm::vec
     if (key == "icosahedron") { return shape("Icosahedron", position); }
     if (key == "quad" || key == "circle") {
         auto p = shape(key == "quad" ? "Quad" : "Circle", position);
-        p.setDimensions(PANEL_DIMENSIONS);
+        p.setDimensions(FLAT_DIMENSIONS);   // 1 x 1 m, lying flat (a 1 x 1 m upright panel came out as a line)
         p.setRotation(facing(cameraYaw));
         return p;
     }
@@ -118,13 +124,13 @@ EntityItemProperties EditorCreate::properties(const QString& key, const glm::vec
     if (key == "point" || key == "spot") {
         p.setType(EntityTypes::Light);
         p.setName(key == "spot" ? "Spot Light" : "Point Light");
-        p.setDimensions(glm::vec3(20.0f));   // the light's reach
+        p.setDimensions(glm::vec3(LIGHT_RANGE * 2.0f));   // the light reaches half its dimensions
         p.setColor(WHITE);
         p.setIntensity(5.0f);
         p.setFalloffRadius(1.0f);
         p.setIsSpotlight(key == "spot");
         p.setExponent(1.0f);
-        p.setCutoff(75.0f);
+        p.setCutoff(45.0f);
         if (key == "spot") {
             p.setRotation(facing(cameraYaw) * glm::angleAxis(-glm::half_pi<float>(), Vectors::RIGHT));   // down
         }
@@ -221,7 +227,12 @@ EntityItemProperties EditorCreate::imageProperties(const QUrl& url, const glm::v
 
 float EditorCreate::lift(const EntityItemProperties& properties) {
     switch (properties.getType()) {
-        case EntityTypes::Light: return 1.0f;
+        case EntityTypes::Light: return properties.getIsSpotlight() ? SPOT_LIGHT_LIFT : POINT_LIGHT_LIFT;
+        case EntityTypes::Shape:
+            if (properties.getShape() == "Quad" || properties.getShape() == "Circle") {
+                return FLAT_LIFT;
+            }
+            return properties.getDimensions().y * 0.5f;
         case EntityTypes::Material: return 0.0f;
         case EntityTypes::Grid: return 0.02f;
         default: return properties.getDimensions().y * 0.5f;   // resting on the surface

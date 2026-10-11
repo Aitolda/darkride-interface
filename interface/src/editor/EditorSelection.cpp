@@ -22,6 +22,8 @@ namespace {
     const QString HIGHLIGHT_LIST = "editorSelection";
     const QString ITEM_TYPE = "entity";
     const int MAX_PARENT_DEPTH = 64;
+    const int HIGHLIGHT_RETRY_MS = 100;
+    const int HIGHLIGHT_RETRY_LIMIT = 50;   // 5 s
 
     QVariantMap color(int red, int green, int blue) {
         QVariantMap map;
@@ -52,6 +54,9 @@ namespace {
 }
 
 EditorSelection::EditorSelection(QObject* parent) : QObject(parent) {
+    _highlightRetry.setSingleShot(true);
+    _highlightRetry.setInterval(HIGHLIGHT_RETRY_MS);
+    connect(&_highlightRetry, &QTimer::timeout, this, &EditorSelection::pushHighlight);
 }
 
 QList<QUuid> EditorSelection::topLevel() const {
@@ -202,6 +207,11 @@ void EditorSelection::setHighlightEnabled(bool enabled) {
 }
 
 void EditorSelection::applyHighlight() {
+    _highlightRetries = 0;
+    pushHighlight();
+}
+
+void EditorSelection::pushHighlight() {
     if (!_highlightEnabled) {
         return;
     }
@@ -209,8 +219,15 @@ void EditorSelection::applyHighlight() {
     if (!selection) {
         return;
     }
+    // the list holds what each entity draws, looked up as it is filled: one with nothing drawn yet is left out
+    auto renderer = qApp->getEntities();
+    bool waiting = false;
     selection->clearSelectedItemsList(HIGHLIGHT_LIST);
     for (const auto& id : _ids) {
         selection->addToSelectedItemsList(HIGHLIGHT_LIST, ITEM_TYPE, id);
+        waiting |= renderer && !render::Item::isValidID(renderer->renderableIdForEntityId(id));
+    }
+    if (waiting && _highlightRetries++ < HIGHLIGHT_RETRY_LIMIT) {
+        _highlightRetry.start();
     }
 }

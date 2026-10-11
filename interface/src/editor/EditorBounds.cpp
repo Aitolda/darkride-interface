@@ -66,6 +66,46 @@ namespace {
     }
 }
 
+namespace {
+    void appendCone(const EditorBoundsShape& shape, QVector<glm::vec3>& points, QVector<glm::vec4>& colors) {
+        // a spot light's beam as Unity draws it: four lines from the light out to the rim of the beam where its
+        // reach ends, the rim, and two arcs across the end (the reach is a distance, so the end is curved)
+        float angle = glm::clamp(shape.angle, 0.0f, (float)M_PI_2);
+        glm::vec3 forward = shape.rotation * glm::vec3(0.0f, 0.0f, -1.0f);
+        glm::vec3 right = shape.rotation * glm::vec3(1.0f, 0.0f, 0.0f);
+        glm::vec3 up = shape.rotation * glm::vec3(0.0f, 1.0f, 0.0f);
+        auto line = [&](const glm::vec3& a, const glm::vec3& b) {
+            points << a << b;
+            colors << shape.color << shape.color;
+        };
+        glm::vec3 rimCenter = shape.position + forward * (shape.range * std::cos(angle));
+        float rimRadius = shape.range * std::sin(angle);
+        glm::vec3 previous;
+        for (int i = 0; i <= CIRCLE_SEGMENTS; ++i) {
+            float around = (float)i / CIRCLE_SEGMENTS * 2.0f * (float)M_PI;
+            glm::vec3 point = rimCenter + (right * std::cos(around) + up * std::sin(around)) * rimRadius;
+            if (i > 0) {
+                line(previous, point);
+            }
+            if (i % (CIRCLE_SEGMENTS / 4) == 0 && i < CIRCLE_SEGMENTS) {
+                line(shape.position, point);
+            }
+            previous = point;
+        }
+        for (const glm::vec3& side : { right, up }) {
+            const int segments = CIRCLE_SEGMENTS / 2;
+            for (int i = 0; i <= segments; ++i) {
+                float tilt = angle * (2.0f * (float)i / segments - 1.0f);
+                glm::vec3 point = shape.position + (forward * std::cos(tilt) + side * std::sin(tilt)) * shape.range;
+                if (i > 0) {
+                    line(previous, point);
+                }
+                previous = point;
+            }
+        }
+    }
+}
+
 void EditorBoundsShared::setShapes(const std::vector<EditorBoundsShape>& shapes) {
     std::lock_guard<std::mutex> lock(_mutex);
     _shapes = shapes;
@@ -104,6 +144,8 @@ void EditorBoundsShared::render(RenderArgs* args) {
     for (const auto& shape : shapes) {
         if (shape.kind == EditorBoundsShape::Sphere) {
             appendSphere(shape, points, colors);
+        } else if (shape.kind == EditorBoundsShape::Cone) {
+            appendCone(shape, points, colors);
         } else {
             appendBox(shape, points, colors);
         }

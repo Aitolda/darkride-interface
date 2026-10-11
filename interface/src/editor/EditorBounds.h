@@ -25,16 +25,18 @@
 #include <render/Scene.h>
 
 struct EditorBoundsShape {
-    enum Kind { Box, Sphere };
+    enum Kind { Box, Sphere, Cone };
     Kind kind { Box };
-    glm::vec3 position;
-    glm::quat rotation;
+    glm::vec3 position;            // a cone's tip
+    glm::quat rotation;            // a cone opens along -Z, the way a spot light shines
     glm::vec3 dimensions { 1.0f };
     glm::vec4 color { 1.0f };
+    float range { 0.0f };          // Cone: how far it reaches from its tip
+    float angle { 0.0f };          // Cone: from its axis to its side, in radians
 
     bool operator==(const EditorBoundsShape& other) const {
         return kind == other.kind && position == other.position && rotation == other.rotation
-            && dimensions == other.dimensions && color == other.color;
+            && dimensions == other.dimensions && color == other.color && range == other.range && angle == other.angle;
     }
 };
 

@@ -240,6 +240,12 @@ namespace {
         P_FLOAT("intensity", Intensity);
         P_FLOAT("falloffRadius", FalloffRadius);
         P_BOOL("isSpotlight", IsSpotlight);
+        // a light's Type, as Unity has it, and its Range: how far it reaches, half its largest dimension
+        // (setting all three is right for a spot light too: the engine shapes it from its length)
+        add("lightType", [](const EP& p) { return QVariant(p.getIsSpotlight() ? "spot" : "point"); },
+            [](EP& p, const QVariant& v) { p.setIsSpotlight(v.toString() == "spot"); });
+        add("range", [](const EP& p) { return QVariant((double)glm::compMax(p.getDimensions()) * 0.5); },
+            [](EP& p, const QVariant& v) { p.setDimensions(glm::vec3((float)v.toDouble() * 2.0f)); });
         P_FLOAT("exponent", Exponent);
         P_FLOAT("cutoff", Cutoff);
 
@@ -519,10 +525,13 @@ namespace {
         add(spec("scriptURL", "Script URL", K::Url, "web"));
 
         // light
+        // Unity's order: Type, Range, then colour and intensity. Range is where the light ends (what its sphere or
+        // cone shows); Falloff Radius is how fast it dims within that (a quarter as bright that far out)
+        en("lightType", "Type", "light", { "point:Point", "spot:Spot" });
+        range(add(spec("range", "Range", K::Float, "light")), 0.01, 5000, 0.1, 2, "m");
         add(spec("color", "Color", K::Color, "light"));
         range(add(spec("intensity", "Intensity", K::Float, "light")), 0, 10000, 0.1, 2);
         range(add(spec("falloffRadius", "Falloff Radius", K::Float, "light")), 0, 10000, 0.1, 2, "m");
-        add(spec("isSpotlight", "Spotlight", K::Bool, "light"));
         with(range(add(spec("exponent", "Spot Exponent", K::Float, "light")), 0, DBL_MAX, 0.01, 2), "isSpotlight=true");
         with(range(add(spec("cutoff", "Spot Cutoff", K::Float, "light")), 0, 90, 0.5, 1, "°"), "isSpotlight=true");
 

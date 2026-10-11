@@ -14,6 +14,7 @@
 
 #include <QtCore/QList>
 #include <QtCore/QObject>
+#include <QtCore/QTimer>
 #include <QtCore/QUuid>
 
 #include <glm/glm.hpp>
@@ -52,9 +53,14 @@ signals:
 
 private:
     void applyHighlight();
+    void pushHighlight();
 
     QList<QUuid> _ids;
     bool _highlightEnabled { false };
+    // an entity made a moment ago (a paste, a duplicate, a new one) has nothing drawn yet, and the outline is
+    // made of what is drawn: the list is sent again shortly, until all of them show
+    QTimer _highlightRetry;
+    int _highlightRetries { 0 };
 };
 
 #endif // hifi_EditorSelection_h

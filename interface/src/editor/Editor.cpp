@@ -12,11 +12,15 @@
 #include <cmath>
 #include <functional>
 
+#include <QtCore/QDateTime>
+#include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QHash>
 #include <QtCore/QMimeData>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QUrl>
 #include <QtGui/QCursor>
+#include <QtGui/QImage>
 #include <QtGui/QDropEvent>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QKeyEvent>
@@ -41,6 +45,7 @@
 #include <EntityScriptingInterface.h>
 #include <EntityTree.h>
 #include <EntityTreeRenderer.h>
+#include <LightEntityItem.h>
 #include <ParticleEffectEntityItem.h>
 #include <gl/GLWidget.h>
 #include <GLMHelpers.h>
@@ -545,10 +550,21 @@ void Editor::updateBounds() {
                         shape.kind = EditorBoundsShape::Box;
                         shape.color = ZONE_COLOR;
                         break;
-                    case EntityTypes::Light:
-                        shape.kind = EditorBoundsShape::Sphere;   // its reach
+                    case EntityTypes::Light: {
+                        // as Unity draws them: a point light's reach as a sphere round it, a spot light's beam as a cone
+                        // down its -Z axis; the reach is half the light's largest dimension (what the engine uses)
+                        auto light = std::static_pointer_cast<LightEntityItem>(entity);
+                        float range = glm::compMax(entity->getScaledDimensions()) * 0.5f;
+                        shape.kind = light->getIsSpotlight() ? EditorBoundsShape::Cone : EditorBoundsShape::Sphere;
                         shape.color = LIGHT_COLOR;
-                        break;
+                        shape.position = entity->getWorldPosition();
+                        shape.rotation = entity->getWorldOrientation();
+                        shape.dimensions = glm::vec3(range * 2.0f);
+                        shape.range = range;
+                        shape.angle = glm::radians(light->getCutoff());
+                        shapes.push_back(shape);
+                        continue;
+                    }
                     case EntityTypes::ParticleEffect: {
                         // the emitter, where the particles start, as Unity draws it: the entity's own dimensions
                         // are the whole space its particles can reach (the engine works them out from speed,
@@ -1550,6 +1566,81 @@ void Editor::pollModelDimensions() {
     }
 }
 
+namespace {
+    QString unescapeHtml(QString text) {
+        return text.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'").replace("&#x2F;", "/");
+    }
+
+    // the address in a srcset with the largest width or density ("a.jpg 320w, b.jpg 1200w", "a.jpg 1x, b.jpg 2x")
+    QString largestInSrcset(const QString& srcset) {
+        static const QRegularExpression SEPARATOR(",\\s+");
+        static const QRegularExpression SPACES("\\s+");
+        QString best;
+        double bestSize = -1.0;
+        for (const QString& candidate : srcset.split(SEPARATOR, Qt::SkipEmptyParts)) {
+            QStringList parts = candidate.trimmed().split(SPACES, Qt::SkipEmptyParts);
+            if (parts.isEmpty()) {
+                continue;
+            }
+            double size = 1.0;
+            if (parts.size() > 1) {
+                bool ok = false;
+                double value = parts[1].left(parts[1].size() - 1).toDouble(&ok);   // "1200w" -> 1200, "2x" -> 2
+                if (ok) {
+                    size = value;
+                }
+            }
+            if (size > bestSize) {
+                bestSize = size;
+                best = parts[0];
+            }
+        }
+        return best;
+    }
+
+    // the addresses of the pictures in dragged HTML, the first picture first. News sites load pictures lazily:
+    // src is then a placeholder (a data: address or a tiny GIF) and the picture is in srcset or a data- attribute.
+    QList<QUrl> pictureAddresses(const QString& html, const QUrl& base) {
+        static const QRegularExpression IMG_TAG("<img\\b[^>]*>", QRegularExpression::CaseInsensitiveOption);
+        static const QRegularExpression ATTRIBUTE("\\s([a-zA-Z_:-]+)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')");
+        static const QStringList PREFERRED = { "srcset", "data-srcset", "data-src", "data-lazy-src", "data-original", "src" };
+        QList<QUrl> addresses;
+        auto tags = IMG_TAG.globalMatch(html);
+        while (tags.hasNext()) {
+            QString tag = tags.next().captured(0);
+            QHash<QString, QString> attributes;
+            auto found = ATTRIBUTE.globalMatch(tag);
+            while (found.hasNext()) {
+                auto match = found.next();
+                attributes.insert(match.captured(1).toLower(), match.captured(2).isNull() ? match.captured(3) : match.captured(2));
+            }
+            for (const auto& name : PREFERRED) {
+                QString value = unescapeHtml(attributes.value(name).trimmed());
+                if (name.endsWith("srcset")) {
+                    value = largestInSrcset(value);
+                }
+                if (value.isEmpty() || value.startsWith("data:", Qt::CaseInsensitive)) {
+                    continue;
+                }
+                if (value.startsWith("//")) {
+                    value.prepend("https:");   // the page's own scheme, which these days is https
+                }
+                QUrl url = base.isValid() ? base.resolved(QUrl(value)) : QUrl(value);
+                if (url.scheme() == "http" || url.scheme() == "https") {
+                    addresses << url;
+                    break;
+                }
+            }
+        }
+        return addresses;
+    }
+
+    // an address fit for the log: no query (it can carry a key), no fragment, no user
+    QString bareAddress(const QUrl& url) {
+        return url.adjusted(QUrl::RemoveQuery | QUrl::RemoveFragment | QUrl::RemoveUserInfo).toString();
+    }
+}
+
 bool Editor::handleDrop(QDropEvent* event) {
     if (!_active) {
         return false;
@@ -1560,6 +1651,9 @@ bool Editor::handleDrop(QDropEvent* event) {
     QList<bool> remoteIsImage;
     QList<bool> localIsImage;
     auto consider = [&](const QUrl& url, bool knownImage) {
+        if (remote.contains(url) || local.contains(url)) {
+            return;   // a browser offers the same picture as a link and in its HTML
+        }
         QString name = url.fileName();
         bool image = knownImage || EditorCreate::isImageFile(name);
         bool model = !image && EditorCreate::isModelFile(name);
@@ -1577,23 +1671,50 @@ bool Editor::handleDrop(QDropEvent* event) {
     for (const auto& url : mime->urls()) {
         consider(url, false);
     }
-    // a browser drags a picture as the link around it (often an article) plus a copy of the file;
-    // the <img src> in the dragged HTML is the picture's own address, which needs no upload
-    if (mime->hasHtml()) {
-        static const QRegularExpression IMG_SRC("<img[^>]*\\ssrc\\s*=\\s*[\"']([^\"']+)[\"']",
-                                                QRegularExpression::CaseInsensitiveOption);
-        auto match = IMG_SRC.match(mime->html());
-        if (match.hasMatch()) {
-            QString src = match.captured(1);
-            src.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'");
-            consider(QUrl(src), true);
+    // a browser drags a picture as the link around it (often an article) plus a copy of the file; the
+    // picture's own address is in the dragged HTML, and needs no upload
+    if (remote.isEmpty() && mime->hasHtml()) {
+        QUrl base;   // what a relative address is relative to: the page, as near as the drag tells
+        for (const auto& url : mime->urls()) {
+            if (url.scheme() == "http" || url.scheme() == "https") {
+                base = url;
+                break;
+            }
+        }
+        for (const auto& url : pictureAddresses(mime->html(), base)) {
+            consider(url, true);
+            if (!remote.isEmpty()) {
+                break;   // the first picture is the one dragged
+            }
         }
     }
     if (remote.isEmpty() && local.isEmpty() && mime->hasText()) {
         consider(QUrl(mime->text().trimmed()), false);
     }
+    // no address at all, but the browser sent the picture itself: upload that copy
+    if (remote.isEmpty() && local.isEmpty() && mime->hasImage()) {
+        QImage image = qvariant_cast<QImage>(mime->imageData());
+        QString path = QDir(QDir::tempPath()).filePath(
+            QString("picture-%1.png").arg(QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss")));
+        if (!image.isNull() && image.save(path, "PNG")) {
+            local << QUrl::fromLocalFile(path);
+            localIsImage << true;
+        }
+    }
+    QStringList offered;
+    for (const auto& url : mime->urls()) {
+        offered << bareAddress(url);
+    }
+    QStringList placing;
+    for (const auto& url : remote + local) {
+        placing << bareAddress(url);
+    }
+    qCDebug(interfaceapp) << "editor drop:" << mime->formats() << "links" << offered << "placing" << placing;
     if (remote.isEmpty() && local.isEmpty()) {
-        return false;
+        if (mime->hasHtml() || mime->hasImage()) {
+            setStatus("Nothing to place: no picture or model found in what was dropped", STATUS_CLEAR_MS);
+        }
+        return false;   // a script or a place, perhaps: the client's own handling
     }
     if (!editable()) {
         return true;   // ours to refuse: said so on the toolbar
