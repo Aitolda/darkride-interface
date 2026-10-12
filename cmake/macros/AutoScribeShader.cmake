@@ -233,6 +233,12 @@ macro(AUTOSCRIBE_SHADER_LIB)
         list(APPEND ALL_SHADER_HEADERS ${SHADER_INCLUDE_FILES})
         list(APPEND ALL_SCRIBE_SHADERS ${SHADER_INCLUDE_FILES})
     endif()
+    # The slot constants shaders include as C headers: a change there must run shadergen too, which then
+    # regenerates the shaders whose scribe dependencies name the header (and no others)
+    file(GLOB_RECURSE SHADER_CONSTANT_FILES ${SRC_FOLDER}/*ShaderConstants.h)
+    if(SHADER_CONSTANT_FILES)
+        list(APPEND ALL_SCRIBE_SHADERS ${SHADER_CONSTANT_FILES})
+    endif()
 
     file(GLOB_RECURSE SHADER_VERTEX_FILES ${SRC_FOLDER}/*.slv)
     if (SHADER_VERTEX_FILES)
