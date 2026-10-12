@@ -770,7 +770,12 @@ QString OffscreenUi::fileDialog(const QVariantMap& properties) {
         );
         fileDialog->setOptions(static_cast<QFileDialog::Options>(properties["options"].toInt()));
         if (properties["saveDialog"].toBool()) fileDialog->setAcceptMode(QFileDialog::AcceptSave);
-        if (properties["selectDirectory"].toBool()) fileDialog->setFileMode(QFileDialog::Directory);
+        if (properties["selectDirectory"].toBool()) {
+            fileDialog->setFileMode(QFileDialog::Directory);
+        } else if (!properties["saveDialog"].toBool()) {
+            // an open dialog returns a file that exists, never a folder, as QFileDialog::getOpenFileName does
+            fileDialog->setFileMode(QFileDialog::ExistingFile);
+        }
         fileDialog->show();
 
         int result = fileDialog->exec();
@@ -830,7 +835,12 @@ ModalDialogListener* OffscreenUi::fileDialogAsync(const QVariantMap& properties)
         );
         fileDialog->setOptions(static_cast<QFileDialog::Options>(properties["options"].toInt()));
         if (properties["saveDialog"].toBool()) fileDialog->setAcceptMode(QFileDialog::AcceptSave);
-        if (properties["selectDirectory"].toBool()) fileDialog->setFileMode(QFileDialog::Directory);
+        if (properties["selectDirectory"].toBool()) {
+            fileDialog->setFileMode(QFileDialog::Directory);
+        } else if (!properties["saveDialog"].toBool()) {
+            // an open dialog returns a file that exists, never a folder, as QFileDialog::getOpenFileName does
+            fileDialog->setFileMode(QFileDialog::ExistingFile);
+        }
         fileDialog->show();
 
         connect(fileDialog, &QFileDialog::fileSelected, [=](const QString& fileConst){

@@ -172,31 +172,31 @@ public:
         QMessageBox::StandardButtons buttons = QMessageBox::Ok,
         QMessageBox::StandardButton defaultButton = QMessageBox::NoButton);
 
-    Q_INVOKABLE QString fileOpenDialog(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
-    Q_INVOKABLE ModalDialogListener* fileOpenDialogAsync(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
+    Q_INVOKABLE QString fileOpenDialog(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::Options());
+    Q_INVOKABLE ModalDialogListener* fileOpenDialogAsync(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::Options());
 
-    Q_INVOKABLE QString fileSaveDialog(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
-    Q_INVOKABLE ModalDialogListener* fileSaveDialogAsync(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
+    Q_INVOKABLE QString fileSaveDialog(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::Options());
+    Q_INVOKABLE ModalDialogListener* fileSaveDialogAsync(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::Options());
 
     Q_INVOKABLE QString existingDirectoryDialog(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
     Q_INVOKABLE ModalDialogListener* existingDirectoryDialogAsync(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
 
-    Q_INVOKABLE QString assetOpenDialog(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
-    Q_INVOKABLE ModalDialogListener* assetOpenDialogAsync(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
+    Q_INVOKABLE QString assetOpenDialog(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::Options());
+    Q_INVOKABLE ModalDialogListener* assetOpenDialogAsync(const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::Options());
 
     // Compatibility with QFileDialog::getOpenFileName
-    static QString getOpenFileName(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);    
-    static ModalDialogListener* getOpenFileNameAsync(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
+    static QString getOpenFileName(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::Options());    
+    static ModalDialogListener* getOpenFileNameAsync(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::Options());
 
     // Compatibility with QFileDialog::getSaveFileName
-    static QString getSaveFileName(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
-    static ModalDialogListener* getSaveFileNameAsync(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
+    static QString getSaveFileName(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::Options());
+    static ModalDialogListener* getSaveFileNameAsync(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::Options());
     // Compatibility with QFileDialog::getExistingDirectory
     static QString getExistingDirectory(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
     static ModalDialogListener* getExistingDirectoryAsync(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
 
-    static QString getOpenAssetName(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
-    static ModalDialogListener* getOpenAssetNameAsync(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::ShowDirsOnly);
+    static QString getOpenAssetName(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::Options());
+    static ModalDialogListener* getOpenAssetNameAsync(void* ignored, const QString &caption = QString(), const QString &dir = QString(), const QString &filter = QString(), QString *selectedFilter = 0, QFileDialog::Options options = QFileDialog::Options());
 
     Q_INVOKABLE QVariant inputDialog(const Icon icon, const QString& title, const QString& label = QString(), const QVariant& current = QVariant());
     Q_INVOKABLE ModalDialogListener* inputDialogAsync(const Icon icon, const QString& title, const QString& label = QString(), const QVariant& current = QVariant());
