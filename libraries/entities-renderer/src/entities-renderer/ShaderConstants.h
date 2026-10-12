@@ -19,8 +19,9 @@
 #define ENTITIES_TEXTURE_POLYVOX_YMAP 1
 #define ENTITIES_TEXTURE_POLYVOX_ZMAP 2
 
-// Terrain: the layers' colour textures take the material slots, which the terrain's own pipeline leaves free;
-// the layer parameters sit in a buffer slot neither the deferred nor the forward shading binds
+// Terrain: the layers' colour textures take the material texture slots and their parameters the material buffer
+// slot, which the terrain's own pipeline leaves free (the backend has fourteen buffer slots, 0 to 13); an item
+// with a material binds its own there before it draws, so a terrain chunk's leftover never reaches one
 #define ENTITIES_TEXTURE_TERRAIN_LAYER0 0
 #define ENTITIES_TEXTURE_TERRAIN_LAYER1 1
 #define ENTITIES_TEXTURE_TERRAIN_LAYER2 2
@@ -29,7 +30,7 @@
 #define ENTITIES_TEXTURE_TERRAIN_LAYER5 5
 #define ENTITIES_TEXTURE_TERRAIN_LAYER6 6
 #define ENTITIES_TEXTURE_TERRAIN_LAYER7 7
-#define ENTITIES_BUFFER_TERRAIN_LAYERS 14
+#define ENTITIES_BUFFER_TERRAIN_LAYERS 1
 
 
 
