@@ -589,6 +589,10 @@ bool NumberEditor::isEditing() const {
     return _scrubbing || (_spin->hasFocus() && _spin->isTyping());
 }
 
+void NumberEditor::revertTyping() {
+    _spin->setValue(_spin->value());   // the text goes back to the value, which is unchanged until Enter
+}
+
 // --- VectorEditor -------------------------------------------------------------------------------
 
 VectorEditor::VectorEditor(const PropertySpec& spec, QWidget* parent) : PropertyEditor(spec, parent) {
@@ -721,6 +725,11 @@ TextEditor::TextEditor(const PropertySpec& spec, QWidget* parent) : PropertyEdit
     });
 }
 
+void TextEditor::revertTyping() {
+    _edit->setText(_shown);
+    _edit->setModified(false);
+}
+
 void TextEditor::setValue(const QVariant& value, bool mixed) {
     _updating = true;
     _mixed = mixed;
@@ -800,6 +809,11 @@ ImageEditor::ImageEditor(const PropertySpec& spec, QWidget* parent) : PropertyEd
             emit committed(QVariant(QString()));
         }
     });
+}
+
+void ImageEditor::revertTyping() {
+    _url->setText(_shown);
+    _url->setModified(false);
 }
 
 void ImageEditor::setValue(const QVariant& value, bool mixed) {

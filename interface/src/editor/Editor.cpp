@@ -28,6 +28,7 @@
 #include <QtGui/QMouseEvent>
 #include <QtGui/QWheelEvent>
 #include <QtCore/QEvent>
+#include <QtWidgets/QAbstractItemView>
 #include <QtWidgets/QAbstractSpinBox>
 #include <QtWidgets/QAction>
 #include <QtWidgets/QApplication>
@@ -71,6 +72,7 @@
 #include "PropertySpec.h"
 #include "ui/HierarchyPanel.h"
 #include "ui/InspectorPanel.h"
+#include "ui/PropertyEditors.h"
 #include "ui/ViewportContainer.h"
 #include <gl/GLHelpers.h>
 
@@ -2456,8 +2458,14 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
     // holds typing not yet committed; one just clicked into, or committed with Enter, passes them on, so that an
     // undo straight after an edit undoes the edit rather than the typing
     auto fieldPassesUndo = [] {
-        auto line = qobject_cast<QLineEdit*>(QApplication::focusWidget());
-        return line && !line->isModified();
+        QWidget* focus = QApplication::focusWidget();
+        if (auto line = qobject_cast<QLineEdit*>(focus)) {
+            return !line->isModified();
+        }
+        if (auto spin = qobject_cast<ScrubSpinBox*>(focus)) {   // a number field is the keyboard's, not its text
+            return !spin->isTyping();
+        }
+        return false;
     };
     if (command && keyEvent->key() == Qt::Key_Z && (!typing || fieldPassesUndo())) {
         if (!qmlTyping()) {
@@ -2465,6 +2473,28 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
             return true;
         }
         return false;
+    }
+
+    // Enter in an Inspector field is the end of it: the field commits (its own handling, after this) and the
+    // keyboard goes back to the world, so the field is not left highlighted, with the avatar's keys in it. Escape
+    // drops typing not yet committed and does the same. A field in a list (a User Data entry being edited in
+    // place) and the JSON box keep both keys
+    bool fieldKey = keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter || keyEvent->key() == Qt::Key_Escape;
+    if (fieldKey && !keyEvent->isAutoRepeat() && widget == QApplication::focusWidget() && _inspector->isAncestorOf(widget)
+            && (qobject_cast<QLineEdit*>(widget) || qobject_cast<QAbstractSpinBox*>(widget))) {
+        bool inList = false;
+        PropertyEditor* editor = nullptr;
+        for (QWidget* parent = widget->parentWidget(); parent && !editor; parent = parent->parentWidget()) {
+            inList = inList || qobject_cast<QAbstractItemView*>(parent);
+            editor = qobject_cast<PropertyEditor*>(parent);
+        }
+        if (!inList) {
+            if (keyEvent->key() == Qt::Key_Escape && editor) {
+                editor->revertTyping();
+            }
+            QTimer::singleShot(0, this, [this] { focusViewport(); });
+            return keyEvent->key() == Qt::Key_Escape;   // Enter goes on to the field, which commits on it
+        }
     }
 
     // Escape twice in quick succession leaves build mode, wherever the keyboard is but a text field, where

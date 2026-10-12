@@ -98,6 +98,8 @@ public:
     virtual void setValue(const QVariant& value, bool mixed) = 0;
     // the user is in the middle of it: do not refresh the value under them
     virtual bool isEditing() const { return false; }
+    // Escape: typing not yet committed is dropped, the value shown before comes back
+    virtual void revertTyping() {}
     // the value shown now, and whether it stands for differing values (for Copy)
     virtual QVariant currentValue() const = 0;
     virtual bool isMixed() const { return false; }
@@ -130,6 +132,7 @@ public:
     QWidget* createLabel(QWidget* parent) override;
     void setValue(const QVariant& value, bool mixed) override;
     bool isEditing() const override;
+    void revertTyping() override;
     QVariant currentValue() const override { return QVariant(_spin->value()); }
     bool isMixed() const override { return _spin->isMixedShown(); }
     double value() const { return _spin->value(); }
@@ -176,6 +179,7 @@ public:
     TextEditor(const PropertySpec& spec, QWidget* parent = nullptr);
     void setValue(const QVariant& value, bool mixed) override;
     bool isEditing() const override;
+    void revertTyping() override;
     QVariant currentValue() const override { return QVariant(_edit->text()); }
     bool isMixed() const override { return _mixed; }
 private:
@@ -193,6 +197,7 @@ public:
     ImageEditor(const PropertySpec& spec, QWidget* parent = nullptr);
     void setValue(const QVariant& value, bool mixed) override;
     bool isEditing() const override;
+    void revertTyping() override;
     QVariant currentValue() const override { return QVariant(_url->text()); }
     bool isMixed() const override { return _mixed; }
 
