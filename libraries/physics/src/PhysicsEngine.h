@@ -126,7 +126,8 @@ public:
     void removeContacts(ObjectMotionState* motionState);
 
     // Ray casts in the root world's coordinates (the simulation frame), filtered as a body of the given group
-    // and mask would be. A null body filter means "everything".
+    // and mask would be. A null body filter means "everything". castRayClosest tests the root world only;
+    // castRayAll also goes into every frame's world (a rider can be picked), hits sorted by distance.
     bool castRayClosest(const glm::vec3& start, const glm::vec3& end, int32_t group, int32_t mask,
                         const JPH::BodyFilter* bodyFilter, RayHit& result) const;
     void castRayAll(const glm::vec3& start, const glm::vec3& end, int32_t group, int32_t mask,
@@ -177,6 +178,8 @@ private:
     CharacterController* _myAvatarController { nullptr };
     uint64_t _lastStepTime { 0 };
     float _accumulatedTime { 0.0f };
+    float _smoothedFrameDuration { 0.0f }; // the paced clock's frame (see stepSimulation)
+    float _pacedClockLead { 0.0f }; // how far the paced clock is ahead of the wall clock
     float _lastStepDuration { 0.0f };
     uint32_t _numSubsteps { 0 };
     uint32_t _debugDrawMode { 0 };

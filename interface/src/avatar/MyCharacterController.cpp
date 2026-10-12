@@ -23,6 +23,7 @@
 
 #include "MyAvatar.h"
 #include "DetailedMotionState.h"
+#include <PhysicsWorld.h>
 
 void MyCharacterController::RayShotgunResult::reset() {
     hitFraction = 1.0f;
@@ -315,6 +316,15 @@ void MyCharacterController::clearDetailedMotionStates() {
 void MyCharacterController::buildPhysicsTransaction(PhysicsEngine::Transaction& transaction) {
     for (auto& detailedMotionState : _detailedMotionStates) {
         detailedMotionState->forceActive();
+    }
+    // the joint bodies follow the avatar into its frame's world (and back out)
+    if (!_detailedMotionStates.empty()) {
+        DetailedMotionState* first = _detailedMotionStates.front();
+        if (first->getWorld() && first->getWorld()->getFrameID() != first->getFrameID()) {
+            for (auto& detailedMotionState : _detailedMotionStates) {
+                transaction.objectsToReinsert.push_back(detailedMotionState);
+            }
+        }
     }
     if (_pendingFlags & PENDING_FLAG_REMOVE_DETAILED_FROM_SIMULATION) {
         _pendingFlags &= ~PENDING_FLAG_REMOVE_DETAILED_FROM_SIMULATION;

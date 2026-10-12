@@ -18,6 +18,8 @@
 #include <Jolt/Physics/Body/MotionProperties.h>
 #include <Jolt/Physics/Collision/Shape/Shape.h>
 
+#include <EntityItem.h>
+
 #include "JoltUtil.h"
 #include "PhysicsEngine.h"
 #include "PhysicsWorld.h"
@@ -33,6 +35,97 @@ const float ACTIVATION_ANGULAR_VELOCITY_DELTA = 0.03f;
 
 // origin of physics simulation in world-frame
 glm::vec3 _worldOffset(0.0f);
+
+// the time past the last substep that results are read ahead by
+float _leftoverTime(0.0f);
+
+// static
+void ObjectMotionState::setLeftoverTime(float seconds) {
+    _leftoverTime = seconds;
+}
+
+// static
+float ObjectMotionState::getLeftoverTime() {
+    return _leftoverTime;
+}
+
+static bool isFrameEntity(const SpatiallyNestablePointer& object) {
+    return object && object->getNestableType() == NestableType::Entity &&
+        std::static_pointer_cast<EntityItem>(object)->isFrame();
+}
+
+const int MAX_FRAME_NESTING_DEPTH = 16;
+
+// static
+SpatiallyNestablePointer ObjectMotionState::findFrameAncestor(const SpatiallyNestablePointer& object) {
+    if (!object) {
+        return nullptr;
+    }
+    bool success = false;
+    SpatiallyNestablePointer parent = object->getParentPointer(success);
+    int depth = 0;
+    while (success && parent && depth < MAX_FRAME_NESTING_DEPTH) {
+        if (isFrameEntity(parent)) {
+            return parent;
+        }
+        parent = parent->getParentPointer(success);
+        ++depth;
+    }
+    return nullptr;
+}
+
+// static
+// Walks from the object's parent up to its frame, composing local transforms and velocities (each local
+// velocity is in its parent's rotation; angular motion of the chain is left out, as SpatiallyNestable does).
+bool ObjectMotionState::getParentTransformInFrame(const SpatiallyNestablePointer& object, Transform& transform,
+                                                  glm::vec3& linearVelocity, glm::vec3& angularVelocity) {
+    transform = Transform();
+    linearVelocity = glm::vec3(0.0f);
+    angularVelocity = glm::vec3(0.0f);
+    if (!object) {
+        return false;
+    }
+    bool success = false;
+    SpatiallyNestablePointer parent = object->getParentPointer(success);
+    if (!success || !parent) {
+        return false;
+    }
+    // the chain from the parent up to (not including) the frame
+    std::vector<SpatiallyNestablePointer> chain;
+    int depth = 0;
+    while (success && parent && depth < MAX_FRAME_NESTING_DEPTH) {
+        if (isFrameEntity(parent)) {
+            // frame found: compose top-down
+            for (auto itr = chain.rbegin(); itr != chain.rend(); ++itr) {
+                const SpatiallyNestablePointer& node = *itr;
+                glm::quat rotationSoFar = transform.getRotation();
+                linearVelocity += rotationSoFar * node->getLocalVelocity();
+                angularVelocity += rotationSoFar * node->getLocalAngularVelocity();
+                Transform composed;
+                Transform::mult(composed, transform, node->getLocalTransform());
+                transform = composed;
+            }
+            return true;
+        }
+        chain.push_back(parent);
+        parent = parent->getParentPointer(success);
+        ++depth;
+    }
+    return false;
+}
+
+// static
+bool ObjectMotionState::getFrameTransform(const SpatiallyNestablePointer& object, Transform& frameTransform) {
+    SpatiallyNestablePointer frame = findFrameAncestor(object);
+    if (!frame) {
+        return false;
+    }
+    bool success = false;
+    frameTransform = frame->getTransform(success);
+    // an entity's transform carries its dimensions as scale; a frame's coordinates are metres
+    frameTransform.setScale(1.0f);
+    return success;
+}
 
 // static
 void ObjectMotionState::setWorldOffset(const glm::vec3& offset) {
@@ -351,6 +444,7 @@ void ObjectMotionState::updateLastKinematicStep() {
     // one substep of motion on the first push. (Starting a step earlier gave two, and that doubled velocity
     // was then read back from the body into the entity.)
     _lastKinematicStep = ObjectMotionState::getWorldSimulationStep();
+    _extrapolatedTime = 0.0f;
 }
 
 void ObjectMotionState::updateBodyMassProperties() {

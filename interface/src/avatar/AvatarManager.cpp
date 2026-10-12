@@ -513,7 +513,10 @@ void AvatarManager::buildPhysicsTransaction(PhysicsEngine::Transaction& transact
         } else if (isInPhysics) {
             AvatarMotionState* motionState = avatar->_motionState;
             uint32_t flags = motionState->getIncomingDirtyFlags();
-            if (flags & EASY_DIRTY_PHYSICS_FLAGS) {
+            // stepping on or off a frame: the body is rebuilt in the other world, from the pose in that
+            // world's coordinates, and so are the joint bodies (the easy changes would place it in the old one)
+            bool frameChanged = avatar->needsFrameChange();
+            if (!frameChanged && (flags & EASY_DIRTY_PHYSICS_FLAGS)) {
                 motionState->handleEasyChanges(flags);
             }
             // NOTE: we don't call detailedMotionState->handleEasyChanges() here because they are KINEMATIC
@@ -522,10 +525,13 @@ void AvatarManager::buildPhysicsTransaction(PhysicsEngine::Transaction& transact
             if (motionState->needsNewShape()) {
                 rebuildAvatarPhysics(transaction, avatar);
             } else {
-                if (flags & (Simulation::DIRTY_MOTION_TYPE | Simulation::DIRTY_COLLISION_GROUP)) {
+                if (frameChanged || (flags & (Simulation::DIRTY_MOTION_TYPE | Simulation::DIRTY_COLLISION_GROUP))) {
                     transaction.objectsToReinsert.push_back(motionState);
                 }
                 motionState->clearIncomingDirtyFlags();
+            }
+            if (frameChanged) {
+                avatar->_needsDetailedRebuild = true;
             }
 
             if (avatar->_needsDetailedRebuild) {

@@ -56,25 +56,6 @@ static bool hasMovingEntityAncestor(const EntityItemPointer& entity) {
     return false;
 }
 
-// The nearest ancestor that is a moving reference frame, looking through entities and avatars alike (what a
-// rider holds belongs to the rider's frame). Null when there is none.
-static EntityItemPointer findFrameAncestor(const EntityItemPointer& entity) {
-    bool success = false;
-    SpatiallyNestablePointer parent = entity->getParentPointer(success);
-    int depth = 0;
-    while (success && parent && depth < MAX_NESTING_DEPTH) {
-        if (parent->getNestableType() == NestableType::Entity) {
-            EntityItemPointer parentEntity = std::static_pointer_cast<EntityItem>(parent);
-            if (parentEntity->isFrame()) {
-                return parentEntity;
-            }
-        }
-        parent = parent->getParentPointer(success);
-        ++depth;
-    }
-    return nullptr;
-}
-
 static bool parentIsFrame(const EntityItemPointer& entity) {
     bool success = false;
     SpatiallyNestablePointer parent = entity->getParentPointer(success);
@@ -188,6 +169,11 @@ void EntityMotionState::handleEasyChanges(uint32_t& flags) {
     }
     ObjectMotionState::handleEasyChanges(flags);
 
+    if (flags & Simulation::DIRTY_TRANSFORM) {
+        // the entity was placed from outside (a script, the network): that is the present, nothing is read ahead
+        _extrapolatedTime = 0.0f;
+    }
+
     if (flags & Simulation::DIRTY_SIMULATOR_ID) {
         if (_entity->getSimulatorID().isNull()) {
             // simulation ownership has been removed
@@ -271,7 +257,7 @@ bool EntityMotionState::isMoving() const {
 }
 
 QUuid EntityMotionState::getFrameID() const {
-    EntityItemPointer frame = _entity ? findFrameAncestor(_entity) : nullptr;
+    SpatiallyNestablePointer frame = ObjectMotionState::findFrameAncestor(_entity);
     return frame ? frame->getID() : QUuid();
 }
 
@@ -297,42 +283,8 @@ bool EntityMotionState::getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorne
     return true;
 }
 
-// Walks from the entity's parent up to its frame, composing local transforms and velocities (each local
-// velocity is in its parent's rotation; angular motion of the chain is left out, as SpatiallyNestable does).
 bool EntityMotionState::getParentTransformInFrame(Transform& transform, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const {
-    transform = Transform();
-    linearVelocity = glm::vec3(0.0f);
-    angularVelocity = glm::vec3(0.0f);
-    if (!_entity) {
-        return false;
-    }
-    bool success = false;
-    SpatiallyNestablePointer parent = _entity->getParentPointer(success);
-    if (!success || !parent) {
-        return false;
-    }
-    // the chain from the parent up to (not including) the frame
-    std::vector<SpatiallyNestablePointer> chain;
-    int depth = 0;
-    while (success && parent && depth < MAX_NESTING_DEPTH) {
-        if (parent->getNestableType() == NestableType::Entity && std::static_pointer_cast<EntityItem>(parent)->isFrame()) {
-            // frame found: compose top-down
-            for (auto itr = chain.rbegin(); itr != chain.rend(); ++itr) {
-                const SpatiallyNestablePointer& node = *itr;
-                glm::quat rotationSoFar = transform.getRotation();
-                linearVelocity += rotationSoFar * node->getLocalVelocity();
-                angularVelocity += rotationSoFar * node->getLocalAngularVelocity();
-                Transform composed;
-                Transform::mult(composed, transform, node->getLocalTransform());
-                transform = composed;
-            }
-            return true;
-        }
-        chain.push_back(parent);
-        parent = parent->getParentPointer(success);
-        ++depth;
-    }
-    return false;
+    return ObjectMotionState::getParentTransformInFrame(_entity, transform, linearVelocity, angularVelocity);
 }
 
 glm::vec3 EntityMotionState::getObjectPosition() const {
@@ -391,9 +343,13 @@ void EntityMotionState::pushTransformToBody(float dt) {
     // of the physics simulation and uses full gravity for acceleration.
     _entity->setAcceleration(_entity->getGravity());
 
-    float stepDt = (thisStep - _lastKinematicStep) * PHYSICS_ENGINE_FIXED_SUBSTEP;
+    // (less what pullTransformFromBody already read ahead to the present after the last step)
+    float stepDt = (thisStep - _lastKinematicStep) * PHYSICS_ENGINE_FIXED_SUBSTEP - _extrapolatedTime;
     _lastKinematicStep = thisStep;
-    _entity->stepKinematicMotion(stepDt);
+    _extrapolatedTime = 0.0f;
+    if (stepDt > 0.0f) {
+        _entity->stepKinematicMotion(stepDt);
+    }
 
     // and set the acceleration-matches-gravity count high so that if we send an update
     // it will use the correct acceleration for remote simulations
@@ -428,9 +384,35 @@ void EntityMotionState::pullTransformFromBody() {
     }
     measureBodyAcceleration();
 
+    float leftover = ObjectMotionState::getLeftoverTime();
+    if (_body->IsKinematic() && !hasInternalKinematicChanges()) {
+        // A keyframed body went where the entity told it, up to the last substep. The entity's own record is
+        // now read ahead to the present along its own motion (the body stays at the substep; the next push
+        // integrates only what is left), so what is rendered and sent does not step by substeps. The entity's
+        // velocity stays the truth; the body's (which may include a catch-up) is never written back.
+        if (_entity->getDirtyFlags() & Simulation::DIRTY_TRANSFORM) {
+            // placed from outside since the step began: that transform is the present
+            _extrapolatedTime = 0.0f;
+        } else {
+            float ahead = leftover - _extrapolatedTime;
+            if (ahead > 0.0f) {
+                _entity->setAcceleration(_entity->getGravity());
+                _entity->stepKinematicMotion(ahead);
+            }
+            _extrapolatedTime = leftover;
+        }
+        _entity->setLastSimulated(usecTimestampNow());
+        return;
+    }
+
     glm::vec3 position;
     glm::quat rotation;
     getBodyTransform(position, rotation);
+    if (leftover > 0.0f && !_body->IsKinematic()) {
+        // the body is at the last substep; it is read ahead to the present along its velocity
+        position += leftover * getBodyLinearVelocity();
+        rotation = glm::normalize(computeBulletRotationStep(getBodyAngularVelocity(), leftover) * rotation);
+    }
 
     Transform parentInFrame;
     glm::vec3 parentVelocity, parentAngularVelocity;
@@ -468,8 +450,8 @@ void EntityMotionState::pullTransformFromBody() {
     position += ObjectMotionState::getWorldOffset();
 
     if (_body->IsKinematic()) {
-        // A keyframed body went where the entity told it; the entity's own velocity stays the truth, and the
-        // body's (which may include a catch-up) must not be written back. Only the transform is taken.
+        // A keyframed body moved by an action: the body is authoritative, only its transform is taken; the
+        // entity's own velocity stays the truth and the body's must not be written back.
         uint32_t kinematicFlags = _entity->getDirtyFlags() & Simulation::DIRTY_TRANSFORM;
         if (!kinematicFlags) {
             _entity->setWorldTransform(position, rotation);

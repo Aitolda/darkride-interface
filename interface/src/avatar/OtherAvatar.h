@@ -56,6 +56,7 @@ public:
     uint8_t getWorkloadRegion() { return _workloadRegion; }
     bool shouldBeInPhysicsSimulation() const;
     bool needsPhysicsUpdate() const;
+    bool needsFrameChange() const;
 
     const JPH::Shape* createCollisionShape(int32_t jointIndex, bool& isBound, std::vector<int32_t>& boundJoints);
     std::vector<DetailedMotionState*>& getDetailedMotionStates() { return _detailedMotionStates; }

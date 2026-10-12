@@ -474,13 +474,25 @@ void CharacterController::setPositionAndOrientation(
         const glm::quat& orientation) {
     updateUpAxis(orientation);
     _rotation = orientation;
-    _position = position + orientation * _shapeLocalOffset;
+    glm::vec3 bodyPosition = position;
+    const float UNCHANGED_DISTANCE2 = 1.0e-8f; // a tenth of a millimetre, squared
+    if (glm::distance2(position, _handedOutPosition) < UNCHANGED_DISTANCE2) {
+        // the pose read ahead at the last harvest came back untouched: the body stays where the simulation
+        // left it, so the read-ahead is not integrated twice
+        bodyPosition -= _readAhead;
+    }
+    _position = bodyPosition + orientation * _shapeLocalOffset;
 }
 
+// The pose is read ahead to the present along the character's velocity (ObjectMotionState::getLeftoverTime),
+// as every simulated object's is; setPositionAndOrientation takes the read-ahead back out when the pose
+// comes back unchanged.
 void CharacterController::getPositionAndOrientation(glm::vec3& position, glm::quat& rotation) const {
     if (_character) {
         rotation = joltToGLM(_character->GetRotation());
-        position = joltToGLM(_character->GetPosition()) - rotation * _shapeLocalOffset;
+        _readAhead = ObjectMotionState::getLeftoverTime() * joltToGLM(_character->GetLinearVelocity());
+        position = joltToGLM(_character->GetPosition()) + _readAhead - rotation * _shapeLocalOffset;
+        _handedOutPosition = position;
     }
 }
 

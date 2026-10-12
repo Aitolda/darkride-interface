@@ -109,19 +109,42 @@ float AvatarMotionState::getObjectAngularDamping() const {
     return 0.5f;
 }
 
+// Another person's avatar arrives as a parent and a local pose. Riding a frame, the body lives in the
+// frame's world and follows that local pose, so the rider holds still on the deck however the frame moves.
 // virtual
 glm::vec3 AvatarMotionState::getObjectPosition() const {
+    Transform parentInFrame;
+    glm::vec3 v, w;
+    if (ObjectMotionState::getParentTransformInFrame(_avatar, parentInFrame, v, w)) {
+        return parentInFrame.transform(_avatar->getLocalPosition());
+    }
     return _avatar->getWorldPosition();
 }
 
 // virtual
 glm::quat AvatarMotionState::getObjectRotation() const {
+    Transform parentInFrame;
+    glm::vec3 v, w;
+    if (ObjectMotionState::getParentTransformInFrame(_avatar, parentInFrame, v, w)) {
+        return parentInFrame.getRotation() * _avatar->getLocalOrientation();
+    }
     return _avatar->getWorldOrientation();
 }
 
 // virtual
 glm::vec3 AvatarMotionState::getObjectLinearVelocity() const {
+    Transform parentInFrame;
+    glm::vec3 v, w;
+    if (ObjectMotionState::getParentTransformInFrame(_avatar, parentInFrame, v, w)) {
+        return v + parentInFrame.getRotation() * _avatar->getLocalVelocity();
+    }
     return _avatar->getWorldVelocity();
+}
+
+// virtual
+QUuid AvatarMotionState::getFrameID() const {
+    SpatiallyNestablePointer frame = ObjectMotionState::findFrameAncestor(_avatar);
+    return frame ? frame->getID() : QUuid();
 }
 
 // virtual

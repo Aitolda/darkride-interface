@@ -398,9 +398,31 @@ void PhysicsEngine::stepSimulation() {
 
     const float MAX_TIMESTEP = (float)PHYSICS_ENGINE_MAX_NUM_SUBSTEPS * PHYSICS_ENGINE_FIXED_SUBSTEP;
     uint64_t now = usecTimestampNow();
-    float dt = 1.0e-6f * (float)(now - _lastStepTime);
+    float dt = glm::min(1.0e-6f * (float)(now - _lastStepTime), MAX_TIMESTEP);
     _lastStepTime = now;
-    _accumulatedTime += glm::min(dt, MAX_TIMESTEP);
+
+    // The simulation runs on a paced clock, not the wall clock: frames are presented evenly, but this update
+    // runs early or late within them by several milliseconds, and with the results read ahead to the present
+    // (below) that wobble would show as uneven motion. The paced clock advances by the smoothed frame
+    // duration and is eased back to the wall clock, within a frame of it; a hitch snaps it back.
+    const float FRAME_SMOOTHING = 0.05f;
+    const float CLOCK_EASING = 0.05f;
+    if (_smoothedFrameDuration <= 0.0f) {
+        _smoothedFrameDuration = dt;
+    } else {
+        _smoothedFrameDuration += FRAME_SMOOTHING * (dt - _smoothedFrameDuration);
+    }
+    float paced = _smoothedFrameDuration;
+    _pacedClockLead += paced - dt;
+    if (fabsf(_pacedClockLead) > _smoothedFrameDuration) {
+        paced -= _pacedClockLead;
+        _pacedClockLead = 0.0f;
+    } else {
+        float correction = CLOCK_EASING * _pacedClockLead;
+        paced -= correction;
+        _pacedClockLead -= correction;
+    }
+    _accumulatedTime = glm::max(_accumulatedTime + paced, 0.0f);
 
     int numSubsteps = (int)(_accumulatedTime / PHYSICS_ENGINE_FIXED_SUBSTEP);
     if (numSubsteps > PHYSICS_ENGINE_MAX_NUM_SUBSTEPS) {
@@ -417,8 +439,13 @@ void PhysicsEngine::stepSimulation() {
     }
     _lastStepDuration = 1.0e-3f * (float)(usecTimestampNow() - start);
 
+    // The results are read once per rendered frame, this much past the last substep, and every object reads
+    // itself that far ahead along its velocity (ObjectMotionState::pullTransformFromBody); so a frame with no
+    // substep of its own (a display faster than the simulation) still reads fresh positions.
+    ObjectMotionState::setLeftoverTime(_accumulatedTime);
+    _hasOutgoingChanges = true;
+
     if (numSubsteps > 0) {
-        _hasOutgoingChanges = true;
         if (_debugDrawMode != PhysicsDebugDraw::DRAW_NOTHING) {
             PROFILE_RANGE(simulation_physics, "debugDrawWorld");
             _rootWorld->debugDraw(_debugDrawMode, _physicsDebugDraw.get());
@@ -655,4 +682,16 @@ void PhysicsEngine::castRayAll(const glm::vec3& start, const glm::vec3& end, int
     if (_rootWorld) {
         _rootWorld->castRayAll(start, end, group, mask, results);
     }
+    // the ray goes into each frame's world in that frame's coordinates, and the hits come back out
+    for (const auto& entry : _frameWorlds) {
+        const PhysicsWorld* world = entry.second.get();
+        std::vector<RayHit> hits;
+        world->castRayAll(world->toLocal(start), world->toLocal(end), group, mask, hits);
+        for (RayHit& hit : hits) {
+            hit.point = world->toParent(hit.point);
+            hit.normal = world->getFrameRotation() * hit.normal;
+            results.push_back(hit);
+        }
+    }
+    std::sort(results.begin(), results.end(), [](const RayHit& a, const RayHit& b) { return a.fraction < b.fraction; });
 }

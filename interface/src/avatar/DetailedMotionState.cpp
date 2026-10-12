@@ -91,20 +91,37 @@ float DetailedMotionState::getObjectAngularDamping() const {
     return 0.5f;
 }
 
+// The joints are known in world coordinates; riding a frame, the body lives in the frame's world and the
+// pose goes in through the frame's transform.
 // virtual
 glm::vec3 DetailedMotionState::getObjectPosition() const {
-    if (_otherAvatar != nullptr) {
-        auto bodyLOD = _otherAvatar->getBodyLOD();
-        if (bodyLOD == OtherAvatar::BodyLOD::Sphere) {
-            return _avatar->getFitBounds().calcCenter();
-        }
+    glm::vec3 position;
+    if (_otherAvatar != nullptr && _otherAvatar->getBodyLOD() == OtherAvatar::BodyLOD::Sphere) {
+        position = _avatar->getFitBounds().calcCenter();
+    } else {
+        position = _avatar->getJointPosition(_jointIndex);
     }
-    return  _avatar->getJointPosition(_jointIndex);
+    Transform frameTransform;
+    if (ObjectMotionState::getFrameTransform(_avatar, frameTransform)) {
+        return glm::inverse(frameTransform.getRotation()) * (position - frameTransform.getTranslation());
+    }
+    return position;
 }
 
 // virtual
 glm::quat DetailedMotionState::getObjectRotation() const {
-    return _avatar->getWorldOrientation() * _avatar->getAbsoluteJointRotationInObjectFrame(_jointIndex);
+    glm::quat rotation = _avatar->getWorldOrientation() * _avatar->getAbsoluteJointRotationInObjectFrame(_jointIndex);
+    Transform frameTransform;
+    if (ObjectMotionState::getFrameTransform(_avatar, frameTransform)) {
+        return glm::inverse(frameTransform.getRotation()) * rotation;
+    }
+    return rotation;
+}
+
+// virtual
+QUuid DetailedMotionState::getFrameID() const {
+    SpatiallyNestablePointer frame = ObjectMotionState::findFrameAncestor(_avatar);
+    return frame ? frame->getID() : QUuid();
 }
 
 // virtual

@@ -17,6 +17,11 @@
 //  engine itself when it stands in the cabin's volume, so the "unparented" phases measure the automatic
 //  membership, and a last phase walks the avatar off the open end of the moving cabin to measure the handover.
 //
+//  Round 3 (two clients): run-pair.sh starts this script on one client and observer.js on another, both on a
+//  domain. On a domain the script creates the ground and the light itself when they are missing, and every
+//  entity it makes has a lifetime, so a sandbox cleans itself up. The phase in progress is published in the
+//  cabin's description for the observer.
+//
 //  Distributed under the Apache License, Version 2.0.
 //
 
@@ -28,8 +33,10 @@
     var CABIN_TOP = 0.5;          // the cabin floor's top surface, m
     var FRAME = (typeof PHYSICS_BASELINE_FRAME !== "undefined") && PHYSICS_BASELINE_FRAME;
 
+    var LIFETIME = 600;           // s; on a domain the test's entities expire on their own
     var cabin = null;
     var walls = [];
+    var platform = null;
     var samples = [];
     var phaseLog = [];
     var phase = { name: "boot", t0: 0 };
@@ -43,17 +50,53 @@
         phase = { name: name, t0: now() };
         phaseLog.push(phase);
         log("phase " + name + " at " + phase.t0.toFixed(2) + " s");
+        if (cabin) {
+            // for the observer on the other client
+            Entities.editEntity(cabin, { description: name });
+        }
+    }
+
+    // On a domain the world starts empty: the ground and the light of world.json are made here when missing,
+    // plus a station platform behind the cabin's open end, at the cabin floor's height, for stepping on.
+    function ensureWorld() {
+        var origin = { x: 0, y: 0, z: 0 };
+        if (Entities.findEntitiesByName("Ground", origin, 1000).length === 0) {
+            Entities.addEntity({
+                type: "Box", name: "Ground", shapeType: "box", locked: false, lifetime: LIFETIME,
+                position: { x: 0, y: -0.05, z: 0 }, dimensions: { x: 400, y: 0.1, z: 400 },
+                color: { red: 90, green: 110, blue: 90 }, grab: { grabbable: false }
+            });
+            log("ground created");
+        }
+        if (Entities.findEntitiesByName("BaselineZone", origin, 1000).length === 0) {
+            Entities.addEntity({
+                type: "Zone", name: "BaselineZone", shapeType: "box", lifetime: LIFETIME,
+                position: origin, dimensions: { x: 1000, y: 1000, z: 1000 },
+                keyLightMode: "enabled", keyLight: { color: { red: 255, green: 255, blue: 255 }, intensity: 1.0,
+                    direction: { x: 0.5, y: -0.7, z: -0.5 } },
+                ambientLightMode: "enabled", ambientLight: { ambientIntensity: 0.5 },
+                skyboxMode: "enabled", skybox: { color: { red: 60, green: 80, blue: 120 } }
+            });
+            log("zone created");
+        }
+        platform = Entities.addEntity({
+            type: "Box", name: "baseline-platform", shapeType: "box", lifetime: LIFETIME,
+            position: { x: 0, y: CABIN_TOP - 0.25, z: 6 }, dimensions: { x: 4, y: 0.5, z: 3 },
+            color: { red: 140, green: 140, blue: 150 }, dynamic: false, collisionless: false, grab: { grabbable: false }
+        });
     }
 
     function spawnCabin() {
+        ensureWorld();
         cabin = Entities.addEntity({
-            type: "Box", name: "baseline-cabin", shapeType: "box",
+            type: "Box", name: "baseline-cabin", shapeType: "box", lifetime: LIFETIME,
             position: { x: 0, y: CABIN_TOP - 0.25, z: 0 },
             dimensions: { x: 4, y: 0.5, z: 8 },
             color: { red: 200, green: 160, blue: 60 },
             dynamic: false, collisionless: false,
             damping: 0, angularDamping: 0,
             grab: { grabbable: false },
+            description: phase.name,
             userData: FRAME ? JSON.stringify({ frame: true }) : ""
         });
         // low walls, children of the cabin, so the rider has something to bump against; the back end (+z; the
@@ -67,7 +110,7 @@
         ];
         wallSpecs.forEach(function (w) {
             walls.push(Entities.addEntity({
-                type: "Box", name: "baseline-wall", shapeType: "box",
+                type: "Box", name: "baseline-wall", shapeType: "box", lifetime: LIFETIME,
                 parentID: cabin, localPosition: w.pos, dimensions: w.dim,
                 color: { red: 120, green: 90, blue: 40 },
                 dynamic: false, collisionless: false, grab: { grabbable: false }
@@ -294,6 +337,7 @@
         log("done, " + samples.length + " samples");
         walls.forEach(function (w) { Entities.deleteEntity(w); });
         if (cabin) { Entities.deleteEntity(cabin); }
+        if (platform) { Entities.deleteEntity(platform); }
         Script.setTimeout(function () { Test.quit(); }, 1000);
     }
 

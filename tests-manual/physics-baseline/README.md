@@ -32,4 +32,14 @@ The samples are in `$R/physics-baseline.json`. The client quits by itself when t
 
 Caveat: the computed local position is made from two reads a moment apart (the cabin's transform and the avatar's position), so it carries up to one frame of the cabin's motion as noise (about 6 mm rms, 83 mm max at 5 m/s and 60 Hz); the stored local position has no such noise and is the number to read whenever it is printed.
 
+**Two clients (PHYSICS.md round 3):** `run-pair.sh <app> <results dir> [udp port]` runs the frame baseline on a domain with a second client watching. Start a sandbox domain from the same build first (`~/git/tivolicloud/domain-sandbox.sh physics <build dir> 42102` in the docs repo); the mover creates the ground, the light and a station platform behind the cabin when the world lacks them, and gives every entity a lifetime. The observer (`observer.js`) steps onto the stopped cabin from the platform, rides every phase, steps off behind the cabin when the mover does and watches it go from the ground. It reads the phase from the cabin's description and prints `PHYSICS-OBSERVER` lines, per phase:
+
+- its own stored local position's jitter while riding (the engine's value, no read race);
+- the other rider's stored local position as the avatar mixer delivers it (`AvatarList.getAvatar(id).localPosition`, added for this);
+- the other rider relative to itself in the cabin's frame (what a rider sees of the other; two reads a moment apart);
+- the cabin's own world step per frame on this non-owning client, while riding and from the ground: the evenness of the glide;
+- its crossings, with the world-position step at each.
+
+The samples are in `<results dir>/observer/physics-observer.json` and the mover's in `<results dir>/mover/physics-baseline.json`.
+
 Results so far are in `results/`: `2026-10-12-bullet.json` (round 0), `2026-10-12-jolt.json` (round 1), `2026-10-12-jolt-frame.json` (round 2, frame mode) and `2026-10-12-jolt-round2-plain.json` (round 2 build, plain mode).

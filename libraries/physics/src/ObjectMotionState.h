@@ -22,6 +22,8 @@
 #include <Jolt/Physics/Body/AllowedDOFs.h>
 
 #include <SimulationFlags.h>
+#include <SpatiallyNestable.h>
+#include <Transform.h>
 
 #include "ContactInfo.h"
 #include "ShapeManager.h"
@@ -109,6 +111,23 @@ public:
     // The WorldSimulationStep is a cached copy of number of SubSteps of the simulation, used for local time measurements.
     static void setWorldSimulationStep(uint32_t step);
     static uint32_t getWorldSimulationStep();
+
+    // How far the present is past the last substep (less than one substep). The simulation runs in fixed
+    // substeps and is read once per rendered frame, so the results are read this much ahead, along each
+    // body's velocity; otherwise everything that moves would step by one or two substeps per frame.
+    static void setLeftoverTime(float seconds);
+    static float getLeftoverTime();
+
+    // Moving reference frames (PHYSICS.md 4.1), for any object with a parent chain: entities and avatars.
+    // The nearest ancestor that is a frame; null when there is none.
+    static SpatiallyNestablePointer findFrameAncestor(const SpatiallyNestablePointer& object);
+    // The transform and velocities of the object's parent in the coordinates of the object's frame: the chain
+    // from the parent up to (not including) the frame, composed. False when the object has no frame.
+    static bool getParentTransformInFrame(const SpatiallyNestablePointer& object, Transform& transform,
+                                          glm::vec3& linearVelocity, glm::vec3& angularVelocity);
+    // The world transform of the object's frame, with unit scale, for taking world-space poses into the frame.
+    // False when the object has no frame.
+    static bool getFrameTransform(const SpatiallyNestablePointer& object, Transform& frameTransform);
 
     static void setShapeManager(ShapeManager* manager);
     static ShapeManager* getShapeManager();
@@ -247,6 +266,8 @@ protected:
     float _density { 1.0f };
 
     mutable uint32_t _lastKinematicStep;
+    // how far a keyframed object's own record has been read ahead of its last substep (see getLeftoverTime)
+    mutable float _extrapolatedTime { 0.0f };
     mutable bool _hasInternalKinematicChanges { false };
 };
 

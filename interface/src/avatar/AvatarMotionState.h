@@ -43,11 +43,13 @@ public:
     float getObjectLinearDamping() const override;
     float getObjectAngularDamping() const override;
 
+    // in the coordinates of the avatar's frame when it rides one (PHYSICS.md 4.3), else the domain's
     glm::vec3 getObjectPosition() const override;
     glm::quat getObjectRotation() const override;
     glm::vec3 getObjectLinearVelocity() const override;
     glm::vec3 getObjectAngularVelocity() const override;
     glm::vec3 getObjectGravity() const override;
+    QUuid getFrameID() const override;
 
     const QUuid getObjectID() const override;
 
