@@ -35,7 +35,7 @@ ObjectActionOffset::~ObjectActionOffset() {
     #endif
 }
 
-void ObjectActionOffset::updateActionWorker(btScalar deltaTimeStep) {
+void ObjectActionOffset::updateActionWorker(float deltaTimeStep) {
     withTryReadLock([&]{
         auto ownerEntity = _ownerEntity.lock();
         if (!ownerEntity) {
@@ -48,15 +48,18 @@ void ObjectActionOffset::updateActionWorker(btScalar deltaTimeStep) {
         }
 
         ObjectMotionState* motionState = static_cast<ObjectMotionState*>(physicsInfo);
-        btRigidBody* rigidBody = motionState->getRigidBody();
-        if (!rigidBody) {
-            qCDebug(physics) << "ObjectActionOffset::updateActionWorker no rigidBody";
+        JPH::Body* body = motionState->getBody();
+        if (!body) {
+            qCDebug(physics) << "ObjectActionOffset::updateActionWorker no body";
             return;
         }
 
         const float MAX_LINEAR_TIMESCALE = 600.0f;  // 10 minutes is a long time
         if (_positionalTargetSet && _linearTimeScale < MAX_LINEAR_TIMESCALE) {
-            glm::vec3 objectPosition = bulletToGLM(rigidBody->getCenterOfMassPosition());
+            // the body's origin in the simulation frame (what Bullet called the center-of-mass position)
+            glm::vec3 objectPosition;
+            glm::quat objectRotation;
+            motionState->getBodyTransform(objectPosition, objectRotation);
             glm::vec3 springAxis = objectPosition - _pointToOffsetFrom; // from anchor to object
             float distance = glm::length(springAxis);
             if (distance > FLT_EPSILON) {
@@ -67,7 +70,7 @@ void ObjectActionOffset::updateActionWorker(btScalar deltaTimeStep) {
                 glm::vec3 targetVelocity = (-1.0f / _linearTimeScale) * offset;
 
                 // compute current velocity and its parallel component
-                glm::vec3 currentVelocity = bulletToGLM(rigidBody->getLinearVelocity());
+                glm::vec3 currentVelocity = motionState->getBodyLinearVelocity();
                 glm::vec3 parallelVelocity = glm::dot(currentVelocity, springAxis) * springAxis;
 
                 // we blend the parallel component with the spring's target velocity to get the new velocity
@@ -75,7 +78,7 @@ void ObjectActionOffset::updateActionWorker(btScalar deltaTimeStep) {
                 if (blend > 1.0f) {
                     blend = 1.0f;
                 }
-                rigidBody->setLinearVelocity(glmToBullet(currentVelocity + blend * (targetVelocity - parallelVelocity)));
+                motionState->setBodyLinearVelocity(currentVelocity + blend * (targetVelocity - parallelVelocity));
             }
         }
     });

@@ -11,4 +11,11 @@
 
 macro(include_hifi_library_headers LIBRARY)
   target_include_directories(${TARGET_NAME} PRIVATE "${HIFI_LIBRARY_DIR}/${LIBRARY}/src")
+  if ("${LIBRARY}" STREQUAL "physics")
+
+    # the physics headers include Jolt
+
+    target_jolt_headers()
+
+  endif()
 endmacro(include_hifi_library_headers _library _root_dir)

@@ -15,5 +15,4 @@ include_hifi_library_headers(hfm)
 include_hifi_library_headers(fbx)
 include_hifi_library_headers(graphics)
 
-target_bullet()
 target_jolt()

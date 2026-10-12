@@ -8,24 +8,29 @@
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
 //
-//  http://bulletphysics.org/Bullet/BulletFull/classbtDynamicInterface.html
+// http://bulletphysics.org/Bullet/BulletFull/classbtActionInterface.html
 
 #ifndef hifi_ObjectDynamic_h
 #define hifi_ObjectDynamic_h
 
+#include <vector>
+
 #include <QUuid>
 
-#include <btBulletDynamicsCommon.h>
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Body/BodyID.h>
 
 #include <EntityItemID.h>
 #include <shared/ReadWriteLockable.h>
 #include <SpatiallyNestable.h>
 
 #include "ObjectMotionState.h"
-#include "BulletUtil.h"
+#include "JoltUtil.h"
 #include "EntityDynamicInterface.h"
 
-
+// A "dynamic" is something added to an entity that changes how it moves: an action pushes on its body every
+// substep, a constraint ties it to another body.
 class ObjectDynamic : public EntityDynamicInterface, public ReadWriteLockable {
 public:
     ObjectDynamic(EntityDynamicType type, const QUuid& id, EntityItemPointer ownerEntity);
@@ -42,22 +47,25 @@ public:
     virtual bool updateArguments(QVariantMap arguments) override;
     virtual QVariantMap getArguments() override;
 
-
     virtual QByteArray serialize() const override = 0;
     virtual void deserialize(QByteArray serializedArguments) override = 0;
 
     virtual bool lifetimeIsOver() override;
     virtual quint64 getExpires() override { return _expires; }
 
-    virtual QList<btRigidBody*> getRigidBodies();
+    // the bodies this dynamic touches, for ownership bookkeeping in the engine
+    virtual std::vector<JPH::BodyID> getBodyIDs();
 
 protected:
     quint64 localTimeToServerTime(quint64 timeValue) const;
     quint64 serverTimeToLocalTime(quint64 timeValue) const;
 
-    btRigidBody* getOtherRigidBody(EntityItemID otherEntityID);
+    // the owner's motion state and body, when it is in the simulation
+    ObjectMotionState* getMotionState() const;
+    virtual JPH::Body* getBody();
+    ObjectMotionState* getOtherMotionState(EntityItemID otherEntityID) const;
+    JPH::Body* getOtherBody(EntityItemID otherEntityID);
     EntityItemPointer getEntityByID(EntityItemID entityID) const;
-    virtual btRigidBody* getRigidBody();
     virtual void activateBody(bool forceActivation = false);
     virtual void forceBodyNonStatic();
 

@@ -12,26 +12,31 @@
 #ifndef hifi_ShapeFactory_h
 #define hifi_ShapeFactory_h
 
-#include <btBulletDynamicsCommon.h>
 #include <glm/glm.hpp>
 #include <QObject>
 #include <QtCore/QRunnable>
 
+#include <Jolt/Jolt.h>
+#include <Jolt/Core/Reference.h>
+#include <Jolt/Physics/Collision/Shape/Shape.h>
+
 #include <ShapeInfo.h>
 
-// The ShapeFactory assembles and correctly disassembles btCollisionShapes.
-
+// translates between ShapeInfo and Jolt shapes
 namespace ShapeFactory {
-    const btCollisionShape* createShapeFromInfo(const ShapeInfo& info);
-    void deleteShape(const btCollisionShape* shape);
+    // Jolt shapes are reference counted and immutable; whoever holds a reference keeps the shape alive.
+    using ShapeRef = JPH::RefConst<JPH::Shape>;
+
+    // Returns a null reference when the info describes no usable shape.
+    ShapeRef createShapeFromInfo(const ShapeInfo& info);
 
     class Worker : public QObject, public QRunnable {
         Q_OBJECT
     public:
-        Worker(const ShapeInfo& info) : shapeInfo(info), shape(nullptr) {}
+        Worker(const ShapeInfo& info) : shapeInfo(info) {}
         void run() override;
         ShapeInfo shapeInfo;
-        const btCollisionShape* shape;
+        ShapeRef shape;
     signals:
         void submitWork(Worker*);
     };

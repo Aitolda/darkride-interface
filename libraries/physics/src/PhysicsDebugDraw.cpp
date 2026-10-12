@@ -10,45 +10,48 @@
 //
 
 #include "PhysicsDebugDraw.h"
-#include "BulletUtil.h"
-#include "PhysicsLogging.h"
 
 #include <DebugDraw.h>
 #include <GLMHelpers.h>
 
-void PhysicsDebugDraw::drawLine(const btVector3& from, const btVector3& to, const btVector3& color) {
-    DebugDraw::getInstance().drawRay(bulletToGLM(from), bulletToGLM(to), glm::vec4(color.getX(), color.getY(), color.getZ(), 1.0f));
+#include "JoltUtil.h"
+#include "PhysicsLogging.h"
+
+PhysicsDebugDraw::PhysicsDebugDraw() {
+    Initialize();
 }
 
-void PhysicsDebugDraw::drawContactPoint(const btVector3& PointOnB, const btVector3& normalOnB, btScalar distance,
-                                        int lifeTime, const btVector3& color) {
+static glm::vec4 toColor(JPH::ColorArg color) {
+    return glm::vec4(color.r / 255.0f, color.g / 255.0f, color.b / 255.0f, 1.0f);
+}
 
+void PhysicsDebugDraw::DrawLine(JPH::RVec3Arg from, JPH::RVec3Arg to, JPH::ColorArg color) {
+    DebugDraw::getInstance().drawRay(joltToGLM(from) + _worldOffset, joltToGLM(to) + _worldOffset, toColor(color));
+}
+
+void PhysicsDebugDraw::DrawTriangle(JPH::RVec3Arg v1, JPH::RVec3Arg v2, JPH::RVec3Arg v3, JPH::ColorArg color, ECastShadow castShadow) {
+    DrawLine(v1, v2, color);
+    DrawLine(v2, v3, color);
+    DrawLine(v3, v1, color);
+}
+
+void PhysicsDebugDraw::DrawText3D(JPH::RVec3Arg position, const std::string_view& string, JPH::ColorArg color, float height) {
+    // no text in the debug draw layer
+}
+
+void PhysicsDebugDraw::drawLine(const glm::vec3& from, const glm::vec3& to, const glm::vec3& color) {
+    DebugDraw::getInstance().drawRay(from + _worldOffset, to + _worldOffset, glm::vec4(color, 1.0f));
+}
+
+void PhysicsDebugDraw::drawContactPoint(const glm::vec3& pointOnB, const glm::vec3& normalOnB, float distance, const glm::vec3& color) {
     glm::vec3 normal, tangent, biNormal;
-    generateBasisVectors(bulletToGLM(normalOnB), Vectors::UNIT_X, normal, tangent, biNormal);
-    btVector3 u = glmToBullet(normal);
-    btVector3 v = glmToBullet(tangent);
-    btVector3 w = glmToBullet(biNormal);
+    generateBasisVectors(normalOnB, Vectors::UNIT_X, normal, tangent, biNormal);
 
-    // x marks the spot, green is along the normal.
     const float CONTACT_POINT_RADIUS = 0.1f;
-    const btVector3 GREEN(0.0f, 1.0f, 0.0f);
-    const btVector3 WHITE(1.0f, 1.0f, 1.0f);
-    drawLine(PointOnB - u * CONTACT_POINT_RADIUS, PointOnB + u * CONTACT_POINT_RADIUS, GREEN);
-    drawLine(PointOnB - v * CONTACT_POINT_RADIUS, PointOnB + v * CONTACT_POINT_RADIUS, WHITE);
-    drawLine(PointOnB - w * CONTACT_POINT_RADIUS, PointOnB + w * CONTACT_POINT_RADIUS, WHITE);
-}
+    const glm::vec3 GREEN(0.0f, 1.0f, 0.0f);
+    const glm::vec3 WHITE(1.0f, 1.0f, 1.0f);
 
-void PhysicsDebugDraw::reportErrorWarning(const char* warningString) {
-    qCWarning(physics) << "BULLET:" << warningString;
-}
-
-void PhysicsDebugDraw::draw3dText(const btVector3& location, const char* textString) {
-}
-
-void PhysicsDebugDraw::setDebugMode(int debugMode) {
-    _debugDrawMode = debugMode;
-}
-
-int PhysicsDebugDraw::getDebugMode() const {
-    return _debugDrawMode;
+    drawLine(pointOnB - normal * CONTACT_POINT_RADIUS, pointOnB + normal * CONTACT_POINT_RADIUS, GREEN);
+    drawLine(pointOnB - tangent * CONTACT_POINT_RADIUS, pointOnB + tangent * CONTACT_POINT_RADIUS, WHITE);
+    drawLine(pointOnB - biNormal * CONTACT_POINT_RADIUS, pointOnB + biNormal * CONTACT_POINT_RADIUS, WHITE);
 }

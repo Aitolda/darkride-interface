@@ -34,7 +34,7 @@ public:
     };
 
     EntityMotionState() = delete;
-    EntityMotionState(btCollisionShape* shape, EntityItemPointer item);
+    EntityMotionState(const JPH::Shape* shape, EntityItemPointer item);
     virtual ~EntityMotionState();
 
     void handleDeactivation();
@@ -46,10 +46,11 @@ public:
     virtual bool isMoving() const override;
 
     // this relays incoming position/rotation to the RigidBody
-    virtual void getWorldTransform(btTransform& worldTrans) const override;
+    void pushTransformToBody(float dt) override;
 
     // this relays outgoing position/rotation to the EntityItem
-    virtual void setWorldTransform(const btTransform& worldTrans) override;
+    void pullTransformFromBody() override;
+    int getNestingDepth() const override;
 
     bool shouldSendUpdate(uint32_t simulationStep);
     void sendBid(OctreeEditPacketSender* packetSender, uint32_t step);
@@ -98,10 +99,9 @@ public:
     OwnershipState getOwnershipState() const { return _ownershipState; }
 
     void setRegion(uint8_t region);
-    void saveKinematicState(btScalar timeStep) override;
 
 protected:
-    void setRigidBody(btRigidBody* body) override;
+    void setBody(JPH::Body* body, JPH::BodyInterface* bodyInterface) override;
 
     uint8_t computeFinalBidPriority() const;
     void updateSendVelocities();
@@ -116,7 +116,6 @@ protected:
 
     void clearObjectVelocities() const;
 
-    bool isInPhysicsSimulation() const { return _body != nullptr; }
     bool shouldBeInPhysicsSimulation() const;
     void setMotionType(PhysicsMotionType motionType) override;
 

@@ -123,11 +123,8 @@ void PhysicalEntitySimulation::processChangedEntity(const EntityItemPointer& ent
     if (motionState) {
         if (!shouldBePhysical) {
             if (motionState->isLocallyOwned()) {
-                // zero velocities by first deactivating the RigidBody
-                btRigidBody* body = motionState->getRigidBody();
-                if (body) {
-                    body->forceActivationState(ISLAND_SLEEPING);
-                }
+                // zero velocities by first deactivating the body
+                motionState->deactivateBody();
 
                 // send packet to remove ownership
                 // NOTE: this packet will NOT be resent if lost, but the good news is:
@@ -261,7 +258,7 @@ void PhysicalEntitySimulation::removeDeadEntities() {
 
 void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
     // this lambda for when we decide to actually build the motionState
-    auto buildMotionState = [&](btCollisionShape* shape, EntityItemPointer entity) {
+    auto buildMotionState = [&](const JPH::Shape* shape, EntityItemPointer entity) {
         EntityMotionState* motionState = new EntityMotionState(shape, entity);
         entity->setPhysicsInfo(static_cast<void*>(motionState));
         motionState->setRegion(_space->getRegion(entity->getSpaceIndex()));
@@ -280,7 +277,7 @@ void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
             EntityMotionState* motionState = static_cast<EntityMotionState*>(entity->getPhysicsInfo());
             if (!motionState) {
                 // this is an ADD because motionState doesn't exist yet
-                btCollisionShape* shape = const_cast<btCollisionShape*>(ObjectMotionState::getShapeManager()->getShapeByKey(requestItr->shapeHash));
+                const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShapeByKey(requestItr->shapeHash);
                 if (shape) {
                     // shape is ready at last!
                     // but the entity's physics desired physics status may have changed since last requested
@@ -299,7 +296,7 @@ void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
                         // bummer, the hashes are different and we no longer want the shape we've received
                         ObjectMotionState::getShapeManager()->releaseShape(shape);
                         // try again
-                        shape = const_cast<btCollisionShape*>(ObjectMotionState::getShapeManager()->getShape(shapeInfo));
+                        shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
                         if (shape) {
                             buildMotionState(shape, entity);
                             requestItr = _shapeRequests.erase(requestItr);
@@ -373,7 +370,7 @@ void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
                 ShapeInfo shapeInfo;
                 entity->computeShapeInfo(shapeInfo);
                 uint32_t requestCount = ObjectMotionState::getShapeManager()->getWorkRequestCount();
-                btCollisionShape* shape = const_cast<btCollisionShape*>(ObjectMotionState::getShapeManager()->getShape(shapeInfo));
+                const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
                 if (shape) {
                     buildMotionState(shape, entity);
                 } else if (requestCount != ObjectMotionState::getShapeManager()->getWorkRequestCount()) {
@@ -436,7 +433,7 @@ void PhysicalEntitySimulation::buildPhysicsTransaction(PhysicsEngine::Transactio
                     ShapeInfo shapeInfo;
                     object->_entity->computeShapeInfo(shapeInfo);
                     uint32_t requestCount = ObjectMotionState::getShapeManager()->getWorkRequestCount();
-                    btCollisionShape* shape = const_cast<btCollisionShape*>(ObjectMotionState::getShapeManager()->getShape(shapeInfo));
+                    const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
                     if (shape) {
                         object->setShape(shape);
                         handledFlags |= Simulation::DIRTY_SHAPE;
@@ -455,7 +452,7 @@ void PhysicalEntitySimulation::buildPhysicsTransaction(PhysicsEngine::Transactio
             } else {
                 ShapeInfo shapeInfo;
                 object->_entity->computeShapeInfo(shapeInfo);
-                btCollisionShape* shape = const_cast<btCollisionShape*>(ObjectMotionState::getShapeManager()->getShape(shapeInfo));
+                const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
                 if (shape) {
                     object->setShape(shape);
                     handledFlags |= Simulation::DIRTY_SHAPE;
@@ -482,7 +479,7 @@ void PhysicalEntitySimulation::buildPhysicsTransaction(PhysicsEngine::Transactio
         if (unhandledFlags & (Simulation::DIRTY_MOTION_TYPE | Simulation::DIRTY_COLLISION_GROUP | (handledFlags & Simulation::DIRTY_SHAPE))) {
             transaction.objectsToReinsert.push_back(object);
             handledFlags |= HARD_DIRTY_PHYSICS_FLAGS;
-        } else if (unhandledFlags & Simulation::DIRTY_PHYSICS_ACTIVATION && object->getRigidBody()->isStaticObject()) {
+        } else if (unhandledFlags & Simulation::DIRTY_PHYSICS_ACTIVATION && object->getBody() && object->getBody()->IsStatic()) {
             transaction.activeStaticObjects.push_back(object);
         }
         object->clearIncomingDirtyFlags(handledFlags);

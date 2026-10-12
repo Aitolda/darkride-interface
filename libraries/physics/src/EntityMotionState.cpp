@@ -20,16 +20,39 @@
 #include <PhysicsCollisionGroups.h>
 #include <Profile.h>
 
-#include "BulletUtil.h"
+#include "JoltUtil.h"
 #include "PhysicsEngine.h"
 #include "PhysicsHelpers.h"
 #include "PhysicsLogging.h"
 
 const uint8_t LOOPS_FOR_SIMULATION_ORPHAN = 50;
 const quint64 USECS_BETWEEN_OWNERSHIP_BIDS = USECS_PER_SECOND / 15;
+const int MAX_NESTING_DEPTH = 16;
+
+// A child of something that moves has to move with it in the simulation, as a kinematic body with a velocity,
+// so that it carries and pushes whatever it touches: the walls of a moving cabin, the seat of a car. Before this
+// such children were static bodies that stayed behind when their parent moved under them.
+static bool hasMovingEntityAncestor(const EntityItemPointer& entity) {
+    bool success = false;
+    SpatiallyNestablePointer parent = entity->getParentPointer(success);
+    int depth = 0;
+    while (success && parent && depth < MAX_NESTING_DEPTH) {
+        if (parent->getNestableType() == NestableType::Entity) {
+            EntityItemPointer parentEntity = std::static_pointer_cast<EntityItem>(parent);
+            if (parentEntity->getDynamic() || parentEntity->hasActions() || parentEntity->isMovingRelativeToParent()) {
+                return true;
+            }
+        } else if (parent->getNestableType() == NestableType::Avatar) {
+            return true;
+        }
+        parent = parent->getParentPointer(success);
+        ++depth;
+    }
+    return false;
+}
 
 
-EntityMotionState::EntityMotionState(btCollisionShape* shape, EntityItemPointer entity) :
+EntityMotionState::EntityMotionState(const JPH::Shape* shape, EntityItemPointer entity) :
     ObjectMotionState(nullptr),
     _entity(entity),
     _serverPosition(0.0f),
@@ -101,7 +124,7 @@ void EntityMotionState::handleDeactivation() {
         // We assume the EntityMotionState is the last to know, so we copy from EntityItem to _server* variables
         // here but don't clear the flags --> the will body be set straight before next simulation step.
         updateServerPhysicsVariables();
-    } else if (_body->isStaticOrKinematicObject() && _ownershipState != EntityMotionState::OwnershipState::LocallyOwned) {
+    } else if ((_body->IsStatic() || _body->IsKinematic()) && _ownershipState != EntityMotionState::OwnershipState::LocallyOwned) {
             // To allow the ESS to move entities around in a kinematic way we had to remove the requirement that
             // every moving+simulated entity has an authoritative simulation owner.  As a result, we cannot rely
             // on a final authoritative update of kinmatic objects prior to deactivation in the local simulation.
@@ -115,11 +138,8 @@ void EntityMotionState::handleDeactivation() {
         localTransform.setTranslation(_serverPosition);
         localTransform.setRotation(_serverRotation);
         _entity->setLocalTransformAndVelocities(localTransform, ENTITY_ITEM_ZERO_VEC3, ENTITY_ITEM_ZERO_VEC3);
-        // and also to RigidBody
-        btTransform worldTrans;
-        worldTrans.setOrigin(glmToBullet(_entity->getWorldPosition()));
-        worldTrans.setRotation(glmToBullet(_entity->getWorldOrientation()));
-        _body->setWorldTransform(worldTrans);
+        // and also to the body
+        setBodyTransform(getObjectPosition(), _entity->getWorldOrientation(), false);
         // no need to update velocities... should already be zero
     }
     if (!isLocallyOwned()) {
@@ -144,9 +164,7 @@ void EntityMotionState::handleEasyChanges(uint32_t& flags) {
             // TODO: also check angularVelocity
                 // this object is coming to rest
                 flags &= ~Simulation::DIRTY_PHYSICS_ACTIVATION;
-                _body->setActivationState(WANTS_DEACTIVATION);
-                const float ACTIVATION_EXPIRY = 3.0f; // something larger than the 2.0 hard coded in Bullet
-                _body->setDeactivationTime(ACTIVATION_EXPIRY);
+                // the engine puts it to sleep on its own once it is slow for long enough
             } else {
                 // disowned object is still moving --> start timer for ownership bid
                 // TODO? put a delay in here proportional to distance from object?
@@ -168,15 +186,11 @@ void EntityMotionState::handleEasyChanges(uint32_t& flags) {
         // reset bid expiry so that we bid ASAP
         _nextBidExpiry = 0;
     }
-    if ((flags & Simulation::DIRTY_PHYSICS_ACTIVATION) && !_body->isActive()) {
-        if (_body->isKinematicObject()) {
-            // only force activate kinematic bodies (dynamic shouldn't need force and
-            // active static bodies are special (see PhysicsEngine::_activeStaticBodies))
-            _body->activate(true);
+    if ((flags & Simulation::DIRTY_PHYSICS_ACTIVATION) && !_body->IsActive()) {
+        if (_body->IsKinematic()) {
             _lastKinematicStep = ObjectMotionState::getWorldSimulationStep();
-        } else {
-            _body->activate();
         }
+        activateBody();
     }
 }
 
@@ -202,57 +216,96 @@ PhysicsMotionType EntityMotionState::computePhysicsMotionType() const {
     }
     if (_entity->hasActions() ||
         _entity->isMovingRelativeToParent() ||
-        _entity->hasAncestorOfType(NestableType::Avatar)) {
+        _entity->hasAncestorOfType(NestableType::Avatar) ||
+        hasMovingEntityAncestor(_entity)) {
         return MOTION_TYPE_KINEMATIC;
     }
     return MOTION_TYPE_STATIC;
+}
+
+int EntityMotionState::getNestingDepth() const {
+    int depth = 0;
+    bool success = false;
+    SpatiallyNestablePointer parent = _entity ? _entity->getParentPointer(success) : nullptr;
+    while (success && parent && depth < MAX_NESTING_DEPTH) {
+        ++depth;
+        parent = parent->getParentPointer(success);
+    }
+    return depth;
 }
 
 bool EntityMotionState::isMoving() const {
     return _entity && _entity->isMovingRelativeToParent();
 }
 
-// This callback is invoked by the physics simulation in two cases:
-// (1) when the RigidBody is first added to the world
-//     (irregardless of PhysicsMotionType: STATIC, DYNAMIC, or KINEMATIC)
-// (2) at the beginning of each simulation step for KINEMATIC RigidBody's --
-//     it is an opportunity for outside code to update the object's simulation position
-void EntityMotionState::getWorldTransform(btTransform& worldTrans) const {
-    BT_PROFILE("getWorldTransform");
-    if (!_entity) {
+// Called by the engine before every substep. Kinematic entities integrate their keyframed motion here and
+// move their body toward the result over the substep, so whatever they touch is pushed properly.
+void EntityMotionState::pushTransformToBody(float dt) {
+    if (!_entity || !_body || _motionType != MOTION_TYPE_KINEMATIC) {
         return;
     }
-    if (_motionType == MOTION_TYPE_KINEMATIC) {
-        BT_PROFILE("kinematicIntegration");
-        uint32_t thisStep = ObjectMotionState::getWorldSimulationStep();
-        if (hasInternalKinematicChanges()) {
-            // ACTION_CAN_CONTROL_KINEMATIC_OBJECT_HACK: This kinematic body was moved by an Action
-            // and doesn't require transform update because the body is authoritative and its transform
-            // has already been copied out --> do no kinematic integration.
-            clearInternalKinematicChanges();
-            _lastKinematicStep = thisStep;
-            return;
-        }
-        // This is physical kinematic motion which steps strictly by the subframe count
-        // of the physics simulation and uses full gravity for acceleration.
-        _entity->setAcceleration(_entity->getGravity());
-
-        float dt = (thisStep - _lastKinematicStep) * PHYSICS_ENGINE_FIXED_SUBSTEP;
+    DETAILED_PROFILE_RANGE(simulation_physics, "kinematicIntegration");
+    uint32_t thisStep = ObjectMotionState::getWorldSimulationStep();
+    if (hasInternalKinematicChanges()) {
+        // ACTION_CAN_CONTROL_KINEMATIC_OBJECT_HACK: This kinematic body was moved by an Action
+        // and doesn't require transform update because the body is authoritative and its transform
+        // has already been copied out --> do no kinematic integration.
+        clearInternalKinematicChanges();
         _lastKinematicStep = thisStep;
-        _entity->stepKinematicMotion(dt);
-
-        // and set the acceleration-matches-gravity count high so that if we send an update
-        // it will use the correct acceleration for remote simulations
-        _accelerationNearlyGravityCount = (uint8_t)(-1);
+        return;
     }
-    worldTrans.setOrigin(glmToBullet(getObjectPosition()));
-    worldTrans.setRotation(glmToBullet(_entity->getWorldOrientation()));
+    // This is physical kinematic motion which steps strictly by the subframe count
+    // of the physics simulation and uses full gravity for acceleration.
+    _entity->setAcceleration(_entity->getGravity());
+
+    float stepDt = (thisStep - _lastKinematicStep) * PHYSICS_ENGINE_FIXED_SUBSTEP;
+    _lastKinematicStep = thisStep;
+    _entity->stepKinematicMotion(stepDt);
+
+    // and set the acceleration-matches-gravity count high so that if we send an update
+    // it will use the correct acceleration for remote simulations
+    _accelerationNearlyGravityCount = (uint8_t)(-1);
+
+    _bodyInterface->MoveKinematic(_body->GetID(), glmToJoltR(getObjectPosition()), glmToJolt(_entity->getWorldOrientation()), dt);
+
+    // a child that is still a static body has to become kinematic now that its parent moves
+    EntityTreePointer tree = _entity->getTree();
+    _entity->forEachChild([&](SpatiallyNestablePointer child) {
+        if (child->getNestableType() == NestableType::Entity) {
+            EntityItemPointer childEntity = std::static_pointer_cast<EntityItem>(child);
+            EntityMotionState* childState = static_cast<EntityMotionState*>(childEntity->getPhysicsInfo());
+            if (childState && childState->getBody() && childState->getBody()->IsStatic()) {
+                childEntity->flagForMotionStateChange();
+                if (tree) {
+                    tree->entityChanged(childEntity);
+                }
+            }
+        }
+    });
 }
 
-// This callback is invoked by the physics simulation at the end of each simulation step...
-// iff the corresponding RigidBody is DYNAMIC and ACTIVE.
-void EntityMotionState::setWorldTransform(const btTransform& worldTrans) {
+// Called by the engine after a step for every body that was active: the body's result goes to the entity.
+void EntityMotionState::pullTransformFromBody() {
+    if (!_entity || !_body) {
+        return;
+    }
     measureBodyAcceleration();
+
+    glm::vec3 position;
+    glm::quat rotation;
+    getBodyTransform(position, rotation);
+    position += ObjectMotionState::getWorldOffset();
+
+    if (_body->IsKinematic()) {
+        // A keyframed body went where the entity told it; the entity's own velocity stays the truth, and the
+        // body's (which may include a catch-up) must not be written back. Only the transform is taken.
+        uint32_t kinematicFlags = _entity->getDirtyFlags() & Simulation::DIRTY_TRANSFORM;
+        if (!kinematicFlags) {
+            _entity->setWorldTransform(position, rotation);
+        }
+        _entity->setLastSimulated(usecTimestampNow());
+        return;
+    }
 
     // If transform or velocities are flagged as dirty it means a network or scripted change
     // occured between the beginning and end of the stepSimulation() and we DON'T want to apply
@@ -260,14 +313,14 @@ void EntityMotionState::setWorldTransform(const btTransform& worldTrans) {
     uint32_t flags = _entity->getDirtyFlags() & (Simulation::DIRTY_TRANSFORM | Simulation::DIRTY_VELOCITIES);
     if (!flags) {
         // flags are clear
-        _entity->setWorldTransform(bulletToGLM(worldTrans.getOrigin()), bulletToGLM(worldTrans.getRotation()));
+        _entity->setWorldTransform(position, rotation);
         _entity->setWorldVelocity(getBodyLinearVelocity());
         _entity->setWorldAngularVelocity(getBodyAngularVelocity());
         _entity->setLastSimulated(usecTimestampNow());
     } else {
         // only set properties NOT flagged
         if (!(flags & Simulation::DIRTY_TRANSFORM)) {
-            _entity->setWorldTransform(bulletToGLM(worldTrans.getOrigin()), bulletToGLM(worldTrans.getRotation()));
+            _entity->setWorldTransform(position, rotation);
         }
         if (!(flags & Simulation::DIRTY_LINEAR_VELOCITY)) {
             _entity->setWorldVelocity(getBodyLinearVelocity());
@@ -316,7 +369,7 @@ bool EntityMotionState::remoteSimulationOutOfSync(uint32_t simulationStep) {
         return (dt > INACTIVE_UPDATE_PERIOD * (float)_numInactiveUpdates);
     }
 
-    if (!_body->isActive()) {
+    if (!_body->IsActive()) {
         // object has gone inactive but our last send was moving --> send non-moving update immediately
         return true;
     }
@@ -326,7 +379,7 @@ bool EntityMotionState::remoteSimulationOutOfSync(uint32_t simulationStep) {
         return true;
     }
 
-    if (_body->isStaticOrKinematicObject()) {
+    if (_body->IsStatic() || _body->IsKinematic()) {
         return false;
     }
 
@@ -341,7 +394,7 @@ bool EntityMotionState::remoteSimulationOutOfSync(uint32_t simulationStep) {
 
         if (ancestryIsKnown && !hasAvatarAncestor) {
             _serverVelocity += _serverAcceleration * dt;
-            _serverVelocity *= powf(1.0f - _body->getLinearDamping(), dt);
+            _serverVelocity *= powf(1.0f - _entity->getDamping(), dt);
 
             // NOTE: we ignore the second-order acceleration term when integrating
             // the position forward because Bullet also does this.
@@ -364,8 +417,10 @@ bool EntityMotionState::remoteSimulationOutOfSync(uint32_t simulationStep) {
         localToWorld.evalInverse(worldToLocal);
     }
 
-    btTransform worldTrans = _body->getWorldTransform();
-    glm::vec3 position = worldToLocal.transform(bulletToGLM(worldTrans.getOrigin()));
+    glm::vec3 bodyPosition;
+    glm::quat bodyRotation;
+    getBodyTransform(bodyPosition, bodyRotation);
+    glm::vec3 position = worldToLocal.transform(bodyPosition + ObjectMotionState::getWorldOffset());
 
     float dx2 = glm::distance2(position, _serverPosition);
     const float MAX_POSITION_ERROR_SQUARED = 0.000004f; // corresponds to 2mm
@@ -386,7 +441,7 @@ bool EntityMotionState::remoteSimulationOutOfSync(uint32_t simulationStep) {
 
         // Bullet caps the effective rotation velocity inside its rotation integration step, therefore
         // we must integrate with the same algorithm and timestep in order achieve similar results.
-        float attenuation = powf(1.0f - _body->getAngularDamping(), PHYSICS_ENGINE_FIXED_SUBSTEP);
+        float attenuation = powf(1.0f - _entity->getAngularDamping(), PHYSICS_ENGINE_FIXED_SUBSTEP);
         _serverAngularVelocity *= attenuation;
         glm::quat rotation = computeBulletRotationStep(_serverAngularVelocity, PHYSICS_ENGINE_FIXED_SUBSTEP);
         for (int i = 1; i < numSteps; ++i) {
@@ -395,7 +450,7 @@ bool EntityMotionState::remoteSimulationOutOfSync(uint32_t simulationStep) {
         }
         _serverRotation = glm::normalize(rotation * _serverRotation);
         const float MIN_ROTATION_DOT = 0.99999f; // This corresponds to about 0.5 degrees of rotation
-        glm::quat actualRotation = worldToLocal.getRotation() * bulletToGLM(worldTrans.getRotation());
+        glm::quat actualRotation = worldToLocal.getRotation() * bodyRotation;
         return (fabsf(glm::dot(actualRotation, _serverRotation)) < MIN_ROTATION_DOT);
     }
     return false;
@@ -426,8 +481,8 @@ bool EntityMotionState::shouldSendUpdate(uint32_t simulationStep) {
 }
 
 void EntityMotionState::updateSendVelocities() {
-    if (!_body->isActive()) {
-        if (!_body->isKinematicObject()) {
+    if (!_body->IsActive()) {
+        if (!_body->IsKinematic()) {
             clearObjectVelocities();
         }
         if (_entity->getEntityHostType() == entity::HostType::AVATAR) {
@@ -449,7 +504,7 @@ void EntityMotionState::updateSendVelocities() {
             _entity->setAcceleration(Vectors::ZERO);
         }
 
-        if (!_body->isStaticOrKinematicObject()) {
+        if (!(_body->IsStatic() || _body->IsKinematic())) {
             const float DYNAMIC_LINEAR_VELOCITY_THRESHOLD = 0.05f;  // 5 cm/sec
             const float DYNAMIC_ANGULAR_VELOCITY_THRESHOLD = 0.087266f;  // ~5 deg/sec
 
@@ -625,14 +680,10 @@ uint32_t EntityMotionState::getIncomingDirtyFlags() const {
             }
         }
         // we add DIRTY_MOTION_TYPE if the body's motion type disagrees with entity velocity settings
-        int bodyFlags = _body->getCollisionFlags();
-        bool isMoving = _entity->isMovingRelativeToParent();
-
-        if (((bodyFlags & btCollisionObject::CF_STATIC_OBJECT) && isMoving) // ||
-            // TODO -- there is opportunity for an optimization here, but this currently causes
-            // excessive re-insertion of the rigid body.
-            // (bodyFlags & btCollisionObject::CF_KINEMATIC_OBJECT && !isMoving)
-            ) {
+        bool isMoving = _entity->isMovingRelativeToParent() || hasMovingEntityAncestor(_entity);
+        if (_body->IsStatic() && isMoving) {
+            // TODO -- there is opportunity for an optimization here (kinematic and not moving), but it causes
+            // excessive re-insertion of the body.
             dirtyFlags |= Simulation::DIRTY_MOTION_TYPE;
         }
     }
@@ -690,7 +741,7 @@ void EntityMotionState::measureBodyAcceleration() {
         glm::vec3 velocity = getBodyLinearVelocityGTSigma();
 
         const float MIN_DAMPING_FACTOR = 0.01f;
-        float invDampingAttenuationFactor = 1.0f / glm::max(powf(1.0f - _body->getLinearDamping(), dt), MIN_DAMPING_FACTOR);
+        float invDampingAttenuationFactor = 1.0f / glm::max(powf(1.0f - _entity->getDamping(), dt), MIN_DAMPING_FACTOR);
         _measuredAcceleration = (velocity * invDampingAttenuationFactor - _lastVelocity) * invDt;
         _lastVelocity = velocity;
         if (numSubsteps > PHYSICS_ENGINE_MAX_NUM_SUBSTEPS) {
@@ -745,16 +796,16 @@ void EntityMotionState::computeCollisionGroupAndMask(int32_t& group, int32_t& ma
 
 bool EntityMotionState::shouldSendBid() const {
     // NOTE: this method is only ever called when the entity's simulation is NOT locally owned
-    return _body->isActive()
+    return _body->IsActive()
         && (_region == workload::Region::R1)
         && _ownershipState != EntityMotionState::OwnershipState::Unownable
         && glm::max(glm::max(VOLUNTEER_SIMULATION_PRIORITY, _bumpedPriority), _entity->getScriptSimulationPriority()) >= _entity->getSimulationPriority()
         && !_entity->getLocked()
-        && (!_body->isStaticOrKinematicObject() || _entity->stillHasMyGrab());
+        && (!(_body->IsStatic() || _body->IsKinematic()) || _entity->stillHasMyGrab());
 }
 
-void EntityMotionState::setRigidBody(btRigidBody* body) {
-    ObjectMotionState::setRigidBody(body);
+void EntityMotionState::setBody(JPH::Body* body, JPH::BodyInterface* bodyInterface) {
+    ObjectMotionState::setBody(body, bodyInterface);
     if (_body) {
         _entity->markSpecialFlags(Simulation::SPECIAL_FLAG_IN_PHYSICS_SIMULATION);
     } else {
@@ -824,15 +875,4 @@ void EntityMotionState::clearObjectVelocities() const {
         }
     }
     _entity->setAcceleration(glm::vec3(0.0f));
-}
-
-void EntityMotionState::saveKinematicState(btScalar timeStep) {
-    _body->saveKinematicState(timeStep);
-
-    // This is a WORKAROUND for a quirk in Bullet: due to floating point error slow spinning kinematic objects will
-    // have a measured angular velocity of zero.  This probably isn't a bug that the Bullet team is interested in
-    // fixing since there is one very simple workaround: use double-precision math for the physics simulation.
-    // We're not ready migrate to double-precision yet so we explicitly work around it by slamming the RigidBody's
-    // angular velocity with the value in the entity.
-    _body->setAngularVelocity(glmToBullet(_entity->getWorldAngularVelocity()));
 }

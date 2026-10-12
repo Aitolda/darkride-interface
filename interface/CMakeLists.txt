@@ -232,7 +232,6 @@ target_include_directories(${TARGET_NAME} PRIVATE "${CMAKE_BINARY_DIR}/libraries
 # include OpenSSL
 target_openssl()
 
-target_bullet()
 target_opengl()
 add_crashpad()
 target_breakpad()

@@ -11,6 +11,10 @@
 
 #include "ObjectConstraintSlider.h"
 
+#include <cfloat>
+
+#include <Jolt/Physics/Constraints/SliderConstraint.h>
+
 #include <LogHandler.h>
 
 #include "QVariantGLM.h"
@@ -22,6 +26,25 @@
 const uint16_t ObjectConstraintSlider::constraintVersion = 1;
 const glm::vec3 DEFAULT_SLIDER_AXIS(1.0f, 0.0f, 0.0f);
 
+// A point given relative to the body's origin, as scripts give it, expressed relative to the body's centre of
+// mass, which is what Jolt's LocalToBodyCOM constraint space wants.
+static JPH::RVec3 toBodyCOMSpace(const JPH::Body* body, const glm::vec3& point) {
+    return glmToJoltR(point - joltToGLM(body->GetShape()->GetCenterOfMass()));
+}
+
+// Bullet accepted any [low, high], with low above high meaning no limit. Jolt wants the lower limit at or below 0
+// and the upper at or above 0 (0 being where the two points coincide), with -FLT_MAX / FLT_MAX meaning no limit,
+// so a range that does not include 0 is widened to include it.
+static void sliderLimitsForJolt(float low, float high, float& limitsMin, float& limitsMax) {
+    if (low > high) {
+        limitsMin = -FLT_MAX;
+        limitsMax = FLT_MAX;
+        return;
+    }
+    limitsMin = glm::min(low, 0.0f);
+    limitsMax = glm::max(high, 0.0f);
+}
+
 ObjectConstraintSlider::ObjectConstraintSlider(const QUuid& id, EntityItemPointer ownerEntity) :
     ObjectConstraint(DYNAMIC_TYPE_SLIDER, id, ownerEntity),
     _axisInA(DEFAULT_SLIDER_AXIS),
@@ -32,15 +55,17 @@ ObjectConstraintSlider::ObjectConstraintSlider(const QUuid& id, EntityItemPointe
 ObjectConstraintSlider::~ObjectConstraintSlider() {
 }
 
-QList<btRigidBody*> ObjectConstraintSlider::getRigidBodies() {
-    QList<btRigidBody*> result;
-    result += getRigidBody();
+std::vector<JPH::BodyID> ObjectConstraintSlider::getBodyIDs() {
+    std::vector<JPH::BodyID> result = ObjectDynamic::getBodyIDs();
     QUuid otherEntityID;
     withReadLock([&]{
         otherEntityID = _otherID;
     });
     if (!otherEntityID.isNull()) {
-        result += getOtherRigidBody(otherEntityID);
+        JPH::Body* otherBody = getOtherBody(otherEntityID);
+        if (otherBody) {
+            result.push_back(otherBody->GetID());
+        }
     }
     return result;
 }
@@ -49,40 +74,46 @@ void ObjectConstraintSlider::prepareForPhysicsSimulation() {
 }
 
 void ObjectConstraintSlider::updateSlider() {
-    btSliderConstraint* constraint { nullptr };
+    JPH::SliderConstraint* constraint { nullptr };
+    float linearLow;
+    float linearHigh;
 
     withReadLock([&]{
-        constraint = static_cast<btSliderConstraint*>(_constraint);
+        constraint = static_cast<JPH::SliderConstraint*>(_constraint.GetPtr());
+        linearLow = _linearLow;
+        linearHigh = _linearHigh;
     });
 
     if (!constraint) {
         return;
     }
 
-    // constraint->setFrames (const btTransform &frameA, const btTransform &frameB);
-    constraint->setLowerLinLimit(_linearLow);
-    constraint->setUpperLinLimit(_linearHigh);
-    constraint->setLowerAngLimit(_angularLow);
-    constraint->setUpperAngLimit(_angularHigh);
-
+    // Jolt's slider does not turn about its axis, so _angularLow and _angularHigh have nothing to set.
+    float limitsMin, limitsMax;
+    sliderLimitsForJolt(linearLow, linearHigh, limitsMin, limitsMax);
+    constraint->SetLimits(limitsMin, limitsMax);
 }
 
 
-btTypedConstraint* ObjectConstraintSlider::getConstraint() {
-    btSliderConstraint* constraint { nullptr };
+JPH::Constraint* ObjectConstraintSlider::getConstraint() {
+    JPH::Constraint* constraint { nullptr };
     QUuid otherEntityID;
     glm::vec3 pointInA;
     glm::vec3 axisInA;
     glm::vec3 pointInB;
     glm::vec3 axisInB;
+    float linearLow;
+    float linearHigh;
 
     withReadLock([&]{
-        constraint = static_cast<btSliderConstraint*>(_constraint);
+        constraint = _constraint.GetPtr();
         pointInA = _pointInA;
         axisInA = _axisInA;
         otherEntityID = _otherID;
         pointInB = _pointInB;
         axisInB = _axisInB;
+        linearLow = _linearLow;
+        linearHigh = _linearHigh;
     });
     if (constraint) {
         return constraint;
@@ -90,9 +121,9 @@ btTypedConstraint* ObjectConstraintSlider::getConstraint() {
 
     static int repeatMessageID = LogHandler::getInstance().newRepeatedMessageID();
 
-    btRigidBody* rigidBodyA = getRigidBody();
-    if (!rigidBodyA) {
-        HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintSlider::getConstraint -- no rigidBodyA");
+    JPH::Body* bodyA = getBody();
+    if (!bodyA) {
+        HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintSlider::getConstraint -- no bodyA");
         return nullptr;
     }
 
@@ -103,8 +134,23 @@ btTypedConstraint* ObjectConstraintSlider::getConstraint() {
         axisInA = glm::normalize(axisInA);
     }
 
+    JPH::SliderConstraintSettings settings;
+    settings.mSpace = JPH::EConstraintSpace::LocalToBodyCOM;
+    glm::vec3 normalInA = joltToGLM(glmToJolt(axisInA).GetNormalizedPerpendicular());
+    glm::vec3 positionA = joltToGLM(bodyA->GetPosition());
+    glm::quat rotationA = joltToGLM(bodyA->GetRotation());
+
+    JPH::Body* body1 { nullptr };
+    JPH::Body* body2 { nullptr };
     if (!otherEntityID.isNull()) {
-        // This slider is between two entities... find the other rigid body.
+        // This slider is between two entities... find the other body. As with Bullet this entity is the first body
+        // and the other the second, so the slider position is the other point's offset along the axis from this
+        // entity's point.
+        JPH::Body* bodyB = getOtherBody(otherEntityID);
+        if (!bodyB) {
+            HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintSlider::getConstraint -- no bodyB");
+            return nullptr;
+        }
 
         if (glm::length(axisInB) < FLT_EPSILON) {
             qCWarning(physics) << "slider axis cannot be a zero vector";
@@ -113,34 +159,47 @@ btTypedConstraint* ObjectConstraintSlider::getConstraint() {
             axisInB = glm::normalize(axisInB);
         }
 
-        glm::quat rotA = glm::rotation(DEFAULT_SLIDER_AXIS, axisInA);
-        glm::quat rotB = glm::rotation(DEFAULT_SLIDER_AXIS, axisInB);
+        // Jolt's slider allows no rotation about its axis (Bullet's did, within the angular limits), so the bodies
+        // are held at the rotation where the two frames' normals align. The second normal is taken from where the
+        // bodies are now: they are only turned to align their axes, as Bullet turned them, and keep their present
+        // rotation about it.
+        glm::quat rotationB = joltToGLM(bodyB->GetRotation());
+        glm::vec3 axisAInWorld = rotationA * axisInA;
+        glm::vec3 axisBInWorld = rotationB * axisInB;
+        glm::vec3 normalInB = glm::inverse(rotationB) *
+            (glm::rotation(axisAInWorld, axisBInWorld) * (rotationA * normalInA));
 
-        btTransform frameInA(glmToBullet(rotA), glmToBullet(pointInA));
-        btTransform frameInB(glmToBullet(rotB), glmToBullet(pointInB));
-
-        btRigidBody* rigidBodyB = getOtherRigidBody(otherEntityID);
-        if (!rigidBodyB) {
-            HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintSlider::getConstraint -- no rigidBodyB");
-            return nullptr;
-        }
-
-        constraint = new btSliderConstraint(*rigidBodyA, *rigidBodyB, frameInA, frameInB, true);
+        body1 = bodyA;
+        body2 = bodyB;
+        settings.mPoint1 = toBodyCOMSpace(bodyA, pointInA);
+        settings.mSliderAxis1 = glmToJolt(axisInA);
+        settings.mNormalAxis1 = glmToJolt(normalInA);
+        settings.mPoint2 = toBodyCOMSpace(bodyB, pointInB);
+        settings.mSliderAxis2 = glmToJolt(axisInB);
+        settings.mNormalAxis2 = glmToJolt(normalInB);
     } else {
-        // This slider is between an entity and the world-frame.
-
-        glm::quat rot = glm::rotation(DEFAULT_SLIDER_AXIS, axisInA);
-
-        btTransform frameInA(glmToBullet(rot), glmToBullet(pointInA));
-
-        constraint = new btSliderConstraint(*rigidBodyA, frameInA, true);
+        // This slider is between an entity and the world-frame. As with Bullet the world is the first body and the
+        // entity the second, so the slider position is the entity's offset along the axis from where it started.
+        // The world side is Jolt's fixed-to-world body, whose own frame is the world frame; it gets the entity's
+        // point and axis where they are now.
+        body1 = &JPH::Body::sFixedToWorld;
+        body2 = bodyA;
+        settings.mPoint1 = glmToJoltR(positionA + rotationA * pointInA);
+        settings.mSliderAxis1 = glmToJolt(rotationA * axisInA);
+        settings.mNormalAxis1 = glmToJolt(rotationA * normalInA);
+        settings.mPoint2 = toBodyCOMSpace(bodyA, pointInA);
+        settings.mSliderAxis2 = glmToJolt(axisInA);
+        settings.mNormalAxis2 = glmToJolt(normalInA);
     }
+    sliderLimitsForJolt(linearLow, linearHigh, settings.mLimitsMin, settings.mLimitsMax);
+
+    constraint = settings.Create(*body1, *body2);
 
     withWriteLock([&]{
         _constraint = constraint;
     });
 
-    // if we don't wake up rigidBodyA, we may not send the dynamicData property over the network
+    // if we don't wake up bodyA, we may not send the dynamicData property over the network
     forceBodyNonStatic();
     activateBody();
 
@@ -262,29 +321,33 @@ bool ObjectConstraintSlider::updateArguments(QVariantMap arguments) {
 }
 
 /**jsdoc
- * The <code>"slider"</code> {@link Entities.ActionType|ActionType} lets an entity slide and rotate along an axis, or connects 
- * two entities that slide and rotate along a shared axis.
+ * The <code>"slider"</code> {@link Entities.ActionType|ActionType} lets an entity slide along an axis, or connects two
+ * entities that slide along a shared axis.
  * It has arguments in addition to the common {@link Entities.ActionArguments|ActionArguments}:
  *
  * @typedef {object} Entities.ActionArguments-Slider
  * @property {Uuid} otherEntityID=null - The ID of the other entity that is connected to the joint, if any. If none is
- *     specified then the first entity simply slides and rotates about its specified <code>axis</code>.
+ *     specified then the first entity simply slides along its specified <code>axis</code>.
  * @property {Vec3} point=0,0,0 - The local position of a point in the entity that slides along the axis.
  * @property {Vec3} axis=1,0,0 - The axis of the entity that slides along the joint. Must be a non-zero vector.
  * @property {Vec3} otherPoint=0,0,0 - The local position of a point in the other entity that slides along the axis.
  * @property {Vec3} otherAxis=1,0,0 - The axis of the other entity that slides along the joint. Must be a non-zero vector.
  * @property {number} linearLow=1.17e-38 - The most negative linear offset from the entity's initial point that the entity can 
- *     have along the slider.
+ *     have along the slider. Limits always include the initial point <code>0</code>; <code>linearLow</code> above
+ *     <code>linearHigh</code> leaves the slider free.
  * @property {number} linearHigh=3.40e+38 - The most positive linear offset from the entity's initial point that the entity can 
  *     have along the slider. 
  * @property {number} angularLow=-2*Math.PI - The most negative angle that the entity can rotate about the axis if the action 
  *     involves only one entity, otherwise the most negative angle the rotation can be between the two entities. In radians.
+ *     <em>Not enforced: the joint does not rotate about its axis. The value is stored and reported only.</em>
  * @property {number} angularHigh=Math.PI - The most positive angle that the entity can rotate about the axis if the action 
  *     involves only one entity, otherwise the most positive angle the rotation can be between the two entities. In radians.
+ *     <em>Not enforced: the joint does not rotate about its axis. The value is stored and reported only.</em>
  * @property {number} linearPosition=0 - The current linear offset the entity is from its initial point if the action involves 
  *     only one entity, otherwise the linear offset between the two entities' action points. <em>Read-only.</em>
  * @property {number} angularPosition=0 - The current angular offset of the entity from its initial rotation if the action 
- *     involves only one entity, otherwise the angular offset between the two entities. In radians. <em>Read-only.</em>
+ *     involves only one entity, otherwise the angular offset between the two entities. In radians. Always <code>0</code>,
+ *     as the joint does not rotate about its axis. <em>Read-only.</em>
  */
 QVariantMap ObjectConstraintSlider::getArguments() {
     QVariantMap arguments = ObjectDynamic::getArguments();
@@ -299,12 +362,12 @@ QVariantMap ObjectConstraintSlider::getArguments() {
         arguments["angularLow"] = _angularLow;
         arguments["angularHigh"] = _angularHigh;
         if (_constraint) {
-            arguments["linearPosition"] = static_cast<btSliderConstraint*>(_constraint)->getLinearPos();
-            arguments["angularPosition"] = static_cast<btSliderConstraint*>(_constraint)->getAngularPos();
+            arguments["linearPosition"] = static_cast<JPH::SliderConstraint*>(_constraint.GetPtr())->GetCurrentPosition();
         } else {
             arguments["linearPosition"] = 0.0f;
-            arguments["angularPosition"] = 0.0f;
         }
+        // Jolt's slider holds the rotation about its axis fixed
+        arguments["angularPosition"] = 0.0f;
     });
     return arguments;
 }

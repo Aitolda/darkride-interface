@@ -14,7 +14,8 @@
 
 #include "ObjectConstraint.h"
 
-// http://bulletphysics.org/Bullet/BulletFull/classbtBallSocketConstraint.html
+// A ball-and-socket joint: a point on the entity is held to a point on another entity (or in the world), with
+// rotation free. Built on JPH::PointConstraint (Jolt/Physics/Constraints/PointConstraint.h).
 
 class ObjectConstraintBallSocket : public ObjectConstraint {
 public:
@@ -29,8 +30,8 @@ public:
     virtual QByteArray serialize() const override;
     virtual void deserialize(QByteArray serializedArguments) override;
 
-    virtual QList<btRigidBody*> getRigidBodies() override;
-    virtual btTypedConstraint* getConstraint() override;
+    virtual std::vector<JPH::BodyID> getBodyIDs() override;
+    virtual JPH::Constraint* getConstraint() override;
 
 protected:
     static const uint16_t constraintVersion;

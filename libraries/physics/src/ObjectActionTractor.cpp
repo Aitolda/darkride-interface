@@ -11,13 +11,41 @@
 
 #include "ObjectActionTractor.h"
 
+#include <glm/gtc/quaternion.hpp>
+
 #include <EntityItem.h>
+#include <PhysicsHelpers.h>
 #include <QVariantGLM.h>
 
 #include "PhysicsLogging.h"
 
 const float TRACTOR_MAX_SPEED = 10.0f;
 const float MAX_TRACTOR_TIMESCALE = 600.0f; // 10 min is a long time
+
+// Bullet let a body fall asleep below a per-body speed, which the engine set by motion type; Jolt has one world-wide
+// threshold instead. The action keeps Bullet's numbers to decide when the motion it asks for has to wake the body.
+const float BULLET_DEFAULT_LINEAR_SLEEPING_THRESHOLD = 0.8f; // m/s, what a static body kept
+const float BULLET_DEFAULT_ANGULAR_SLEEPING_THRESHOLD = 1.0f; // rad/s
+
+static float linearSleepingThreshold(const JPH::Body* body) {
+    if (body->IsDynamic()) {
+        return DYNAMIC_LINEAR_SPEED_THRESHOLD;
+    }
+    if (body->IsKinematic()) {
+        return KINEMATIC_LINEAR_SPEED_THRESHOLD;
+    }
+    return BULLET_DEFAULT_LINEAR_SLEEPING_THRESHOLD;
+}
+
+static float angularSleepingThreshold(const JPH::Body* body) {
+    if (body->IsDynamic()) {
+        return DYNAMIC_ANGULAR_SPEED_THRESHOLD;
+    }
+    if (body->IsKinematic()) {
+        return KINEMATIC_ANGULAR_SPEED_THRESHOLD;
+    }
+    return BULLET_DEFAULT_ANGULAR_SLEEPING_THRESHOLD;
+}
 
 const uint16_t ObjectActionTractor::tractorVersion = 1;
 
@@ -92,7 +120,7 @@ bool ObjectActionTractor::getTarget(float deltaTimeStep, glm::quat& rotation, gl
     });
 }
 
-bool ObjectActionTractor::prepareForTractorUpdate(btScalar deltaTimeStep) {
+bool ObjectActionTractor::prepareForTractorUpdate(float deltaTimeStep) {
     auto ownerEntity = _ownerEntity.lock();
     if (!ownerEntity) {
         return false;
@@ -179,7 +207,7 @@ bool ObjectActionTractor::prepareForTractorUpdate(btScalar deltaTimeStep) {
 }
 
 
-void ObjectActionTractor::updateActionWorker(btScalar deltaTimeStep) {
+void ObjectActionTractor::updateActionWorker(float deltaTimeStep) {
     if (!prepareForTractorUpdate(deltaTimeStep)) {
         return;
     }
@@ -195,36 +223,40 @@ void ObjectActionTractor::updateActionWorker(btScalar deltaTimeStep) {
             return;
         }
         ObjectMotionState* motionState = static_cast<ObjectMotionState*>(physicsInfo);
-        btRigidBody* rigidBody = motionState->getRigidBody();
-        if (!rigidBody) {
-            qCDebug(physics) << "ObjectActionTractor::updateActionWorker no rigidBody";
+        JPH::Body* body = motionState->getBody();
+        if (!body) {
+            qCDebug(physics) << "ObjectActionTractor::updateActionWorker no body";
             return;
         }
 
+        // the body's origin and orientation in the simulation frame (what Bullet called the center-of-mass transform)
+        glm::vec3 bodyPosition;
+        glm::quat bodyRotation;
+        motionState->getBodyTransform(bodyPosition, bodyRotation);
+
         if (_linearTimeScale < MAX_TRACTOR_TIMESCALE) {
-            btVector3 offsetVelocity(0.0f, 0.0f, 0.0f);
-            btVector3 offset = rigidBody->getCenterOfMassPosition() - glmToBullet(_positionalTarget);
-            float offsetLength = offset.length();
+            glm::vec3 offsetVelocity(0.0f);
+            glm::vec3 offset = bodyPosition - _positionalTarget;
+            float offsetLength = glm::length(offset);
             if (offsetLength > FLT_EPSILON) {
                 float speed = glm::min(offsetLength / _linearTimeScale, TRACTOR_MAX_SPEED);
                 offsetVelocity = (-speed / offsetLength) * offset;
-                if (speed > rigidBody->getLinearSleepingThreshold()) {
+                if (speed > linearSleepingThreshold(body)) {
                     forceBodyNonStatic();
-                    rigidBody->activate();
+                    activateBody();
                 }
             }
             // this action is aggresively critically damped and defeats the current velocity
-            rigidBody->setLinearVelocity(glmToBullet(_linearVelocityTarget) + offsetVelocity);
+            motionState->setBodyLinearVelocity(_linearVelocityTarget + offsetVelocity);
         }
 
         if (_angularTimeScale < MAX_TRACTOR_TIMESCALE) {
-            btVector3 targetVelocity(0.0f, 0.0f, 0.0f);
+            glm::vec3 targetVelocity(0.0f);
 
-            btQuaternion bodyRotation = rigidBody->getOrientation();
-            auto alignmentDot = bodyRotation.dot(glmToBullet(_rotationalTarget));
+            float alignmentDot = glm::dot(bodyRotation, _rotationalTarget);
             const float ALMOST_ONE = 0.99999f;
             if (glm::abs(alignmentDot) < ALMOST_ONE) {
-                btQuaternion target = glmToBullet(_rotationalTarget);
+                glm::quat target = _rotationalTarget;
                 if (alignmentDot < 0.0f) {
                     target = -target;
                 }
@@ -235,15 +267,17 @@ void ObjectActionTractor::updateActionWorker(btScalar deltaTimeStep) {
                 // solving for dQ gives:
                 //
                 //      dQ = Q1 * Q0^
-                btQuaternion deltaQ = target * bodyRotation.inverse();
-                float speed = deltaQ.getAngle() / _angularTimeScale;
-                targetVelocity = speed * deltaQ.getAxis();
-                if (speed > rigidBody->getAngularSleepingThreshold()) {
-                    rigidBody->activate();
+                //
+                // (the conjugate is the inverse of a unit quaternion, and glm::angle/axis are Bullet's getAngle/getAxis)
+                glm::quat deltaQ = target * glm::conjugate(bodyRotation);
+                float speed = glm::angle(deltaQ) / _angularTimeScale;
+                targetVelocity = speed * glm::axis(deltaQ);
+                if (speed > angularSleepingThreshold(body)) {
+                    activateBody();
                 }
             }
             // this action is aggresively critically damped and defeats the current velocity
-            rigidBody->setAngularVelocity(targetVelocity);
+            motionState->setBodyAngularVelocity(targetVelocity);
         }
     });
 }

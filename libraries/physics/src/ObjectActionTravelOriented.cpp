@@ -14,11 +14,26 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <EntityItem.h>
+#include <PhysicsHelpers.h>
 #include <QVariantGLM.h>
 
 #include "PhysicsLogging.h"
 
 const uint16_t ObjectActionTravelOriented::actionVersion = 1;
+
+// Bullet let a body fall asleep below a per-body speed, which the engine set by motion type; Jolt has one world-wide
+// threshold instead. The action keeps Bullet's numbers to decide when the motion it asks for has to wake the body.
+const float BULLET_DEFAULT_ANGULAR_SLEEPING_THRESHOLD = 1.0f; // rad/s, what a static body kept
+
+static float angularSleepingThreshold(const JPH::Body* body) {
+    if (body->IsDynamic()) {
+        return DYNAMIC_ANGULAR_SPEED_THRESHOLD;
+    }
+    if (body->IsKinematic()) {
+        return KINEMATIC_ANGULAR_SPEED_THRESHOLD;
+    }
+    return BULLET_DEFAULT_ANGULAR_SLEEPING_THRESHOLD;
+}
 
 
 ObjectActionTravelOriented::ObjectActionTravelOriented(const QUuid& id, EntityItemPointer ownerEntity) :
@@ -34,7 +49,7 @@ ObjectActionTravelOriented::~ObjectActionTravelOriented() {
     #endif
 }
 
-void ObjectActionTravelOriented::updateActionWorker(btScalar deltaTimeStep) {
+void ObjectActionTravelOriented::updateActionWorker(float deltaTimeStep) {
     withReadLock([&] {
         auto ownerEntity = _ownerEntity.lock();
         if (!ownerEntity) {
@@ -45,9 +60,9 @@ void ObjectActionTravelOriented::updateActionWorker(btScalar deltaTimeStep) {
             return;
         }
         ObjectMotionState* motionState = static_cast<ObjectMotionState*>(physicsInfo);
-        btRigidBody* rigidBody = motionState->getRigidBody();
-        if (!rigidBody) {
-            qCDebug(physics) << "ObjectActionTravelOriented::updateActionWorker no rigidBody";
+        JPH::Body* body = motionState->getBody();
+        if (!body) {
+            qCDebug(physics) << "ObjectActionTravelOriented::updateActionWorker no body";
             return;
         }
         const float MAX_TIMESCALE = 600.0f; // 10 min is a long time
@@ -56,7 +71,7 @@ void ObjectActionTravelOriented::updateActionWorker(btScalar deltaTimeStep) {
         }
 
         // find normalized velocity
-        glm::vec3 velocity = bulletToGLM(rigidBody->getLinearVelocity());
+        glm::vec3 velocity = motionState->getBodyLinearVelocity();
         float speed = glm::length(velocity);
         const float TRAVEL_ORIENTED_TOO_SLOW = 0.001f; // meters / second
         if (speed < TRAVEL_ORIENTED_TOO_SLOW) {
@@ -65,20 +80,21 @@ void ObjectActionTravelOriented::updateActionWorker(btScalar deltaTimeStep) {
         glm::vec3 direction = glm::normalize(velocity);
 
         // find current angle of "forward"
-        btQuaternion bodyRotation = rigidBody->getOrientation();
-        glm::quat orientation = bulletToGLM(bodyRotation);
+        glm::vec3 bodyPosition;
+        glm::quat orientation;
+        motionState->getBodyTransform(bodyPosition, orientation);
         glm::vec3 forwardInWorldFrame = glm::normalize(orientation * _forward);
 
         // find the rotation that would line up direction and forward
         glm::quat neededRotation = glm::rotation(forwardInWorldFrame, direction);
         glm::quat rotationalTarget = neededRotation * orientation;
 
-        btVector3 targetAngularVelocity(0.0f, 0.0f, 0.0f);
+        glm::vec3 targetAngularVelocity(0.0f);
 
-        auto alignmentDot = bodyRotation.dot(glmToBullet(rotationalTarget));
+        float alignmentDot = glm::dot(orientation, rotationalTarget);
         const float ALMOST_ONE = 0.99999f;
         if (glm::abs(alignmentDot) < ALMOST_ONE) {
-            btQuaternion target = glmToBullet(rotationalTarget);
+            glm::quat target = rotationalTarget;
             if (alignmentDot < 0.0f) {
                 target = -target;
             }
@@ -89,15 +105,17 @@ void ObjectActionTravelOriented::updateActionWorker(btScalar deltaTimeStep) {
             // solving for dQ gives:
             //
             //      dQ = Q1 * Q0^
-            btQuaternion deltaQ = target * bodyRotation.inverse();
-            float speed = deltaQ.getAngle() / _angularTimeScale;
-            targetAngularVelocity = speed * deltaQ.getAxis();
-            if (speed > rigidBody->getAngularSleepingThreshold()) {
-                rigidBody->activate();
+            //
+            // (the conjugate is the inverse of a unit quaternion, and glm::angle/axis are Bullet's getAngle/getAxis)
+            glm::quat deltaQ = target * glm::conjugate(orientation);
+            float angularSpeed = glm::angle(deltaQ) / _angularTimeScale;
+            targetAngularVelocity = angularSpeed * glm::axis(deltaQ);
+            if (angularSpeed > angularSleepingThreshold(body)) {
+                activateBody();
             }
         }
         // this action is aggresively critically damped and defeats the current velocity
-        rigidBody->setAngularVelocity(targetAngularVelocity);
+        motionState->setBodyAngularVelocity(targetAngularVelocity);
     });
 }
 

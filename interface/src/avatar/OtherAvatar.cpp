@@ -147,7 +147,7 @@ int OtherAvatar::parseDataFromBuffer(const QByteArray& buffer) {
     return bytesRead;
 }
 
-const btCollisionShape* OtherAvatar::createCollisionShape(int32_t jointIndex, bool& isBound, std::vector<int32_t>& boundJoints) {
+const JPH::Shape* OtherAvatar::createCollisionShape(int32_t jointIndex, bool& isBound, std::vector<int32_t>& boundJoints) {
     ShapeInfo shapeInfo;
     isBound = false;
     QString jointName = "";
@@ -238,7 +238,7 @@ void OtherAvatar::computeShapeLOD() {
 }
 
 bool OtherAvatar::isInPhysicsSimulation() const {
-    return _motionState && _motionState->getRigidBody();
+    return _motionState && _motionState->getBody();
 }
 
 bool OtherAvatar::shouldBeInPhysicsSimulation() const {

@@ -432,7 +432,7 @@ void AvatarManager::queuePhysicsChange(const OtherAvatarPointer& avatar) {
 DetailedMotionState* AvatarManager::createDetailedMotionState(OtherAvatarPointer avatar, int32_t jointIndex) {
     bool isBound = false;
     std::vector<int32_t> boundJoints;
-    const btCollisionShape* shape = avatar->createCollisionShape(jointIndex, isBound, boundJoints);
+    const JPH::Shape* shape = avatar->createCollisionShape(jointIndex, isBound, boundJoints);
     if (shape) {
         DetailedMotionState* motionState = new DetailedMotionState(avatar, shape, jointIndex);
         motionState->setMass(0.0f); // DetailedMotionState has KINEMATIC MotionType, so zero mass is ok
@@ -449,11 +449,11 @@ void AvatarManager::rebuildAvatarPhysics(PhysicsEngine::Transaction& transaction
     AvatarMotionState* motionState = avatar->_motionState;
     ShapeInfo shapeInfo;
     avatar->computeShapeInfo(shapeInfo);
-    const btCollisionShape* shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
+    const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
     assert(shape);
     motionState->setShape(shape);
     motionState->setMass(avatar->computeMass());
-    if (motionState->getRigidBody()) {
+    if (motionState->getBody()) {
         transaction.objectsToReinsert.push_back(motionState);
     } else {
         transaction.objectsToAdd.push_back(motionState);
@@ -767,9 +767,9 @@ RayToAvatarIntersectionResult AvatarManager::findRayIntersectionVector(const Pic
 
     PROFILE_RANGE(simulation_physics, __FUNCTION__);
 
-    float bulletDistance = (float)INT_MAX;  // with FLT_MAX bullet rayTest does not return results 
+    const float MAX_RAY_LENGTH = 65536.0f;  // twice the domain; a ray this long still casts cleanly in single precision
     glm::vec3 rayDirection = glm::normalize(ray.direction);
-    std::vector<MyCharacterController::RayAvatarResult> physicsResults = _myAvatar->getCharacterController()->rayTest(glmToBullet(ray.origin), glmToBullet(rayDirection), bulletDistance, QVector<uint>());
+    std::vector<MyCharacterController::RayAvatarResult> physicsResults = _myAvatar->getCharacterController()->rayTest(ray.origin, rayDirection, MAX_RAY_LENGTH, QVector<uint>());
     if (physicsResults.size() > 0) {
         glm::vec3 rayDirectionInv = { rayDirection.x != 0.0f ? 1.0f / rayDirection.x : INFINITY,
                                       rayDirection.y != 0.0f ? 1.0f / rayDirection.y : INFINITY,

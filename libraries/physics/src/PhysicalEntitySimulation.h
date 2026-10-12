@@ -16,8 +16,6 @@
 #include <map>
 #include <set>
 
-#include <btBulletDynamicsCommon.h>
-#include <BulletCollision/CollisionDispatch/btGhostObject.h>
 
 #include <EntityDynamicInterface.h>
 #include <EntityItem.h>

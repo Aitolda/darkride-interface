@@ -13,7 +13,12 @@
 
 #include <math.h>
 
-#include "BulletUtil.h"
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Body/BodyInterface.h>
+#include <Jolt/Physics/Body/MotionProperties.h>
+#include <Jolt/Physics/Collision/Shape/Shape.h>
+
+#include "JoltUtil.h"
 #include "PhysicsEngine.h"
 #include "PhysicsHelpers.h"
 #include "PhysicsLogging.h"
@@ -24,7 +29,6 @@ const float ACTIVATION_ALIGNMENT_DOT = 0.99990f;
 const float ACTIVATION_LINEAR_VELOCITY_DELTA = 0.01f;
 const float ACTIVATION_GRAVITY_DELTA = 0.1f;
 const float ACTIVATION_ANGULAR_VELOCITY_DELTA = 0.03f;
-
 
 // origin of physics simulation in world-frame
 glm::vec3 _worldOffset(0.0f);
@@ -63,7 +67,7 @@ ShapeManager* ObjectMotionState::getShapeManager() {
     return shapeManager;
 }
 
-ObjectMotionState::ObjectMotionState(const btCollisionShape* shape) :
+ObjectMotionState::ObjectMotionState(const JPH::Shape* shape) :
     _lastKinematicStep(worldSimulationStep)
 {
     setShape(shape);
@@ -74,17 +78,23 @@ ObjectMotionState::~ObjectMotionState() {
     setShape(nullptr);
 }
 
+JPH::BodyID ObjectMotionState::getBodyID() const {
+    return _body ? _body->GetID() : JPH::BodyID();
+}
+
+// the mass is the density of the shape's bounding box, so that a changed shape keeps its feel
+static float boundsVolume(const JPH::Shape* shape) {
+    JPH::AABox bounds = shape->GetLocalBounds();
+    JPH::Vec3 diagonal = bounds.GetSize();
+    return diagonal.GetX() * diagonal.GetY() * diagonal.GetZ();
+}
+
 void ObjectMotionState::setMass(float mass) {
     _density = 1.0f;
     if (_shape) {
         // we compute the density for the current shape's Aabb volume
         // and save that instead of the total mass
-        btTransform transform;
-        transform.setIdentity();
-        btVector3 minCorner, maxCorner;
-        _shape->getAabb(transform, minCorner, maxCorner);
-        btVector3 diagonal = maxCorner - minCorner;
-        float volume = diagonal.getX() * diagonal.getY() * diagonal.getZ();
+        float volume = boundsVolume(_shape);
         if (volume > EPSILON) {
             _density = fabsf(mass) / volume;
         }
@@ -92,14 +102,9 @@ void ObjectMotionState::setMass(float mass) {
 }
 
 float ObjectMotionState::getMass() const {
-    if (_shape && _shape->getShapeType() != TRIANGLE_MESH_SHAPE_PROXYTYPE) {
+    if (_shape && _shape->GetType() != JPH::EShapeType::Mesh) {
         // scale the density by the current Aabb volume to get mass
-        btTransform transform;
-        transform.setIdentity();
-        btVector3 minCorner, maxCorner;
-        _shape->getAabb(transform, minCorner, maxCorner);
-        btVector3 diagonal = maxCorner - minCorner;
-        float volume = diagonal.getX() * diagonal.getY() * diagonal.getZ();
+        float volume = boundsVolume(_shape);
 
         // cap the max mass for numerical stability
         const float MIN_OBJECT_MASS = 0.0f;
@@ -112,19 +117,24 @@ float ObjectMotionState::getMass() const {
 }
 
 void ObjectMotionState::setBodyLinearVelocity(const glm::vec3& velocity) const {
-    _body->setLinearVelocity(glmToBullet(velocity));
+    if (_body && _bodyInterface && !_body->IsStatic()) {
+        _bodyInterface->SetLinearVelocity(_body->GetID(), glmToJolt(velocity));
+    }
 }
 
 void ObjectMotionState::setBodyAngularVelocity(const glm::vec3& velocity) const {
-    _body->setAngularVelocity(glmToBullet(velocity));
+    if (_body && _bodyInterface && !_body->IsStatic()) {
+        _bodyInterface->SetAngularVelocity(_body->GetID(), glmToJolt(velocity));
+    }
 }
 
-void ObjectMotionState::setBodyGravity(const glm::vec3& gravity) const {
-    _body->setGravity(glmToBullet(gravity));
+void ObjectMotionState::setBodyGravity(const glm::vec3& gravity) {
+    // the world has no gravity of its own; the engine applies this one as a force each substep
+    _gravity = gravity;
 }
 
 glm::vec3 ObjectMotionState::getBodyLinearVelocity() const {
-    return bulletToGLM(_body->getLinearVelocity());
+    return (_body && !_body->IsStatic()) ? joltToGLM(_body->GetLinearVelocity()) : glm::vec3(0.0f);
 }
 
 glm::vec3 ObjectMotionState::getBodyLinearVelocityGTSigma() const {
@@ -133,7 +143,7 @@ glm::vec3 ObjectMotionState::getBodyLinearVelocityGTSigma() const {
     // just under this velocity threshold would trigger an update about V/dX times per second.
     const float MIN_LINEAR_SPEED_SQUARED = 0.0036f; // 6 mm/sec
 
-    glm::vec3 velocity = bulletToGLM(_body->getLinearVelocity());
+    glm::vec3 velocity = getBodyLinearVelocity();
     if (glm::length2(velocity) < MIN_LINEAR_SPEED_SQUARED) {
         velocity *= 0.0f;
     }
@@ -145,54 +155,42 @@ glm::vec3 ObjectMotionState::getObjectLinearVelocityChange() const {
 }
 
 glm::vec3 ObjectMotionState::getBodyAngularVelocity() const {
-    return bulletToGLM(_body->getAngularVelocity());
+    return (_body && !_body->IsStatic()) ? joltToGLM(_body->GetAngularVelocity()) : glm::vec3(0.0f);
 }
 
 void ObjectMotionState::setMotionType(PhysicsMotionType motionType) {
     _motionType = motionType;
 }
 
-// Update the Continuous Collision Detection (CCD) configuration settings of our RigidBody so that
-// CCD will be enabled automatically when its speed surpasses a certain threshold.
+// Continuous collision detection (a linear cast per step) for the small, fast things that would otherwise
+// pass through walls; big and mesh shapes don't need it.
 void ObjectMotionState::updateCCDConfiguration() {
     assert(_body);
-    if (_shape && _shape->getShapeType() != TRIANGLE_MESH_SHAPE_PROXYTYPE) {
-        // find minumum dimension of shape
-        btVector3 aabbMin, aabbMax;
-        btTransform transform;
-        transform.setIdentity();
-        _shape->getAabb(transform, aabbMin, aabbMax);
-        aabbMin = aabbMax - aabbMin;
-        btScalar radius = *((btScalar*)(aabbMin) + aabbMin.minAxis());
-
-        // use the minimum dimension as the radius of the CCD proxy sphere
-        _body->setCcdSweptSphereRadius(radius);
-
-        // also use the radius as the motion threshold for enabling CCD
-        _body->setCcdMotionThreshold(radius);
-    } else {
-        // disable CCD
-        _body->setCcdSweptSphereRadius(0.0f);
-        _body->setCcdMotionThreshold(0.0f);
+    if (!_bodyInterface || _body->IsStatic()) {
+        return;
     }
+    const float MAX_RADIUS_FOR_CCD = 0.5f; // meters
+    bool wantsCCD = _shape && _shape->GetType() != JPH::EShapeType::Mesh && _shape->GetInnerRadius() < MAX_RADIUS_FOR_CCD;
+    _bodyInterface->SetMotionQuality(_body->GetID(), wantsCCD ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete);
 }
 
-void ObjectMotionState::setRigidBody(btRigidBody* body) {
-    // give the body a (void*) back-pointer to this ObjectMotionState
+void ObjectMotionState::setBody(JPH::Body* body, JPH::BodyInterface* bodyInterface) {
+    // give the body a back-pointer to this ObjectMotionState
     if (_body != body) {
         if (_body) {
-            _body->setUserPointer(nullptr);
+            _body->SetUserData(0);
         }
         _body = body;
+        _bodyInterface = body ? bodyInterface : nullptr;
         if (_body) {
-            _body->setUserPointer(this);
-            assert(_body->getCollisionShape() == _shape);
+            _body->SetUserData((JPH::uint64)(uintptr_t)this);
+            assert(_body->GetShape() == _shape);
             updateCCDConfiguration();
         }
     }
 }
 
-void ObjectMotionState::setShape(const btCollisionShape* shape) {
+void ObjectMotionState::setShape(const JPH::Shape* shape) {
     if (_shape != shape) {
         if (_shape) {
             getShapeManager()->releaseShape(_shape);
@@ -200,7 +198,7 @@ void ObjectMotionState::setShape(const btCollisionShape* shape) {
         _shape = shape;
         if (_body) {
             assert(_shape);
-            _body->setCollisionShape(const_cast<btCollisionShape*>(_shape));
+            _bodyInterface->SetShape(_body->GetID(), _shape, false, JPH::EActivation::DontActivate);
             updateCCDConfiguration();
         }
     } else if (shape) {
@@ -209,75 +207,89 @@ void ObjectMotionState::setShape(const btCollisionShape* shape) {
     }
 }
 
+void ObjectMotionState::setBodyTransform(const glm::vec3& position, const glm::quat& rotation, bool activate) {
+    if (_body && _bodyInterface) {
+        _bodyInterface->SetPositionAndRotation(_body->GetID(), glmToJoltR(position), glmToJolt(rotation),
+                                               activate ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+    }
+}
+
+void ObjectMotionState::getBodyTransform(glm::vec3& position, glm::quat& rotation) const {
+    if (_body) {
+        position = joltToGLM(_body->GetPosition());
+        rotation = joltToGLM(_body->GetRotation());
+    }
+}
+
+void ObjectMotionState::activateBody() {
+    if (_body && _bodyInterface && !_body->IsStatic()) {
+        _bodyInterface->ActivateBody(_body->GetID());
+    }
+}
+
+void ObjectMotionState::deactivateBody() {
+    if (_body && _bodyInterface && !_body->IsStatic()) {
+        _bodyInterface->DeactivateBody(_body->GetID());
+    }
+}
+
 void ObjectMotionState::handleEasyChanges(uint32_t& flags) {
     assert(_body && _shape);
-    if (flags & Simulation::DIRTY_POSITION) {
-        btTransform worldTrans = _body->getWorldTransform();
-        btVector3 newPosition = glmToBullet(getObjectPosition());
-        float delta = (newPosition - worldTrans.getOrigin()).length();
-        if (delta > ACTIVATION_POSITION_DELTA) {
-            flags |= Simulation::DIRTY_PHYSICS_ACTIVATION;
-        }
-        worldTrans.setOrigin(newPosition);
+    glm::vec3 bodyPosition;
+    glm::quat bodyRotation;
+    getBodyTransform(bodyPosition, bodyRotation);
 
+    if (flags & (Simulation::DIRTY_POSITION | Simulation::DIRTY_ROTATION)) {
+        glm::vec3 newPosition = bodyPosition;
+        glm::quat newRotation = bodyRotation;
+        if (flags & Simulation::DIRTY_POSITION) {
+            newPosition = getObjectPosition();
+            float delta = glm::length(newPosition - bodyPosition);
+            if (delta > ACTIVATION_POSITION_DELTA) {
+                flags |= Simulation::DIRTY_PHYSICS_ACTIVATION;
+            }
+        }
         if (flags & Simulation::DIRTY_ROTATION) {
-            btQuaternion newRotation = glmToBullet(getObjectRotation());
-            float alignmentDot = fabsf(worldTrans.getRotation().dot(newRotation));
+            newRotation = getObjectRotation();
+            float alignmentDot = fabsf(glm::dot(bodyRotation, newRotation));
             if (alignmentDot < ACTIVATION_ALIGNMENT_DOT) {
                 flags |= Simulation::DIRTY_PHYSICS_ACTIVATION;
             }
-            worldTrans.setRotation(newRotation);
         }
-        _body->setWorldTransform(worldTrans);
-        if (!(flags & HARD_DIRTY_PHYSICS_FLAGS) && _body->isStaticObject()) {
-            // force activate static body so its Aabb is updated later
-            _body->activate(true);
-        }
-    } else if (flags & Simulation::DIRTY_ROTATION) {
-        btTransform worldTrans = _body->getWorldTransform();
-        btQuaternion newRotation = glmToBullet(getObjectRotation());
-        float alignmentDot = fabsf(worldTrans.getRotation().dot(newRotation));
-        if (alignmentDot < ACTIVATION_ALIGNMENT_DOT) {
-            flags |= Simulation::DIRTY_PHYSICS_ACTIVATION;
-        }
-        worldTrans.setRotation(newRotation);
-        _body->setWorldTransform(worldTrans);
-        if (!(flags & HARD_DIRTY_PHYSICS_FLAGS) && _body->isStaticObject()) {
-            // force activate static body so its Aabb is updated later
-            _body->activate(true);
-        }
+        // a moved static body is placed without activation; the engine wakes what it touches
+        setBodyTransform(newPosition, newRotation, false);
     }
 
-    if (_body && _body->getCollisionShape()->getShapeType() != TRIANGLE_MESH_SHAPE_PROXYTYPE) {
+    if (!_body->IsStatic() && _shape->GetType() != JPH::EShapeType::Mesh) {
         if (flags & Simulation::DIRTY_LINEAR_VELOCITY) {
-            btVector3 newLinearVelocity = glmToBullet(getObjectLinearVelocity());
+            glm::vec3 newLinearVelocity = getObjectLinearVelocity();
             if (!(flags & Simulation::DIRTY_PHYSICS_ACTIVATION)) {
-                float delta = (newLinearVelocity - _body->getLinearVelocity()).length();
+                float delta = glm::length(newLinearVelocity - getBodyLinearVelocity());
                 if (delta > ACTIVATION_LINEAR_VELOCITY_DELTA) {
                     flags |= Simulation::DIRTY_PHYSICS_ACTIVATION;
                 }
             }
-            _body->setLinearVelocity(newLinearVelocity);
+            setBodyLinearVelocity(newLinearVelocity);
 
-            btVector3 newGravity = glmToBullet(getObjectGravity());
+            glm::vec3 newGravity = getObjectGravity();
             if (!(flags & Simulation::DIRTY_PHYSICS_ACTIVATION)) {
-                float delta = (newGravity - _body->getGravity()).length();
+                float delta = glm::length(newGravity - _gravity);
                 if (delta > ACTIVATION_GRAVITY_DELTA ||
-                        (delta > 0.0f && _body->getGravity().length2() == 0.0f)) {
+                        (delta > 0.0f && glm::length2(_gravity) == 0.0f)) {
                     flags |= Simulation::DIRTY_PHYSICS_ACTIVATION;
                 }
             }
-            _body->setGravity(newGravity);
+            setBodyGravity(newGravity);
         }
         if (flags & Simulation::DIRTY_ANGULAR_VELOCITY) {
-            btVector3 newAngularVelocity = glmToBullet(getObjectAngularVelocity());
+            glm::vec3 newAngularVelocity = getObjectAngularVelocity();
             if (!(flags & Simulation::DIRTY_PHYSICS_ACTIVATION)) {
-                float delta = (newAngularVelocity - _body->getAngularVelocity()).length();
+                float delta = glm::length(newAngularVelocity - getBodyAngularVelocity());
                 if (delta > ACTIVATION_ANGULAR_VELOCITY_DELTA) {
                     flags |= Simulation::DIRTY_PHYSICS_ACTIVATION;
                 }
             }
-            _body->setAngularVelocity(newAngularVelocity);
+            setBodyAngularVelocity(newAngularVelocity);
         }
     }
 
@@ -290,36 +302,55 @@ void ObjectMotionState::handleEasyChanges(uint32_t& flags) {
     }
 }
 
+// The entity's damping d means "the velocity loses the fraction d of itself each second": v(t) = v0 (1-d)^t.
+// Jolt's damping c is the rate in dv/dt = -c v, so v(t) = v0 e^(-c t). The two agree when c = -ln(1-d).
+static float joltDamping(float damping) {
+    const float MAX_DAMPING = 0.999f;
+    damping = glm::clamp(fabsf(damping), 0.0f, MAX_DAMPING);
+    return -logf(1.0f - damping);
+}
+
 void ObjectMotionState::updateBodyMaterialProperties() {
-    _body->setRestitution(getObjectRestitution());
-    _body->setFriction(getObjectFriction());
-    _body->setDamping(fabsf(btMin(getObjectLinearDamping(), 1.0f)), fabsf(btMin(getObjectAngularDamping(), 1.0f)));
+    if (!_body || !_bodyInterface) {
+        return;
+    }
+    _bodyInterface->SetRestitution(_body->GetID(), getObjectRestitution());
+    _bodyInterface->SetFriction(_body->GetID(), getObjectFriction());
+    JPH::MotionProperties* motion = _body->GetMotionPropertiesUnchecked();
+    if (motion) {
+        motion->SetLinearDamping(joltDamping(getObjectLinearDamping()));
+        motion->SetAngularDamping(joltDamping(getObjectAngularDamping()));
+    }
 }
 
 void ObjectMotionState::updateBodyVelocities() {
     setBodyLinearVelocity(getObjectLinearVelocity());
     setBodyAngularVelocity(getObjectAngularVelocity());
     setBodyGravity(getObjectGravity());
-    _body->setActivationState(ACTIVE_TAG);
+    activateBody();
 }
 
 void ObjectMotionState::updateLastKinematicStep() {
-    // NOTE: we init to worldSimulationStep - 1 so that: when any object transitions to kinematic
-    // it will compute a non-zero dt on its first step.
-    _lastKinematicStep = ObjectMotionState::getWorldSimulationStep() - 1;
+    // The step counter advances before each substep's push, so starting at the current step gives exactly
+    // one substep of motion on the first push. (Starting a step earlier gave two, and that doubled velocity
+    // was then read back from the body into the entity.)
+    _lastKinematicStep = ObjectMotionState::getWorldSimulationStep();
 }
 
 void ObjectMotionState::updateBodyMassProperties() {
-    btScalar mass = getMass();
-    btVector3 inertia(1.0f, 1.0f, 1.0f);
-    if (mass > 0.0f) {
-        _body->getCollisionShape()->calculateLocalInertia(mass, inertia);
+    if (!_body) {
+        return;
     }
-    _body->setMassProps(mass, inertia);
-    _body->updateInertiaTensor();
+    JPH::MotionProperties* motion = _body->GetMotionPropertiesUnchecked();
+    if (!motion || _body->GetMotionType() != JPH::EMotionType::Dynamic) {
+        return;
+    }
+    float mass = getMass();
+    const float MIN_DYNAMIC_MASS = 0.01f;
+    if (mass != mass || mass < MIN_DYNAMIC_MASS) {
+        mass = MIN_DYNAMIC_MASS;
+    }
+    JPH::MassProperties massProperties = _shape->GetMassProperties();
+    massProperties.ScaleToMass(mass);
+    motion->SetMassProperties(motion->GetAllowedDOFs(), massProperties);
 }
-
-void ObjectMotionState::saveKinematicState(btScalar timeStep) {
-    _body->saveKinematicState(timeStep);
-}
-

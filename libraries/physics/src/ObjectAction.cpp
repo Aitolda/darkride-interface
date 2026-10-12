@@ -1,6 +1,6 @@
 //
 //  ObjectAction.cpp
-//  libraries/physics/src
+//  libraries/physcis/src
 //
 //  Created by Seth Alves 2015-6-2
 //  Copyright 2015 High Fidelity, Inc.
@@ -12,17 +12,14 @@
 #include "ObjectAction.h"
 
 #include "EntitySimulation.h"
-
 #include "PhysicsLogging.h"
 
-
 ObjectAction::ObjectAction(EntityDynamicType type, const QUuid& id, EntityItemPointer ownerEntity) :
-    btActionInterface(),
     ObjectDynamic(type, id, ownerEntity)
 {
 }
 
-void ObjectAction::updateAction(btCollisionWorld* collisionWorld, btScalar deltaTimeStep) {
+void ObjectAction::updateAction(float deltaTimeStep) {
     quint64 expiresWhen = 0;
     EntityItemPointer ownerEntity = nullptr;
 
@@ -32,11 +29,7 @@ void ObjectAction::updateAction(btCollisionWorld* collisionWorld, btScalar delta
     });
 
     if (!ownerEntity) {
-        qCDebug(physics) << "warning -- action [" << _tag << "] with no entity removing self from btCollisionWorld.";
-        btDynamicsWorld* dynamicsWorld = static_cast<btDynamicsWorld*>(collisionWorld);
-        if (dynamicsWorld) {
-            dynamicsWorld->removeAction(this);
-        }
+        // the entity is gone; the engine drops the action when the owner's body goes
         return;
     }
 
@@ -63,7 +56,4 @@ void ObjectAction::updateAction(btCollisionWorld* collisionWorld, btScalar delta
     }
 
     updateActionWorker(deltaTimeStep);
-}
-
-void ObjectAction::debugDraw(btIDebugDraw* debugDrawer) {
 }

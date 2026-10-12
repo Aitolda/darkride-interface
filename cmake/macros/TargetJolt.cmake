@@ -64,3 +64,10 @@ macro(TARGET_JOLT)
     endif()
     target_link_libraries(${TARGET_NAME} Jolt)
 endmacro()
+
+# For a target that includes the physics library's headers without linking it (include_hifi_library_headers):
+# the headers include Jolt, so the target needs Jolt's include path and the same compile definitions.
+macro(TARGET_JOLT_HEADERS)
+    target_include_directories(${TARGET_NAME} SYSTEM PRIVATE $<TARGET_PROPERTY:Jolt,INTERFACE_INCLUDE_DIRECTORIES>)
+    target_compile_definitions(${TARGET_NAME} PRIVATE $<TARGET_PROPERTY:Jolt,INTERFACE_COMPILE_DEFINITIONS>)
+endmacro()

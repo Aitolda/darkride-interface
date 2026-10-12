@@ -11,6 +11,8 @@
 
 #include "AvatarActionHold.h"
 
+#include <glm/gtc/quaternion.hpp>
+
 #include <QVariantGLM.h>
 
 #include "avatar/AvatarManager.h"
@@ -108,10 +110,10 @@ void AvatarActionHold::prepareForPhysicsSimulation() {
 
 
         // determine the difference in translation and rotation between the avatar's
-        // rigid body and the palm position.  The avatar's rigid body will be moved by bullet
+        // rigid body and the palm position.  The avatar's rigid body will be moved by the physics engine
         // between this call and the call to getTarget, below.  A call to get*PalmPosition in
         // getTarget would get the palm position of the previous location of the avatar (because
-        // bullet has moved the av's rigid body but the rigid body's location has not yet been
+        // the engine has moved the av's rigid body but the rigid body's location has not yet been
         // copied out into the Avatar class.
         //glm::quat avatarRotationInverse = glm::inverse(avatarRigidBodyRotation);
 
@@ -199,8 +201,8 @@ bool AvatarActionHold::getTarget(float deltaTimeStep, glm::quat& rotation, glm::
                 getAvatarRigidBodyLocation(avatarRigidBodyPosition, avatarRigidBodyRotation);
 
                 // the offset and rotation between the avatar's rigid body and the palm were determined earlier
-                // in prepareForPhysicsSimulation.  At this point, the avatar's rigid body has been moved by bullet
-                // and the data in the Avatar class is stale.  This means that the result of get*PalmPosition will
+                // in prepareForPhysicsSimulation.  At this point, the avatar's rigid body has been moved by the
+                // physics engine and the data in the Avatar class is stale.  This means that the result of get*PalmPosition will
                 // be stale.  Instead, determine the current palm position with the current avatar's rigid body
                 // location and the saved offsets.
 
@@ -276,9 +278,9 @@ void AvatarActionHold::doKinematicUpdate(float deltaTimeStep) {
         return;
     }
     ObjectMotionState* motionState = static_cast<ObjectMotionState*>(physicsInfo);
-    btRigidBody* rigidBody = motionState ? motionState->getRigidBody() : nullptr;
-    if (!rigidBody) {
-        qDebug() << "AvatarActionHold::doKinematicUpdate -- no rigidBody";
+    JPH::Body* body = motionState ? motionState->getBody() : nullptr;
+    if (!body) {
+        qDebug() << "AvatarActionHold::doKinematicUpdate -- no body";
         return;
     }
 
@@ -319,14 +321,37 @@ void AvatarActionHold::doKinematicUpdate(float deltaTimeStep) {
                                           // - 3  // 3 because of the 3 we skipped, above
                                           );
 
-            rigidBody->setLinearVelocity(glmToBullet(measuredLinearVelocity));
-            rigidBody->setAngularVelocity(glmToBullet(_angularVelocityTarget));
+            motionState->setBodyLinearVelocity(measuredLinearVelocity);
+            motionState->setBodyAngularVelocity(_angularVelocityTarget);
+        } else if (body->IsKinematic()) {
+            // Bullet measured a kinematic body's velocity from how far it had been moved (saveKinematicState); Jolt
+            // keeps whatever velocity the body last had, so measure it here from this substep's move.
+            glm::vec3 linearVelocity(0.0f);
+            glm::vec3 angularVelocity(0.0f);
+            if (_previousSet && deltaTimeStep > EPSILON) {
+                linearVelocity = (_positionalTarget - _previousPositionalTarget) / deltaTimeStep;
+                glm::quat deltaRotation = _rotationalTarget * glm::conjugate(_previousRotationalTarget);
+                if (deltaRotation.w < 0.0f) {
+                    deltaRotation = -deltaRotation; // the short way round
+                }
+                angularVelocity = (glm::angle(deltaRotation) / deltaTimeStep) * glm::axis(deltaRotation);
+            }
+            motionState->setBodyLinearVelocity(linearVelocity);
+            motionState->setBodyAngularVelocity(angularVelocity);
         }
 
-        btTransform worldTrans = rigidBody->getWorldTransform();
-        worldTrans.setOrigin(glmToBullet(_positionalTarget));
-        worldTrans.setRotation(glmToBullet(_rotationalTarget));
-        rigidBody->setWorldTransform(worldTrans);
+        // Bullet left the body where an action put it; Jolt carries it on by its velocity over the substep (a
+        // kinematic body exactly, a dynamic one before contacts and gravity have their say). So the body is placed
+        // where that motion lands it on the target when the substep ends, which is where Bullet left it.
+        glm::vec3 linearVelocity = motionState->getBodyLinearVelocity();
+        glm::vec3 angularVelocity = motionState->getBodyAngularVelocity();
+        glm::vec3 position = _positionalTarget - linearVelocity * deltaTimeStep;
+        glm::quat rotation = _rotationalTarget;
+        float angle = glm::length(angularVelocity) * deltaTimeStep;
+        if (angle > EPSILON) {
+            rotation = glm::normalize(glm::angleAxis(-angle, angularVelocity / glm::length(angularVelocity)) * rotation);
+        }
+        motionState->setBodyTransform(position, rotation, false);
 
         motionState->dirtyInternalKinematicChanges();
 
@@ -560,8 +585,8 @@ void AvatarActionHold::lateAvatarUpdate(const AnimPose& prePhysicsRoomPose, cons
         return;
     }
     ObjectMotionState* motionState = static_cast<ObjectMotionState*>(physicsInfo);
-    btRigidBody* rigidBody = motionState ? motionState->getRigidBody() : nullptr;
-    if (!rigidBody) {
+    JPH::Body* body = motionState ? motionState->getBody() : nullptr;
+    if (!body) {
         return;
     }
     auto avatarManager = DependencyManager::get<AvatarManager>();
@@ -570,19 +595,19 @@ void AvatarActionHold::lateAvatarUpdate(const AnimPose& prePhysicsRoomPose, cons
         return;
     }
 
-    btTransform worldTrans = rigidBody->getWorldTransform();
-    AnimPose worldBodyPose(glm::vec3(1), bulletToGLM(worldTrans.getRotation()), bulletToGLM(worldTrans.getOrigin()));
+    glm::vec3 bodyPosition;
+    glm::quat bodyRotation;
+    motionState->getBodyTransform(bodyPosition, bodyRotation);
+    AnimPose worldBodyPose(glm::vec3(1), bodyRotation, bodyPosition);
 
     // transform the body transform into sensor space with the prePhysics sensor-to-world matrix.
     // then transform it back into world uisng the postAvatarUpdate sensor-to-world matrix.
     AnimPose newWorldBodyPose = postAvatarUpdateRoomPose * prePhysicsRoomPose.inverse() * worldBodyPose;
 
-    worldTrans.setOrigin(glmToBullet(newWorldBodyPose.trans()));
-    worldTrans.setRotation(glmToBullet(newWorldBodyPose.rot()));
-    rigidBody->setWorldTransform(worldTrans);
+    motionState->setBodyTransform(newWorldBodyPose.trans(), newWorldBodyPose.rot(), false);
 
     bool positionSuccess;
-    ownerEntity->setWorldPosition(bulletToGLM(worldTrans.getOrigin()) + ObjectMotionState::getWorldOffset(), positionSuccess, false);
+    ownerEntity->setWorldPosition(newWorldBodyPose.trans() + ObjectMotionState::getWorldOffset(), positionSuccess, false);
     bool orientationSuccess;
-    ownerEntity->setWorldOrientation(bulletToGLM(worldTrans.getRotation()), orientationSuccess, false);
+    ownerEntity->setWorldOrientation(newWorldBodyPose.rot(), orientationSuccess, false);
 }

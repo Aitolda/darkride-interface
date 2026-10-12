@@ -14,7 +14,8 @@
 
 #include "ObjectConstraint.h"
 
-// http://bulletphysics.org/Bullet/BulletFull/classbtConeTwistConstraint.html
+// A cone-twist joint: a ball joint whose axis may swing within an elliptical cone and twist within a range.
+// Built on JPH::SwingTwistConstraint (Jolt/Physics/Constraints/SwingTwistConstraint.h).
 
 class ObjectConstraintConeTwist : public ObjectConstraint {
 public:
@@ -29,8 +30,8 @@ public:
     virtual QByteArray serialize() const override;
     virtual void deserialize(QByteArray serializedArguments) override;
 
-    virtual QList<btRigidBody*> getRigidBodies() override;
-    virtual btTypedConstraint* getConstraint() override;
+    virtual std::vector<JPH::BodyID> getBodyIDs() override;
+    virtual JPH::Constraint* getConstraint() override;
 
 protected:
     static const uint16_t constraintVersion;
@@ -44,8 +45,8 @@ protected:
     glm::vec3 _axisInB;
 
     float _swingSpan1 { TWO_PI };
-    float _swingSpan2 { TWO_PI };;
-    float _twistSpan { TWO_PI };;
+    float _swingSpan2 { TWO_PI };
+    float _twistSpan { TWO_PI };
 };
 
 #endif // hifi_ObjectConstraintConeTwist_h
