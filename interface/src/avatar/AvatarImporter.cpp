@@ -10,7 +10,6 @@
 
 #include "AvatarImporter.h"
 
-#include <functional>
 #include <map>
 #include <memory>
 
@@ -18,6 +17,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QRegExp>
 #include <QUrl>
 #include <QtConcurrent/QtConcurrentRun>
@@ -29,7 +29,6 @@
 #include <GLMHelpers.h>
 #include <GLTFSerializer.h>
 #include <OBJSerializer.h>
-#include <OffscreenUi.h>
 #include <PathUtils.h>
 #include <StandardSkeleton.h>
 
@@ -132,13 +131,35 @@ QString avatarFolder(const QString& name) {
     return folder;
 }
 
-void ask(const QString& text, QMessageBox::StandardButtons buttons, QMessageBox::StandardButton defaultButton,
-         const std::function<void(QMessageBox::StandardButton)>& then) {
-    ModalDialogListener* dialog = OffscreenUi::asyncQuestion(TITLE, text, buttons, defaultButton);
-    QObject::connect(dialog, &ModalDialogListener::response, qApp, [dialog, then](QVariant answer) {
-        QObject::disconnect(dialog, &ModalDialogListener::response, qApp, nullptr);
-        then(static_cast<QMessageBox::StandardButton>(answer.toInt()));
-    });
+struct Choice {
+    QString label;
+    QMessageBox::ButtonRole role;  // AcceptRole is the default button, RejectRole the one Escape presses
+};
+
+// One of the importer's questions: a native dialog with buttons named for what they do (the client's own dialogs
+// only offer Yes, No and Cancel). Returns the chosen button's place in the list, or -1.
+int ask(const QString& text, const QString& details, const std::vector<Choice>& choices) {
+    QMessageBox box;
+    box.setWindowTitle(TITLE);
+    box.setText(text);
+    box.setInformativeText(details);
+    std::vector<QAbstractButton*> buttons;
+    for (const Choice& choice : choices) {
+        QPushButton* button = box.addButton(choice.label, choice.role);
+        buttons.push_back(button);
+        if (choice.role == QMessageBox::AcceptRole) {
+            box.setDefaultButton(button);
+        } else if (choice.role == QMessageBox::RejectRole) {
+            box.setEscapeButton(button);
+        }
+    }
+    box.exec();
+    auto chosen = std::find(buttons.begin(), buttons.end(), box.clickedButton());
+    return chosen == buttons.end() ? -1 : (int)(chosen - buttons.begin());
+}
+
+void warn(const QString& text) {
+    QMessageBox::warning(nullptr, TITLE, text);
 }
 
 void wear(const QString& fstPath, const QString& name) {
@@ -148,12 +169,10 @@ void wear(const QString& fstPath, const QString& name) {
 }
 
 void offerToWear(const QString& fstPath, const QString& name, const QString& what) {
-    ask(what + "\n\nWear it now? Only you will see it until it is in My Files.", QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::Yes, [fstPath, name](QMessageBox::StandardButton answer) {
-            if (answer == QMessageBox::Yes) {
-                wear(fstPath, name);
-            }
-        });
+    if (ask(what, "Only you will see it until it is in My Files.",
+            { { "Wear it", QMessageBox::AcceptRole }, { "Not now", QMessageBox::RejectRole } }) == 0) {
+        wear(fstPath, name);
+    }
 }
 
 // The rigging and saving happen off the main thread; the answer comes back to it.
@@ -170,12 +189,12 @@ void autoRig(const ImportPointer& import, float scale) {
         }
         QMetaObject::invokeMethod(qApp, [import, result, written]() {
             if (!result.ok) {
-                OffscreenUi::asyncWarning(TITLE, "Could not rig " + import->name + ": " + result.error + ".");
+                warn("Could not rig " + import->name + ": " + result.error + ".");
             } else if (!written.ok) {
-                OffscreenUi::asyncWarning(TITLE, "Could not save " + import->name + ": " + written.error + ".");
+                warn("Could not save " + import->name + ": " + written.error + ".");
             } else {
                 offerToWear(written.fstPath, import->name,
-                            import->name + " is rigged with Darkride's standard skeleton and saved in " +
+                            import->name + " is rigged with Darkride's standard skeleton. Wear it now?\n\nSaved in " +
                                 QFileInfo(written.fstPath).absolutePath() + ".");
             }
         }, Qt::QueuedConnection);
@@ -185,17 +204,16 @@ void autoRig(const ImportPointer& import, float scale) {
 void checkHeightThenRig(const ImportPointer& import) {
     const float height = import->body.maximum.y - import->body.minimum.y;
     if (height > 2.4f || height < 0.6f) {
-        ask(QString("%1 is %2 m tall, which looks like a units mistake in its file.\n\nYes: make it %3 m tall.\nNo: keep "
-                    "it %2 m tall.")
-                .arg(import->name).arg(height, 0, 'f', 2).arg(USUAL_HEIGHT, 0, 'f', 2),
-            QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::Yes,
-            [import, height](QMessageBox::StandardButton answer) {
-                if (answer == QMessageBox::Yes) {
-                    autoRig(import, USUAL_HEIGHT / height);
-                } else if (answer == QMessageBox::No) {
-                    autoRig(import, 1.0f);
-                }
-            });
+        const int answer = ask(QString("%1 is %2 m tall.").arg(import->name).arg(height, 0, 'f', 2),
+                               "That looks like a units mistake in its file.",
+                               { { QString("Make it %1 m tall").arg(USUAL_HEIGHT, 0, 'f', 2), QMessageBox::AcceptRole },
+                                 { QString("Keep it %1 m tall").arg(height, 0, 'f', 2), QMessageBox::ActionRole },
+                                 { "Cancel", QMessageBox::RejectRole } });
+        if (answer == 0) {
+            autoRig(import, USUAL_HEIGHT / height);
+        } else if (answer == 1) {
+            autoRig(import, 1.0f);
+        }
     } else {
         autoRig(import, 1.0f);
     }
@@ -203,46 +221,43 @@ void checkHeightThenRig(const ImportPointer& import) {
 
 void decide(const ImportPointer& import) {
     if (!import->model || import->body.triangles.empty()) {
-        OffscreenUi::asyncWarning(TITLE, "Could not read " + QFileInfo(import->path).fileName() + " as a character.");
+        warn("Could not read " + QFileInfo(import->path).fileName() + " as a character.");
         return;
     }
     switch (import->rig) {
-        case RigKind::Standard:
-            ask(import->name + " already has Darkride's standard skeleton.\n\nYes: wear it with its own rig.\nNo: replace "
-                "its rig with an automatic one.",
-                QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::Yes,
-                [import](QMessageBox::StandardButton answer) {
-                    if (answer == QMessageBox::Yes) {
-                        const QString folder = avatarFolder(import->name);
-                        QDir().mkpath(folder);
-                        const QString fstPath = QDir(folder).filePath(import->name + ".fst");
-                        if (autorig::writeFst(fstPath, import->name, QUrl::fromLocalFile(import->path).toString())) {
-                            wear(fstPath, import->name);
-                        } else {
-                            OffscreenUi::asyncWarning(TITLE, "Could not write " + fstPath + ".");
-                        }
-                    } else if (answer == QMessageBox::No) {
-                        checkHeightThenRig(import);
-                    }
-                });
+        case RigKind::Standard: {
+            const int answer = ask(import->name + " already has Darkride's standard skeleton.",
+                                   "Keep its own rig, or replace it with an automatic one. The file itself is not changed.",
+                                   { { "Keep existing rig", QMessageBox::AcceptRole },
+                                     { "Replace rig", QMessageBox::ActionRole },
+                                     { "Cancel", QMessageBox::RejectRole } });
+            if (answer == 0) {
+                const QString folder = avatarFolder(import->name);
+                QDir().mkpath(folder);
+                const QString fstPath = QDir(folder).filePath(import->name + ".fst");
+                if (autorig::writeFst(fstPath, import->name, QUrl::fromLocalFile(import->path).toString())) {
+                    wear(fstPath, import->name);
+                } else {
+                    warn("Could not write " + fstPath + ".");
+                }
+            } else if (answer == 1) {
+                checkHeightThenRig(import);
+            }
             break;
+        }
         case RigKind::Other:
-            ask(import->name + " has a skeleton of its own, but " + import->why +
-                    ", so Darkride's animations would move it wrongly.\n\nAuto rig it? Its skeleton and skin weights are "
-                    "replaced with Darkride's standard skeleton. The file itself is not changed.",
-                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Yes, [import](QMessageBox::StandardButton answer) {
-                    if (answer == QMessageBox::Yes) {
-                        checkHeightThenRig(import);
-                    }
-                });
+            if (ask(import->name + " has a skeleton of its own, but Darkride's animations would move it wrongly.",
+                    "Because " + import->why + ". Its rig can be replaced with Darkride's standard skeleton; the file "
+                    "itself is not changed.",
+                    { { "Replace rig", QMessageBox::AcceptRole }, { "Cancel", QMessageBox::RejectRole } }) == 0) {
+                checkHeightThenRig(import);
+            }
             break;
         case RigKind::None:
-            ask(import->name + " has no skeleton yet.\n\nAuto rig it with Darkride's standard skeleton?",
-                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Yes, [import](QMessageBox::StandardButton answer) {
-                    if (answer == QMessageBox::Yes) {
-                        checkHeightThenRig(import);
-                    }
-                });
+            if (ask(import->name + " has no skeleton yet.", "Darkride can rig it with the standard skeleton.",
+                    { { "Auto rig", QMessageBox::AcceptRole }, { "Cancel", QMessageBox::RejectRole } }) == 0) {
+                checkHeightThenRig(import);
+            }
             break;
     }
 }
@@ -252,12 +267,7 @@ void decide(const ImportPointer& import) {
 void AvatarImporter::importFile(const QString& path) {
     const QString name = avatarName(path);
     if (QFileInfo(path).suffix().toLower() == "fst") {
-        ask("Wear " + name + "? Only you will see it until it is in My Files.", QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::Yes, [path, name](QMessageBox::StandardButton answer) {
-                if (answer == QMessageBox::Yes) {
-                    wear(path, name);
-                }
-            });
+        offerToWear(path, name, "Wear " + name + "?");
         return;
     }
     auto import = std::make_shared<Import>();
