@@ -428,6 +428,7 @@ public:
     DEFINE_PROPERTY(PROP_TERRAIN_VOXEL_SIZE, VoxelSize, voxelSize, float, TerrainEntityItem::DEFAULT_VOXEL_SIZE);
     DEFINE_PROPERTY_REF(PROP_TERRAIN_URL, TerrainURL, terrainURL, QString, "");
     DEFINE_PROPERTY(PROP_TERRAIN_VERSION, TerrainVersion, terrainVersion, uint32_t, 0);
+    DEFINE_PROPERTY_REF(PROP_TERRAIN_LAYERS, TerrainLayers, terrainLayers, QString, "");
 
     // Gizmo
     DEFINE_PROPERTY_REF_ENUM(PROP_GIZMO_TYPE, GizmoType, gizmoType, GizmoType, GizmoType::RING);

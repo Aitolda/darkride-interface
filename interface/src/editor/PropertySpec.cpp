@@ -315,6 +315,7 @@ namespace {
         P_FLOAT("voxelSize", VoxelSize);
         P_STR("terrainURL", TerrainURL);
         P_INT("terrainVersion", TerrainVersion, uint32_t);
+        P_STR("terrainLayers", TerrainLayers);
 
         // particles
         P_BOOL("isEmitting", IsEmitting);
@@ -877,6 +878,7 @@ namespace {
         range(add(spec("voxelSize", "Voxel Size", K::Float, "terrain")), 0.05, 16, 0.05, 2, "m");
         add(spec("terrainURL", "Terrain File", K::Url, "terrain"));
         add(spec("terrainVersion", "Version", K::Int, "terrain")).readOnly = true;
+        add(spec("terrainLayers", "Layers", K::Json, "terrain"));
 
         // particles
         add(spec("isEmitting", "Emit", K::Bool, "particles"));

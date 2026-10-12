@@ -3,10 +3,13 @@
 //  <$_SCRIBE_FILENAME$>
 //  Generated on <$_SCRIBE_DATE$>
 //
-//  A Terrain entity's ground. For now each voxel material is a colour from a small palette, with a faint metre
-//  checker projected along the surface's main axis so the ground's shape and scale read; the layers and paint maps
-//  of TERRAIN.md's second phase replace this. The fragment is shaded like any opaque material (deferred), or lit in
-//  place on the forward path.
+//  A Terrain entity's ground (TERRAIN.md section 5, the voxel-material half). Each voxel material is one of the
+//  terrain's layers: a colour texture tiled by a size in metres, sampled triplanar in the terrain's own space (its
+//  box's axes, metres) and blended by how squarely the surface faces each axis, so slopes and cliffs do not
+//  stretch. A triangle's three vertices may hold three materials; the fragment blends them by its barycentric
+//  weights, so materials fade into each other across a cell rather than cut along triangle edges. A layer without
+//  a texture is a plain colour with a faint metre checker. The paint maps that take over where the ground faces up
+//  come next. The fragment is shaded like any opaque material (deferred), or lit in place on the forward path.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -14,6 +17,7 @@
 
 <@include graphics/Material.slh@>
 <@include render-utils/ShaderConstants.h@>
+<@include entities-renderer/ShaderConstants.h@>
 
 <@if not HIFI_USE_FORWARD@>
     <@include DeferredBufferWrite.slh@>
@@ -32,27 +36,86 @@
 
 layout(location=RENDER_UTILS_ATTR_POSITION_WS) in vec4 _positionWS;
 layout(location=RENDER_UTILS_ATTR_NORMAL_WS) in vec3 _normalWS;
-layout(location=RENDER_UTILS_ATTR_COLOR) flat in int _material;
+layout(location=RENDER_UTILS_ATTR_TEXCOORD01) flat in ivec3 _materials;
+layout(location=RENDER_UTILS_ATTR_COLOR) in vec3 _weights;
+
+// One layer, as TerrainLayerSet packs it.
+struct TerrainLayer {
+    vec4 color;    // rgb: the plain colour; a: 1 while a texture is bound for the layer
+    vec4 tiling;   // x: repeats per metre
+};
+
+struct TerrainParams {
+    mat4 worldToTerrain;
+    TerrainLayer layers[8];
+};
+
+LAYOUT_STD140(binding=ENTITIES_BUFFER_TERRAIN_LAYERS) uniform terrainParamsBuffer {
+    TerrainParams params;
+};
+
+LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER0) uniform sampler2D layerMap0;
+LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER1) uniform sampler2D layerMap1;
+LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER2) uniform sampler2D layerMap2;
+LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER3) uniform sampler2D layerMap3;
+LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER4) uniform sampler2D layerMap4;
+LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER5) uniform sampler2D layerMap5;
+LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER6) uniform sampler2D layerMap6;
+LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER7) uniform sampler2D layerMap7;
 
 const float TERRAIN_ROUGHNESS = 0.9;
+const float TRIPLANAR_SHARPNESS = 4.0;   // how quickly one projection gives way to the next as the slope turns
 
-vec3 terrainPaletteColor(int material) {
-    // grass, dirt, rock, sand, clay, snow, dark stone, moss
-    const vec3 PALETTE[8] = vec3[8](
-        vec3(0.33, 0.52, 0.22), vec3(0.42, 0.30, 0.18), vec3(0.50, 0.50, 0.50), vec3(0.78, 0.70, 0.50),
-        vec3(0.62, 0.32, 0.22), vec3(0.92, 0.93, 0.95), vec3(0.28, 0.28, 0.30), vec3(0.24, 0.40, 0.20));
-    return PALETTE[clamp(material, 0, 7)];
+// The layer's texture at uv. The layer is the same across a triangle, so the branch is uniform in practice; the
+// derivatives are taken outside it all the same, which keeps the mip selection defined.
+vec4 sampleLayer(int layer, vec2 uv) {
+    vec2 dx = dFdx(uv);
+    vec2 dy = dFdy(uv);
+    switch (layer) {
+        case 0: return textureGrad(layerMap0, uv, dx, dy);
+        case 1: return textureGrad(layerMap1, uv, dx, dy);
+        case 2: return textureGrad(layerMap2, uv, dx, dy);
+        case 3: return textureGrad(layerMap3, uv, dx, dy);
+        case 4: return textureGrad(layerMap4, uv, dx, dy);
+        case 5: return textureGrad(layerMap5, uv, dx, dy);
+        case 6: return textureGrad(layerMap6, uv, dx, dy);
+        default: return textureGrad(layerMap7, uv, dx, dy);
+    }
+}
+
+// The layer's colour at a point of the terrain (metres along the box's axes), the three projections blended.
+vec3 layerColor(int layer, vec3 point, vec3 blend) {
+    layer = clamp(layer, 0, 7);
+    TerrainLayer l = params.layers[layer];
+    if (l.color.a < 0.5) {
+        // no texture: the plain colour, with a metre checker along the surface's main axis so shape and scale read
+        vec2 planar = blend.y >= max(blend.x, blend.z) ? point.xz : (blend.x >= blend.z ? point.zy : point.xy);
+        vec2 cell = floor(planar);
+        return l.color.rgb * (0.94 + 0.06 * mod(cell.x + cell.y, 2.0));
+    }
+    float repeats = l.tiling.x;
+    vec3 alongX = sampleLayer(layer, point.zy * repeats).rgb;
+    vec3 alongY = sampleLayer(layer, point.xz * repeats).rgb;
+    vec3 alongZ = sampleLayer(layer, point.xy * repeats).rgb;
+    return alongX * blend.x + alongY * blend.y + alongZ * blend.z;
 }
 
 void main(void) {
     vec3 normal = normalize(_normalWS);
-    vec3 albedo = terrainPaletteColor(_material);
+    vec3 point = (params.worldToTerrain * vec4(_positionWS.xyz, 1.0)).xyz;
+    vec3 terrainNormal = normalize(mat3(params.worldToTerrain) * normal);
+    vec3 blend = pow(abs(terrainNormal), vec3(TRIPLANAR_SHARPNESS));
+    blend /= (blend.x + blend.y + blend.z);
 
-    vec3 axis = abs(normal);
-    vec2 planar = axis.y >= max(axis.x, axis.z) ? _positionWS.xz : (axis.x >= axis.z ? _positionWS.zy : _positionWS.xy);
-    vec2 cell = floor(planar);
-    float checker = mod(cell.x + cell.y, 2.0);
-    albedo *= 0.94 + 0.06 * checker;
+    // the triangle's materials, each sampled once, blended by the corner weights
+    ivec3 m = _materials;
+    vec3 color0 = layerColor(m.x, point, blend);
+    vec3 albedo = color0;
+    if (m.y != m.x || m.z != m.x) {
+        vec3 color1 = (m.y == m.x) ? color0 : layerColor(m.y, point, blend);
+        vec3 color2 = (m.z == m.x) ? color0 : ((m.z == m.y) ? color1 : layerColor(m.z, point, blend));
+        albedo = _weights.x * color0 + _weights.y * color1 + _weights.z * color2;
+    }
 
 <@if not HIFI_USE_FORWARD@>
     packDeferredFragment(

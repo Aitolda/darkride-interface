@@ -285,6 +285,7 @@ enum class EntityVersion : PacketVersion {
     RemovedCustomTags, // maki
     SkeletonModelURLInIdentityPacket, // maki
     TerrainEntities, // darkride
+    TerrainLayers, // darkride
     // TO DO - reinstate with tonemapping in zones
     // ToneMappingMode, // caitlyn
     

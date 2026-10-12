@@ -19,6 +19,18 @@
 #define ENTITIES_TEXTURE_POLYVOX_YMAP 1
 #define ENTITIES_TEXTURE_POLYVOX_ZMAP 2
 
+// Terrain: the layers' colour textures take the material slots, which the terrain's own pipeline leaves free;
+// the layer parameters sit in a buffer slot neither the deferred nor the forward shading binds
+#define ENTITIES_TEXTURE_TERRAIN_LAYER0 0
+#define ENTITIES_TEXTURE_TERRAIN_LAYER1 1
+#define ENTITIES_TEXTURE_TERRAIN_LAYER2 2
+#define ENTITIES_TEXTURE_TERRAIN_LAYER3 3
+#define ENTITIES_TEXTURE_TERRAIN_LAYER4 4
+#define ENTITIES_TEXTURE_TERRAIN_LAYER5 5
+#define ENTITIES_TEXTURE_TERRAIN_LAYER6 6
+#define ENTITIES_TEXTURE_TERRAIN_LAYER7 7
+#define ENTITIES_BUFFER_TERRAIN_LAYERS 14
+
 
 
 // <!
@@ -30,8 +42,15 @@ enum Texture {
     PolyvoxXMap = ENTITIES_TEXTURE_POLYVOX_XMAP,
     PolyvoxYMap = ENTITIES_TEXTURE_POLYVOX_YMAP,
     PolyvoxZMap = ENTITIES_TEXTURE_POLYVOX_ZMAP,
+    TerrainLayer0 = ENTITIES_TEXTURE_TERRAIN_LAYER0,
 };
 } // namespace texture
+
+namespace buffer {
+enum Buffer {
+    TerrainLayers = ENTITIES_BUFFER_TERRAIN_LAYERS,
+};
+} // namespace buffer
 
 } } // namespace entities::slot
 

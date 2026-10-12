@@ -715,6 +715,7 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
     CHECK_PROPERTY_CHANGE(PROP_TERRAIN_VOXEL_SIZE, voxelSize);
     CHECK_PROPERTY_CHANGE(PROP_TERRAIN_URL, terrainURL);
     CHECK_PROPERTY_CHANGE(PROP_TERRAIN_VERSION, terrainVersion);
+    CHECK_PROPERTY_CHANGE(PROP_TERRAIN_LAYERS, terrainLayers);
 
     // Gizmo
     CHECK_PROPERTY_CHANGE(PROP_GIZMO_TYPE, gizmoType);
@@ -1620,6 +1621,9 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
  * @property {string} terrainURL="" - The URL of the terrain file that holds the voxels.
  * @property {number} terrainVersion=0 - Counts up each time the terrain file is saved, so other clients know to
  *     fetch it again.
+ * @property {string} terrainLayers="" - The terrain's material layers as a JSON array, one entry per voxel material
+ *     index, up to eight: <code>[{"albedo": "https://.../grass.jpg", "tiling": 4}, ...]</code>, the tiling in
+ *     meters per repeat. A layer without a texture, and a terrain without layers, draws in a plain colour.
  */
 
 /**jsdoc
@@ -2007,6 +2011,7 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
         COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TERRAIN_VOXEL_SIZE, voxelSize);
         COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TERRAIN_URL, terrainURL);
         COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TERRAIN_VERSION, terrainVersion);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TERRAIN_LAYERS, terrainLayers);
     }
 
     // Gizmo only
@@ -2349,6 +2354,7 @@ void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool 
     COPY_PROPERTY_FROM_QSCRIPTVALUE(voxelSize, float, setVoxelSize);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(terrainURL, QString, setTerrainURL);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(terrainVersion, uint32_t, setTerrainVersion);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(terrainLayers, QString, setTerrainLayers);
 
     // Gizmo
     COPY_PROPERTY_FROM_QSCRIPTVALUE_ENUM(gizmoType, GizmoType);
@@ -2647,6 +2653,7 @@ void EntityItemProperties::merge(const EntityItemProperties& other) {
     COPY_PROPERTY_IF_CHANGED(voxelSize);
     COPY_PROPERTY_IF_CHANGED(terrainURL);
     COPY_PROPERTY_IF_CHANGED(terrainVersion);
+    COPY_PROPERTY_IF_CHANGED(terrainLayers);
 
     // Gizmo
     COPY_PROPERTY_IF_CHANGED(gizmoType);
@@ -3060,6 +3067,7 @@ bool EntityItemProperties::getPropertyInfo(const QString& propertyName, EntityPr
         ADD_PROPERTY_TO_MAP(PROP_TERRAIN_VOXEL_SIZE, VoxelSize, voxelSize, float);
         ADD_PROPERTY_TO_MAP(PROP_TERRAIN_URL, TerrainURL, terrainURL, QString);
         ADD_PROPERTY_TO_MAP(PROP_TERRAIN_VERSION, TerrainVersion, terrainVersion, uint32_t);
+        ADD_PROPERTY_TO_MAP(PROP_TERRAIN_LAYERS, TerrainLayers, terrainLayers, QString);
 
         // Gizmo
         ADD_PROPERTY_TO_MAP(PROP_GIZMO_TYPE, GizmoType, gizmoType, GizmoType);
@@ -3548,6 +3556,7 @@ OctreeElement::AppendState EntityItemProperties::encodeEntityEditPacket(PacketTy
                 APPEND_ENTITY_PROPERTY(PROP_TERRAIN_VOXEL_SIZE, properties.getVoxelSize());
                 APPEND_ENTITY_PROPERTY(PROP_TERRAIN_URL, properties.getTerrainURL());
                 APPEND_ENTITY_PROPERTY(PROP_TERRAIN_VERSION, properties.getTerrainVersion());
+                APPEND_ENTITY_PROPERTY(PROP_TERRAIN_LAYERS, properties.getTerrainLayers());
             }
 
             if (properties.getType() == EntityTypes::Gizmo) {
@@ -4030,6 +4039,7 @@ bool EntityItemProperties::decodeEntityEditPacket(const unsigned char* data, int
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TERRAIN_VOXEL_SIZE, float, setVoxelSize);
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TERRAIN_URL, QString, setTerrainURL);
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TERRAIN_VERSION, uint32_t, setTerrainVersion);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TERRAIN_LAYERS, QString, setTerrainLayers);
     }
 
     if (properties.getType() == EntityTypes::Gizmo) {
@@ -4392,6 +4402,7 @@ void EntityItemProperties::markAllChanged() {
     _voxelSizeChanged = true;
     _terrainURLChanged = true;
     _terrainVersionChanged = true;
+    _terrainLayersChanged = true;
 
     // Gizmo
     _gizmoTypeChanged = true;
@@ -5128,6 +5139,9 @@ QList<QString> EntityItemProperties::listChangedProperties() {
     }
     if (terrainVersionChanged()) {
         out += "terrainVersion";
+    }
+    if (terrainLayersChanged()) {
+        out += "terrainLayers";
     }
 
     // Gizmo

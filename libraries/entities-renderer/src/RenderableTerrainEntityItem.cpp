@@ -28,6 +28,7 @@
 #include <terrain/TerrainFile.h>
 
 #include "EntitiesRendererLogging.h"
+#include "entities-renderer/ShaderConstants.h"
 
 using namespace render;
 using namespace render::entities;
@@ -37,7 +38,24 @@ namespace {
 struct TerrainVertex {
     glm::vec3 position;
     glm::vec3 normal;
-    uint32_t material;   // the material index in the low byte, read as the colour attribute's red channel
+    uint32_t materials;   // the triangle's three materials in the low bytes, this corner (0-2) in the high byte;
+                          // read as the colour attribute, a byte per channel
+};
+
+// The layer parameters as terrain.slf reads them (std140: vec4s and a mat4 only).
+struct TerrainLayerParams {
+    glm::vec4 color;    // rgb: the plain colour; a: 1 while a texture is bound
+    glm::vec4 tiling;   // x: repeats per metre
+};
+struct TerrainParams {
+    glm::mat4 worldToTerrain;
+    TerrainLayerParams layers[TerrainLayerSet::LAYER_COUNT];
+};
+
+// The plain colours of layers without a texture: grass, dirt, rock, sand, clay, snow, dark stone, moss.
+const glm::vec3 LAYER_PALETTE[TerrainLayerSet::LAYER_COUNT] = {
+    glm::vec3(0.33f, 0.52f, 0.22f), glm::vec3(0.42f, 0.30f, 0.18f), glm::vec3(0.50f, 0.50f, 0.50f), glm::vec3(0.78f, 0.70f, 0.50f),
+    glm::vec3(0.62f, 0.32f, 0.22f), glm::vec3(0.92f, 0.93f, 0.95f), glm::vec3(0.28f, 0.28f, 0.30f), glm::vec3(0.24f, 0.40f, 0.20f)
 };
 
 uint8_t CUSTOM_PIPELINE_NUMBER = 0;
@@ -74,7 +92,7 @@ void initTerrainPipelines() {
         _vertexFormat = std::make_shared<gpu::Stream::Format>();
         _vertexFormat->setAttribute(gpu::Stream::POSITION, 0, gpu::Element(gpu::VEC3, gpu::FLOAT, gpu::XYZ), offsetof(TerrainVertex, position));
         _vertexFormat->setAttribute(gpu::Stream::NORMAL, 0, gpu::Element(gpu::VEC3, gpu::FLOAT, gpu::XYZ), offsetof(TerrainVertex, normal));
-        _vertexFormat->setAttribute(gpu::Stream::COLOR, 0, gpu::Element(gpu::VEC4, gpu::NUINT8, gpu::RGBA), offsetof(TerrainVertex, material));
+        _vertexFormat->setAttribute(gpu::Stream::COLOR, 0, gpu::Element(gpu::VEC4, gpu::NUINT8, gpu::RGBA), offsetof(TerrainVertex, materials));
     });
 }
 
@@ -316,26 +334,88 @@ void RenderableTerrainEntityItem::computeShapeInfo(ShapeInfo& info) {
     withReadLock([&] { info = _shapeInfo; });
 }
 
+// The layer set
+
+TerrainLayerSet::TerrainLayerSet(const std::vector<TerrainLayerSpec>& specs) {
+    auto textureCache = DependencyManager::get<TextureCache>();
+    for (int i = 0; i < LAYER_COUNT; ++i) {
+        Layer& layer = _layers[i];
+        if (i < (int)specs.size()) {
+            layer.spec = specs[i];
+        }
+        if (!layer.spec.albedoURL.isEmpty()) {
+            layer.texture = textureCache->getTexture(QUrl(layer.spec.albedoURL), image::TextureUsage::ALBEDO_TEXTURE);
+        }
+    }
+    _params = std::make_shared<gpu::Buffer>(sizeof(TerrainParams), nullptr);
+}
+
+void TerrainLayerSet::setWorldToTerrain(const glm::mat4& worldToTerrain) {
+    if (_worldToTerrain != worldToTerrain) {
+        _worldToTerrain = worldToTerrain;
+        _paramsDirty = true;
+    }
+}
+
+void TerrainLayerSet::updateParams() {
+    TerrainParams params;
+    params.worldToTerrain = _worldToTerrain;
+    for (int i = 0; i < LAYER_COUNT; ++i) {
+        const Layer& layer = _layers[i];
+        params.layers[i].color = glm::vec4(LAYER_PALETTE[i], layer.textured ? 1.0f : 0.0f);
+        params.layers[i].tiling = glm::vec4(1.0f / std::max(layer.spec.tiling, 0.01f), 0.0f, 0.0f, 0.0f);
+    }
+    _params->setSubData(0, params);
+    _paramsDirty = false;
+}
+
+void TerrainLayerSet::bind(gpu::Batch& batch) {
+    auto textureCache = DependencyManager::get<TextureCache>();
+    for (int i = 0; i < LAYER_COUNT; ++i) {
+        Layer& layer = _layers[i];
+        gpu::TexturePointer texture = layer.texture ? layer.texture->getGPUTexture() : nullptr;
+        const bool textured = texture != nullptr;   // the plain colour until the texture has arrived
+        if (textured != layer.textured) {
+            layer.textured = textured;
+            _paramsDirty = true;
+        }
+        batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_LAYER0 + i, textured ? texture : textureCache->getWhiteTexture());
+    }
+    if (_paramsDirty) {
+        updateParams();
+    }
+    batch.setUniformBuffer(ENTITIES_BUFFER_TERRAIN_LAYERS, _params, 0, sizeof(TerrainParams));
+}
+
 // The chunk payload
 
 gpu::BufferPointer TerrainChunkPayload::makeVertexBuffer(const terrain::ChunkMesh& mesh) {
-    std::vector<TerrainVertex> vertices(mesh.getVertexCount());
-    for (size_t i = 0; i < vertices.size(); ++i) {
-        vertices[i].position = mesh.positions[i];
-        vertices[i].normal = mesh.normals[i];
-        vertices[i].material = 0xFF000000u | mesh.materials[i];
+    // de-indexed: a triangle's three vertices share its three materials and differ in their corner
+    std::vector<TerrainVertex> vertices(mesh.indices.size());
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        const uint32_t materials = (uint32_t)mesh.materials[mesh.indices[i]]
+                                 | ((uint32_t)mesh.materials[mesh.indices[i + 1]] << 8)
+                                 | ((uint32_t)mesh.materials[mesh.indices[i + 2]] << 16);
+        for (uint32_t corner = 0; corner < 3; ++corner) {
+            const uint32_t index = mesh.indices[i + corner];
+            TerrainVertex& vertex = vertices[i + corner];
+            vertex.position = mesh.positions[index];
+            vertex.normal = mesh.normals[index];
+            vertex.materials = materials | (corner << 24);
+        }
     }
     return std::make_shared<gpu::Buffer>(vertices.size() * sizeof(TerrainVertex), (const gpu::Byte*)vertices.data());
 }
 
-gpu::BufferPointer TerrainChunkPayload::makeIndexBuffer(const terrain::ChunkMesh& mesh) {
-    return std::make_shared<gpu::Buffer>(mesh.indices.size() * sizeof(uint32_t), (const gpu::Byte*)mesh.indices.data());
+void TerrainChunkPayload::setBuffers(const gpu::BufferPointer& vertices, uint32_t vertexCount) {
+    _vertexBuffer = vertices;
+    _vertexCount = vertexCount;
 }
 
-void TerrainChunkPayload::setBuffers(const gpu::BufferPointer& vertices, const gpu::BufferPointer& indices, uint32_t indexCount) {
-    _vertexBuffer = vertices;
-    _indexBuffer = indices;
-    _indexCount = indexCount;
+void TerrainChunkPayload::setWorldToTerrain(const glm::mat4& worldToTerrain) {
+    if (_layers) {
+        _layers->setWorldToTerrain(worldToTerrain);
+    }
 }
 
 void TerrainChunkPayload::setPlacement(const Transform& chunkToWorld) {
@@ -355,15 +435,15 @@ ShapeKey TerrainChunkPayload::getShapeKey() const {
 }
 
 void TerrainChunkPayload::render(RenderArgs* args) {
-    if (!_vertexBuffer || !_indexBuffer || _indexCount == 0) {
+    if (!_vertexBuffer || _vertexCount == 0 || !_layers) {
         return;
     }
     gpu::Batch& batch = *args->_batch;
     batch.setModelTransform(_transform);
     batch.setInputFormat(_vertexFormat);
     batch.setInputBuffer(0, _vertexBuffer, 0, sizeof(TerrainVertex));
-    batch.setIndexBuffer(gpu::UINT32, _indexBuffer, 0);
-    batch.drawIndexed(gpu::TRIANGLES, _indexCount, 0);
+    _layers->bind(batch);   // the shadow pass binds them too, and ignores them
+    batch.draw(gpu::TRIANGLES, _vertexCount, 0);
 }
 
 namespace render {
@@ -430,6 +510,9 @@ bool TerrainEntityRenderer::needsRenderUpdateFromTypedEntity(const TypedEntityPo
     if (entity->getVoxelScale() != _lastVoxelScale) {
         return true;
     }
+    if (!_layerSetMade || entity->getTerrainLayers() != _lastLayersJSON) {
+        return true;
+    }
     if ((_primitiveMode == PrimitiveMode::LINES) != _lastWireframe) {
         return true;
     }
@@ -460,6 +543,22 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         emit requestRenderUpdate();   // the tree renderer only comes back when asked: next frame, for the rest
     }
 
+    // The layers: what the voxel materials look like. A changed list makes a new set; the textures come in on
+    // their own time and the set binds them as they do.
+    const QString layersJSON = entity->getTerrainLayers();
+    bool layersChanged = false;
+    if (!_layerSetMade || layersJSON != _lastLayersJSON) {
+        QString error;
+        const std::vector<TerrainLayerSpec> specs = TerrainEntityItem::parseTerrainLayers(layersJSON, &error);
+        if (!error.isEmpty()) {
+            qCWarning(entitiesrenderer) << "Terrain" << entity->getID() << "layers are not usable:" << error;
+        }
+        _layerSet = std::make_shared<TerrainLayerSet>(specs);
+        _lastLayersJSON = layersJSON;
+        _layerSetMade = true;
+        layersChanged = true;
+    }
+
     // The chunk items.
     const Transform& model = getModelTransform();
     const glm::vec3 dimensions = entity->getScaledDimensions();
@@ -474,6 +573,8 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
     _lastWireframe = wireframe;
     _lastChunkKey = key;
     _meshVersion = entity->getMeshVersion();
+    const glm::mat4 worldToTerrain = glm::inverse(model.getMatrix());
+    const TerrainLayerSet::Pointer layerSet = _layerSet;
 
     const auto& meshes = entity->getChunkMeshes();
     for (auto it = _chunkItems.begin(); it != _chunkItems.end();) {
@@ -491,11 +592,12 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         auto found = _chunkItems.find(chunk);
         if (found == _chunkItems.end()) {
             auto payload = std::make_shared<TerrainChunkPayload>();
-            payload->setBuffers(TerrainChunkPayload::makeVertexBuffer(entry.mesh), TerrainChunkPayload::makeIndexBuffer(entry.mesh),
-                                (uint32_t)entry.mesh.indices.size());
+            payload->setBuffers(TerrainChunkPayload::makeVertexBuffer(entry.mesh), TerrainChunkPayload::getVertexCount(entry.mesh));
             payload->setPlacement(placement);
             payload->setKey(key);
             payload->setWireframe(wireframe);
+            payload->setLayers(layerSet);
+            payload->setWorldToTerrain(worldToTerrain);
             ChunkItem item;
             item.id = scene->allocateID();
             item.meshVersion = entry.version;
@@ -504,21 +606,23 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
             continue;
         }
         const bool meshChanged = found->second.meshVersion != entry.version;
-        if (!meshChanged && !placementChanged && !keyChanged) {
+        if (!meshChanged && !placementChanged && !keyChanged && !layersChanged) {
             continue;
         }
         found->second.meshVersion = entry.version;
         // The buffers are built here, on the main thread, and handed over: the update runs later on the render thread.
         gpu::BufferPointer vertices = meshChanged ? TerrainChunkPayload::makeVertexBuffer(entry.mesh) : nullptr;
-        gpu::BufferPointer indices = meshChanged ? TerrainChunkPayload::makeIndexBuffer(entry.mesh) : nullptr;
-        const uint32_t indexCount = (uint32_t)entry.mesh.indices.size();
-        transaction.updateItem<TerrainChunkPayload>(found->second.id, [vertices, indices, indexCount, placement, key, wireframe](TerrainChunkPayload& payload) {
+        const uint32_t vertexCount = TerrainChunkPayload::getVertexCount(entry.mesh);
+        transaction.updateItem<TerrainChunkPayload>(found->second.id,
+                [vertices, vertexCount, placement, key, wireframe, layerSet, worldToTerrain](TerrainChunkPayload& payload) {
             if (vertices) {
-                payload.setBuffers(vertices, indices, indexCount);
+                payload.setBuffers(vertices, vertexCount);
             }
             payload.setPlacement(placement);
             payload.setKey(key);
             payload.setWireframe(wireframe);
+            payload.setLayers(layerSet);
+            payload.setWorldToTerrain(worldToTerrain);
         });
     }
 }

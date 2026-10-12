@@ -18,8 +18,10 @@
 #ifndef hifi_RenderableTerrainEntityItem_h
 #define hifi_RenderableTerrainEntityItem_h
 
+#include <array>
 #include <map>
 
+#include <TextureCache.h>
 #include <terrain/AsyncMesher.h>
 #include <terrain/SurfaceNets.h>
 #include <terrain/VoxelGrid.h>
@@ -126,19 +128,53 @@ private:
 
 namespace render { namespace entities {
 
+// A terrain's layers as its chunk items draw them: the colour textures and the parameter buffer the terrain shader
+// reads (TERRAIN.md section 5), shared by every chunk item of one entity. Made on the main thread, which starts the
+// texture fetches, handed to the items through the scene's transaction, and used on the render thread from then on.
+class TerrainLayerSet {
+public:
+    using Pointer = std::shared_ptr<TerrainLayerSet>;
+    static const int LAYER_COUNT = TerrainEntityItem::MAX_TERRAIN_LAYERS;
+
+    explicit TerrainLayerSet(const std::vector<TerrainLayerSpec>& specs);
+
+    // World space to the terrain's own: its box's axes, in metres, from the box's centre. The textures are tiled
+    // in that space, so they stay put on the ground when the entity moves or turns.
+    void setWorldToTerrain(const glm::mat4& worldToTerrain);
+    // Binds the textures that have arrived (white for the rest, which draw as plain colours) and the parameters.
+    void bind(gpu::Batch& batch);
+
+private:
+    struct Layer {
+        TerrainLayerSpec spec;
+        NetworkTexturePointer texture;
+        bool textured { false };
+    };
+    void updateParams();
+
+    std::array<Layer, LAYER_COUNT> _layers;
+    glm::mat4 _worldToTerrain { 1.0f };
+    gpu::BufferPointer _params;
+    bool _paramsDirty { true };
+};
+
 // One chunk's mesh as a render item.
 class TerrainChunkPayload {
 public:
     using Pointer = std::shared_ptr<TerrainChunkPayload>;
 
+    // The mesh without indices, three vertices to a triangle, each carrying the triangle's three materials and
+    // its own corner, so the shader can blend materials across the triangle (terrain.slv).
     static gpu::BufferPointer makeVertexBuffer(const terrain::ChunkMesh& mesh);
-    static gpu::BufferPointer makeIndexBuffer(const terrain::ChunkMesh& mesh);
+    static uint32_t getVertexCount(const terrain::ChunkMesh& mesh) { return (uint32_t)mesh.indices.size(); }
 
-    void setBuffers(const gpu::BufferPointer& vertices, const gpu::BufferPointer& indices, uint32_t indexCount);
+    void setBuffers(const gpu::BufferPointer& vertices, uint32_t vertexCount);
     // The transform of the chunk's voxel (0, 0, 0) in the world; the bound follows from it.
     void setPlacement(const Transform& chunkToWorld);
     void setKey(const ItemKey& key) { _key = key; }
     void setWireframe(bool wireframe) { _wireframe = wireframe; }
+    void setLayers(const TerrainLayerSet::Pointer& layers) { _layers = layers; }
+    void setWorldToTerrain(const glm::mat4& worldToTerrain);
 
     const ItemKey& getKey() const { return _key; }
     const Item::Bound& getBound() const { return _bound; }
@@ -147,12 +183,12 @@ public:
 
 private:
     gpu::BufferPointer _vertexBuffer;
-    gpu::BufferPointer _indexBuffer;
-    uint32_t _indexCount { 0 };
+    uint32_t _vertexCount { 0 };
     Transform _transform;
     Item::Bound _bound;
     ItemKey _key;
     bool _wireframe { false };
+    TerrainLayerSet::Pointer _layers;
 };
 
 class TerrainEntityRenderer : public TypedEntityRenderer<RenderableTerrainEntityItem> {
@@ -187,6 +223,9 @@ private:
     glm::vec3 _lastVoxelScale { 0.0f };
     bool _lastWireframe { false };
     uint64_t _meshVersion { 0 };
+    TerrainLayerSet::Pointer _layerSet;
+    QString _lastLayersJSON;
+    bool _layerSetMade { false };
 
     ResourceRequest* _request { nullptr };
     QString _requestURL;
