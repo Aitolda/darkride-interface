@@ -51,6 +51,7 @@
 #include "GizmoEntityItem.h"
 #include "LightEntityItem.h"
 #include "ZoneEntityItem.h"
+#include "TerrainEntityItem.h"
 
 #include "AnimationPropertyGroup.h"
 #include "SkyboxPropertyGroup.h"
@@ -118,6 +119,7 @@ class EntityItemProperties {
     friend class GizmoEntityItem;
     friend class LightEntityItem;
     friend class ZoneEntityItem;
+    friend class TerrainEntityItem;
     friend class MaterialEntityItem;
 public:
     static bool blobToProperties(QScriptEngine& scriptEngine, const QByteArray& blob, EntityItemProperties& properties);
@@ -421,6 +423,11 @@ public:
     DEFINE_PROPERTY_REF(PROP_GRID_FOLLOW_CAMERA, FollowCamera, followCamera, bool, true);
     DEFINE_PROPERTY(PROP_MAJOR_GRID_EVERY, MajorGridEvery, majorGridEvery, uint32_t, GridEntityItem::DEFAULT_MAJOR_GRID_EVERY);
     DEFINE_PROPERTY(PROP_MINOR_GRID_EVERY, MinorGridEvery, minorGridEvery, float, GridEntityItem::DEFAULT_MINOR_GRID_EVERY);
+
+    // Terrain
+    DEFINE_PROPERTY(PROP_TERRAIN_VOXEL_SIZE, VoxelSize, voxelSize, float, TerrainEntityItem::DEFAULT_VOXEL_SIZE);
+    DEFINE_PROPERTY_REF(PROP_TERRAIN_URL, TerrainURL, terrainURL, QString, "");
+    DEFINE_PROPERTY(PROP_TERRAIN_VERSION, TerrainVersion, terrainVersion, uint32_t, 0);
 
     // Gizmo
     DEFINE_PROPERTY_REF_ENUM(PROP_GIZMO_TYPE, GizmoType, gizmoType, GizmoType, GizmoType::RING);

@@ -94,6 +94,7 @@ const QVector<EditorCreate::Item>& EditorCreate::items() {
         { "particles", "Particles", "", EntityTypes::ParticleEffect },
         { "material", "Material", "", EntityTypes::Material },
         { "grid", "Grid", "", EntityTypes::Grid },
+        { "terrain", "Terrain", "", EntityTypes::Terrain },
     };
     return ITEMS;
 }
@@ -210,6 +211,12 @@ EntityItemProperties EditorCreate::properties(const QString& key, const glm::vec
         p.setMajorGridEvery(5);
         p.setMinorGridEvery(1.0f);
         p.setRotation(glm::angleAxis(-glm::half_pi<float>(), Vectors::RIGHT));   // flat on the ground
+    } else if (key == "terrain") {
+        // 64 x 32 x 64 voxels at half a metre; the ground starts flat halfway up the box (TERRAIN.md)
+        p.setType(EntityTypes::Terrain);
+        p.setName("Terrain");
+        p.setDimensions(glm::vec3(32.0f, 16.0f, 32.0f));
+        p.setVoxelSize(0.5f);
     }
     return p;
 }
@@ -251,6 +258,7 @@ float EditorCreate::lift(const EntityItemProperties& properties) {
             return properties.getDimensions().y * 0.5f;
         case EntityTypes::Material: return 0.0f;
         case EntityTypes::Grid: return 0.02f;
+        case EntityTypes::Terrain: return 0.0f;   // the ground starts halfway up the box, so the box's centre sits at the surface
         default: return properties.getDimensions().y * 0.5f;   // resting on the surface
     }
 }

@@ -22,6 +22,7 @@
 #include "RenderableLightEntityItem.h"
 #include "RenderableZoneEntityItem.h"
 #include "RenderableMaterialEntityItem.h"
+#include "RenderableTerrainEntityItem.h"
 
 using namespace render;
 using namespace render::entities;
@@ -29,6 +30,7 @@ using namespace render::entities;
 void EntityRenderer::initEntityRenderers() {
     REGISTER_ENTITY_TYPE_WITH_FACTORY(Model, RenderableModelEntityItem::factory)
     REGISTER_ENTITY_TYPE_WITH_FACTORY(PolyVox, RenderablePolyVoxEntityItem::factory)
+    REGISTER_ENTITY_TYPE_WITH_FACTORY(Terrain, RenderableTerrainEntityItem::factory)
 }
 
 const Transform& EntityRenderer::getModelTransform() const {
@@ -277,6 +279,10 @@ EntityRenderer::Pointer EntityRenderer::addToScene(EntityTreeRenderer& renderer,
 
         case Type::Material:
             result = make_renderer<MaterialEntityRenderer>(entity);
+            break;
+
+        case Type::Terrain:
+            result = make_renderer<TerrainEntityRenderer>(entity);
             break;
 
         default:

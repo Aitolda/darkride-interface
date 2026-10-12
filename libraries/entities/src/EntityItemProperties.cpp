@@ -711,6 +711,11 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
     CHECK_PROPERTY_CHANGE(PROP_MAJOR_GRID_EVERY, majorGridEvery);
     CHECK_PROPERTY_CHANGE(PROP_MINOR_GRID_EVERY, minorGridEvery);
 
+    // Terrain
+    CHECK_PROPERTY_CHANGE(PROP_TERRAIN_VOXEL_SIZE, voxelSize);
+    CHECK_PROPERTY_CHANGE(PROP_TERRAIN_URL, terrainURL);
+    CHECK_PROPERTY_CHANGE(PROP_TERRAIN_VERSION, terrainVersion);
+
     // Gizmo
     CHECK_PROPERTY_CHANGE(PROP_GIZMO_TYPE, gizmoType);
     changedProperties += _ring.getChangedProperties();
@@ -918,6 +923,7 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
  * @see {@link Entities.EntityProperties-PolyVox|EntityProperties-PolyVox}
  * @see {@link Entities.EntityProperties-Shape|EntityProperties-Shape}
  * @see {@link Entities.EntityProperties-Sphere|EntityProperties-Sphere}
+ * @see {@link Entities.EntityProperties-Terrain|EntityProperties-Terrain}
  * @see {@link Entities.EntityProperties-Text|EntityProperties-Text}
  * @see {@link Entities.EntityProperties-Web|EntityProperties-Web}
  * @see {@link Entities.EntityProperties-Zone|EntityProperties-Zone}
@@ -1605,6 +1611,18 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
  */
 
 /**jsdoc
+ * The <code>"Terrain"</code> {@link Entities.EntityType|EntityType} is voxel ground that can be shaped and dug.
+ * It has properties in addition to the common {@link Entities.EntityProperties|EntityProperties}.
+ *
+ * @typedef {object} Entities.EntityProperties-Terrain
+ * @property {Vec3} dimensions - The box the voxels fill: the voxel count along each side times the voxel size.
+ * @property {number} voxelSize=0.5 - The size of one voxel, in meters.
+ * @property {string} terrainURL="" - The URL of the terrain file that holds the voxels.
+ * @property {number} terrainVersion=0 - Counts up each time the terrain file is saved, so other clients know to
+ *     fetch it again.
+ */
+
+/**jsdoc
  * The <code>"Gizmo"</code> {@link Entities.EntityType|EntityType} displays an entity that could be used as UI.
  * It has properties in addition to the common {@link Entities.EntityProperties|EntityProperties}.
  *
@@ -1984,6 +2002,13 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
         COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_MINOR_GRID_EVERY, minorGridEvery);
     }
 
+    // Terrain only
+    if (_type == EntityTypes::Terrain) {
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TERRAIN_VOXEL_SIZE, voxelSize);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TERRAIN_URL, terrainURL);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TERRAIN_VERSION, terrainVersion);
+    }
+
     // Gizmo only
     if (_type == EntityTypes::Gizmo) {
         COPY_PROPERTY_TO_QSCRIPTVALUE_GETTER(PROP_GIZMO_TYPE, gizmoType, getGizmoTypeAsString());
@@ -2320,6 +2345,11 @@ void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool 
     COPY_PROPERTY_FROM_QSCRIPTVALUE(majorGridEvery, uint32_t, setMajorGridEvery);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(minorGridEvery, float, setMinorGridEvery);
 
+    // Terrain
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(voxelSize, float, setVoxelSize);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(terrainURL, QString, setTerrainURL);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(terrainVersion, uint32_t, setTerrainVersion);
+
     // Gizmo
     COPY_PROPERTY_FROM_QSCRIPTVALUE_ENUM(gizmoType, GizmoType);
     _ring.copyFromScriptValue(object, _defaultSettings);
@@ -2612,6 +2642,11 @@ void EntityItemProperties::merge(const EntityItemProperties& other) {
     COPY_PROPERTY_IF_CHANGED(followCamera);
     COPY_PROPERTY_IF_CHANGED(majorGridEvery);
     COPY_PROPERTY_IF_CHANGED(minorGridEvery);
+
+    // Terrain
+    COPY_PROPERTY_IF_CHANGED(voxelSize);
+    COPY_PROPERTY_IF_CHANGED(terrainURL);
+    COPY_PROPERTY_IF_CHANGED(terrainVersion);
 
     // Gizmo
     COPY_PROPERTY_IF_CHANGED(gizmoType);
@@ -3020,6 +3055,11 @@ bool EntityItemProperties::getPropertyInfo(const QString& propertyName, EntityPr
         ADD_PROPERTY_TO_MAP(PROP_GRID_FOLLOW_CAMERA, FollowCamera, followCamera, bool);
         ADD_PROPERTY_TO_MAP(PROP_MAJOR_GRID_EVERY, MajorGridEvery, majorGridEvery, uint32_t);
         ADD_PROPERTY_TO_MAP(PROP_MINOR_GRID_EVERY, MinorGridEvery, minorGridEvery, float);
+
+        // Terrain
+        ADD_PROPERTY_TO_MAP(PROP_TERRAIN_VOXEL_SIZE, VoxelSize, voxelSize, float);
+        ADD_PROPERTY_TO_MAP(PROP_TERRAIN_URL, TerrainURL, terrainURL, QString);
+        ADD_PROPERTY_TO_MAP(PROP_TERRAIN_VERSION, TerrainVersion, terrainVersion, uint32_t);
 
         // Gizmo
         ADD_PROPERTY_TO_MAP(PROP_GIZMO_TYPE, GizmoType, gizmoType, GizmoType);
@@ -3503,6 +3543,13 @@ OctreeElement::AppendState EntityItemProperties::encodeEntityEditPacket(PacketTy
                 APPEND_ENTITY_PROPERTY(PROP_MINOR_GRID_EVERY, properties.getMinorGridEvery());
             }
 
+            // Terrain
+            if (properties.getType() == EntityTypes::Terrain) {
+                APPEND_ENTITY_PROPERTY(PROP_TERRAIN_VOXEL_SIZE, properties.getVoxelSize());
+                APPEND_ENTITY_PROPERTY(PROP_TERRAIN_URL, properties.getTerrainURL());
+                APPEND_ENTITY_PROPERTY(PROP_TERRAIN_VERSION, properties.getTerrainVersion());
+            }
+
             if (properties.getType() == EntityTypes::Gizmo) {
                 APPEND_ENTITY_PROPERTY(PROP_GIZMO_TYPE, (uint32_t)properties.getGizmoType());
                 _staticRing.setProperties(properties);
@@ -3978,6 +4025,13 @@ bool EntityItemProperties::decodeEntityEditPacket(const unsigned char* data, int
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_MINOR_GRID_EVERY, float, setMinorGridEvery);
     }
 
+    // Terrain
+    if (properties.getType() == EntityTypes::Terrain) {
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TERRAIN_VOXEL_SIZE, float, setVoxelSize);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TERRAIN_URL, QString, setTerrainURL);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TERRAIN_VERSION, uint32_t, setTerrainVersion);
+    }
+
     if (properties.getType() == EntityTypes::Gizmo) {
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_GIZMO_TYPE, GizmoType, setGizmoType);
         properties.getRing().decodeFromEditPacket(propertyFlags, dataAt, processedBytes);
@@ -4333,6 +4387,11 @@ void EntityItemProperties::markAllChanged() {
     _followCameraChanged = true;
     _majorGridEveryChanged = true;
     _minorGridEveryChanged = true;
+
+    // Terrain
+    _voxelSizeChanged = true;
+    _terrainURLChanged = true;
+    _terrainVersionChanged = true;
 
     // Gizmo
     _gizmoTypeChanged = true;
@@ -5058,6 +5117,17 @@ QList<QString> EntityItemProperties::listChangedProperties() {
     }
     if (minorGridEveryChanged()) {
         out += "minorGridEvery";
+    }
+
+    // Terrain
+    if (voxelSizeChanged()) {
+        out += "voxelSize";
+    }
+    if (terrainURLChanged()) {
+        out += "terrainURL";
+    }
+    if (terrainVersionChanged()) {
+        out += "terrainVersion";
     }
 
     // Gizmo

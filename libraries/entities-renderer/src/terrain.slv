@@ -1,0 +1,39 @@
+<@include gpu/Config.slh@>
+<$VERSION_HEADER$>
+//  <$_SCRIBE_FILENAME$>
+//  Generated on <$_SCRIBE_DATE$>
+//
+//  A Terrain entity's chunk mesh (RenderableTerrainEntityItem): positions in voxel units relative to the chunk's
+//  origin, the model transform placing the chunk in the world, the voxel material's index in the colour attribute's
+//  red channel. Shadow passes draw these meshes with the standard shadow pipeline, so there is no shadow variant.
+//
+//  Distributed under the Apache License, Version 2.0.
+//  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
+//
+
+<@include gpu/Inputs.slh@>
+<@include render-utils/ShaderConstants.h@>
+
+<@include gpu/Transform.slh@>
+<$declareStandardTransform()$>
+
+<@if HIFI_USE_FORWARD@>
+    layout(location=RENDER_UTILS_ATTR_POSITION_ES) out vec4 _positionES;
+<@endif@>
+layout(location=RENDER_UTILS_ATTR_POSITION_WS) out vec4 _positionWS;
+layout(location=RENDER_UTILS_ATTR_NORMAL_WS) out vec3 _normalWS;
+layout(location=RENDER_UTILS_ATTR_COLOR) flat out int _material;
+
+void main(void) {
+    TransformCamera cam = getTransformCamera();
+    TransformObject obj = getTransformObject();
+
+<@if HIFI_USE_FORWARD@>
+    <$transformModelToEyeAndClipPos(cam, obj, inPosition, _positionES, gl_Position)$>
+<@else@>
+    <$transformModelToClipPos(cam, obj, inPosition, gl_Position)$>
+<@endif@>
+    <$transformModelToWorldPos(obj, inPosition, _positionWS)$>
+    <$transformModelToWorldDir(cam, obj, inNormal.xyz, _normalWS)$>
+    _material = int(inColor.r * 255.0 + 0.5);
+}

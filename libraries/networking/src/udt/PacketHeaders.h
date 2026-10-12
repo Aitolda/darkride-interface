@@ -284,6 +284,7 @@ enum class EntityVersion : PacketVersion {
     CloneGrabbable, // maki
     RemovedCustomTags, // maki
     SkeletonModelURLInIdentityPacket, // maki
+    TerrainEntities, // darkride
     // TO DO - reinstate with tonemapping in zones
     // ToneMappingMode, // caitlyn
     

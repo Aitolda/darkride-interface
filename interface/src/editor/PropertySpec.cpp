@@ -311,6 +311,11 @@ namespace {
         P_INT("majorGridEvery", MajorGridEvery, uint32_t);
         P_FLOAT("minorGridEvery", MinorGridEvery);
 
+        // terrain
+        P_FLOAT("voxelSize", VoxelSize);
+        P_STR("terrainURL", TerrainURL);
+        P_INT("terrainVersion", TerrainVersion, uint32_t);
+
         // particles
         P_BOOL("isEmitting", IsEmitting);
         P_FLOAT("lifespan", Lifespan);
@@ -868,6 +873,11 @@ namespace {
         add(spec("majorGridEvery", "Major Every", K::Int, "grid"));
         range(add(spec("minorGridEvery", "Minor Every", K::Float, "grid")), 0, DBL_MAX, 0.01, 2);
 
+        // terrain
+        range(add(spec("voxelSize", "Voxel Size", K::Float, "terrain")), 0.05, 16, 0.05, 2, "m");
+        add(spec("terrainURL", "Terrain File", K::Url, "terrain"));
+        add(spec("terrainVersion", "Version", K::Int, "terrain")).readOnly = true;
+
         // particles
         add(spec("isEmitting", "Emit", K::Bool, "particles"));
         range(add(spec("lifespan", "Lifespan", K::Float, "particles")), 0, 86400, 0.01, 2, "s");
@@ -961,6 +971,7 @@ namespace {
         { "material_inputs", "Surface Inputs", true },
         { "material_data", "Material Data", true },
         { "grid", "Grid", false },
+        { "terrain", "Terrain", false },
         { "particles", "Particles", false },
         { "particles_emit", "Emit", true },
         { "particles_size", "Size", true },
@@ -1040,6 +1051,8 @@ static QStringList typeSections(EntityTypes::EntityType type, bool multiple) {
                      "particles_acceleration", "particles_spin", "particles_constraints", "behavior", "physics" };
         case EntityTypes::Grid:
             return { "base", "spatial", "grid", "behavior", "physics" };
+        case EntityTypes::Terrain:
+            return { "base", "spatial", "terrain", "behavior", "collision" };
         default:
             return { "base", "spatial", "behavior", "collision", "physics" };
     }
