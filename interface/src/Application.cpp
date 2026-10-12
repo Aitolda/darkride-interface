@@ -8598,7 +8598,9 @@ void Application::importAvatarDialog() {
     static Setting::Handle<QString> previousLocation("previousAvatarImportLocation",
                                                      QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
     ModalDialogListener* dlg = OffscreenUi::getOpenFileNameAsync(_glWidget, tr("Import Avatar"), previousLocation.get(),
-        tr("Avatars and characters (*.fst *.fbx *.FBX *.dae *.DAE *.obj *.glb *.gltf *.vrm)"));
+        // every file stays selectable: the macOS panel greyed them all out with a list of extensions, and the
+        // importer reads by extension and says so when it cannot read a file
+        tr("Characters and avatars (*)"));
     connect(dlg, &ModalDialogListener::response, this, [=] (QVariant answer) {
         disconnect(dlg, &ModalDialogListener::response, this, nullptr);
         const QString& response = answer.toString();
