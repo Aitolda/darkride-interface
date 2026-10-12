@@ -1,0 +1,15 @@
+{
+  "DataVersion": 0,
+  "Paths": { "/": "/0,1.2,0/0,0,0,1" },
+  "Entities": [
+    { "id": "{aaaaaaaa-0000-0000-0000-000000000001}", "type": "Box", "name": "Ground",
+      "position": { "x": 0, "y": -0.05, "z": 0 }, "dimensions": { "x": 400, "y": 0.1, "z": 400 },
+      "color": { "red": 90, "green": 110, "blue": 90 }, "shapeType": "box", "locked": true },
+    { "id": "{aaaaaaaa-0000-0000-0000-000000000002}", "type": "Zone", "name": "BaselineZone",
+      "position": { "x": 0, "y": 0, "z": 0 }, "dimensions": { "x": 1000, "y": 1000, "z": 1000 }, "shapeType": "box",
+      "keyLightMode": "enabled", "keyLight": { "color": { "red": 255, "green": 255, "blue": 255 }, "intensity": 1.0,
+        "direction": { "x": 0.5, "y": -0.7, "z": -0.5 } },
+      "ambientLightMode": "enabled", "ambientLight": { "ambientIntensity": 0.5 },
+      "skyboxMode": "enabled", "skybox": { "color": { "red": 60, "green": 80, "blue": 120 } } }
+  ]
+}
