@@ -24,6 +24,7 @@
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QMenu>
+#include <QtWidgets/QScrollArea>
 #include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QTreeWidgetItemIterator>
 #include <QtWidgets/QVBoxLayout>
@@ -446,18 +447,41 @@ void UserDataEditor::addEntry(const Path& parentPath, QJsonValue::Type type) {
     commit();
     QTimer::singleShot(0, this, [this, path] {
         rebuildTree();
-        if (isIndex(path.last())) {
-            return;
-        }
-        // a new entry starts with its name being typed
-        for (QTreeWidgetItemIterator it(_tree); *it; ++it) {
-            if ((*it)->data(0, PATH_ROLE).toList() == path) {
-                _tree->scrollToItem(*it);
-                _tree->editItem(*it, 0);
-                break;
+        // a new entry starts with its name being typed (an item of an array has no name)
+        if (QTreeWidgetItem* item = itemAt(path)) {
+            if (!isIndex(path.last())) {
+                _tree->editItem(item, 0);
             }
         }
+        QTimer::singleShot(0, this, [this, path] { reveal(path); });   // once the list has grown to hold it
     });
+}
+
+QTreeWidgetItem* UserDataEditor::itemAt(const Path& path) const {
+    for (QTreeWidgetItemIterator it(_tree); *it; ++it) {
+        if ((*it)->data(0, PATH_ROLE).toList() == path) {
+            return *it;
+        }
+    }
+    return nullptr;
+}
+
+void UserDataEditor::reveal(const Path& path) {
+    QTreeWidgetItem* item = itemAt(path);
+    if (!item) {
+        return;
+    }
+    _tree->scrollToItem(item);
+    // the Inspector scrolls as well: the list sits at its bottom, where a new row is below its edge
+    QScrollArea* area = nullptr;
+    for (QWidget* parent = parentWidget(); parent && !area; parent = parent->parentWidget()) {
+        area = qobject_cast<QScrollArea*>(parent);
+    }
+    if (area && area->widget()) {
+        QRect rect = _tree->visualItemRect(item);
+        QPoint at = _tree->viewport()->mapTo(area->widget(), rect.center());
+        area->ensureVisible(at.x(), at.y(), 0, rect.height() + 8);
+    }
 }
 
 void UserDataEditor::renameEntry(QTreeWidgetItem* item) {

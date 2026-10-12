@@ -54,6 +54,8 @@ private:
 
     void setEntry(const Path& path, const QJsonValue& value, bool rebuild);
     void addEntry(const Path& parentPath, QJsonValue::Type type);
+    QTreeWidgetItem* itemAt(const Path& path) const;
+    void reveal(const Path& path);        // scrolls the list and the Inspector to the entry
     void renameEntry(QTreeWidgetItem* item);
     void showMenu(const QPoint& pos);
     void editAsJson();
