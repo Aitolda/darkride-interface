@@ -368,10 +368,12 @@ namespace {
             [](EP& p, const QVariant& v) { p.setCollisionMask(groupsToMask(v.toString())); });
         P_STR("collisionSoundURL", CollisionSoundURL);
         P_BOOL("dynamic", Dynamic);
-        P_VEC3("localVelocity", LocalVelocity);
+        // the velocity and angularVelocity properties are the entity's in its parent's frame (what the local ones
+        // would be); EntityItem::getProperties leaves localVelocity and localAngularVelocity unfilled
+        P_VEC3("velocity", Velocity);
         P_FLOAT("damping", Damping);
-        add("localAngularVelocity", [](const EP& p) { return QVariant(toQ(glm::degrees(p.getLocalAngularVelocity()))); },
-            [](EP& p, const QVariant& v) { p.setLocalAngularVelocity(glm::radians(fromQ(v.value<QVector3D>()))); });
+        add("angularVelocity", [](const EP& p) { return QVariant(toQ(glm::degrees(p.getAngularVelocity()))); },
+            [](EP& p, const QVariant& v) { p.setAngularVelocity(glm::radians(fromQ(v.value<QVector3D>()))); });
         P_FLOAT("angularDamping", AngularDamping);
         P_FLOAT("restitution", Restitution);
         P_FLOAT("friction", Friction);
@@ -931,9 +933,9 @@ namespace {
         add(spec("dynamic", "Dynamic", K::Bool, "collision"));
 
         // physics
-        stepping(add(spec("localVelocity", "Velocity", K::Vec3, "physics")), 0.01, 3, "m/s");
+        stepping(add(spec("velocity", "Velocity", K::Vec3, "physics")), 0.01, 3, "m/s");
         range(add(spec("damping", "Damping", K::Float, "physics")), 0, 1, 0.001, 3);
-        stepping(add(spec("localAngularVelocity", "Angular Velocity", K::Vec3, "physics")), 1, 2, "°/s");
+        stepping(add(spec("angularVelocity", "Angular Velocity", K::Vec3, "physics")), 1, 2, "°/s");
         range(add(spec("angularDamping", "Angular Damping", K::Float, "physics")), 0, 1, 0.001, 3);
         range(add(spec("restitution", "Bounciness", K::Float, "physics")), 0, 0.99, 0.01, 2);
         range(add(spec("friction", "Friction", K::Float, "physics")), 0, 10, 0.01, 2);
