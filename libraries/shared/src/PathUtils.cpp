@@ -146,7 +146,22 @@ QUrl PathUtils::qmlUrl(const QString& relativeUrl) {
     return QUrl(qmlBaseUrl() + relativeUrl);
 }
 
+// A sandboxed server (domain-sandbox.sh in darkride-ops) keeps its settings, world file, asset store and backups
+// apart from the main installation's by naming a directory of its own here. An environment variable, because Qt
+// on macOS asks the system for the application data directory and ignores HOME.
+static QString sandboxedAppDataPath() {
+    static const QString path = QString::fromLocal8Bit(qgetenv("TIVOLI_APP_DATA_DIR"));
+    if (path.isEmpty() || path.endsWith('/')) {
+        return path;
+    }
+    return path + "/";
+}
+
 QString PathUtils::getAppDataPath() {
+    const QString sandboxed = sandboxedAppDataPath();
+    if (!sandboxed.isEmpty()) {
+        return sandboxed;
+    }
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/";
 }
 
@@ -155,6 +170,10 @@ QString PathUtils::getAppLocalDataPath() {
     // return overridden path if set
     if (!overriddenPath.isEmpty()) {
         return overriddenPath;
+    }
+    const QString sandboxed = sandboxedAppDataPath();
+    if (!sandboxed.isEmpty()) {
+        return sandboxed;
     }
 
     // otherwise return standard path

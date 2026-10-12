@@ -21,6 +21,8 @@
 #include <QtCore/QMap>
 #include <QtCore/QStringList>
 #include <QtCore/QStandardPaths>
+
+#include <PathUtils.h>
 #include <QtCore/QUrlQuery>
 #include <QtCore/QThreadPool>
 #include <QtNetwork/QHttpMultiPart>
@@ -134,7 +136,12 @@ QString accountFileDir() {
 #if defined(Q_OS_ANDROID)
     return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/../files";
 #else
-    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    // the application data directory, which a sandboxed server moves (PathUtils::getAppDataPath)
+    QString dir = PathUtils::getAppDataPath();
+    if (dir.endsWith('/')) {
+        dir.chop(1);
+    }
+    return dir;
 #endif
 }
 
