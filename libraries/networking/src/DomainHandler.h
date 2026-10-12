@@ -95,8 +95,10 @@ public:
 
     unsigned short getPort() const { return _sockAddr.getPort(); }
     void setPort(quint16 port) { _sockAddr.setPort(port); }
-    // whether the domain URL named its port; a local domain is otherwise found through shared memory (NodeList)
+    // whether the domain's port was chosen (named in the URL, or given on an assignment client's command line);
+    // a local domain named only "localhost" is otherwise found through shared memory (NodeList)
     bool hasExplicitPort() const { return _explicitPort; }
+    void setExplicitPort(bool explicitPort) { _explicitPort = explicitPort; }
 
     const QUuid& getConnectionToken() const { return _connectionToken; }
     void setConnectionToken(const QUuid& connectionToken) { _connectionToken = connectionToken; }

@@ -236,6 +236,10 @@ void AssignmentClient::handleCreateAssignmentPacket(QSharedPointer<ReceivedMessa
         // switch our DomainHandler hostname and port to whoever sent us the assignment
 
         nodeList->getDomainHandler().setSockAddr(message->getSenderSockAddr(), _assignmentServerHostname);
+        // a port given on the command line stays the domain's when the agent connects, as it did when it asked
+        // for work: setSockAddr knows nothing of the command line, and NodeList would otherwise read the shared-memory
+        // slot for a "localhost" domain and follow whichever local domain started last
+        nodeList->getDomainHandler().setExplicitPort(_assignmentServerPortGiven);
         nodeList->getDomainHandler().setAssignmentUUID(_currentAssignment->getUUID());
 
         qCDebug(assignment_client) << "Destination IP for assignment is" << nodeList->getDomainHandler().getIP().toString();
