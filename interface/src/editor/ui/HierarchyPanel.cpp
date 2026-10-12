@@ -43,6 +43,11 @@ HierarchyPanel::HierarchyPanel(QWidget* parent) : QDockWidget("Hierarchy", paren
     _tree->setFrameShape(QFrame::NoFrame);
     _tree->setEditTriggers(QAbstractItemView::EditKeyPressed | QAbstractItemView::SelectedClicked);
     _tree->setExpandsOnDoubleClick(false);
+    // rows dragged onto another become its children, onto the empty space below the rows top-level entities
+    _tree->setDragEnabled(true);
+    _tree->setAcceptDrops(true);
+    _tree->setDropIndicatorShown(true);
+    _tree->setDragDropMode(QAbstractItemView::InternalMove);
 
     // the search filters the tree and keeps a match's ancestors; names sort case-blind
     _proxy = new QSortFilterProxyModel(this);
@@ -85,6 +90,7 @@ void HierarchyPanel::setReadOnly(bool readOnly, const QString& reason) {
     _banner->setVisible(readOnly);
     _tree->setEditTriggers(readOnly ? QAbstractItemView::NoEditTriggers
                                     : QAbstractItemView::EditKeyPressed | QAbstractItemView::SelectedClicked);
+    _tree->setDragEnabled(!readOnly);
     // the style sheet dims the names through this property
     _tree->setProperty("readOnly", readOnly);
     _tree->style()->unpolish(_tree);

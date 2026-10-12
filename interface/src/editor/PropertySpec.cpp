@@ -655,12 +655,13 @@ namespace {
         with(stepping(add(spec("localRotation", "Local Rotation", K::Euler, "spatial")), 1.0, 2), "parentID!=");
         range(add(spec("registrationPoint", "Pivot", K::Vec3, "spatial")), 0, 1, 0.01, 3);
 
-        // shape
+        // shape; one that is not drawn (an Empty, a parent with nothing of its own to show) has no shape to show
+        // fields for: Visible brings them
         en("shape", "Shape", "shape", { "Cube:Box", "Sphere:Sphere", "Tetrahedron:Tetrahedron", "Octahedron:Octahedron",
             "Icosahedron:Icosahedron", "Dodecahedron:Dodecahedron", "Hexagon:Hexagon", "Triangle:Triangle", "Octagon:Octagon",
-            "Cylinder:Cylinder", "Cone:Cone", "Circle:Circle", "Quad:Quad" });
-        add(spec("color", "Color", K::Color, "shape"));
-        range(add(spec("alpha", "Alpha", K::Float, "shape")), 0, 1, 0.01, 2);
+            "Cylinder:Cylinder", "Cone:Cone", "Circle:Circle", "Quad:Quad" }, "visible=true");
+        with(add(spec("color", "Color", K::Color, "shape")), "visible=true");
+        with(range(add(spec("alpha", "Alpha", K::Float, "shape")), 0, 1, 0.01, 2), "visible=true");
 
         // text
         add(spec("text", "Text", K::String, "text"));

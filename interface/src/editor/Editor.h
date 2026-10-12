@@ -163,6 +163,8 @@ private:
     void updateRenderMethod();
     void onSelectionChanged();
     void rename(const QUuid& id, const QString& name);
+    // makes the entities children of the parent (none: top-level), where they are in the world staying so
+    void reparent(const QList<QUuid>& ids, const QUuid& parentId);
 
     // the Inspector: snapshots of the selection, and edits coming back from its fields
     void refreshInspector(bool selectionChanged);

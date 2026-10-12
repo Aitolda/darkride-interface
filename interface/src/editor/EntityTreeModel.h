@@ -17,6 +17,7 @@
 #include <QtCore/QAbstractItemModel>
 #include <QtCore/QHash>
 #include <QtCore/QSet>
+#include <QtCore/QStringList>
 #include <QtCore/QTimer>
 #include <QtCore/QUuid>
 
@@ -53,10 +54,22 @@ public:
     bool setData(const QModelIndex& index, const QVariant& value, int role) override;
     Qt::ItemFlags flags(const QModelIndex& index) const override;
     QHash<int, QByteArray> roleNames() const override;
+    // rows dragged onto another become its children, onto the empty space top-level entities; the editor makes
+    // the move (reparentRequested), and the tree follows the entities
+    Qt::DropActions supportedDropActions() const override { return Qt::MoveAction; }
+    QStringList mimeTypes() const override;
+    QMimeData* mimeData(const QModelIndexList& indexes) const override;
+    bool canDropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column,
+                         const QModelIndex& parent) const override;
+    bool dropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column, const QModelIndex& parent) override;
+    // the entity is the other, or below it
+    bool isDescendantOf(const QUuid& id, const QUuid& ancestor) const;
 
 signals:
     // the user typed a new name in the Hierarchy; the editor applies it (through undo)
     void renameRequested(const QUuid& id, const QString& name);
+    // the user dragged entities onto another (or onto the empty space: a null parent); the editor moves them
+    void reparentRequested(const QList<QUuid>& ids, const QUuid& parentId);
 
 private slots:
     void onEntityAdded(const EntityItemID& id);

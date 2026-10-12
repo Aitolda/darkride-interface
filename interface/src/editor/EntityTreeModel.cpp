@@ -8,6 +8,8 @@
 
 #include "EntityTreeModel.h"
 
+#include <QtCore/QMimeData>
+
 #include <EntityItem.h>
 #include <EntityTreeElement.h>
 #include <EntityTreeRenderer.h>
@@ -17,6 +19,18 @@
 namespace {
     const int EDIT_FLUSH_MS = 100;
     const int RESCAN_MS = 3000;
+    const QString ID_MIME_TYPE = QStringLiteral("application/x-darkride-entity-ids");   // a drag's ids, one a line
+
+    QList<QUuid> draggedIds(const QMimeData* data) {
+        QList<QUuid> ids;
+        for (const auto& text : QString::fromUtf8(data->data(ID_MIME_TYPE)).split('\n', Qt::SkipEmptyParts)) {
+            QUuid id(text);
+            if (!id.isNull()) {
+                ids << id;
+            }
+        }
+        return ids;
+    }
 }
 
 EntityTreeModel::EntityTreeModel(QObject* parent) : QAbstractItemModel(parent), _root(new Node()) {
@@ -445,9 +459,61 @@ bool EntityTreeModel::setData(const QModelIndex& index, const QVariant& value, i
 
 Qt::ItemFlags EntityTreeModel::flags(const QModelIndex& index) const {
     if (!index.isValid()) {
-        return Qt::NoItemFlags;
+        return Qt::ItemIsDropEnabled;   // the empty space below the rows: a drop there is to the top level
     }
-    return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable;
+    return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled;
+}
+
+QStringList EntityTreeModel::mimeTypes() const {
+    return { ID_MIME_TYPE };
+}
+
+QMimeData* EntityTreeModel::mimeData(const QModelIndexList& indexes) const {
+    QStringList ids;
+    for (const auto& index : indexes) {
+        QUuid id = idForIndex(index);
+        if (index.column() == 0 && !id.isNull()) {
+            ids << id.toString();
+        }
+    }
+    if (ids.isEmpty()) {
+        return nullptr;
+    }
+    auto data = new QMimeData();
+    data->setData(ID_MIME_TYPE, ids.join('\n').toUtf8());
+    return data;
+}
+
+bool EntityTreeModel::canDropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column,
+                                      const QModelIndex& parent) const {
+    Q_UNUSED(row);
+    Q_UNUSED(column);
+    if (action != Qt::MoveAction || !data || !data->hasFormat(ID_MIME_TYPE)) {
+        return false;
+    }
+    // onto an entity, or onto the empty space; not onto one of the dragged or anything below it
+    QUuid target = idForIndex(parent);
+    for (const auto& id : draggedIds(data)) {
+        if (!target.isNull() && isDescendantOf(target, id)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool EntityTreeModel::dropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column, const QModelIndex& parent) {
+    if (!canDropMimeData(data, action, row, column, parent)) {
+        return false;
+    }
+    // the editor makes the move (through undo) and the tree follows the entities: nothing is taken out here
+    emit reparentRequested(draggedIds(data), idForIndex(parent));
+    return true;
+}
+
+bool EntityTreeModel::isDescendantOf(const QUuid& id, const QUuid& ancestor) const {
+    Node* node = _nodes.value(id);
+    Node* ancestorNode = _nodes.value(ancestor);
+    return node && ancestorNode && isDescendant(node, ancestorNode);
 }
 
 QHash<int, QByteArray> EntityTreeModel::roleNames() const {

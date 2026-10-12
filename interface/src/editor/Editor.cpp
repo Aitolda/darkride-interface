@@ -468,6 +468,7 @@ void Editor::createPanels() {
 
     _treeModel = new EntityTreeModel(this);
     connect(_treeModel, &EntityTreeModel::renameRequested, this, &Editor::rename);
+    connect(_treeModel, &EntityTreeModel::reparentRequested, this, &Editor::reparent);
 
     _hierarchy = new HierarchyPanel(window);
     _hierarchy->setModel(_treeModel);
@@ -1088,6 +1089,18 @@ void Editor::onInspectorCommitted(const QString& key, const QVariant& value) {
 }
 
 void Editor::commitInspectorEdit(const QString& key, const QVariant& value, const QList<QUuid>& targets) {
+    if (key == QStringLiteral("parentID")) {
+        // Parent typed in: the same move as a drag in the Hierarchy, the entity staying where it is in the world
+        QString text = value.toString().trimmed();
+        QUuid parentId(text);
+        if (!text.isEmpty() && parentId.isNull()) {
+            setStatus("Parent must be an entity's id, or empty for none", STATUS_CLEAR_MS * 2);
+        } else {
+            reparent(targets, parentId);
+        }
+        refreshInspector(false);
+        return;
+    }
     QList<QUuid> ids;
     QVector<EntityItemProperties> before;
     QVector<glm::vec3> naturalSizes;
@@ -1506,6 +1519,48 @@ void Editor::rename(const QUuid& id, const QString& name) {
     EntityItemProperties after;
     after.setName(name);
     _undo.pushPropertyEdit("Rename", { id }, { before }, { after }, false);
+}
+
+void Editor::reparent(const QList<QUuid>& ids, const QUuid& parentId) {
+    if (!_active || !_treeModel || !editable()) {
+        return;
+    }
+    QList<QUuid> moved;
+    QVector<EntityItemProperties> before;
+    QVector<EntityItemProperties> after;
+    for (const auto& id : ids) {
+        // of a family dragged together only its head moves: the rest come along with it, as in Unity
+        bool withinDragged = false;
+        for (const auto& other : ids) {
+            if (other != id && _treeModel->isDescendantOf(id, other)) {
+                withinDragged = true;
+                break;
+            }
+        }
+        EntityItemProperties snapshot;
+        if (withinDragged || id == parentId || EditorUndo::isLocked(id) || !EditorUndo::snapshot(id, snapshot)
+                || snapshot.getParentID() == parentId || (!parentId.isNull() && _treeModel->isDescendantOf(parentId, id))) {
+            continue;
+        }
+        // it stays where it is in the world: the edit carries the world position and rotation, which the engine
+        // makes relative to the new parent, and undoing, to the old one
+        EntityItemProperties was;
+        was.setParentID(snapshot.getParentID());
+        was.setPosition(snapshot.getPosition());
+        was.setRotation(snapshot.getRotation());
+        EntityItemProperties now;
+        now.setParentID(parentId);
+        now.setPosition(snapshot.getPosition());
+        now.setRotation(snapshot.getRotation());
+        moved << id;
+        before << was;
+        after << now;
+    }
+    if (moved.isEmpty()) {
+        return;
+    }
+    _undo.pushPropertyEdit(parentId.isNull() ? "Unparent" : "Parent", moved, before, after, false);
+    refreshInspector(false);
 }
 
 void Editor::deleteSelection() {
