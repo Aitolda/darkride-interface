@@ -73,6 +73,7 @@
 #include "ui/HierarchyPanel.h"
 #include "ui/InspectorPanel.h"
 #include "ui/PropertyEditors.h"
+#include "ui/TerrainToolBar.h"
 #include "ui/ViewportContainer.h"
 #include <gl/GLHelpers.h>
 
@@ -175,7 +176,7 @@ namespace {
     }
 }
 
-Editor::Editor() : _selection(this), _undo(this) {
+Editor::Editor() : _selection(this), _undo(this), _terrain(&_undo, this) {
     connect(&_selection, &EditorSelection::changed, this, &Editor::onSelectionChanged);
     _undo.setSelectionApplier([this](const QList<QUuid>& ids) {
         ++_historyDepth;
@@ -281,6 +282,7 @@ void Editor::setActive(bool active) {
         _boundsShapes.clear();
         _bounds.setShapes(_boundsShapes);
         endLightHandleDrag(false);
+        _terrain.clear();
         _lightGizmos.clear();
         _nearbyLights.clear();
         _lightSearchFrame = -1;
@@ -365,14 +367,33 @@ void Editor::setGridVisible(bool visible) {
 }
 
 void Editor::setTool(EditorToolBar::Tool tool) {
-    if (_gizmo.isDragging()) {
+    if (_gizmo.isDragging() || _terrain.isStroking()) {
         return;
     }
     _tool = tool;
     if (_toolBar) {
         _toolBar->setTool(tool);
     }
+    applyTool();
+}
+
+void Editor::applyTool() {
+    if (_tool != EditorToolBar::Tool::Terrain) {
+        _terrain.clear();
+    }
+    updateTerrainBar();
     updateGizmo();
+}
+
+void Editor::updateTerrainBar() {
+    if (!_terrainBar) {
+        return;
+    }
+    bool show = _active && _tool == EditorToolBar::Tool::Terrain;
+    if (_terrainBar->isHidden() == show) {
+        gl::ViewChangeGuard guard;   // the Terrain row coming or going resizes the GL view
+        _terrainBar->setVisible(show);
+    }
 }
 
 void Editor::setLocalSpace(bool local) {
@@ -509,7 +530,7 @@ void Editor::createPanels() {
     connect(_toolBar, &EditorToolBar::gizmosToggled, this, &Editor::setGizmosVisible);
     connect(_toolBar, &EditorToolBar::toolChanged, this, [this](EditorToolBar::Tool tool) {
         _tool = tool;
-        updateGizmo();
+        applyTool();
     });
     connect(_toolBar, &EditorToolBar::localSpaceToggled, this, &Editor::setLocalSpace);
     connect(_toolBar, &EditorToolBar::pivotToggled, this, &Editor::setPivotMode);
@@ -519,9 +540,17 @@ void Editor::createPanels() {
     connect(_toolBar, &EditorToolBar::saveWorldRequested, this, [this] { _world->save(); });
     updateWorldControls();
 
+    // the Terrain tool's row, under the toolbar, shown while that tool is active
+    _terrainBar = new TerrainToolBar(window);
+    connect(_terrainBar, &TerrainToolBar::brushChanged, this, [this] { _terrain.setBrush(_terrainBar->brush()); });
+    _terrain.setBrush(_terrainBar->brush());
+
     window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
     window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
     window->addToolBar(Qt::TopToolBarArea, _toolBar);
+    window->addToolBarBreak(Qt::TopToolBarArea);
+    window->addToolBar(Qt::TopToolBarArea, _terrainBar);
+    _terrainBar->setVisible(false);
     window->resizeDocks({ _hierarchy, _inspector }, { 260, 430 }, Qt::Horizontal);
     qApp->installEventFilter(this);
 
@@ -532,6 +561,7 @@ void Editor::createPanels() {
     // a saved layout from before the panels were fixed can still float them
     _hierarchy->setFloating(false);
     _inspector->setFloating(false);
+    updateTerrainBar();   // the saved layout knows nothing of the tool
 }
 
 void Editor::focusViewport() {
@@ -559,6 +589,7 @@ void Editor::showPanels(bool show) {
     _hierarchy->setVisible(show);
     _inspector->setVisible(show);
     _toolBar->setVisible(show);
+    updateTerrainBar();
 }
 
 void Editor::resetLayout() {
@@ -603,6 +634,10 @@ void Editor::update(float deltaTime) {
     updateGizmo();
     updateBounds();
     updateLightGizmos();
+    _terrain.setView(_camera.position(), 2.0f * tanHalfFov() / viewportHeight());
+    if (_tool == EditorToolBar::Tool::Terrain) {
+        _terrain.update(deltaTime);
+    }
 }
 
 void Editor::updateBounds() {
@@ -883,7 +918,8 @@ glm::quat Editor::gizmoRotation() const {
 
 void Editor::updateGizmo() {
     // a read-only world gets no handles: nothing could be moved anyway
-    bool show = _active && !_readOnly && _tool != EditorToolBar::Tool::View && !_selection.isEmpty();
+    bool show = _active && !_readOnly && _tool != EditorToolBar::Tool::View && _tool != EditorToolBar::Tool::Terrain
+        && !_selection.isEmpty();
     if (show) {
         _gizmo.setMode(gizmoModeFor(_tool));
         glm::vec3 position;
@@ -2320,6 +2356,17 @@ bool Editor::handleMousePress(QMouseEvent* event) {
         beginLightHandleDrag(lightHandle, ray);
         return true;
     }
+    // the Terrain tool: a press on the ground begins a stroke; elsewhere it is a click like any other
+    if (_tool == EditorToolBar::Tool::Terrain && _terrain.pointsAtTerrain(ray)) {
+        if (!editable()) {
+            return true;
+        }
+        QString refusal;
+        if (!_terrain.beginStroke(ray, event->modifiers().testFlag(Qt::ShiftModifier), refusal) && !refusal.isEmpty()) {
+            setStatus(refusal, STATUS_CLEAR_MS);
+        }
+        return true;
+    }
     _clickPending = true;
     return true;
 }
@@ -2337,6 +2384,10 @@ bool Editor::handleMouseMove(QMouseEvent* event) {
     }
     if (!_lightHandleDrag.isNone()) {
         moveLightHandleDrag(event->pos());
+        return true;
+    }
+    if (_terrain.isStroking()) {
+        _terrain.moveStroke(pickRay(event->pos()));
         return true;
     }
     if (_marqueeActive) {
@@ -2362,6 +2413,9 @@ bool Editor::handleMouseMove(QMouseEvent* event) {
         }
         // the transform gizmo is picked first: only one of them lights up
         _lightGizmos.setHover(gizmoHover == GizmoHandle::None ? _lightGizmos.handleAt(ray) : EditorLightHandle());
+        if (_tool == EditorToolBar::Tool::Terrain) {
+            _terrain.hover(ray);
+        }
     }
     return false;
 }
@@ -2392,6 +2446,10 @@ bool Editor::handleMouseRelease(QMouseEvent* event) {
     }
     if (!_lightHandleDrag.isNone()) {
         endLightHandleDrag(false);
+        return true;
+    }
+    if (_terrain.isStroking()) {
+        _terrain.endStroke(false);
         return true;
     }
     if (_marqueeActive) {
@@ -2444,6 +2502,10 @@ bool Editor::handleKeyPress(QKeyEvent* event) {
             deleteSelection();
             return true;
         case Qt::Key_Escape:
+            if (_terrain.isStroking()) {
+                _terrain.endStroke(true);   // the ground goes back as it was
+                return true;
+            }
             _selection.clear();
             return true;
         case Qt::Key_F:
@@ -2466,6 +2528,17 @@ bool Editor::handleKeyPress(QKeyEvent* event) {
             break;
         case Qt::Key_R:
             if (!command) { setTool(EditorToolBar::Tool::Scale); return true; }
+            break;
+        case Qt::Key_T:
+            if (!command) { setTool(EditorToolBar::Tool::Terrain); return true; }
+            break;
+        case Qt::Key_BracketLeft:
+        case Qt::Key_BracketRight:
+            // the brush grows and shrinks by steps, as in Unity
+            if (_tool == EditorToolBar::Tool::Terrain && _terrainBar) {
+                _terrainBar->setRadius(_terrain.brush().radius * (event->key() == Qt::Key_BracketRight ? 1.25f : 0.8f));
+                return true;
+            }
             break;
         case Qt::Key_X:
             if (command) { cutSelection(); } else { setLocalSpace(!_localSpace); }

@@ -8,13 +8,16 @@
 
 #include "RenderableTerrainEntityItem.h"
 
+#include <cfloat>
 #include <mutex>
 
 #include <glm/gtx/transform.hpp>
 #include <QUrl>
 
+#include <AABox.h>
 #include <DependencyManager.h>
 #include <EntityTree.h>
+#include <GeometryUtil.h>
 #include <ResourceManager.h>
 #include <ResourceRequest.h>
 #include <SimulationFlags.h>
@@ -189,6 +192,80 @@ glm::vec3 RenderableTerrainEntityItem::getVoxelScale() const {
 
 glm::mat4 RenderableTerrainEntityItem::voxelToLocalMatrix() const {
     return glm::translate(-0.5f * getScaledDimensions()) * glm::scale(getVoxelScale());
+}
+
+glm::mat4 RenderableTerrainEntityItem::voxelToWorldMatrix() const {
+    bool success = false;
+    const Transform toCenter = getTransformToCenter(success);
+    return toCenter.getMatrix() * voxelToLocalMatrix();
+}
+
+glm::mat4 RenderableTerrainEntityItem::worldToVoxelMatrix() const {
+    return glm::inverse(voxelToWorldMatrix());
+}
+
+bool RenderableTerrainEntityItem::rayHitsGround(const glm::vec3& origin, const glm::vec3& direction, float& t, glm::vec3& normal) const {
+    bool hit = false;
+    float best = FLT_MAX;
+    const glm::vec3 invDirection = 1.0f / direction;
+    for (const auto& pair : _chunkMeshes) {
+        // the chunk's mesh lies within one voxel outside the chunk on the low side and inside it elsewhere
+        const glm::vec3 chunkOrigin(pair.first * terrain::CHUNK_SIZE);
+        const AABox box(chunkOrigin - 1.0f, glm::vec3((float)terrain::CHUNK_SIZE + 2.0f));
+        if (!box.contains(origin)) {
+            float boxDistance = 0.0f;
+            BoxFace boxFace = UNKNOWN_FACE;
+            glm::vec3 boxNormal;
+            if (!box.findRayIntersection(origin, direction, invDirection, boxDistance, boxFace, boxNormal) || boxDistance > best) {
+                continue;
+            }
+        }
+        const terrain::ChunkMesh& mesh = pair.second.mesh;
+        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+            const glm::vec3 v0 = mesh.positions[mesh.indices[i]] + chunkOrigin;
+            const glm::vec3 v1 = mesh.positions[mesh.indices[i + 1]] + chunkOrigin;
+            const glm::vec3 v2 = mesh.positions[mesh.indices[i + 2]] + chunkOrigin;
+            float triangleDistance = 0.0f;
+            // from either side: a dig is seen from inside the ground's box, and a cave's ceiling from below
+            if (findRayTriangleIntersection(origin, direction, v0, v1, v2, triangleDistance, true)
+                    && triangleDistance >= 0.0f && triangleDistance < best) {
+                best = triangleDistance;
+                normal = glm::cross(v1 - v0, v2 - v0);   // counter-clockwise seen from the air: out of the ground
+                hit = true;
+            }
+        }
+    }
+    if (hit) {
+        t = best;
+        const float length = glm::length(normal);
+        normal = length > 1.0e-12f ? normal / length : glm::vec3(0.0f, 1.0f, 0.0f);
+    }
+    return hit;
+}
+
+bool RenderableTerrainEntityItem::findDetailedRayIntersection(const glm::vec3& origin, const glm::vec3& direction, OctreeElementPointer& element,
+                                                              float& distance, BoxFace& face, glm::vec3& surfaceNormal, QVariantMap& extraInfo,
+                                                              bool precisionPicking) const {
+    if (_chunkMeshes.empty()) {
+        return false;   // no ground yet (or none left): nothing to land on
+    }
+    if (!precisionPicking) {
+        return true;    // the box, which the element has already met
+    }
+    const glm::mat4 worldToVoxel = worldToVoxelMatrix();
+    const glm::vec3 voxelOrigin(worldToVoxel * glm::vec4(origin, 1.0f));
+    const glm::vec3 voxelDirection(worldToVoxel * glm::vec4(direction, 0.0f));
+    float t = 0.0f;
+    glm::vec3 voxelNormal;
+    if (!rayHitsGround(voxelOrigin, voxelDirection, t, voxelNormal)) {
+        return false;
+    }
+    distance = t;   // the parameter along the caller's direction, as the box test measures it
+    // normals go through the inverse transpose of the voxel-to-world matrix, which is the transpose of its inverse
+    const glm::vec3 worldNormal(glm::transpose(worldToVoxel) * glm::vec4(voxelNormal, 0.0f));
+    const float length = glm::length(worldNormal);
+    surfaceNormal = length > 1.0e-12f ? worldNormal / length : glm::vec3(0.0f, 1.0f, 0.0f);
+    return true;
 }
 
 void RenderableTerrainEntityItem::setUnscaledDimensions(const glm::vec3& value) {
@@ -463,6 +540,7 @@ void TerrainEntityRenderer::fetchTerrain(const QString& url, uint32_t version) {
             }
         }
         entity->setGridSource(url, version);
+        entity->gridEdited();
     });
     _request->send();
 }

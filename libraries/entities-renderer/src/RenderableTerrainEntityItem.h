@@ -68,11 +68,28 @@ public:
     void updateCollisionShape();
     bool collisionShapeIsStale() const { return _shapeStale; }
 
+    // The editor's brushes edit the grid in place; a stroke's end asks for the collision shape to follow.
+    void markCollisionShapeStale() { _shapeStale = true; }
+    // Voxels have changed outside the renderer's own update (a brush, an undo, a file that arrived): the renderer
+    // only comes to entities that say they changed, so this says so, and it meshes the dirty chunks next frame.
+    void gridEdited() { somethingChangedNotification(); }
+
     // The size of a voxel in the entity's local space: the box's dimensions over the grid's voxel count, so scaling
     // the entity stretches the ground with the box. The voxelSize property is the size the grid was made at.
     glm::vec3 getVoxelScale() const;
     // Voxel space (voxel units, origin at the box's low corner) to the entity's box-centred local space.
     glm::mat4 voxelToLocalMatrix() const;
+    glm::mat4 voxelToWorldMatrix() const;
+    glm::mat4 worldToVoxelMatrix() const;
+
+    // Picking lands on the ground itself, not the box: a click selects the terrain where there is ground under it,
+    // and the editor's brushes find where to work. The ray is in voxel space, its direction as long as it likes:
+    // t is the parameter along it (the same in any space the ray is mapped to affinely), the normal in voxel space.
+    bool rayHitsGround(const glm::vec3& origin, const glm::vec3& direction, float& t, glm::vec3& normal) const;
+    bool supportsDetailedIntersection() const override { return true; }
+    bool findDetailedRayIntersection(const glm::vec3& origin, const glm::vec3& direction, OctreeElementPointer& element,
+                                     float& distance, BoxFace& face, glm::vec3& surfaceNormal, QVariantMap& extraInfo,
+                                     bool precisionPicking) const override;
 
     void setUnscaledDimensions(const glm::vec3& value) override;
 

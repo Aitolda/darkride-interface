@@ -14,6 +14,7 @@
 #define hifi_EditorUndo_h
 
 #include <functional>
+#include <map>
 
 #include <QtCore/QHash>
 #include <QtCore/QList>
@@ -23,6 +24,10 @@
 #include <QtWidgets/QUndoStack>
 
 #include <EntityItemProperties.h>
+#include <terrain/VoxelGrid.h>
+
+// the chunks of a terrain's grid as they were, or will be: what a sculpt stroke records
+using TerrainChunks = std::map<glm::ivec3, terrain::Chunk, terrain::IVec3Less>;
 
 class EditorUndo : public QObject {
     Q_OBJECT
@@ -63,6 +68,13 @@ public:
     // creates entities now and records it; returns the new ids in order. sourceIds: as for
     // createEntities (a paste gives the originals; a brand new entity gives none)
     QList<QUuid> pushAdd(const QString& text, const QVector<EntityItemProperties>& properties, const QList<QUuid>& sourceIds);
+    // a sculpt stroke on a terrain, already applied: the chunks it touched before and after. Undo and redo put
+    // them back into the entity's grid on this client (the voxels live there until the terrain is saved)
+    void pushTerrainEdit(const QString& text, const QUuid& id, const TerrainChunks& before, const TerrainChunks& after);
+    // puts chunks into a terrain entity's grid, and has the collision shape follow; false when the entity is
+    // not a terrain on this client
+    bool applyTerrainChunks(const QUuid& id, const TerrainChunks& chunks) const;
+
     // a change made to a created entity since, which a redo of its creation should make too (a new model's own
     // size, once it has loaded): the dimensions and position in `changes` replace the recorded ones
     void amendCreated(const QUuid& id, const EntityItemProperties& changes);

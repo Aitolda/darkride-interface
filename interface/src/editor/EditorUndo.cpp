@@ -16,6 +16,7 @@
 #include <EntityScriptingInterface.h>
 #include <EntityTree.h>
 #include <EntityTreeRenderer.h>
+#include <RenderableTerrainEntityItem.h>
 #include <SharedUtil.h>
 
 #include "Application.h"
@@ -67,6 +68,33 @@ namespace {
         QVector<EntityItemProperties> _before;
         QVector<EntityItemProperties> _after;
         bool _skipFirstRedo;
+    };
+
+    // A sculpt stroke on a terrain's voxels, with the chunks as they were.
+    class TerrainEditCommand : public QUndoCommand {
+    public:
+        TerrainEditCommand(EditorUndo* undo, const QString& text, const QUuid& id, const TerrainChunks& before,
+            const TerrainChunks& after) :
+            QUndoCommand(text), _undo(undo), _id(id), _before(before), _after(after) {
+        }
+        void redo() override {
+            if (_skipFirstRedo) {
+                _skipFirstRedo = false;
+                return;
+            }
+            qCDebug(entities) << "editor redo" << text() << "on" << _after.size() << "chunks";
+            _undo->applyTerrainChunks(_id, _after);
+        }
+        void undo() override {
+            qCDebug(entities) << "editor undo" << text() << "on" << _before.size() << "chunks";
+            _undo->applyTerrainChunks(_id, _before);
+        }
+    private:
+        EditorUndo* _undo;
+        QUuid _id;
+        TerrainChunks _before;
+        TerrainChunks _after;
+        bool _skipFirstRedo { true };
     };
 
     // Entities that were deleted; undo brings them back (with new ids, which the stack remaps).
@@ -357,4 +385,31 @@ QList<QUuid> EditorUndo::pushAdd(const QString& text, const QVector<EntityItemPr
     }
     _stack.push(new AddEntitiesCommand(this, text, newIds, recorded));
     return newIds;
+}
+
+void EditorUndo::pushTerrainEdit(const QString& text, const QUuid& id, const TerrainChunks& before, const TerrainChunks& after) {
+    if (before.empty() && after.empty()) {
+        return;
+    }
+    _stack.push(new TerrainEditCommand(this, text, id, before, after));
+}
+
+bool EditorUndo::applyTerrainChunks(const QUuid& id, const TerrainChunks& chunks) const {
+    auto tree = entityTree();
+    if (!tree) {
+        return false;
+    }
+    auto terrain = std::dynamic_pointer_cast<RenderableTerrainEntityItem>(tree->findEntityByID(resolve(id)));
+    if (!terrain || !terrain->hasGrid()) {
+        return false;
+    }
+    terrain::VoxelGrid& grid = terrain->getGrid();
+    for (const auto& pair : chunks) {
+        if (grid.containsChunk(pair.first)) {
+            grid.setChunk(pair.first, pair.second);
+        }
+    }
+    terrain->markCollisionShapeStale();
+    terrain->gridEdited();
+    return true;
 }

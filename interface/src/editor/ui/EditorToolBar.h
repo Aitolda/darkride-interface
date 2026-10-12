@@ -2,7 +2,7 @@
 //  EditorToolBar.h
 //  interface/src/editor/ui
 //
-//  The tool strip above the viewport: View / Move / Rotate / Scale, handle space, pivot
+//  The tool strip above the viewport: View / Move / Rotate / Scale / Terrain, handle space, pivot
 //  mode, snapping, the grid, the gizmos, and the way out of build mode.
 //
 //  Distributed under the Apache License, Version 2.0.
@@ -23,7 +23,7 @@ class QToolButton;
 class EditorToolBar : public QToolBar {
     Q_OBJECT
 public:
-    enum class Tool { View, Move, Rotate, Scale };
+    enum class Tool { View, Move, Rotate, Scale, Terrain };
 
     explicit EditorToolBar(QWidget* parent = nullptr);
 

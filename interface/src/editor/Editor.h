@@ -43,6 +43,7 @@
 #include "EditorLightGizmos.h"
 #include "EditorGrid.h"
 #include "EditorSelection.h"
+#include "EditorTerrain.h"
 #include "EditorUndo.h"
 #include "ui/EditorToolBar.h"
 
@@ -58,6 +59,7 @@ class EditorWorld;
 class EntityTreeModel;
 class HierarchyPanel;
 class InspectorPanel;
+class TerrainToolBar;
 
 class Editor : public QObject, public Dependency {
     Q_OBJECT
@@ -160,6 +162,9 @@ private:
     void setMenuActionsEnabled(bool enabled);
     void updateAxes();
     void updateGizmo();
+    // the tool has changed: the gizmo, the Terrain tool's row and its outline follow
+    void applyTool();
+    void updateTerrainBar();
     void updateRenderMethod();
     void onSelectionChanged();
     // the selection has changed by the user's hand: a step in the history, as in Unity
@@ -330,6 +335,7 @@ private:
     EditorBounds _bounds;
     std::vector<EditorBoundsShape> _boundsShapes;
     EditorLightGizmos _lightGizmos;
+    EditorTerrain _terrain;             // the Terrain tool: its brushes, strokes and outline
     bool _gizmosVisible { true };       // every light's icon, not only the selected ones'
     QVector<QUuid> _nearbyLights;       // the lights round the camera, looked for every so often
     int _lightSearchFrame { -1 };       // when they were last looked for; -1 to look at once
@@ -348,6 +354,7 @@ private:
     HierarchyPanel* _hierarchy { nullptr };
     InspectorPanel* _inspector { nullptr };
     EditorToolBar* _toolBar { nullptr };
+    TerrainToolBar* _terrainBar { nullptr };
     EntityTreeModel* _treeModel { nullptr };
     Setting::Handle<QByteArray> _layoutSetting { "editor/layout2", QByteArray() };   // 2: the panels no longer float
     // build mode narrows the field of view; the user's own is kept here so it survives a crash

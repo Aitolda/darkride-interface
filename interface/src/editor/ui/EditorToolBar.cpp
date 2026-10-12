@@ -56,6 +56,7 @@ EditorToolBar::EditorToolBar(QWidget* parent) : QToolBar("Build", parent) {
     addTool("Move", "W", Tool::Move)->setChecked(true);
     addTool("Rotate", "E", Tool::Rotate);
     addTool("Scale", "R", Tool::Scale);
+    addTool("Terrain", "T", Tool::Terrain);
     addSeparator();
 
     _spaceAction = addAction("Global");
