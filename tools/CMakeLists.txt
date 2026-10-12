@@ -27,6 +27,7 @@ if (BUILD_TOOLS)
         ktx-tool
         ac-client
         skeleton-dump
+        auto-rig
         atp-client
         oven
     )
