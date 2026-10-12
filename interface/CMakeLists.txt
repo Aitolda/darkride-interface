@@ -215,7 +215,7 @@ link_hifi_libraries(
   shared workload task octree ktx gpu gl procedural graphics graphics-scripting render
   pointers recording hfm fbx networking material-networking
   model-networking model-baker entities avatars
-  audio audio-client animation script-engine physics
+  audio audio-client animation script-engine physics vehicles
   render-utils entities-renderer avatars-renderer ui qml auto-updater midi
   controllers plugins image platform
   ui-plugins display-plugins input-plugins

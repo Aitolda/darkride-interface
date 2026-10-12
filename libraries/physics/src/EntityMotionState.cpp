@@ -14,6 +14,7 @@
 #include <glm/gtx/norm.hpp>
 
 #include <EntityItem.h>
+#include <EntityTree.h>
 #include <EntityItemProperties.h>
 #include <EntityEditPacketSender.h>
 #include <LogHandler.h>
@@ -24,6 +25,7 @@
 #include "PhysicsEngine.h"
 #include "PhysicsHelpers.h"
 #include "PhysicsLogging.h"
+#include "TrackSimulation.h"
 
 const uint8_t LOOPS_FOR_SIMULATION_ORPHAN = 50;
 const quint64 USECS_BETWEEN_OWNERSHIP_BIDS = USECS_PER_SECOND / 15;
@@ -96,6 +98,8 @@ EntityMotionState::EntityMotionState(const JPH::Shape* shape, EntityItemPointer 
     // we need the side-effects of EntityMotionState::setShape() so we call it explicitly here
     // rather than pass the legit shape pointer to the ObjectMotionState ctor above.
     setShape(shape);
+
+    _trackDriven = !_entity->getTrackID().isNull();
 
     if (_entity->isAvatarEntity() && !_entity->isMyAvatarEntity()) {
         // avatar entities are always thus, so we cache this fact in _ownershipState
@@ -224,6 +228,12 @@ PhysicsMotionType EntityMotionState::computePhysicsMotionType() const {
         return MOTION_TYPE_STATIC;
     }
 
+    _trackDriven = !_entity->getTrackID().isNull();
+    if (_trackDriven) {
+        // a car on a track: moved along the curve by its owner, and by the owner's velocities everywhere else
+        return MOTION_TYPE_KINEMATIC;
+    }
+
     if (_entity->getDynamic()) {
         if (!_entity->getParentID().isNull() && !parentIsFrame(_entity)) {
             // if something would have been dynamic but is a child of something else, force it to be kinematic, instead.
@@ -274,12 +284,14 @@ bool EntityMotionState::getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorne
     if (_entity->getFrameVolume(minCorner, maxCorner)) {
         return true;
     }
-    const glm::vec3 SIDE_MARGIN(0.5f, 0.5f, 0.5f);
+    // the entity's own box with headroom, and no margin at the sides: membership keeps a rider standing on the floor
+    // in past the edge (PhysicsEngine::frameContaining), and one who has stepped past it should leave at the edge
+    // itself, where the platform or the floor's twin in the world holds them up at the same height
     const glm::vec3 HEADROOM(0.0f, 3.0f, 0.0f);
     glm::vec3 dimensions = _entity->getScaledDimensions();
     glm::vec3 registration = _entity->getRegistrationPoint();
-    minCorner = -registration * dimensions - SIDE_MARGIN;
-    maxCorner = (glm::vec3(1.0f) - registration) * dimensions + SIDE_MARGIN + HEADROOM;
+    minCorner = -registration * dimensions;
+    maxCorner = (glm::vec3(1.0f) - registration) * dimensions + HEADROOM;
     return true;
 }
 
@@ -339,16 +351,36 @@ void EntityMotionState::pushTransformToBody(float dt) {
         _lastKinematicStep = thisStep;
         return;
     }
-    // This is physical kinematic motion which steps strictly by the subframe count
-    // of the physics simulation and uses full gravity for acceleration.
-    _entity->setAcceleration(_entity->getGravity());
+    bool driven = false;
+    if (_trackDriven && _tracks && (isLocallyOwned() || isServerlessMode())) {
+        // a car on a track: this client drives it along the curve (TrackSimulation, PHYSICS.md 4.8) when it owns the
+        // car, or when there is no server and so no owner (a serverless world is all ours). The record is
+        // set to the train's pose at this substep and read ahead from there as any keyframed entity's is.
+        glm::vec3 position, linearVelocity, angularVelocity;
+        glm::quat rotation;
+        driven = _tracks->drive(_entity, thisStep, position, rotation, linearVelocity, angularVelocity);
+        if (driven) {
+            Transform local = _entity->getLocalTransform();
+            local.setTranslation(position);
+            local.setRotation(rotation);
+            _entity->setAcceleration(Vectors::ZERO);
+            _entity->setLocalTransformAndVelocities(local, linearVelocity, angularVelocity);
+            _lastKinematicStep = thisStep;
+            _extrapolatedTime = 0.0f;
+        }
+    }
+    if (!driven) {
+        // This is physical kinematic motion which steps strictly by the subframe count
+        // of the physics simulation and uses full gravity for acceleration.
+        _entity->setAcceleration(_entity->getGravity());
 
-    // (less what pullTransformFromBody already read ahead to the present after the last step)
-    float stepDt = (thisStep - _lastKinematicStep) * PHYSICS_ENGINE_FIXED_SUBSTEP - _extrapolatedTime;
-    _lastKinematicStep = thisStep;
-    _extrapolatedTime = 0.0f;
-    if (stepDt > 0.0f) {
-        _entity->stepKinematicMotion(stepDt);
+        // (less what pullTransformFromBody already read ahead to the present after the last step)
+        float stepDt = (thisStep - _lastKinematicStep) * PHYSICS_ENGINE_FIXED_SUBSTEP - _extrapolatedTime;
+        _lastKinematicStep = thisStep;
+        _extrapolatedTime = 0.0f;
+        if (stepDt > 0.0f) {
+            _entity->stepKinematicMotion(stepDt);
+        }
     }
 
     // and set the acceleration-matches-gravity count high so that if we send an update
@@ -533,6 +565,9 @@ bool EntityMotionState::remoteSimulationOutOfSync(uint32_t simulationStep) {
     }
 
     if (_body->IsStatic() || _body->IsKinematic()) {
+        if (_trackDriven) {
+            return trackCarOutOfSync(simulationStep);
+        }
         return false;
     }
 
@@ -607,6 +642,32 @@ bool EntityMotionState::remoteSimulationOutOfSync(uint32_t simulationStep) {
         return (fabsf(glm::dot(actualRotation, _serverRotation)) < MIN_ROTATION_DOT);
     }
     return false;
+}
+
+// An owned car on a track moves along the curve, and everyone else moves it straight on from the last update (as
+// the entity server does), so an update goes out whenever that would be a centimetre or half a degree out, and at
+// most every few substeps.
+bool EntityMotionState::trackCarOutOfSync(uint32_t simulationStep) {
+    const uint32_t MIN_STEPS_BETWEEN_UPDATES = 3;   // 33 ms at 90 Hz
+    const float MAX_POSITION_ERROR_SQUARED = 0.0001f;   // a centimetre
+    const float MIN_ROTATION_DOT = 0.9999905f;   // half a degree
+    int numSteps = simulationStep - _lastStep;
+    float dt = (float)numSteps * PHYSICS_ENGINE_FIXED_SUBSTEP;
+    _lastStep = simulationStep;
+    _serverPosition += dt * _serverVelocity;
+    if (glm::length2(_serverAngularVelocity) > 0.0f && dt > 0.0f) {
+        _serverRotation = glm::normalize(computeBulletRotationStep(_serverAngularVelocity, dt) * _serverRotation);
+    }
+    if (simulationStep < _lastTrackUpdateStep + MIN_STEPS_BETWEEN_UPDATES) {
+        return false;
+    }
+    Transform local = _entity->getLocalTransform();
+    bool out = glm::distance2(local.getTranslation(), _serverPosition) > MAX_POSITION_ERROR_SQUARED
+        || fabsf(glm::dot(local.getRotation(), _serverRotation)) < MIN_ROTATION_DOT;
+    if (out) {
+        _lastTrackUpdateStep = simulationStep;
+    }
+    return out;
 }
 
 bool EntityMotionState::shouldSendUpdate(uint32_t simulationStep) {
@@ -949,12 +1010,13 @@ void EntityMotionState::computeCollisionGroupAndMask(int32_t& group, int32_t& ma
 
 bool EntityMotionState::shouldSendBid() const {
     // NOTE: this method is only ever called when the entity's simulation is NOT locally owned
-    return _body->IsActive()
+    bool unownedTrackCar = _trackDriven && _entity->getSimulatorID().isNull();   // a train needs a driver, moving or not
+    return (_body->IsActive() || unownedTrackCar)
         && (_region == workload::Region::R1)
         && _ownershipState != EntityMotionState::OwnershipState::Unownable
         && glm::max(glm::max(VOLUNTEER_SIMULATION_PRIORITY, _bumpedPriority), _entity->getScriptSimulationPriority()) >= _entity->getSimulationPriority()
         && !_entity->getLocked()
-        && (!(_body->IsStatic() || _body->IsKinematic()) || _entity->stillHasMyGrab());
+        && (!(_body->IsStatic() || _body->IsKinematic()) || _entity->stillHasMyGrab() || unownedTrackCar);
 }
 
 void EntityMotionState::setBody(JPH::Body* body, PhysicsWorld* world) {
@@ -1028,4 +1090,9 @@ void EntityMotionState::clearObjectVelocities() const {
         }
     }
     _entity->setAcceleration(glm::vec3(0.0f));
+}
+
+bool EntityMotionState::isServerlessMode() {
+    EntityTreePointer tree = _entity ? _entity->getTree() : nullptr;
+    return tree && tree->isServerlessMode();
 }

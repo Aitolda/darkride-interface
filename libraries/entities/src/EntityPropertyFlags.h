@@ -128,6 +128,11 @@ enum EntityPropertyList
     PROP_TEXTURES,
     PROP_BILLBOARD_MODE,    
 
+    // Darkride: a moving reference frame, and riding a Track (PHYSICS.md 4.1 and 4.8)
+    PROP_FRAME,
+    PROP_TRACK_ID,
+    PROP_TRACK_OFFSET,
+
     ////////////////////////////////////////////////////////////////////////////////////////////////////
     // ATTENTION: add new shared EntityItem properties to the list ABOVE this line
     ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -180,6 +185,14 @@ enum EntityPropertyList
     // We do this so that we don't have to expand the size of the properties bitflags mask
     //
     // Only add properties here that are only used by one subclass.  Otherwise, they should go above to prevent collisions
+
+    // Track (PHYSICS.md 4.8)
+    PROP_TRACK_POINTS = PROP_DERIVED_0,
+    PROP_TRACK_BANK = PROP_DERIVED_1,
+    PROP_TRACK_DWELL = PROP_DERIVED_2,
+    PROP_TRACK_CLOSED = PROP_DERIVED_3,
+    PROP_TRACK_SPEED = PROP_DERIVED_4,
+    PROP_TRACK_ACCELERATION = PROP_DERIVED_5,
 
     // Particles
     PROP_MAX_PARTICLES = PROP_DERIVED_0,

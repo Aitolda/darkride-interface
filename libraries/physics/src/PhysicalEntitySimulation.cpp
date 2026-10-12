@@ -12,6 +12,8 @@
 
 #include "PhysicalEntitySimulation.h"
 
+#include "TrackSimulation.h"
+
 #include <Profile.h>
 
 #include "PhysicsHelpers.h"
@@ -20,6 +22,7 @@
 
 
 PhysicalEntitySimulation::PhysicalEntitySimulation() {
+    _trackSimulation = std::make_unique<TrackSimulation>();
 }
 
 PhysicalEntitySimulation::~PhysicalEntitySimulation() {
@@ -262,6 +265,7 @@ void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
         EntityMotionState* motionState = new EntityMotionState(shape, entity);
         entity->setPhysicsInfo(static_cast<void*>(motionState));
         motionState->setRegion(_space->getRegion(entity->getSpaceIndex()));
+        motionState->setTrackSimulation(_trackSimulation.get());
         _physicalObjects.insert(motionState);
         _incomingChanges.insert(motionState);
     };
@@ -553,6 +557,19 @@ void PhysicalEntitySimulation::handleChangedMotionStates(const VectorOfMotionSta
                 } else {
                     entityState->getEntity()->updateQueryAACube();
                 }
+            }
+        }
+    }
+
+    // A car on a track needs a driver even while it stands still (a train at a station is not an active body, so it
+    // is not among the changed states above): whoever is near and finds it unowned bids for it (PHYSICS.md 4.8).
+    for (ObjectMotionState* state : _physicalObjects) {
+        if (state->getType() == MOTIONSTATE_TYPE_ENTITY) {
+            EntityMotionState* entityState = static_cast<EntityMotionState*>(state);
+            if (entityState->isTrackDriven() && entityState->getBody()
+                    && entityState->getOwnershipState() == EntityMotionState::OwnershipState::NotLocallyOwned
+                    && !entityState->isLocallyOwned() && entityState->shouldSendBid()) {
+                addOwnershipBid(entityState);
             }
         }
     }

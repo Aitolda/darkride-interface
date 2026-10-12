@@ -132,7 +132,7 @@ bool PhysicsEngine::getFrameTransform(const QUuid& frameID, glm::vec3& position,
     return itr->second->getFrameTransformInDomain(position, rotation, linearVelocity, angularVelocity);
 }
 
-QUuid PhysicsEngine::frameContaining(const glm::vec3& position, const QUuid& currentFrame) const {
+QUuid PhysicsEngine::frameContaining(const glm::vec3& position, const QUuid& currentFrame, bool supported) const {
     // a point in domain coordinates, each frame's volume in its own: the frame's transform converts
     auto inside = [&](ObjectMotionState* frameState, float margin) -> bool {
         glm::vec3 framePosition, linearVelocity, angularVelocity, minCorner, maxCorner;
@@ -146,10 +146,12 @@ QUuid PhysicsEngine::frameContaining(const glm::vec3& position, const QUuid& cur
                local.y > minCorner.y - margin && local.y < maxCorner.y + margin &&
                local.z > minCorner.z - margin && local.z < maxCorner.z + margin;
     };
-    // staying is easier than entering: a rider in a doorway does not flap between worlds
+    // staying is easier than entering: a rider in a doorway does not flap between worlds. But only while standing
+    // on the frame: a rider who has stepped past the floor's edge, with nothing of the frame under them, is out as
+    // soon as they are outside the volume itself, so they meet the platform in the world instead of falling here.
     if (!currentFrame.isNull()) {
         auto itr = _frameStates.find(currentFrame);
-        if (itr != _frameStates.end() && inside(itr->second, LEAVE_MARGIN)) {
+        if (itr != _frameStates.end() && inside(itr->second, LEAVE_MARGIN) && (supported || inside(itr->second, 0.0f))) {
             return currentFrame;
         }
     }

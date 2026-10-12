@@ -19,6 +19,8 @@
 
 #include "ObjectMotionState.h"
 
+class TrackSimulation;
+
 
 // From the MotionState's perspective:
 //      Inside = physics simulation
@@ -57,6 +59,9 @@ public:
     int getNestingDepth() const override;
 
     bool shouldSendUpdate(uint32_t simulationStep);
+    // a car on a track (PHYSICS.md 4.8): driven along the curve by the client that owns it, through the TrackSimulation
+    bool isTrackDriven() const { return _trackDriven; }
+    void setTrackSimulation(TrackSimulation* tracks) { _tracks = tracks; }
     void sendBid(OctreeEditPacketSender* packetSender, uint32_t step);
     void sendUpdate(OctreeEditPacketSender* packetSender, uint32_t step);
 
@@ -165,6 +170,11 @@ protected:
     uint8_t _numInactiveUpdates { 1 };
     uint8_t _bumpedPriority { 0 }; // the target simulation priority according to collision history
     uint8_t _region { workload::Region::INVALID };
+
+    mutable bool _trackDriven { false }; // the entity has a trackID (refreshed with its motion type)
+    TrackSimulation* _tracks { nullptr };
+    uint32_t _lastTrackUpdateStep { 0 }; // the substep an owned car last sent an update at
+    bool trackCarOutOfSync(uint32_t simulationStep);
 
     bool isServerlessMode();
 };

@@ -79,6 +79,9 @@ public:
 
     void jump(const glm::vec3& dir = glm::vec3(0.0f));
     bool onGround() const;
+    // floor within reach straight below the capsule: what frame membership asks (an edge still holds a capsule up,
+    // as Jolt's ground state says, while the floor below has already ended)
+    bool hasFloorBelow() const;
 
     void clearMotors();
     void addMotor(const glm::vec3& velocity, const glm::quat& rotation, float horizTimescale, float vertTimescale = -1.0f);
@@ -219,6 +222,7 @@ protected:
     float _floorDistance { 0.0f };
     bool _stepUpEnabled { true };
     bool _hasSupport { false };
+    bool _floorBelowNow { false }; // the floor ray reached floor in this update, with none of the grace period below
 
     float _currentGravity { 0.0f };
     float _gravity { DEFAULT_AVATAR_GRAVITY };

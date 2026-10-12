@@ -34,6 +34,7 @@
 #include "LightEntityItem.h"
 #include "ZoneEntityItem.h"
 #include "MaterialEntityItem.h"
+#include "TrackEntityItem.h"
 
 QMap<EntityTypes::EntityType, QString> EntityTypes::_typeToNameMap;
 QMap<QString, EntityTypes::EntityType> EntityTypes::_nameToTypeMap;
@@ -59,6 +60,7 @@ REGISTER_ENTITY_TYPE(Gizmo)
 REGISTER_ENTITY_TYPE(Light)
 REGISTER_ENTITY_TYPE(Zone)
 REGISTER_ENTITY_TYPE(Material)
+REGISTER_ENTITY_TYPE(Track)
 
 bool EntityTypes::typeIsValid(EntityType type) {
     return type > EntityType::Unknown && type <= EntityType::NUM_TYPES;

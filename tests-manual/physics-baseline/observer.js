@@ -19,6 +19,9 @@
     var WALK_SPEED = 1.5;         // m/s, the scripted motor
     var PLATFORM_SPOT = { x: 0, y: 1.3, z: 6.3 };   // on the station platform, behind the cabin's open end
     var ABOARD_Z = 2.5;           // where to stop inside the cabin, in its coordinates
+    // where to stand, which way to walk aboard, how to tell one is aboard, and which way off: round 3's cabin is
+    // boarded from behind; a mover may say otherwise in the cabin's userData ({"boarding": {...}}, see track.js)
+    var boarding = { spot: PLATFORM_SPOT, direction: { x: 0, y: 0, z: -1 }, axis: "z", limit: ABOARD_Z, off: { x: 0, y: 0, z: 1 } };
     var TIMEOUT = 150;            // s, the whole run
 
     var cabin = null;
@@ -96,13 +99,13 @@
             if (tt > 0.5) {
                 MyAvatar.motorReferenceFrame = "world";
                 MyAvatar.motorTimescale = 0.2;
-                MyAvatar.motorVelocity = { x: 0, y: 0, z: -WALK_SPEED };
+                MyAvatar.motorVelocity = Vec3.multiply(WALK_SPEED, boarding.direction);
                 setMode("stepping-on");
             }
         } else if (mode === "stepping-on") {
             var c = cabinState();
             var local = Vec3.multiplyQbyV(Quat.inverse(c.rotation), Vec3.subtract(MyAvatar.position, c.position));
-            if (local.z < ABOARD_Z || tt > 6) {
+            if (local[boarding.axis] < boarding.limit || tt > 6) {
                 MyAvatar.motorVelocity = Vec3.ZERO;
                 log("aboard at local " + JSON.stringify(local) + ", parentID " + MyAvatar.parentID + (tt > 6 ? " (timed out)" : ""));
                 setMode("riding");
@@ -113,7 +116,7 @@
                 tookSteps["step-off"] = true;
                 MyAvatar.motorReferenceFrame = "world";
                 MyAvatar.motorTimescale = 0.2;
-                MyAvatar.motorVelocity = { x: 0, y: 0, z: WALK_SPEED };
+                MyAvatar.motorVelocity = Vec3.multiply(WALK_SPEED, boarding.off);
                 setMode("stepping-off");
             }
         } else if (mode === "stepping-off") {
@@ -151,15 +154,6 @@
         var rows = samples.filter(function (r) { return r.phase === name; });
         if (rows.length < 3) { return null; }
         var first = rows[0], last = rows[rows.length - 1];
-        var crossings = [];
-        for (var k = 1; k < rows.length; k++) {
-            if (rows[k].parented !== rows[k - 1].parented) {
-                var before = Vec3.subtract(rows[k - 1].myPos, rows[k - 2 >= 0 ? k - 2 : 0].myPos);
-                var at = Vec3.subtract(rows[k].myPos, rows[k - 1].myPos);
-                crossings.push({ t: rows[k].t, parented: rows[k].parented,
-                    worldStepMm: 1000 * Vec3.length(at), previousStepMm: 1000 * Vec3.length(before) });
-            }
-        }
         var ridingRows = rows.filter(function (r) { return r.parented; });
         var groundRows = rows.filter(function (r) { return !r.parented && r.mode === "ground"; });
         var pick = function (list, key) { return list.filter(function (r) { return r[key]; }).map(function (r) { return r[key]; }); };
@@ -175,8 +169,7 @@
             relative: jitter(pick(ridingRows, "relative")),
             // the cabin's own world motion on this client: the step per frame, and how even it is
             cabinStepRiding: jitter(ridingRows.map(function (r) { return r.cabinPos; })),
-            cabinStepGround: jitter(groundRows.map(function (r) { return r.cabinPos; })),
-            crossings: crossings
+            cabinStepGround: jitter(groundRows.map(function (r) { return r.cabinPos; }))
         };
     }
 
@@ -184,6 +177,24 @@
         return j ? ("rms " + j.rmsMm.toFixed(1) + " mm, max " + j.maxMm.toFixed(1) + " mm (vertical rms " +
             j.verticalRmsMm.toFixed(1) + ", max " + j.verticalMaxMm.toFixed(1) + " mm; mean step " + j.meanStepMm.toFixed(1) +
             " mm over " + j.n + " frames)") : "n/a";
+    }
+
+    // the frames at which my parent changed and the largest world-position step at and just after each (the pop can
+    // land a sample after the change), over all samples in order
+    function crossings() {
+        var out = [];
+        for (var k = 1; k < samples.length; k++) {
+            if (samples[k].parented !== samples[k - 1].parented) {
+                var before = Vec3.length(Vec3.subtract(samples[k - 1].myPos, samples[Math.max(k - 2, 0)].myPos));
+                var at = 0;
+                for (var m = k; m < Math.min(k + 3, samples.length); m++) {
+                    at = Math.max(at, Vec3.length(Vec3.subtract(samples[m].myPos, samples[m - 1].myPos)));
+                }
+                out.push({ t: samples[k].t, parented: samples[k].parented, mode: samples[k].mode,
+                    worldStepMm: 1000 * at, previousStepMm: 1000 * before });
+            }
+        }
+        return out;
     }
 
     var finished = false;
@@ -202,12 +213,13 @@
                 "; other's stored local " + fmt(s.otherStoredLocal) +
                 "; other relative to me " + fmt(s.relative) +
                 "; cabin step while riding " + fmt(s.cabinStepRiding) +
-                "; cabin step from the ground " + fmt(s.cabinStepGround) +
-                (s.crossings.length ? "; crossings: " + s.crossings.map(function (c) {
-                    return (c.parented ? "in" : "out") + " at " + c.t.toFixed(2) + " s, world step " + c.worldStepMm.toFixed(1) +
-                        " mm (previous " + c.previousStepMm.toFixed(1) + " mm)"; }).join(", ") : ""));
+                "; cabin step from the ground " + fmt(s.cabinStepGround));
         });
-        Test.saveObject({ summary: summary, events: events, samples: samples }, "physics-observer.json");
+        var crossed = crossings();
+        log("crossings: " + (crossed.length ? crossed.map(function (c) {
+            return (c.parented ? "in" : "out") + " at " + c.t.toFixed(2) + " s (" + c.mode + "), world step " + c.worldStepMm.toFixed(1) +
+                " mm (previous " + c.previousStepMm.toFixed(1) + " mm)"; }).join("; ") : "none"));
+        Test.saveObject({ summary: summary, events: events, crossings: crossed, samples: samples }, "physics-observer.json");
         log("done (" + reason + "), " + samples.length + " samples");
         Script.setTimeout(function () { Test.quit(); }, 1000);
     }
@@ -221,7 +233,18 @@
             cabin = findCabin();
             if (cabin) {
                 log("cabin " + cabin + " seen at " + now().toFixed(2) + " s");
-                MyAvatar.position = PLATFORM_SPOT;
+                try {
+                    var said = JSON.parse(Entities.getEntityProperties(cabin, ["userData"]).userData || "{}");
+                    if (said.boarding) {
+                        ["spot", "direction", "axis", "limit", "off"].forEach(function (k) {
+                            if (said.boarding[k] !== undefined) { boarding[k] = said.boarding[k]; }
+                        });
+                        log("boarding as the mover says: " + JSON.stringify(boarding));
+                    }
+                } catch (e) {
+                    log("cabin userData unreadable: " + e);
+                }
+                MyAvatar.position = boarding.spot;
                 MyAvatar.orientation = Quat.IDENTITY;
                 setMode("arriving");
             }

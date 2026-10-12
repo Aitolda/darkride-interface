@@ -86,6 +86,8 @@ public:
      *       <td>{@link Entities.EntityProperties-Zone|EntityProperties-Zone}</td></tr>
      *     <tr><td><code>"Material"</code></td><td>Modifies the existing materials on entities and avatars.</td>
      *       <td>{@link Entities.EntityProperties-Material|EntityProperties-Material}</td></tr>
+     *     <tr><td><code>"Track"</code></td><td>A curve through control points that a train of entities rides along.</td>
+     *       <td>{@link Entities.EntityProperties-Track|EntityProperties-Track}</td></tr>
      *   </tbody>
      * </table>
      * @typedef {string} Entities.EntityType
@@ -108,6 +110,7 @@ public:
         Light,
         Zone,
         Material,
+        Track,
         NUM_TYPES
     } EntityType;
 

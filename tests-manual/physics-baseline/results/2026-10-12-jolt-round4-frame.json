@@ -1,0 +1,260 @@
+{
+ "phases": [
+  {
+   "name": "boot",
+   "t0": 0
+  },
+  {
+   "name": "spawn",
+   "t0": 8.000999927520752
+  },
+  {
+   "name": "settle",
+   "t0": 9.000999927520752
+  },
+  {
+   "name": "straight-unparented",
+   "t0": 13.002000093460083
+  },
+  {
+   "name": "reset-1",
+   "t0": 21.002000093460083
+  },
+  {
+   "name": "straight-parented",
+   "t0": 25.01800012588501
+  },
+  {
+   "name": "reset-2",
+   "t0": 33.01800012588501
+  },
+  {
+   "name": "curve-unparented",
+   "t0": 37.01800012588501
+  },
+  {
+   "name": "reset-3",
+   "t0": 47.01900005340576
+  },
+  {
+   "name": "curve-parented",
+   "t0": 51.03500008583069
+  },
+  {
+   "name": "reset-4",
+   "t0": 61.03600001335144
+  },
+  {
+   "name": "walk-parented",
+   "t0": 65.05200004577637
+  },
+  {
+   "name": "reset-5",
+   "t0": 71.05299997329712
+  },
+  {
+   "name": "step-off",
+   "t0": 75.05299997329712
+  },
+  {
+   "name": "end",
+   "t0": 83.05299997329712
+  }
+ ],
+ "summary": [
+  {
+   "crossings": [],
+   "driftHorizontalM": 0,
+   "driftM": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "frames": 480,
+   "jitterHorizontalMaxMm": 35.24017333984375,
+   "jitterHorizontalRmsMm": 2.891413601575552,
+   "jitterVerticalMaxMm": 0,
+   "jitterVerticalRmsMm": 0,
+   "localEnd": {
+    "x": 0,
+    "y": 1.2632555961608887,
+    "z": 0
+   },
+   "localStart": {
+    "x": 0,
+    "y": 1.2632555961608887,
+    "z": 0
+   },
+   "parentedFrames": 480,
+   "phase": "straight-unparented",
+   "seconds": 7.983999967575073,
+   "storedLocalJitter": {
+    "maxMm": 0,
+    "rmsMm": 0
+   }
+  },
+  {
+   "crossings": [],
+   "driftHorizontalM": 0,
+   "driftM": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "frames": 480,
+   "jitterHorizontalMaxMm": 19.11640167236328,
+   "jitterHorizontalRmsMm": 1.93503239852906,
+   "jitterVerticalMaxMm": 0,
+   "jitterVerticalRmsMm": 0,
+   "localEnd": {
+    "x": 0,
+    "y": 1.2632554769515991,
+    "z": 0
+   },
+   "localStart": {
+    "x": 0,
+    "y": 1.2632554769515991,
+    "z": 0
+   },
+   "parentedFrames": 480,
+   "phase": "straight-parented",
+   "seconds": 7.983000040054321,
+   "storedLocalJitter": {
+    "maxMm": 0,
+    "rmsMm": 0
+   }
+  },
+  {
+   "crossings": [],
+   "driftHorizontalM": 0,
+   "driftM": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "frames": 600,
+   "jitterHorizontalMaxMm": 0,
+   "jitterHorizontalRmsMm": 0,
+   "jitterVerticalMaxMm": 0,
+   "jitterVerticalRmsMm": 0,
+   "localEnd": {
+    "x": 0,
+    "y": 1.2632554769515991,
+    "z": 0
+   },
+   "localStart": {
+    "x": 0,
+    "y": 1.2632554769515991,
+    "z": 0
+   },
+   "parentedFrames": 600,
+   "phase": "curve-unparented",
+   "seconds": 9.983999967575073,
+   "storedLocalJitter": {
+    "maxMm": 0,
+    "rmsMm": 0
+   }
+  },
+  {
+   "crossings": [],
+   "driftHorizontalM": 0,
+   "driftM": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "frames": 600,
+   "jitterHorizontalMaxMm": 0,
+   "jitterHorizontalRmsMm": 0,
+   "jitterVerticalMaxMm": 0,
+   "jitterVerticalRmsMm": 0,
+   "localEnd": {
+    "x": 0,
+    "y": 1.2632554769515991,
+    "z": 0
+   },
+   "localStart": {
+    "x": 0,
+    "y": 1.2632554769515991,
+    "z": 0
+   },
+   "parentedFrames": 600,
+   "phase": "curve-parented",
+   "seconds": 9.983999967575073,
+   "storedLocalJitter": {
+    "maxMm": 0,
+    "rmsMm": 0
+   }
+  },
+  {
+   "crossings": [],
+   "driftHorizontalM": 0.8354055285453796,
+   "driftM": {
+    "x": -0.8354055285453796,
+    "y": 0,
+    "z": 0
+   },
+   "frames": 360,
+   "jitterHorizontalMaxMm": 40.27991099963996,
+   "jitterHorizontalRmsMm": 15.006401431406278,
+   "jitterVerticalMaxMm": 0,
+   "jitterVerticalRmsMm": 0,
+   "localEnd": {
+    "x": -0.8340086340904236,
+    "y": 1.2632554769515991,
+    "z": 0
+   },
+   "localStart": {
+    "x": 0.00139691773802042,
+    "y": 1.2632554769515991,
+    "z": 0
+   },
+   "parentedFrames": 360,
+   "phase": "walk-parented",
+   "seconds": 5.983999967575073,
+   "storedLocalJitter": {
+    "maxMm": 31.86957910656929,
+    "rmsMm": 14.597686404717813
+   }
+  },
+  {
+   "crossings": [
+    {
+     "parented": false,
+     "previousStepMm": 55.16709387302399,
+     "t": 80.4520001411438,
+     "worldStepMm": 55.303484201431274
+    }
+   ],
+   "driftHorizontalM": 17.16693687438965,
+   "driftM": {
+    "x": 0,
+    "y": -0.5000001192092896,
+    "z": 17.16693687438965
+   },
+   "frames": 480,
+   "jitterHorizontalMaxMm": 86.07860654592514,
+   "jitterHorizontalRmsMm": 33.97653201895676,
+   "jitterVerticalMaxMm": 41.657403111457825,
+   "jitterVerticalRmsMm": 4.07626196848501,
+   "localEnd": {
+    "x": -0.1886904388666153,
+    "y": 0.7632554769515991,
+    "z": 17.16693687438965
+   },
+   "localStart": {
+    "x": -0.1886904388666153,
+    "y": 1.2632555961608887,
+    "z": 0
+   },
+   "parentedFrames": 323,
+   "phase": "step-off",
+   "seconds": 7.983999967575073,
+   "storedLocalJitter": {
+    "maxMm": 22.18705043196678,
+    "rmsMm": 12.405266833182647
+   }
+  }
+ ],
+ "samplesDropped": 4503
+}

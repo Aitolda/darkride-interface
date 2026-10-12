@@ -142,7 +142,11 @@ public:
     PhysicsWorld* worldFor(ObjectMotionState* motionState);
     // The frame whose membership volume contains the point (in domain coordinates), with hysteresis against
     // the frame the point is in now; null for the domain itself.
-    QUuid frameContaining(const glm::vec3& position, const QUuid& currentFrame) const;
+    // the frame a point belongs to, with hysteresis for the frame it is in; `supported` says whether the thing is
+    // standing on something of that frame (a character on its floor), which keeps it in past the floor's edge, while
+    // something unsupported there (a walker who has just stepped off the edge, with the platform waiting outside)
+    // leaves at once, before it falls in a world where the platform does not exist
+    QUuid frameContaining(const glm::vec3& position, const QUuid& currentFrame, bool supported = true) const;
     // the transform of a frame in the domain (its body's, or its entity's when it has no body yet)
     bool getFrameTransform(const QUuid& frameID, glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const;
 

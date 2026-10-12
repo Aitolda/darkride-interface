@@ -311,6 +311,16 @@ public:
     bool getIgnorePickIntersection() const;
     void setIgnorePickIntersection(bool value);
 
+    // a moving reference frame (PHYSICS.md 4.1): the property; isFrame() also honours the older userData marker
+    bool getFrame() const;
+    void setFrame(bool value);
+    // the Track entity this one rides (PHYSICS.md 4.8), and where along the train it sits, in metres
+    QUuid getTrackID() const;
+    void setTrackID(const QUuid& value);
+    float getTrackOffset() const;
+    void setTrackOffset(float value);
+    void onFrameChanged();
+
     bool getCanCastShadow() const;
     void setCanCastShadow(bool value);
 
@@ -349,7 +359,7 @@ public:
 
     // true when this entity is a moving reference frame: things inside it are simulated in its own physics world
 
-    bool isFrame() const { return _isFrame; }
+    bool isFrame() const { return _frame || _isFrame; }
     // the box named in userData inside which something belongs to this frame, in the entity's coordinates; false when none
     bool getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorner) const;
     virtual void setUserData(const QString& value); // FIXME: This is suspicious(?)
@@ -681,6 +691,9 @@ protected:
     bool _locked { ENTITY_ITEM_DEFAULT_LOCKED };
     QString _userData { ENTITY_ITEM_DEFAULT_USER_DATA };
     bool _isFrame { false }; // userData {"frame": true}: this entity is a moving reference frame
+    bool _frame { false }; // the frame property; the userData marker above is the older way
+    QUuid _trackID; // the Track this entity rides, null for none
+    float _trackOffset { 0.0f };
     bool _hasFrameVolume { false };
     glm::vec3 _frameVolumeMin { 0.0f };
     glm::vec3 _frameVolumeMax { 0.0f };

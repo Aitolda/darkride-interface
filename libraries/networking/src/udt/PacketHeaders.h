@@ -284,6 +284,7 @@ enum class EntityVersion : PacketVersion {
     CloneGrabbable, // maki
     RemovedCustomTags, // maki
     SkeletonModelURLInIdentityPacket, // maki
+    TrackEntities, // darkride: the Track entity type, and frame, trackID and trackOffset on every entity (PHYSICS.md round 4)
     // TO DO - reinstate with tonemapping in zones
     // ToneMappingMode, // caitlyn
     

@@ -2907,7 +2907,9 @@ void MyAvatar::updateFrameMembership() {
         return;
     }
     glm::vec3 worldPosition = getWorldPosition();
-    QUuid targetFrame = engine->frameContaining(worldPosition, currentFrame);
+    // floor under the avatar keeps it in the frame past the volume's edge; stepping past the floor's edge leaves at
+    // once, where whatever is under it in the world (a platform) takes over at the same height
+    QUuid targetFrame = engine->frameContaining(worldPosition, currentFrame, _characterController.hasFloorBelow());
     if (targetFrame == currentFrame) {
         return;
     }

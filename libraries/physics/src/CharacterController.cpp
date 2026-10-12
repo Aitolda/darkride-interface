@@ -326,6 +326,12 @@ bool CharacterController::onGround() const {
     return _floorDistance < FLOOR_PROXIMITY_THRESHOLD || _hasSupport;
 }
 
+bool CharacterController::hasFloorBelow() const {
+    // not onGround(): that keeps a lost floor for half a second so the state machine does not flap, and in half a
+    // second a walker is well past the edge
+    return _floorBelowNow;
+}
+
 #ifdef DEBUG_STATE_CHANGE
 static const char* stateToStr(CharacterController::State state) {
     switch (state) {
@@ -707,6 +713,7 @@ void CharacterController::updateState() {
             rayHasHit = true;
             _floorDistance = rayLength * hit.fraction - (_radius + _halfHeight);
         }
+        _floorBelowNow = rayHasHit && _floorDistance < 0.3f * _radius;
     }
     quint64 now = usecTimestampNow();
     if (rayHasHit) {

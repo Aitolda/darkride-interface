@@ -110,6 +110,9 @@ EntityPropertyFlags EntityItem::getEntityProperties(EncodeBitstreamParams& param
     requestedProperties += PROP_ENTITY_PRIORITY;
     requestedProperties += PROP_PRIMITIVE_MODE;
     requestedProperties += PROP_IGNORE_PICK_INTERSECTION;
+    requestedProperties += PROP_FRAME;
+    requestedProperties += PROP_TRACK_ID;
+    requestedProperties += PROP_TRACK_OFFSET;
     requestedProperties += _grabProperties.getEntityProperties(params);
 
     // Physics
@@ -310,6 +313,9 @@ OctreeElement::AppendState EntityItem::appendEntityData(
         APPEND_ENTITY_PROPERTY(PROP_ENTITY_PRIORITY, (uint32_t)getEntityPriority());
         APPEND_ENTITY_PROPERTY(PROP_PRIMITIVE_MODE, (uint32_t)getPrimitiveMode());
         APPEND_ENTITY_PROPERTY(PROP_IGNORE_PICK_INTERSECTION, getIgnorePickIntersection());
+        APPEND_ENTITY_PROPERTY(PROP_FRAME, getFrame());
+        APPEND_ENTITY_PROPERTY(PROP_TRACK_ID, getTrackID());
+        APPEND_ENTITY_PROPERTY(PROP_TRACK_OFFSET, getTrackOffset());
         withReadLock([&] {
             _grabProperties.appendSubclassData(packetData, params, entityTreeElementExtraEncodeData, requestedProperties,
                                                propertyFlags, propertiesDidntFit, propertyCount, appendState);
@@ -896,6 +902,9 @@ int EntityItem::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
 
     READ_ENTITY_PROPERTY(PROP_PRIMITIVE_MODE, PrimitiveMode, setPrimitiveMode);
     READ_ENTITY_PROPERTY(PROP_IGNORE_PICK_INTERSECTION, bool, setIgnorePickIntersection);
+    READ_ENTITY_PROPERTY(PROP_FRAME, bool, setFrame);
+    READ_ENTITY_PROPERTY(PROP_TRACK_ID, QUuid, setTrackID);
+    READ_ENTITY_PROPERTY(PROP_TRACK_OFFSET, float, setTrackOffset);
     withWriteLock([&] {
         int bytesFromGrab =
             _grabProperties.readEntitySubclassDataFromBuffer(dataAt, (bytesLeftToRead - bytesRead), args, propertyFlags,
@@ -1378,6 +1387,9 @@ EntityItemProperties EntityItem::getProperties(const EntityPropertyFlags& desire
     COPY_ENTITY_PROPERTY_TO_PROPERTIES(renderLayer, getRenderLayer);
     COPY_ENTITY_PROPERTY_TO_PROPERTIES(primitiveMode, getPrimitiveMode);
     COPY_ENTITY_PROPERTY_TO_PROPERTIES(ignorePickIntersection, getIgnorePickIntersection);
+    COPY_ENTITY_PROPERTY_TO_PROPERTIES(frame, getFrame);
+    COPY_ENTITY_PROPERTY_TO_PROPERTIES(trackID, getTrackID);
+    COPY_ENTITY_PROPERTY_TO_PROPERTIES(trackOffset, getTrackOffset);
     withReadLock([&] { _grabProperties.getProperties(properties); });
 
     // Physics
@@ -1526,6 +1538,9 @@ bool EntityItem::setProperties(const EntityItemProperties& properties) {
     SET_ENTITY_PROPERTY_FROM_PROPERTIES(renderLayer, setRenderLayer);
     SET_ENTITY_PROPERTY_FROM_PROPERTIES(primitiveMode, setPrimitiveMode);
     SET_ENTITY_PROPERTY_FROM_PROPERTIES(ignorePickIntersection, setIgnorePickIntersection);
+    SET_ENTITY_PROPERTY_FROM_PROPERTIES(frame, setFrame);
+    SET_ENTITY_PROPERTY_FROM_PROPERTIES(trackID, setTrackID);
+    SET_ENTITY_PROPERTY_FROM_PROPERTIES(trackOffset, setTrackOffset);
     withWriteLock([&] {
         bool grabPropertiesChanged = _grabProperties.setProperties(properties);
         somethingChanged |= grabPropertiesChanged;
@@ -3001,6 +3016,59 @@ void EntityItem::setIgnorePickIntersection(bool value) {
     withWriteLock([&] { _ignorePickIntersection = value; });
 }
 
+bool EntityItem::getFrame() const {
+    return resultWithReadLock<bool>([&] { return _frame; });
+}
+
+void EntityItem::setFrame(bool value) {
+    bool changed = false;
+    withWriteLock([&] {
+        changed = (_frame != value);
+        _frame = value;
+        if (changed) {
+            _flags |= Simulation::DIRTY_MOTION_TYPE;
+        }
+    });
+    if (changed) {
+        onFrameChanged();
+    }
+}
+
+QUuid EntityItem::getTrackID() const {
+    return resultWithReadLock<QUuid>([&] { return _trackID; });
+}
+
+void EntityItem::setTrackID(const QUuid& value) {
+    withWriteLock([&] {
+        if (_trackID != value) {
+            _trackID = value;
+            _flags |= Simulation::DIRTY_MOTION_TYPE;   // a car on a track is kinematic
+        }
+    });
+}
+
+float EntityItem::getTrackOffset() const {
+    return resultWithReadLock<float>([&] { return _trackOffset; });
+}
+
+void EntityItem::setTrackOffset(float value) {
+    withWriteLock([&] { _trackOffset = value; });
+}
+
+// A frame appeared or went: its contents change world, so each of them gets a new body.
+void EntityItem::onFrameChanged() {
+    EntityTreePointer tree = getTree();
+    forEachDescendant([&](SpatiallyNestablePointer object) {
+        if (object->getNestableType() == NestableType::Entity) {
+            EntityItemPointer entity = std::static_pointer_cast<EntityItem>(object);
+            entity->markDirtyFlags(Simulation::DIRTY_MOTION_TYPE);
+            if (tree) {
+                tree->entityChanged(entity);
+            }
+        }
+    });
+}
+
 bool EntityItem::getCanCastShadow() const {
     bool result;
     withReadLock([&] { result = _canCastShadow; });
@@ -3127,17 +3195,7 @@ void EntityItem::setUserData(const QString& value) {
         }
     });
     if (frameChanged) {
-        // the contents change world: a new body for each of them
-        EntityTreePointer tree = getTree();
-        forEachDescendant([&](SpatiallyNestablePointer object) {
-            if (object->getNestableType() == NestableType::Entity) {
-                EntityItemPointer entity = std::static_pointer_cast<EntityItem>(object);
-                entity->markDirtyFlags(Simulation::DIRTY_MOTION_TYPE);
-                if (tree) {
-                    tree->entityChanged(entity);
-                }
-            }
-        });
+        onFrameChanged();
     }
 }
 
