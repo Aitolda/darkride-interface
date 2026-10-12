@@ -14,6 +14,11 @@
 ScriptAvatarData::ScriptAvatarData(AvatarSharedPointer avatarData) :
     _avatarData(avatarData)
 {
+    // a script that asks for an avatar that is not there gets an empty one: there is nothing to listen to, and
+    // connecting to nothing logged four warnings each time (about 150,000 lines an hour in Auxi's body log, 10-12)
+    if (!avatarData) {
+        return;
+    }
     QObject::connect(avatarData.get(), &AvatarData::displayNameChanged, this, &ScriptAvatarData::displayNameChanged);
     QObject::connect(avatarData.get(), &AvatarData::sessionDisplayNameChanged, this, &ScriptAvatarData::sessionDisplayNameChanged);
     QObject::connect(avatarData.get(), &AvatarData::skeletonModelURLChanged, this, &ScriptAvatarData::skeletonModelURLChanged);
