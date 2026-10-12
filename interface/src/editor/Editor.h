@@ -158,6 +158,7 @@ private:
     enum class DragKind { None, Move, Rotate, Scale };
 
     void createPanels();
+    void placeToolBars();
     void showPanels(bool show);
     void focusViewport();
     void takeFocusUnlessTyping();

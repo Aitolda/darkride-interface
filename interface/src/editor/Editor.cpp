@@ -562,9 +562,7 @@ void Editor::createPanels() {
 
     window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
     window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
-    window->addToolBar(Qt::TopToolBarArea, _toolBar);
-    window->addToolBarBreak(Qt::TopToolBarArea);
-    window->addToolBar(Qt::TopToolBarArea, _terrainBar);
+    placeToolBars();
     _terrainBar->setVisible(false);
     window->setStatusBar(_statusBar);
     _statusBar->setVisible(false);
@@ -575,10 +573,26 @@ void Editor::createPanels() {
     if (!layout.isEmpty()) {
         window->restoreState(layout);
     }
-    // a saved layout from before the panels were fixed can still float them
+    // a saved layout from before the panels were fixed can still float them, and one saved with both toolbars on
+    // one row would keep them there
     _hierarchy->setFloating(false);
     _inspector->setFloating(false);
+    placeToolBars();
     updateTerrainBar();   // the saved layout knows nothing of the tool
+}
+
+void Editor::placeToolBars() {
+    // The build toolbar is a row of its own, so its spacer keeps the world and view controls at the right end;
+    // the Terrain tool's controls are the row under it. Toolbars sharing a row each get their natural width and
+    // only the last is stretched, so a spacer can push nothing past a neighbour: the rows are placed here rather
+    // than left to the saved layout.
+    auto window = qApp->getWindow();
+    gl::ViewChangeGuard guard;   // the rows leaving and returning resize the GL view twice over
+    window->removeToolBar(_terrainBar);
+    window->removeToolBar(_toolBar);
+    window->addToolBar(Qt::TopToolBarArea, _toolBar);
+    window->addToolBarBreak(Qt::TopToolBarArea);
+    window->addToolBar(Qt::TopToolBarArea, _terrainBar);
 }
 
 void Editor::focusViewport() {
@@ -619,7 +633,7 @@ void Editor::resetLayout() {
     _inspector->setFloating(false);
     window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
     window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
-    window->addToolBar(Qt::TopToolBarArea, _toolBar);
+    placeToolBars();
     showPanels(_active);
     _layoutSetting.set(QByteArray());
 }
