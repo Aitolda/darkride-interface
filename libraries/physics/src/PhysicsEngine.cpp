@@ -26,6 +26,7 @@
 #include "PhysicsDebugDraw.h"
 #include "ThreadSafeDynamicsWorld.h"
 #include "PhysicsLogging.h"
+#include "JoltSupport.h"
 
 PhysicsEngine::PhysicsEngine(const glm::vec3& offset) :
         _originOffset(offset),
@@ -43,6 +44,7 @@ PhysicsEngine::~PhysicsEngine() {
 }
 
 void PhysicsEngine::init() {
+    JoltSupport::initialize();
     if (!_dynamicsWorld) {
         _collisionConfig = new btDefaultCollisionConfiguration();
         _collisionDispatcher = new btCollisionDispatcher(_collisionConfig);
