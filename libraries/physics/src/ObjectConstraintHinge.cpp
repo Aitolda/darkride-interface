@@ -11,6 +11,8 @@
 
 #include "ObjectConstraintHinge.h"
 
+#include <Jolt/Physics/Constraints/HingeConstraint.h>
+
 #include <LogHandler.h>
 
 #include "QVariantGLM.h"
@@ -22,6 +24,25 @@
 const uint16_t HINGE_VERSION_WITH_UNUSED_PAREMETERS = 1;
 const uint16_t ObjectConstraintHinge::constraintVersion = 2;
 const glm::vec3 DEFAULT_HINGE_AXIS(1.0f, 0.0f, 0.0f);
+
+// A point given relative to the body's origin, as scripts give it, expressed relative to the body's centre of
+// mass, which is what Jolt's LocalToBodyCOM constraint space wants.
+static JPH::RVec3 toBodyCOMSpace(const JPH::Body* body, const glm::vec3& point) {
+    return glmToJoltR(point - joltToGLM(body->GetShape()->GetCenterOfMass()));
+}
+
+// Bullet accepted any [low, high] arc: a lower bound above the upper one, or a span of a full turn or more, meant
+// no limit. Jolt wants the lower limit in [-pi, 0] and the upper in [0, pi], with [-pi, pi] meaning no limit, so an
+// arc that does not include the rest angle is widened to include it.
+static void hingeLimitsForJolt(float low, float high, float& limitsMin, float& limitsMax) {
+    if (low > high || high - low >= TWO_PI) {
+        limitsMin = -PI;
+        limitsMax = PI;
+        return;
+    }
+    limitsMin = glm::clamp(low, -PI, 0.0f);
+    limitsMax = glm::clamp(high, 0.0f, PI);
+}
 
 ObjectConstraintHinge::ObjectConstraintHinge(const QUuid& id, EntityItemPointer ownerEntity) :
     ObjectConstraint(DYNAMIC_TYPE_HINGE, id, ownerEntity),
@@ -39,15 +60,17 @@ ObjectConstraintHinge::~ObjectConstraintHinge() {
     #endif
 }
 
-QList<btRigidBody*> ObjectConstraintHinge::getRigidBodies() {
-    QList<btRigidBody*> result;
-    result += getRigidBody();
+std::vector<JPH::BodyID> ObjectConstraintHinge::getBodyIDs() {
+    std::vector<JPH::BodyID> result = ObjectDynamic::getBodyIDs();
     QUuid otherEntityID;
     withReadLock([&]{
         otherEntityID = _otherID;
     });
     if (!otherEntityID.isNull()) {
-        result += getOtherRigidBody(otherEntityID);
+        JPH::Body* otherBody = getOtherBody(otherEntityID);
+        if (otherBody) {
+            result.push_back(otherBody->GetID());
+        }
     }
     return result;
 }
@@ -56,14 +79,12 @@ void ObjectConstraintHinge::prepareForPhysicsSimulation() {
 }
 
 void ObjectConstraintHinge::updateHinge() {
-    btHingeConstraint* constraint { nullptr };
-    glm::vec3 axisInA;
+    JPH::HingeConstraint* constraint { nullptr };
     float low;
     float high;
 
     withReadLock([&]{
-        axisInA = _axisInA;
-        constraint = static_cast<btHingeConstraint*>(_constraint);
+        constraint = static_cast<JPH::HingeConstraint*>(_constraint.GetPtr());
         low = _low;
         high = _high;
     });
@@ -72,35 +93,41 @@ void ObjectConstraintHinge::updateHinge() {
         return;
     }
 
-    constraint->setLimit(low, high);
+    float limitsMin, limitsMax;
+    hingeLimitsForJolt(low, high, limitsMin, limitsMax);
+    constraint->SetLimits(limitsMin, limitsMax);
 }
 
 
-btTypedConstraint* ObjectConstraintHinge::getConstraint() {
-    btHingeConstraint* constraint { nullptr };
+JPH::Constraint* ObjectConstraintHinge::getConstraint() {
+    JPH::Constraint* constraint { nullptr };
     QUuid otherEntityID;
     glm::vec3 pivotInA;
     glm::vec3 axisInA;
     glm::vec3 pivotInB;
     glm::vec3 axisInB;
+    float low;
+    float high;
 
     withReadLock([&]{
-        constraint = static_cast<btHingeConstraint*>(_constraint);
+        constraint = _constraint.GetPtr();
         pivotInA = _pivotInA;
         axisInA = _axisInA;
         otherEntityID = _otherID;
         pivotInB = _pivotInB;
         axisInB = _axisInB;
+        low = _low;
+        high = _high;
     });
     if (constraint) {
         return constraint;
     }
-    
+
     static int repeatMessageID = LogHandler::getInstance().newRepeatedMessageID();
 
-    btRigidBody* rigidBodyA = getRigidBody();
-    if (!rigidBodyA) {
-        HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintHinge::getConstraint -- no rigidBodyA");
+    JPH::Body* bodyA = getBody();
+    if (!bodyA) {
+        HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintHinge::getConstraint -- no bodyA");
         return nullptr;
     }
 
@@ -111,11 +138,23 @@ btTypedConstraint* ObjectConstraintHinge::getConstraint() {
         axisInA = glm::normalize(axisInA);
     }
 
+    // The frames are the ones Bullet built: each body's frame is its pivot, its hinge axis and a normal
+    // perpendicular to that axis, and the second frame's normal is the first one's carried over by the shortest
+    // rotation between the two hinge axes. The hinge is at angle 0, from which low and high are measured, when the
+    // two normals align; which perpendicular serves as the first normal makes no difference to that.
+    JPH::HingeConstraintSettings settings;
+    settings.mSpace = JPH::EConstraintSpace::LocalToBodyCOM;
+    settings.mPoint1 = toBodyCOMSpace(bodyA, pivotInA);
+    settings.mHingeAxis1 = glmToJolt(axisInA);
+    settings.mNormalAxis1 = settings.mHingeAxis1.GetNormalizedPerpendicular();
+    glm::vec3 normalInA = joltToGLM(settings.mNormalAxis1);
+
+    JPH::Body* bodyB { nullptr };
     if (!otherEntityID.isNull()) {
-        // This hinge is between two entities... find the other rigid body.
-        btRigidBody* rigidBodyB = getOtherRigidBody(otherEntityID);
-        if (!rigidBodyB) {
-            HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintHinge::getConstraint -- no rigidBodyB");
+        // This hinge is between two entities... find the other body.
+        bodyB = getOtherBody(otherEntityID);
+        if (!bodyB) {
+            HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintHinge::getConstraint -- no bodyB");
             return nullptr;
         }
 
@@ -126,23 +165,30 @@ btTypedConstraint* ObjectConstraintHinge::getConstraint() {
             axisInB = glm::normalize(axisInB);
         }
 
-        constraint = new btHingeConstraint(*rigidBodyA, *rigidBodyB,
-                                           glmToBullet(pivotInA), glmToBullet(pivotInB),
-                                           glmToBullet(axisInA), glmToBullet(axisInB),
-                                           true); // useReferenceFrameA
-
+        settings.mPoint2 = toBodyCOMSpace(bodyB, pivotInB);
+        settings.mHingeAxis2 = glmToJolt(axisInB);
+        settings.mNormalAxis2 = glmToJolt(glm::rotation(axisInA, axisInB) * normalInA);
     } else {
-        // This hinge is between an entity and the world-frame.
-        constraint = new btHingeConstraint(*rigidBodyA,
-                                           glmToBullet(pivotInA), glmToBullet(axisInA),
-                                           true); // useReferenceFrameA
+        // This hinge is between an entity and the world-frame. The other body is Jolt's fixed-to-world body, whose
+        // own frame is the world frame, so its side of the joint is the entity's pivot and axis where they are now.
+        bodyB = &JPH::Body::sFixedToWorld;
+        glm::vec3 positionA = joltToGLM(bodyA->GetPosition());
+        glm::quat rotationA = joltToGLM(bodyA->GetRotation());
+        glm::vec3 axisInWorld = rotationA * axisInA;
+
+        settings.mPoint2 = glmToJoltR(positionA + rotationA * pivotInA);
+        settings.mHingeAxis2 = glmToJolt(axisInWorld);
+        settings.mNormalAxis2 = glmToJolt(glm::rotation(axisInA, axisInWorld) * normalInA);
     }
+    hingeLimitsForJolt(low, high, settings.mLimitsMin, settings.mLimitsMax);
+
+    constraint = settings.Create(*bodyA, *bodyB);
 
     withWriteLock([&]{
         _constraint = constraint;
     });
 
-    // if we don't wake up rigidBodyA, we may not send the dynamicData property over the network
+    // if we don't wake up bodyA, we may not send the dynamicData property over the network
     forceBodyNonStatic();
     activateBody();
 
@@ -257,7 +303,9 @@ bool ObjectConstraintHinge::updateArguments(QVariantMap arguments) {
  * @property {Vec3} axis=1,0,0 - The axis of the entity that it pivots about. Must be a non-zero vector.
  * @property {Vec3} otherPivot=0,0,0 - The local offset of the joint relative to the other entity's position.
  * @property {Vec3} otherAxis=1,0,0 - The axis of the other entity that it pivots about. Must be a non-zero vector.
- * @property {number} low=-2*Math.PI - The most negative angle that the hinge can take, in radians.
+ * @property {number} low=-2*Math.PI - The most negative angle that the hinge can take, in radians. Limits are enforced
+ *     between <code>-Math.PI</code> and <code>Math.PI</code> and always include the rest angle <code>0</code>; a range
+ *     of a full turn or more, or <code>low</code> above <code>high</code>, leaves the hinge free.
  * @property {number} high=2*Math.PI - The most positive angle that the hinge can take, in radians.
  * @property {number} angle=0 - The current angle of the hinge, in radians, range <code>-Math.PI</code> &ndash; 
  *     <code>Math.PI</code>. <em>Read-only.</em>
@@ -273,7 +321,7 @@ QVariantMap ObjectConstraintHinge::getArguments() {
         arguments["low"] = _low;
         arguments["high"] = _high;
         if (_constraint) {
-            arguments["angle"] = static_cast<btHingeConstraint*>(_constraint)->getHingeAngle(); // [-PI,PI]
+            arguments["angle"] = static_cast<JPH::HingeConstraint*>(_constraint.GetPtr())->GetCurrentAngle(); // [-PI,PI]
         } else {
             arguments["angle"] = 0.0f;
         }

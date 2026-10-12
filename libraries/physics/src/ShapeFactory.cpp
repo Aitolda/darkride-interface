@@ -13,99 +13,98 @@
 
 #include <glm/gtx/norm.hpp>
 
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+
 #include <SharedUtil.h> // for MILLIMETERS_PER_METER
 
-#include "BulletUtil.h"
+#include "JoltUtil.h"
+#include "PhysicsLogging.h"
 
+using ShapeFactory::ShapeRef;
 
-class StaticMeshShape : public btBvhTriangleMeshShape {
-public:
-    StaticMeshShape() = delete;
-
-    StaticMeshShape(btTriangleIndexVertexArray* dataArray)
-    :   btBvhTriangleMeshShape(dataArray, true), _dataArray(dataArray) {
-        assert(_dataArray);
-    }
-
-    ~StaticMeshShape() {
-        assert(_dataArray);
-        IndexedMeshArray& meshes = _dataArray->getIndexedMeshArray();
-        for (int32_t i = 0; i < meshes.size(); ++i) {
-            btIndexedMesh mesh = meshes[i];
-            mesh.m_numTriangles = 0;
-            delete [] mesh.m_triangleIndexBase;
-            mesh.m_triangleIndexBase = nullptr;
-            mesh.m_numVertices = 0;
-            delete [] mesh.m_vertexBase;
-            mesh.m_vertexBase = nullptr;
-        }
-        meshes.clear();
-        delete _dataArray;
-        _dataArray = nullptr;
-    }
-
-private:
-    // the StaticMeshShape owns its vertex/index data
-    btTriangleIndexVertexArray* _dataArray;
-};
-
-// the dataArray must be created before we create the StaticMeshShape
-
-// These are the same normalized directions used by the btShapeHull class.
+// These are the same normalized directions used by Bullet's btShapeHull class.
 // 12 points for the face centers of a dodecahedron plus another 30 points
 // for the midpoints the edges, for a total of 42.
 const uint32_t NUM_UNIT_SPHERE_DIRECTIONS = 42;
-static const btVector3 _unitSphereDirections[NUM_UNIT_SPHERE_DIRECTIONS] = {
-    btVector3(btScalar(0.000000) , btScalar(-0.000000),btScalar(-1.000000)),
-    btVector3(btScalar(0.723608) , btScalar(-0.525725),btScalar(-0.447219)),
-    btVector3(btScalar(-0.276388) , btScalar(-0.850649),btScalar(-0.447219)),
-    btVector3(btScalar(-0.894426) , btScalar(-0.000000),btScalar(-0.447216)),
-    btVector3(btScalar(-0.276388) , btScalar(0.850649),btScalar(-0.447220)),
-    btVector3(btScalar(0.723608) , btScalar(0.525725),btScalar(-0.447219)),
-    btVector3(btScalar(0.276388) , btScalar(-0.850649),btScalar(0.447220)),
-    btVector3(btScalar(-0.723608) , btScalar(-0.525725),btScalar(0.447219)),
-    btVector3(btScalar(-0.723608) , btScalar(0.525725),btScalar(0.447219)),
-    btVector3(btScalar(0.276388) , btScalar(0.850649),btScalar(0.447219)),
-    btVector3(btScalar(0.894426) , btScalar(0.000000),btScalar(0.447216)),
-    btVector3(btScalar(-0.000000) , btScalar(0.000000),btScalar(1.000000)),
-    btVector3(btScalar(0.425323) , btScalar(-0.309011),btScalar(-0.850654)),
-    btVector3(btScalar(-0.162456) , btScalar(-0.499995),btScalar(-0.850654)),
-    btVector3(btScalar(0.262869) , btScalar(-0.809012),btScalar(-0.525738)),
-    btVector3(btScalar(0.425323) , btScalar(0.309011),btScalar(-0.850654)),
-    btVector3(btScalar(0.850648) , btScalar(-0.000000),btScalar(-0.525736)),
-    btVector3(btScalar(-0.525730) , btScalar(-0.000000),btScalar(-0.850652)),
-    btVector3(btScalar(-0.688190) , btScalar(-0.499997),btScalar(-0.525736)),
-    btVector3(btScalar(-0.162456) , btScalar(0.499995),btScalar(-0.850654)),
-    btVector3(btScalar(-0.688190) , btScalar(0.499997),btScalar(-0.525736)),
-    btVector3(btScalar(0.262869) , btScalar(0.809012),btScalar(-0.525738)),
-    btVector3(btScalar(0.951058) , btScalar(0.309013),btScalar(0.000000)),
-    btVector3(btScalar(0.951058) , btScalar(-0.309013),btScalar(0.000000)),
-    btVector3(btScalar(0.587786) , btScalar(-0.809017),btScalar(0.000000)),
-    btVector3(btScalar(0.000000) , btScalar(-1.000000),btScalar(0.000000)),
-    btVector3(btScalar(-0.587786) , btScalar(-0.809017),btScalar(0.000000)),
-    btVector3(btScalar(-0.951058) , btScalar(-0.309013),btScalar(-0.000000)),
-    btVector3(btScalar(-0.951058) , btScalar(0.309013),btScalar(-0.000000)),
-    btVector3(btScalar(-0.587786) , btScalar(0.809017),btScalar(-0.000000)),
-    btVector3(btScalar(-0.000000) , btScalar(1.000000),btScalar(-0.000000)),
-    btVector3(btScalar(0.587786) , btScalar(0.809017),btScalar(-0.000000)),
-    btVector3(btScalar(0.688190) , btScalar(-0.499997),btScalar(0.525736)),
-    btVector3(btScalar(-0.262869) , btScalar(-0.809012),btScalar(0.525738)),
-    btVector3(btScalar(-0.850648) , btScalar(0.000000),btScalar(0.525736)),
-    btVector3(btScalar(-0.262869) , btScalar(0.809012),btScalar(0.525738)),
-    btVector3(btScalar(0.688190) , btScalar(0.499997),btScalar(0.525736)),
-    btVector3(btScalar(0.525730) , btScalar(0.000000),btScalar(0.850652)),
-    btVector3(btScalar(0.162456) , btScalar(-0.499995),btScalar(0.850654)),
-    btVector3(btScalar(-0.425323) , btScalar(-0.309011),btScalar(0.850654)),
-    btVector3(btScalar(-0.425323) , btScalar(0.309011),btScalar(0.850654)),
-    btVector3(btScalar(0.162456) , btScalar(0.499995),btScalar(0.850654))
+static const glm::vec3 _unitSphereDirections[NUM_UNIT_SPHERE_DIRECTIONS] = {
+    glm::vec3(0.000000f, -0.000000f, -1.000000f),
+    glm::vec3(0.723608f, -0.525725f, -0.447219f),
+    glm::vec3(-0.276388f, -0.850649f, -0.447219f),
+    glm::vec3(-0.894426f, -0.000000f, -0.447216f),
+    glm::vec3(-0.276388f, 0.850649f, -0.447220f),
+    glm::vec3(0.723608f, 0.525725f, -0.447219f),
+    glm::vec3(0.276388f, -0.850649f, 0.447220f),
+    glm::vec3(-0.723608f, -0.525725f, 0.447219f),
+    glm::vec3(-0.723608f, 0.525725f, 0.447219f),
+    glm::vec3(0.276388f, 0.850649f, 0.447219f),
+    glm::vec3(0.894426f, 0.000000f, 0.447216f),
+    glm::vec3(-0.000000f, 0.000000f, 1.000000f),
+    glm::vec3(0.425323f, -0.309011f, -0.850654f),
+    glm::vec3(-0.162456f, -0.499995f, -0.850654f),
+    glm::vec3(0.262869f, -0.809012f, -0.525738f),
+    glm::vec3(0.425323f, 0.309011f, -0.850654f),
+    glm::vec3(0.850648f, -0.000000f, -0.525736f),
+    glm::vec3(-0.525730f, -0.000000f, -0.850652f),
+    glm::vec3(-0.688190f, -0.499997f, -0.525736f),
+    glm::vec3(-0.162456f, 0.499995f, -0.850654f),
+    glm::vec3(-0.688190f, 0.499997f, -0.525736f),
+    glm::vec3(0.262869f, 0.809012f, -0.525738f),
+    glm::vec3(0.951058f, 0.309013f, 0.000000f),
+    glm::vec3(0.951058f, -0.309013f, 0.000000f),
+    glm::vec3(0.587786f, -0.809017f, 0.000000f),
+    glm::vec3(0.000000f, -1.000000f, 0.000000f),
+    glm::vec3(-0.587786f, -0.809017f, 0.000000f),
+    glm::vec3(-0.951058f, -0.309013f, -0.000000f),
+    glm::vec3(-0.951058f, 0.309013f, -0.000000f),
+    glm::vec3(-0.587786f, 0.809017f, -0.000000f),
+    glm::vec3(-0.000000f, 1.000000f, -0.000000f),
+    glm::vec3(0.587786f, 0.809017f, -0.000000f),
+    glm::vec3(0.688190f, -0.499997f, 0.525736f),
+    glm::vec3(-0.262869f, -0.809012f, 0.525738f),
+    glm::vec3(-0.850648f, 0.000000f, 0.525736f),
+    glm::vec3(-0.262869f, 0.809012f, 0.525738f),
+    glm::vec3(0.688190f, 0.499997f, 0.525736f),
+    glm::vec3(0.525730f, 0.000000f, 0.850652f),
+    glm::vec3(0.162456f, -0.499995f, 0.850654f),
+    glm::vec3(-0.425323f, -0.309011f, 0.850654f),
+    glm::vec3(-0.425323f, 0.309011f, 0.850654f),
+    glm::vec3(0.162456f, 0.499995f, 0.850654f)
 };
 
+namespace {
 
-// util method
-btConvexHullShape* createConvexHull(const ShapeInfo::PointList& points) {
+const float MIN_CONVEX_RADIUS = 0.001f;
+
+// A convex radius keeps contacts cheap and stable, but it must fit inside the shape.
+float convexRadiusFor(const glm::vec3& halfExtents) {
+    float smallest = glm::min(halfExtents.x, glm::min(halfExtents.y, halfExtents.z));
+    return glm::clamp(0.5f * smallest, 0.0f, JPH::cDefaultConvexRadius);
+}
+
+template <typename Settings>
+ShapeRef create(Settings& settings, const char* what) {
+    JPH::Shape::ShapeResult result = settings.Create();
+    if (result.HasError()) {
+        qCWarning(physics) << "ShapeFactory: could not create" << what << ":" << result.GetError().c_str();
+        return nullptr;
+    }
+    return result.Get();
+}
+
+ShapeRef createConvexHull(const ShapeInfo::PointList& points) {
     assert(points.size() > 0);
+    if (points.empty()) {
+        return nullptr;
+    }
 
-    btConvexHullShape* hull = new btConvexHullShape();
     glm::vec3 center = points[0];
     glm::vec3 maxCorner = center;
     glm::vec3 minCorner = center;
@@ -116,94 +115,55 @@ btConvexHullShape* createConvexHull(const ShapeInfo::PointList& points) {
     }
     center /= (float)(points.size());
     if (glm::any(glm::isnan(center))) {
-        // don't feed garbage to Bullet
+        // don't feed garbage to the engine
         assert(false); // crash here in DEBUG so we can investigate source of bad input
         return nullptr;
     }
 
-    float margin = hull->getMargin();
-
-    // Bullet puts "margins" around all the collision shapes.  This can cause objects that use ConvexHull shapes
-    // to have visible gaps between them and the surface they touch.  One option is to reduce the size of the margin
-    // but this can reduce the performance and stability of the simulation (e.g. the GJK algorithm will fail to provide
-    // nearest contact points and narrow-phase collisions will fall into more expensive code paths).  Alternatively
-    // one can shift the geometry of the shape to make the margin surface approximately close to the visible surface.
-    // This is the strategy we try, but if the object is too small then we start to reduce the margin down to some minimum.
-
-    const float MIN_MARGIN = 0.01f;
+    // Jolt shrinks the hull by the convex radius and adds it back as a rounded margin, so the visible surface
+    // and the collision surface agree without the point correction Bullet needed. The radius still has to fit.
     glm::vec3 diagonal = maxCorner - minCorner;
-    float smallestDimension = glm::min(diagonal[0], diagonal[1]);
-    smallestDimension = glm::min(smallestDimension, diagonal[2]);
-    const float MIN_DIMENSION = 2.0f * MIN_MARGIN + 0.001f;
-    if (smallestDimension < MIN_DIMENSION) {
-        for (int i = 0; i < 3; ++i) {
-            if (diagonal[i] < MIN_DIMENSION) {
-                diagonal[i] = MIN_DIMENSION;
-            }
-        }
-        smallestDimension = MIN_DIMENSION;
-    }
-    margin = glm::min(glm::max(0.5f * smallestDimension, MIN_MARGIN), margin);
-    hull->setMargin(margin);
+    float convexRadius = glm::clamp(0.25f * glm::min(diagonal.x, glm::min(diagonal.y, diagonal.z)),
+                                    0.0f, JPH::cDefaultConvexRadius);
 
-    // add the points, correcting for margin
-    glm::vec3 relativeScale = (diagonal - glm::vec3(2.0f * margin)) / diagonal;
-    glm::vec3 correctedPoint;
-    for (size_t i = 0; i < points.size(); ++i) {
-        correctedPoint = (points[i] - center) * relativeScale + center;
-        hull->addPoint(btVector3(correctedPoint[0], correctedPoint[1], correctedPoint[2]), false);
-    }
-
-    uint32_t numPoints = (uint32_t)hull->getNumPoints();
-    if (numPoints > MAX_HULL_POINTS) {
-        // we have too many points, so we compute point projections along canonical unit vectors
-        // and keep the those that project the farthest
-        btVector3 btCenter = glmToBullet(center);
-        btVector3* shapePoints = hull->getUnscaledPoints();
+    JPH::Array<JPH::Vec3> hullPoints;
+    if (points.size() > (size_t)MAX_HULL_POINTS) {
+        // too many points: keep those that project the farthest along the canonical directions
         std::vector<uint32_t> finalIndices;
         finalIndices.reserve(NUM_UNIT_SPHERE_DIRECTIONS);
         for (uint32_t i = 0; i < NUM_UNIT_SPHERE_DIRECTIONS; ++i) {
             uint32_t bestIndex = 0;
-            btScalar maxDistance = _unitSphereDirections[i].dot(shapePoints[0] - btCenter);
-            for (uint32_t j = 1; j < numPoints; ++j) {
-                btScalar distance = _unitSphereDirections[i].dot(shapePoints[j] - btCenter);
+            float maxDistance = glm::dot(_unitSphereDirections[i], points[0] - center);
+            for (uint32_t j = 1; j < points.size(); ++j) {
+                float distance = glm::dot(_unitSphereDirections[i], points[j] - center);
                 if (distance > maxDistance) {
                     maxDistance = distance;
                     bestIndex = j;
                 }
             }
-            bool keep = true;
-            for (uint32_t j = 0; j < finalIndices.size(); ++j) {
-                if (finalIndices[j] == bestIndex) {
-                    keep = false;
-                    break;
-                }
-            }
-            if (keep) {
+            if (std::find(finalIndices.begin(), finalIndices.end(), bestIndex) == finalIndices.end()) {
                 finalIndices.push_back(bestIndex);
             }
         }
-
-        // we cannot copy Bullet shapes so we must create a new one...
-        btConvexHullShape* newHull = new btConvexHullShape();
-        for (uint32_t i = 0; i < finalIndices.size(); ++i) {
-            newHull->addPoint(shapePoints[finalIndices[i]], false);
+        hullPoints.reserve(finalIndices.size());
+        for (uint32_t index : finalIndices) {
+            hullPoints.push_back(glmToJolt(points[index]));
         }
-        // ...and delete the old one
-        delete hull;
-        hull = newHull;
+    } else {
+        hullPoints.reserve(points.size());
+        for (const glm::vec3& point : points) {
+            hullPoints.push_back(glmToJolt(point));
+        }
     }
 
-    hull->recalcLocalAabb();
-    return hull;
+    JPH::ConvexHullShapeSettings settings(hullPoints, convexRadius);
+    return create(settings, "convex hull");
 }
 
-// util method
-btTriangleIndexVertexArray* createStaticMeshArray(const ShapeInfo& info) {
+ShapeRef createStaticMesh(const ShapeInfo& info) {
     assert(info.getType() == SHAPE_TYPE_STATIC_MESH); // should only get here for mesh shapes
 
     const ShapeInfo::PointCollection& pointCollection = info.getPointCollection();
-
     if (pointCollection.size() < 1) {
         // no lists of points to work with
         return nullptr;
@@ -223,78 +183,121 @@ btTriangleIndexVertexArray* createStaticMeshArray(const ShapeInfo& info) {
         return nullptr;
     }
 
-    // allocate mesh buffers
-    btIndexedMesh mesh;
+    JPH::VertexList vertices;
+    vertices.reserve(pointList.size());
+    for (const glm::vec3& point : pointList) {
+        vertices.push_back(JPH::Float3(point.x, point.y, point.z));
+    }
+
     const int32_t VERTICES_PER_TRIANGLE = 3;
-    mesh.m_numTriangles = numIndices / VERTICES_PER_TRIANGLE;
-    if (numIndices < std::numeric_limits<int16_t>::max()) {
-        // small number of points so we can use 16-bit indices
-        mesh.m_triangleIndexBase = new unsigned char[sizeof(int16_t) * (size_t)numIndices];
-        mesh.m_indexType = PHY_SHORT;
-        mesh.m_triangleIndexStride = VERTICES_PER_TRIANGLE * sizeof(int16_t);
-    } else {
-        mesh.m_triangleIndexBase = new unsigned char[sizeof(int32_t) * (size_t)numIndices];
-        mesh.m_indexType = PHY_INTEGER;
-        mesh.m_triangleIndexStride = VERTICES_PER_TRIANGLE * sizeof(int32_t);
-    }
-    mesh.m_numVertices = (int)pointList.size();
-    mesh.m_vertexBase = new unsigned char[VERTICES_PER_TRIANGLE * sizeof(btScalar) * (size_t)mesh.m_numVertices];
-    mesh.m_vertexStride = VERTICES_PER_TRIANGLE * sizeof(btScalar);
-    mesh.m_vertexType = PHY_FLOAT;
-
-    // copy data into buffers
-    btScalar* vertexData = static_cast<btScalar*>((void*)(mesh.m_vertexBase));
-    for (int32_t i = 0; i < mesh.m_numVertices; ++i) {
-        int32_t j = i * VERTICES_PER_TRIANGLE;
-        const glm::vec3& point = pointList[i];
-        vertexData[j] = point.x;
-        vertexData[j + 1] = point.y;
-        vertexData[j + 2] = point.z;
-    }
-    if (numIndices < std::numeric_limits<int16_t>::max()) {
-        int16_t* indices = static_cast<int16_t*>((void*)(mesh.m_triangleIndexBase));
-        for (int32_t i = 0; i < numIndices; ++i) {
-            indices[i] = (int16_t)triangleIndices[i];
+    int32_t numTriangles = numIndices / VERTICES_PER_TRIANGLE;
+    int32_t numVertices = (int32_t)pointList.size();
+    JPH::IndexedTriangleList triangles;
+    triangles.reserve(numTriangles);
+    for (int32_t t = 0; t < numTriangles; ++t) {
+        int32_t a = triangleIndices[3 * t];
+        int32_t b = triangleIndices[3 * t + 1];
+        int32_t c = triangleIndices[3 * t + 2];
+        if (a < 0 || b < 0 || c < 0 || a >= numVertices || b >= numVertices || c >= numVertices) {
+            continue; // a bad index would read past the vertex list
         }
-    } else {
-        int32_t* indices = static_cast<int32_t*>((void*)(mesh.m_triangleIndexBase));
-        for (int32_t i = 0; i < numIndices; ++i) {
-            indices[i] = triangleIndices[i];
-        }
+        triangles.push_back(JPH::IndexedTriangle((JPH::uint32)a, (JPH::uint32)b, (JPH::uint32)c));
+    }
+    if (triangles.empty()) {
+        return nullptr;
     }
 
-    // store buffers in a new dataArray and return the pointer
-    // (external StaticMeshShape will own all of the data that was allocated here)
-    btTriangleIndexVertexArray* dataArray = new btTriangleIndexVertexArray;
-    dataArray->addIndexedMesh(mesh, mesh.m_indexType);
-    return dataArray;
+    JPH::MeshShapeSettings settings(std::move(vertices), std::move(triangles));
+    return create(settings, "static mesh");
 }
 
-const btCollisionShape* ShapeFactory::createShapeFromInfo(const ShapeInfo& info) {
-    btCollisionShape* shape = nullptr;
+// a shape rotated so its own Y axis lies along the requested axis
+ShapeRef rotatedToAxis(const ShapeRef& shape, int axis) {
+    if (!shape) {
+        return nullptr;
+    }
+    JPH::Quat rotation = JPH::Quat::sIdentity();
+    if (axis == 0) {
+        rotation = JPH::Quat::sRotation(JPH::Vec3::sAxisZ(), -0.5f * JPH::JPH_PI); // Y -> X
+    } else if (axis == 2) {
+        rotation = JPH::Quat::sRotation(JPH::Vec3::sAxisX(), 0.5f * JPH::JPH_PI);  // Y -> Z
+    } else {
+        return shape;
+    }
+    JPH::RotatedTranslatedShapeSettings settings(JPH::Vec3::sZero(), rotation, shape);
+    return create(settings, "rotated shape");
+}
+
+ShapeRef createCapsule(float radius, float halfExtentAlongAxis, int axis) {
+    const float MIN_RADIUS = 0.001f;
+    radius = glm::max(radius, MIN_RADIUS);
+    float cylinderHalfHeight = halfExtentAlongAxis - radius;
+    if (cylinderHalfHeight < MIN_RADIUS) {
+        return new JPH::SphereShape(radius);
+    }
+    return rotatedToAxis(new JPH::CapsuleShape(cylinderHalfHeight, radius), axis);
+}
+
+ShapeRef createCylinder(const glm::vec3& halfExtents, int axis) {
+    float halfHeight = halfExtents[axis];
+    float radius = (axis == 1) ? glm::max(halfExtents.x, halfExtents.z)
+                               : glm::max(halfExtents[(axis + 1) % 3], halfExtents[(axis + 2) % 3]);
+    const float MIN_SIZE = 0.001f;
+    halfHeight = glm::max(halfHeight, MIN_SIZE);
+    radius = glm::max(radius, MIN_SIZE);
+    float convexRadius = glm::clamp(0.5f * glm::min(halfHeight, radius), 0.0f, JPH::cDefaultConvexRadius);
+    return rotatedToAxis(new JPH::CylinderShape(halfHeight, radius, convexRadius), axis);
+}
+
+ShapeRef compoundOf(const std::vector<ShapeRef>& parts) {
+    if (parts.empty()) {
+        return nullptr;
+    }
+    if (parts.size() == 1) {
+        return parts[0];
+    }
+    JPH::StaticCompoundShapeSettings settings;
+    for (const ShapeRef& part : parts) {
+        if (part) {
+            settings.AddShape(JPH::Vec3::sZero(), JPH::Quat::sIdentity(), part.GetPtr());
+        }
+    }
+    return create(settings, "compound shape");
+}
+
+} // namespace
+
+ShapeRef ShapeFactory::createShapeFromInfo(const ShapeInfo& info) {
+    ShapeRef shape;
     int type = info.getType();
     switch(type) {
         case SHAPE_TYPE_BOX: {
-            shape = new btBoxShape(glmToBullet(info.getHalfExtents()));
+            glm::vec3 halfExtents = glm::max(info.getHalfExtents(), glm::vec3(MIN_CONVEX_RADIUS));
+            shape = new JPH::BoxShape(glmToJolt(halfExtents), convexRadiusFor(halfExtents));
         }
         break;
         case SHAPE_TYPE_SPHERE: {
             glm::vec3 halfExtents = info.getHalfExtents();
             float radius = glm::max(halfExtents.x, glm::max(halfExtents.y, halfExtents.z));
-            shape = new btSphereShape(radius);
+            shape = new JPH::SphereShape(glm::max(radius, MIN_CONVEX_RADIUS));
         }
         break;
         case SHAPE_TYPE_MULTISPHERE: {
-            std::vector<btVector3> positions;
-            std::vector<float> radiuses;
+            // Jolt has no multi-sphere primitive; a compound of spheres is the same volume
             auto sphereCollection = info.getSphereCollection();
-            for (auto &sphereData : sphereCollection) {
-                positions.push_back(glmToBullet(glm::vec3(sphereData)));
-                radiuses.push_back(sphereData.w);
+            if (sphereCollection.size() == 1) {
+                const glm::vec4& sphereData = sphereCollection[0];
+                JPH::RotatedTranslatedShapeSettings settings(glmToJolt(glm::vec3(sphereData)), JPH::Quat::sIdentity(),
+                                                             new JPH::SphereShape(glm::max(sphereData.w, MIN_CONVEX_RADIUS)));
+                shape = create(settings, "sphere");
+            } else if (!sphereCollection.empty()) {
+                JPH::StaticCompoundShapeSettings settings;
+                for (auto& sphereData : sphereCollection) {
+                    settings.AddShape(glmToJolt(glm::vec3(sphereData)), JPH::Quat::sIdentity(),
+                                      new JPH::SphereShape(glm::max(sphereData.w, MIN_CONVEX_RADIUS)));
+                }
+                shape = create(settings, "multi-sphere");
             }
-            shape = new btMultiSphereShape(positions.data(), radiuses.data(), (int)positions.size());
-            const float MULTI_SPHERE_MARGIN = 0.001f;
-            shape->setMargin(MULTI_SPHERE_MARGIN);
         }
         break;
         case SHAPE_TYPE_ELLIPSOID: {
@@ -306,12 +309,12 @@ const btCollisionShape* ShapeFactory::createShapeFromInfo(const ShapeInfo& info)
                     && fabsf(radius - halfExtents.y) / radius < MIN_RELATIVE_SPHERICAL_ERROR
                     && fabsf(radius - halfExtents.z) / radius < MIN_RELATIVE_SPHERICAL_ERROR) {
                 // close enough to true sphere
-                shape = new btSphereShape(radius);
+                shape = new JPH::SphereShape(radius);
             } else {
                 ShapeInfo::PointList points;
                 points.reserve(NUM_UNIT_SPHERE_DIRECTIONS);
                 for (uint32_t i = 0; i < NUM_UNIT_SPHERE_DIRECTIONS; ++i) {
-                    points.push_back(bulletToGLM(_unitSphereDirections[i]) * halfExtents);
+                    points.push_back(_unitSphereDirections[i] * halfExtents);
                 }
                 shape = createConvexHull(points);
             }
@@ -319,42 +322,30 @@ const btCollisionShape* ShapeFactory::createShapeFromInfo(const ShapeInfo& info)
         break;
         case SHAPE_TYPE_CAPSULE_Y: {
             glm::vec3 halfExtents = info.getHalfExtents();
-            float radius = halfExtents.x;
-            float height = 2.0f * (halfExtents.y - radius);
-            shape = new btCapsuleShape(radius, height);
+            shape = createCapsule(halfExtents.x, halfExtents.y, 1);
         }
         break;
         case SHAPE_TYPE_CAPSULE_X: {
             glm::vec3 halfExtents = info.getHalfExtents();
-            float radius = halfExtents.y;
-            float height = 2.0f * (halfExtents.x - radius);
-            shape = new btCapsuleShapeX(radius, height);
+            shape = createCapsule(halfExtents.y, halfExtents.x, 0);
         }
         break;
         case SHAPE_TYPE_CAPSULE_Z: {
             glm::vec3 halfExtents = info.getHalfExtents();
-            float radius = halfExtents.x;
-            float height = 2.0f * (halfExtents.z - radius);
-            shape = new btCapsuleShapeZ(radius, height);
+            shape = createCapsule(halfExtents.x, halfExtents.z, 2);
         }
         break;
         case SHAPE_TYPE_CYLINDER_X: {
-            const glm::vec3 halfExtents = info.getHalfExtents();
-            const btVector3 btHalfExtents(halfExtents.x, halfExtents.y, halfExtents.z);
-            shape = new btCylinderShapeX(btHalfExtents);
+            shape = createCylinder(info.getHalfExtents(), 0);
         }
         break;
         case SHAPE_TYPE_CYLINDER_Z: {
-            const glm::vec3 halfExtents = info.getHalfExtents();
-            const btVector3 btHalfExtents(halfExtents.x, halfExtents.y, halfExtents.z);
-            shape = new btCylinderShapeZ(btHalfExtents);
+            shape = createCylinder(info.getHalfExtents(), 2);
         }
         break;
         case SHAPE_TYPE_CIRCLE:
         case SHAPE_TYPE_CYLINDER_Y: {
-            const glm::vec3 halfExtents = info.getHalfExtents();
-            const btVector3 btHalfExtents(halfExtents.x, halfExtents.y, halfExtents.z);
-            shape = new btCylinderShape(btHalfExtents);
+            shape = createCylinder(info.getHalfExtents(), 1);
         }
         break;
         case SHAPE_TYPE_COMPOUND:
@@ -366,14 +357,15 @@ const btCollisionShape* ShapeFactory::createShapeFromInfo(const ShapeInfo& info)
                     shape = createConvexHull(pointCollection[0]);
                 }
             } else {
-                auto compound = new btCompoundShape();
-                btTransform trans;
-                trans.setIdentity();
-                foreach (const ShapeInfo::PointList& hullPoints, pointCollection) {
-                    btConvexHullShape* hull = createConvexHull(hullPoints);
-                    compound->addChildShape(trans, hull);
+                std::vector<ShapeRef> hulls;
+                hulls.reserve(pointCollection.size());
+                for (const ShapeInfo::PointList& hullPoints : pointCollection) {
+                    ShapeRef hull = createConvexHull(hullPoints);
+                    if (hull) {
+                        hulls.push_back(hull);
+                    }
                 }
-                shape = compound;
+                shape = compoundOf(hulls);
             }
         }
         break;
@@ -385,7 +377,7 @@ const btCollisionShape* ShapeFactory::createShapeFromInfo(const ShapeInfo& info)
             const uint32_t MIN_NUM_SIMPLE_COMPOUND_INDICES = 2; // END_OF_MESH_PART + END_OF_MESH
             if (numMeshes > 0 && numIndices > MIN_NUM_SIMPLE_COMPOUND_INDICES) {
                 uint32_t i = 0;
-                std::vector<btConvexHullShape*> hulls;
+                std::vector<ShapeRef> hulls;
                 for (auto& points : pointCollection) {
                     // build a hull around each part
                     while (i < numIndices) {
@@ -398,41 +390,31 @@ const btCollisionShape* ShapeFactory::createShapeFromInfo(const ShapeInfo& info)
                                 // end of part
                                 break;
                             }
-                            hullPoints.push_back(points[j]);
+                            if (j >= 0 && j < (int32_t)points.size()) {
+                                hullPoints.push_back(points[j]);
+                            }
                         }
                         if (hullPoints.size() > 0) {
-                            btConvexHullShape* hull = createConvexHull(hullPoints);
-                            hulls.push_back(hull);
+                            ShapeRef hull = createConvexHull(hullPoints);
+                            if (hull) {
+                                hulls.push_back(hull);
+                            }
                         }
 
                         assert(i < numIndices);
-                        if (triangleIndices[i] == END_OF_MESH) {
+                        if (i < numIndices && triangleIndices[i] == END_OF_MESH) {
                             // end of mesh
                             ++i;
                             break;
                         }
                     }
                 }
-                uint32_t numHulls = (uint32_t)hulls.size();
-                if (numHulls == 1) {
-                    shape = hulls[0];
-                } else {
-                    auto compound = new btCompoundShape();
-                    btTransform trans;
-                    trans.setIdentity();
-                    for (auto hull : hulls) {
-                        compound->addChildShape(trans, hull);
-                    }
-                    shape = compound;
-                }
+                shape = compoundOf(hulls);
             }
         }
         break;
         case SHAPE_TYPE_STATIC_MESH: {
-            btTriangleIndexVertexArray* dataArray = createStaticMeshArray(info);
-            if (dataArray) {
-                shape = new StaticMeshShape(dataArray);
-            }
+            shape = createStaticMesh(info);
         }
         break;
         default:
@@ -440,52 +422,14 @@ const btCollisionShape* ShapeFactory::createShapeFromInfo(const ShapeInfo& info)
     }
     if (shape) {
         if (glm::length2(info.getOffset()) > MIN_SHAPE_OFFSET * MIN_SHAPE_OFFSET) {
-            // we need to apply an offset
-            btTransform offset;
-            offset.setIdentity();
-            offset.setOrigin(glmToBullet(info.getOffset()));
-
-            if (shape->getShapeType() == (int)COMPOUND_SHAPE_PROXYTYPE) {
-                // this shape is already compound
-                // walk through the child shapes and adjust their transforms
-                btCompoundShape* compound = static_cast<btCompoundShape*>(shape);
-                int32_t numSubShapes = compound->getNumChildShapes();
-                for (int32_t i = 0; i < numSubShapes; ++i) {
-                    compound->updateChildTransform(i, offset * compound->getChildTransform(i), false);
-                }
-                compound->recalculateLocalAabb();
-            } else {
-                // wrap this shape in a compound
-                auto compound = new btCompoundShape();
-                compound->addChildShape(offset, shape);
-                shape = compound;
-            }
+            // the shape's geometry sits away from the body's origin (the entity's registration point)
+            JPH::RotatedTranslatedShapeSettings settings(glmToJolt(info.getOffset()), JPH::Quat::sIdentity(), shape.GetPtr());
+            shape = create(settings, "offset shape");
         }
     } else {
-        // TODO: warn about this case
+        qCDebug(physics) << "ShapeFactory: no shape for type" << ShapeInfo::getNameForShapeType((ShapeType)type);
     }
     return shape;
-}
-
-void ShapeFactory::deleteShape(const btCollisionShape* shape) {
-    assert(shape);
-    // ShapeFactory is responsible for deleting all shapes, even the const ones that are stored
-    // in the ShapeManager, so we must cast to non-const here when deleting.
-    btCollisionShape* nonConstShape = const_cast<btCollisionShape*>(shape);
-    if (nonConstShape->getShapeType() == (int)COMPOUND_SHAPE_PROXYTYPE) {
-        btCompoundShape* compoundShape = static_cast<btCompoundShape*>(nonConstShape);
-        const int numChildShapes = compoundShape->getNumChildShapes();
-        for (int i = 0; i < numChildShapes; i ++) {
-            btCollisionShape* childShape = compoundShape->getChildShape(i);
-            if (childShape->getShapeType() == (int)COMPOUND_SHAPE_PROXYTYPE) {
-                // recurse
-                ShapeFactory::deleteShape(childShape);
-            } else {
-                delete childShape;
-            }
-        }
-    }
-    delete nonConstShape;
 }
 
 void ShapeFactory::Worker::run() {

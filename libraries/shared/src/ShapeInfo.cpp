@@ -302,9 +302,16 @@ uint64_t ShapeInfo::getHash() const {
 
         QString url = _url.toString();
         if (!url.isEmpty()) {
-            QByteArray baUrl = url.toLocal8Bit();
-            uint32_t urlHash = qChecksum(baUrl.data(), baUrl.size());
-            hasher.hashUint64((uint64_t)urlHash);
+            // The url is the whole identity of a mesh or hull shape (its points are not hashed), so it gets a
+            // real 64-bit hash (FNV-1a) rather than the 16-bit checksum that used to stand in for it: a terrain
+            // chunk key that differs from its last version by one digit must never share a cache entry.
+            QByteArray baUrl = url.toUtf8();
+            uint64_t urlHash = 0xcbf29ce484222325ULL;
+            for (int i = 0; i < baUrl.size(); ++i) {
+                urlHash ^= (uint64_t)(uint8_t)baUrl[i];
+                urlHash *= 0x100000001b3ULL;
+            }
+            hasher.hashUint64(urlHash);
         }
 
         if (_type == SHAPE_TYPE_COMPOUND || _type == SHAPE_TYPE_SIMPLE_COMPOUND) {

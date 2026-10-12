@@ -1,5 +1,5 @@
 //
-//  ContactEvent.h
+//  ContactInfo.h
 //  libraries/physics/src
 //
 //  Created by Andrew Meadows 2015.01.20
@@ -12,29 +12,33 @@
 #ifndef hifi_ContactEvent_h
 #define hifi_ContactEvent_h
 
-#include <btBulletDynamicsCommon.h>
+#include <stdint.h>
+
 #include <glm/glm.hpp>
 
 #include "RegisteredMetaTypes.h"
 
-
+// One touching pair, as last reported by the engine, with the step bookkeeping that turns a stream of
+// contact reports into START, CONTINUE and END events.
 class ContactInfo {
 public:
-    void update(uint32_t currentStep, const btManifoldPoint& p);
+    // positionOnB and normalOnB are in the simulation frame; the normal points from B toward A, as Bullet's
+    // did, so every consumer keeps its sign conventions. distance is negative when penetrating.
+    void update(uint32_t currentStep, const glm::vec3& positionOnB, const glm::vec3& normalOnB, float distance);
     ContactEventType computeType(uint32_t thisStep);
 
-    const btVector3& getPositionWorldOnB() const { return positionWorldOnB; }
-    btVector3 getPositionWorldOnA() const { return positionWorldOnB + normalWorldOnB * distance; }
-
+    const glm::vec3& getPositionWorldOnB() const { return positionWorldOnB; }
+    glm::vec3 getPositionWorldOnA() const { return positionWorldOnB + normalWorldOnB * distance; }
     bool readyForContinue(uint32_t thisStep);
+    uint32_t getLastStep() const { return _lastStep; }
 
-    btVector3 positionWorldOnB;
-    btVector3 normalWorldOnB;
-    btScalar distance;
+    glm::vec3 positionWorldOnB { 0.0f };
+    glm::vec3 normalWorldOnB { 0.0f, 1.0f, 0.0f };
+    float distance { 0.0f };
+
 private:
     uint32_t _lastStep { 0 };
     uint32_t _continueExpiry { 0 };
 };
-
 
 #endif // hifi_ContactEvent_h

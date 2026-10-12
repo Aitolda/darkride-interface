@@ -13,10 +13,14 @@
 #define hifi_MultiSphereShape_h
 
 #include <stdint.h>
-#include <btBulletDynamicsCommon.h>
+#include <vector>
+
+#include <QtCore/QString>
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+
 #include <GLMHelpers.h>
 #include <AABox.h>
-#include "BulletUtil.h"
 
 
 class SphereRegion {
@@ -105,7 +109,7 @@ public:
     };
 
     MultiSphereShape() {};
-    bool computeMultiSphereShape(int jointIndex, const QString& name, const std::vector<btVector3>& points, float scale = 1.0f);
+    bool computeMultiSphereShape(int jointIndex, const QString& name, const std::vector<glm::vec3>& points, float scale = 1.0f);
     void calculateDebugLines();
     const std::vector<SphereData>& getSpheresData() const { return _spheres; }
     const std::vector<std::pair<glm::vec3, glm::vec3>>& getDebugLines() const { return _debugLines; }
@@ -117,12 +121,12 @@ public:
     bool isValid() const { return _spheres.size() > 0; }
 
 private:
-    KdopData getKdopData(const std::vector<btVector3>& kdop);
+    KdopData getKdopData(const std::vector<glm::vec3>& kdop);
     CollapsingMode computeSpheres(ExtractionMode mode, const KdopData& kdopData);
     ExtractionMode getExtractionModeByJointName(const QString& jointName);
     CollapsingMode getNextCollapsingMode(ExtractionMode mode, const std::vector<SphereData>& spheres);
     QString modeToString(CollapsingMode type) { return ExtractionModeNames[(int)type]; }
-    void filterUniquePoints(const std::vector<btVector3>& kdop, std::vector<glm::vec3>& uniquePoints);
+    void filterUniquePoints(const std::vector<glm::vec3>& kdop, std::vector<glm::vec3>& uniquePoints);
     CollapsingMode spheresFromAxes(const std::vector<glm::vec3>& points, const std::vector<glm::vec3>& axes,
                                    std::vector<SphereData>& spheres);
     

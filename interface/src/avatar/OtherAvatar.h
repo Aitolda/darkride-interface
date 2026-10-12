@@ -17,6 +17,10 @@
 
 #include "InterfaceLogging.h"
 
+namespace JPH {
+    class Shape;
+}
+
 class AvatarManager;
 class AvatarMotionState;
 class DetailedMotionState;
@@ -52,8 +56,9 @@ public:
     uint8_t getWorkloadRegion() { return _workloadRegion; }
     bool shouldBeInPhysicsSimulation() const;
     bool needsPhysicsUpdate() const;
+    bool needsFrameChange() const;
 
-    const btCollisionShape* createCollisionShape(int32_t jointIndex, bool& isBound, std::vector<int32_t>& boundJoints);
+    const JPH::Shape* createCollisionShape(int32_t jointIndex, bool& isBound, std::vector<int32_t>& boundJoints);
     std::vector<DetailedMotionState*>& getDetailedMotionStates() { return _detailedMotionStates; }
     void forgetDetailedMotionStates();
     BodyLOD getBodyLOD() { return _bodyLOD; }

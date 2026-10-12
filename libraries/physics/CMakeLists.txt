@@ -1,6 +1,6 @@
 set(TARGET_NAME physics)
 setup_hifi_library()
-link_hifi_libraries(shared workload entities shaders)
+link_hifi_libraries(shared workload entities shaders vehicles)
 include_hifi_library_headers(networking)
 include_hifi_library_headers(gpu)
 include_hifi_library_headers(avatars)
@@ -15,4 +15,4 @@ include_hifi_library_headers(hfm)
 include_hifi_library_headers(fbx)
 include_hifi_library_headers(graphics)
 
-target_bullet()
+target_jolt()

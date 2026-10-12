@@ -13,11 +13,20 @@
 
 #include <iostream>
 
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
+
+#include <JoltSupport.h>
 #include <ShapeManager.h>
 #include <StreamUtils.h>
 #include <Extents.h>
 
 QTEST_MAIN(ShapeManagerTests)
+
+void ShapeManagerTests::initTestCase() {
+    // Jolt's allocator and type registry must be in place before the first shape
+    QVERIFY(JoltSupport::initialize());
+}
 
 void ShapeManagerTests::testShapeAccounting() {
     ShapeManager shapeManager;
@@ -28,14 +37,14 @@ void ShapeManagerTests::testShapeAccounting() {
     QCOMPARE(numReferences, 0);
 
     // create one shape and verify we get a valid pointer
-    const btCollisionShape* shape = shapeManager.getShape(info);
+    const JPH::Shape* shape = shapeManager.getShape(info);
     QCOMPARE(shape != nullptr, true);
 
     // verify number of shapes
     QCOMPARE(shapeManager.getNumShapes(), 1);
 
     // reference the shape again and verify that we get the same pointer
-    const btCollisionShape* otherShape = shapeManager.getShape(info);
+    const JPH::Shape* otherShape = shapeManager.getShape(info);
     QCOMPARE(otherShape, shape);
 
     // verify number of references
@@ -85,7 +94,7 @@ void ShapeManagerTests::testShapeAccounting() {
 void ShapeManagerTests::addManyShapes() {
     ShapeManager shapeManager;
 
-    QVector<const btCollisionShape*> shapes;
+    QVector<const JPH::Shape*> shapes;
 
     int numSizes = 100;
     float startSize = 1.0f;
@@ -93,15 +102,15 @@ void ShapeManagerTests::addManyShapes() {
     float deltaSize = (endSize - startSize) / (float)numSizes;
     ShapeInfo info;
     for (int i = 0; i < numSizes; ++i) {
-        // make a sphere
+        // make a box
         float s = startSize + (float)i * deltaSize;
         glm::vec3 scale(s, 1.23f + s, s - 0.573f);
         info.setBox(0.5f * scale);
-        const btCollisionShape* shape = shapeManager.getShape(info);
+        const JPH::Shape* shape = shapeManager.getShape(info);
         shapes.push_back(shape);
         QCOMPARE(shape != nullptr, true);
 
-        // make a box
+        // make a sphere
         float radius = 0.5f * s;
         info.setSphere(radius);
         shape = shapeManager.getShape(info);
@@ -115,14 +124,14 @@ void ShapeManagerTests::addManyShapes() {
 
     // release each shape by pointer
     for (int i = 0; i < numShapes; ++i) {
-        const btCollisionShape* shape = shapes[i];
+        const JPH::Shape* shape = shapes[i];
         bool success = shapeManager.releaseShape(shape);
         QCOMPARE(success, true);
     }
 
     // verify zero references
     for (int i = 0; i < numShapes; ++i) {
-        const btCollisionShape* shape = shapes[i];
+        const JPH::Shape* shape = shapes[i];
         int numReferences = shapeManager.getNumReferences(shape);
         QCOMPARE(numReferences, 0);
     }
@@ -134,10 +143,12 @@ void ShapeManagerTests::addBoxShape() {
     info.setBox(halfExtents);
 
     ShapeManager shapeManager;
-    const btCollisionShape* shape = shapeManager.getShape(info);
+    const JPH::Shape* shape = shapeManager.getShape(info);
+    QVERIFY(shape != nullptr);
+    QCOMPARE((int)shape->GetSubType(), (int)JPH::EShapeSubType::Box);
 
     ShapeInfo otherInfo = info;
-    const btCollisionShape* otherShape = shapeManager.getShape(otherInfo);
+    const JPH::Shape* otherShape = shapeManager.getShape(otherInfo);
     QCOMPARE(shape, otherShape);
 }
 
@@ -147,43 +158,45 @@ void ShapeManagerTests::addSphereShape() {
     info.setSphere(radius);
 
     ShapeManager shapeManager;
-    const btCollisionShape* shape = shapeManager.getShape(info);
+    const JPH::Shape* shape = shapeManager.getShape(info);
+    QVERIFY(shape != nullptr);
+    QCOMPARE((int)shape->GetSubType(), (int)JPH::EShapeSubType::Sphere);
 
     ShapeInfo otherInfo = info;
-    const btCollisionShape* otherShape = shapeManager.getShape(otherInfo);
+    const JPH::Shape* otherShape = shapeManager.getShape(otherInfo);
     QCOMPARE(shape, otherShape);
 }
 
 void ShapeManagerTests::addCylinderShape() {
-    /* TODO: reimplement Cylinder shape
     ShapeInfo info;
     float radius = 1.23f;
-    float height = 4.56f;
-    info.setCylinder(radius, height);
+    float halfHeight = 4.56f;
+    info.setParams(SHAPE_TYPE_CYLINDER_Y, glm::vec3(radius, halfHeight, radius));
 
     ShapeManager shapeManager;
-    const btCollisionShape* shape = shapeManager.getShape(info);
+    const JPH::Shape* shape = shapeManager.getShape(info);
+    QVERIFY(shape != nullptr);
+    QCOMPARE((int)shape->GetSubType(), (int)JPH::EShapeSubType::Cylinder);
 
     ShapeInfo otherInfo = info;
-    const btCollisionShape* otherShape = shapeManager.getShape(otherInfo);
+    const JPH::Shape* otherShape = shapeManager.getShape(otherInfo);
     QCOMPARE(shape, otherShape);
-    */
 }
 
 void ShapeManagerTests::addCapsuleShape() {
-    /* TODO: reimplement Capsule shape
     ShapeInfo info;
     float radius = 1.23f;
-    float height = 4.56f;
-    info.setCapsule(radius, height);
+    float cylinderHalfHeight = 4.56f;
+    info.setCapsuleY(radius, cylinderHalfHeight);
 
     ShapeManager shapeManager;
-    const btCollisionShape* shape = shapeManager.getShape(info);
+    const JPH::Shape* shape = shapeManager.getShape(info);
+    QVERIFY(shape != nullptr);
+    QCOMPARE((int)shape->GetSubType(), (int)JPH::EShapeSubType::Capsule);
 
     ShapeInfo otherInfo = info;
-    const btCollisionShape* otherShape = shapeManager.getShape(otherInfo);
+    const JPH::Shape* otherShape = shapeManager.getShape(otherInfo);
     QCOMPARE(shape, otherShape);
-    */
 }
 
 void ShapeManagerTests::addCompoundShape() {
@@ -220,15 +233,18 @@ void ShapeManagerTests::addCompoundShape() {
 
     // create the shape
     ShapeManager shapeManager;
-    const btCollisionShape* shape = shapeManager.getShape(info);
+    const JPH::Shape* shape = shapeManager.getShape(info);
     QVERIFY(shape != nullptr);
 
     // verify the shape is correct type
-    QCOMPARE(shape->getShapeType(), (int)COMPOUND_SHAPE_PROXYTYPE);
+    QCOMPARE((int)shape->GetSubType(), (int)JPH::EShapeSubType::StaticCompound);
 
-    // verify the shape has correct number of children
-    const btCompoundShape* compoundShape = static_cast<const btCompoundShape*>(shape);
-    QCOMPARE(compoundShape->getNumChildShapes(), numHulls);
+    // verify the shape has correct number of children, each a convex hull
+    const JPH::StaticCompoundShape* compoundShape = static_cast<const JPH::StaticCompoundShape*>(shape);
+    QCOMPARE((int)compoundShape->GetNumSubShapes(), numHulls);
+    for (int i = 0; i < numHulls; ++i) {
+        QCOMPARE((int)compoundShape->GetSubShape(i).mShape->GetSubType(), (int)JPH::EShapeSubType::ConvexHull);
+    }
 
     // verify manager has only one shape
     QCOMPARE(shapeManager.getNumShapes(), 1);

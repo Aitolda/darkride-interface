@@ -11,6 +11,8 @@
 
 #include "ObjectConstraintConeTwist.h"
 
+#include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
+
 #include <LogHandler.h>
 
 #include "QVariantGLM.h"
@@ -21,6 +23,24 @@
 const uint16_t CONE_TWIST_VERSION_WITH_UNUSED_PAREMETERS = 1;
 const uint16_t ObjectConstraintConeTwist::constraintVersion = 2;
 const glm::vec3 DEFAULT_CONE_TWIST_AXIS(1.0f, 0.0f, 0.0f);
+// The joint frame, as Bullet built it, is the default axis turned onto the given one; its X is the twist axis.
+const glm::vec3 CONE_TWIST_FRAME_Z(0.0f, 0.0f, 1.0f);
+
+// A point given relative to the body's origin, as scripts give it, expressed relative to the body's centre of
+// mass, which is what Jolt's LocalToBodyCOM constraint space wants.
+static JPH::RVec3 toBodyCOMSpace(const JPH::Body* body, const glm::vec3& point) {
+    return glmToJoltR(point - joltToGLM(body->GetShape()->GetCenterOfMass()));
+}
+
+// Bullet's spans were half angles without an upper bound: anything from pi up meant no limit, and a negative twist
+// span no twist limit. Jolt wants half cone angles in [0, pi] and twist angles in [-pi, pi], where pi means free.
+static float swingHalfAngleForJolt(float span) {
+    return glm::clamp(span, 0.0f, PI);
+}
+
+static float twistHalfAngleForJolt(float span) {
+    return span < 0.0f ? PI : glm::min(span, PI);
+}
 
 ObjectConstraintConeTwist::ObjectConstraintConeTwist(const QUuid& id, EntityItemPointer ownerEntity) :
     ObjectConstraint(DYNAMIC_TYPE_CONE_TWIST, id, ownerEntity),
@@ -38,15 +58,17 @@ ObjectConstraintConeTwist::~ObjectConstraintConeTwist() {
     #endif
 }
 
-QList<btRigidBody*> ObjectConstraintConeTwist::getRigidBodies() {
-    QList<btRigidBody*> result;
-    result += getRigidBody();
+std::vector<JPH::BodyID> ObjectConstraintConeTwist::getBodyIDs() {
+    std::vector<JPH::BodyID> result = ObjectDynamic::getBodyIDs();
     QUuid otherEntityID;
     withReadLock([&]{
         otherEntityID = _otherID;
     });
     if (!otherEntityID.isNull()) {
-        result += getOtherRigidBody(otherEntityID);
+        JPH::Body* otherBody = getOtherBody(otherEntityID);
+        if (otherBody) {
+            result.push_back(otherBody->GetID());
+        }
     }
     return result;
 }
@@ -55,13 +77,13 @@ void ObjectConstraintConeTwist::prepareForPhysicsSimulation() {
 }
 
 void ObjectConstraintConeTwist::updateConeTwist() {
-    btConeTwistConstraint* constraint { nullptr };
+    JPH::SwingTwistConstraint* constraint { nullptr };
     float swingSpan1;
     float swingSpan2;
     float twistSpan;
 
     withReadLock([&]{
-        constraint = static_cast<btConeTwistConstraint*>(_constraint);
+        constraint = static_cast<JPH::SwingTwistConstraint*>(_constraint.GetPtr());
         swingSpan1 = _swingSpan1;
         swingSpan2 = _swingSpan2;
         twistSpan = _twistSpan;
@@ -71,27 +93,37 @@ void ObjectConstraintConeTwist::updateConeTwist() {
         return;
     }
 
-    constraint->setLimit(swingSpan1,
-                         swingSpan2,
-                         twistSpan);
+    // swingSpan1 bounds the swing about the frame's Z (the twist axis leaning toward the frame's Y, Jolt's normal
+    // axis); swingSpan2 the swing about the frame's Y (leaning toward the frame's Z, Jolt's plane axis).
+    constraint->SetNormalHalfConeAngle(swingHalfAngleForJolt(swingSpan1));
+    constraint->SetPlaneHalfConeAngle(swingHalfAngleForJolt(swingSpan2));
+    float twist = twistHalfAngleForJolt(twistSpan);
+    constraint->SetTwistMinAngle(-twist);
+    constraint->SetTwistMaxAngle(twist);
 }
 
 
-btTypedConstraint* ObjectConstraintConeTwist::getConstraint() {
-    btConeTwistConstraint* constraint { nullptr };
+JPH::Constraint* ObjectConstraintConeTwist::getConstraint() {
+    JPH::Constraint* constraint { nullptr };
     QUuid otherEntityID;
     glm::vec3 pivotInA;
     glm::vec3 axisInA;
     glm::vec3 pivotInB;
     glm::vec3 axisInB;
+    float swingSpan1;
+    float swingSpan2;
+    float twistSpan;
 
     withReadLock([&]{
-        constraint = static_cast<btConeTwistConstraint*>(_constraint);
+        constraint = _constraint.GetPtr();
         pivotInA = _pivotInA;
         axisInA = _axisInA;
         otherEntityID = _otherID;
         pivotInB = _pivotInB;
         axisInB = _axisInB;
+        swingSpan1 = _swingSpan1;
+        swingSpan2 = _swingSpan2;
+        twistSpan = _twistSpan;
     });
     if (constraint) {
         return constraint;
@@ -99,9 +131,9 @@ btTypedConstraint* ObjectConstraintConeTwist::getConstraint() {
 
     static int repeatMessageID = LogHandler::getInstance().newRepeatedMessageID();
 
-    btRigidBody* rigidBodyA = getRigidBody();
-    if (!rigidBodyA) {
-        HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintConeTwist::getConstraint -- no rigidBodyA");
+    JPH::Body* bodyA = getBody();
+    if (!bodyA) {
+        HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintConeTwist::getConstraint -- no bodyA");
         return nullptr;
     }
 
@@ -112,8 +144,25 @@ btTypedConstraint* ObjectConstraintConeTwist::getConstraint() {
         axisInA = glm::normalize(axisInA);
     }
 
+    // Jolt's constraint frame is made the same as Bullet's: the twist axis is the frame's X (the given axis) and
+    // the plane axis the frame's Z, which makes Jolt's normal axis the frame's Y. The joint is at rest, with no
+    // swing and no twist, when the two frames align.
+    JPH::SwingTwistConstraintSettings settings;
+    settings.mSpace = JPH::EConstraintSpace::LocalToBodyCOM;
+    settings.mSwingType = JPH::ESwingType::Cone; // an elliptical cone, as Bullet's
+    glm::quat rotA = glm::rotation(DEFAULT_CONE_TWIST_AXIS, axisInA);
+    settings.mPosition1 = toBodyCOMSpace(bodyA, pivotInA);
+    settings.mTwistAxis1 = glmToJolt(axisInA);
+    settings.mPlaneAxis1 = glmToJolt(rotA * CONE_TWIST_FRAME_Z);
+
+    JPH::Body* bodyB { nullptr };
     if (!otherEntityID.isNull()) {
-        // This coneTwist is between two entities... find the other rigid body.
+        // This coneTwist is between two entities... find the other body.
+        bodyB = getOtherBody(otherEntityID);
+        if (!bodyB) {
+            HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintConeTwist::getConstraint -- no bodyB");
+            return nullptr;
+        }
 
         if (glm::length(axisInB) < FLT_EPSILON) {
             qCWarning(physics) << "cone-twist axis cannot be a zero vector";
@@ -122,34 +171,35 @@ btTypedConstraint* ObjectConstraintConeTwist::getConstraint() {
             axisInB = glm::normalize(axisInB);
         }
 
-        glm::quat rotA = glm::rotation(DEFAULT_CONE_TWIST_AXIS, axisInA);
         glm::quat rotB = glm::rotation(DEFAULT_CONE_TWIST_AXIS, axisInB);
-
-        btTransform frameInA(glmToBullet(rotA), glmToBullet(pivotInA));
-        btTransform frameInB(glmToBullet(rotB), glmToBullet(pivotInB));
-
-        btRigidBody* rigidBodyB = getOtherRigidBody(otherEntityID);
-        if (!rigidBodyB) {
-            HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintConeTwist::getConstraint -- no rigidBodyB");
-            return nullptr;
-        }
-
-        constraint = new btConeTwistConstraint(*rigidBodyA, *rigidBodyB, frameInA, frameInB);
+        settings.mPosition2 = toBodyCOMSpace(bodyB, pivotInB);
+        settings.mTwistAxis2 = glmToJolt(axisInB);
+        settings.mPlaneAxis2 = glmToJolt(rotB * CONE_TWIST_FRAME_Z);
     } else {
-        // This coneTwist is between an entity and the world-frame.
-
-        glm::quat rot = glm::rotation(DEFAULT_CONE_TWIST_AXIS, axisInA);
-
-        btTransform frameInA(glmToBullet(rot), glmToBullet(pivotInA));
-
-        constraint = new btConeTwistConstraint(*rigidBodyA, frameInA);
+        // This coneTwist is between an entity and the world-frame. The other body is Jolt's fixed-to-world body,
+        // whose own frame is the world frame. As with Bullet, the world side gets the entity's frame as a
+        // world-space frame, so swing and twist are measured from the entity's identity rotation; its pivot,
+        // though, is where the entity's pivot is now (Bullet left it at the world origin).
+        bodyB = &JPH::Body::sFixedToWorld;
+        glm::vec3 positionA = joltToGLM(bodyA->GetPosition());
+        glm::quat rotationA = joltToGLM(bodyA->GetRotation());
+        settings.mPosition2 = glmToJoltR(positionA + rotationA * pivotInA);
+        settings.mTwistAxis2 = settings.mTwistAxis1;
+        settings.mPlaneAxis2 = settings.mPlaneAxis1;
     }
+    settings.mNormalHalfConeAngle = swingHalfAngleForJolt(swingSpan1);
+    settings.mPlaneHalfConeAngle = swingHalfAngleForJolt(swingSpan2);
+    float twist = twistHalfAngleForJolt(twistSpan);
+    settings.mTwistMinAngle = -twist;
+    settings.mTwistMaxAngle = twist;
+
+    constraint = settings.Create(*bodyA, *bodyB);
 
     withWriteLock([&]{
         _constraint = constraint;
     });
 
-    // if we don't wake up rigidBodyA, we may not send the dynamicData property over the network
+    // if we don't wake up bodyA, we may not send the dynamicData property over the network
     forceBodyNonStatic();
     activateBody();
 
@@ -273,6 +323,7 @@ bool ObjectConstraintConeTwist::updateArguments(QVariantMap arguments) {
  * @property {Vec3} otherPivot=0,0,0 - The local offset of the joint relative to the other entity's position.
  * @property {Vec3} otherAxis=1,0,0 - The axis of the other entity that moves through the cone. Must be a non-zero vector.
  * @property {number} swingSpan1=2*Math.PI - The angle through which the joint can move in one axis of the cone, in radians.
+ *     Spans of <code>Math.PI</code> or more leave that movement free.
  * @property {number} swingSpan2=2*Math.PI - The angle through which the joint can move in the other axis of the cone, in 
  *     radians.
  * @property {number} twistSpan=2*Math.PI - The angle through with the joint can twist, in radians.

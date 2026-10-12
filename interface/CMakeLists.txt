@@ -215,7 +215,7 @@ link_hifi_libraries(
   shared workload task octree ktx gpu gl procedural graphics graphics-scripting render
   pointers recording hfm fbx networking material-networking
   model-networking model-baker entities avatars
-  audio audio-client animation script-engine physics
+  audio audio-client animation script-engine physics vehicles
   render-utils entities-renderer avatars-renderer ui qml auto-updater midi terrain
   controllers plugins image platform
   ui-plugins display-plugins input-plugins
@@ -232,7 +232,6 @@ target_include_directories(${TARGET_NAME} PRIVATE "${CMAKE_BINARY_DIR}/libraries
 # include OpenSSL
 target_openssl()
 
-target_bullet()
 target_opengl()
 add_crashpad()
 target_breakpad()

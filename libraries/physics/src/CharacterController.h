@@ -1,5 +1,5 @@
 //
-//  CharacterControllerInterface.h
+//  CharacterController.h
 //  libraries/physics/src
 //
 //  Created by Andrew Meadows 2015.10.21
@@ -15,15 +15,21 @@
 #include <assert.h>
 #include <stdint.h>
 #include <atomic>
-#include <btBulletDynamicsCommon.h>
-#include <BulletDynamics/Character/btCharacterControllerInterface.h>
+#include <vector>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+
+#include <Jolt/Jolt.h>
+#include <Jolt/Core/Reference.h>
+#include <Jolt/Physics/Body/BodyID.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Collision/Shape/Shape.h>
 
 #include <GLMHelpers.h>
 #include <NumericalConstants.h>
 
 #include "AvatarConstants.h"
-#include "BulletUtil.h"
-#include "CharacterGhostObject.h"
 #include "PhysicsEngine.h"
 #include "PhysicsHelpers.h"
 
@@ -35,62 +41,58 @@ const uint32_t PENDING_FLAG_UPDATE_COLLISION_MASK = 1U << 4;
 const uint32_t PENDING_FLAG_RECOMPUTE_FLYING = 1U << 5;
 const uint32_t PENDING_FLAG_ADD_DETAILED_TO_SIMULATION = 1U << 6;
 const uint32_t PENDING_FLAG_REMOVE_DETAILED_FROM_SIMULATION = 1U << 7;
-
 const float DEFAULT_MIN_FLOOR_NORMAL_DOT_UP = cosf(PI / 3.0f);
 
 const uint32_t NUM_SUBSTEPS_FOR_STUCK_TRANSITION = 6; // physics substeps
 const uint32_t NUM_SUBSTEPS_FOR_SAFE_LANDING_RETRY = NUM_SUBSTEPS_PER_SECOND / 2; // retry every half second
 
-class btRigidBody;
-class btCollisionWorld;
-class btDynamicsWorld;
+const float MAX_CHARACTER_MOTOR_TIMESCALE = 60.0f; // one minute
+const float MIN_CHARACTER_MOTOR_TIMESCALE = 0.05f;
 
-//#define DEBUG_STATE_CHANGE
-
-const btScalar MAX_CHARACTER_MOTOR_TIMESCALE = 60.0f; // one minute
-const btScalar MIN_CHARACTER_MOTOR_TIMESCALE = 0.05f;
-
-class CharacterController : public btCharacterControllerInterface {
-
+// MyAvatar's body in the physics world: Jolt's virtual character (collide-and-slide, stairs, slopes, and the
+// velocity of whatever it stands on), driven by the engine's own motors and state machine. The character is
+// not a rigid body; an inner kinematic body in the MY_AVATAR group is what other things collide with and
+// what ray casts hit. The engine calls substep() before every 90 Hz step of the world.
+class CharacterController {
 public:
     CharacterController();
     virtual ~CharacterController();
+
     bool needsRemoval() const;
     bool needsAddition() const;
     virtual void addToWorld();
     void removeFromWorld();
-    btCollisionObject* getCollisionObject() { return _rigidBody; }
+
+    // the kinematic body that stands in for the character where a body is needed; invalid when not in the world
+    JPH::BodyID getInnerBodyID() const;
+    bool isInWorld() const { return _inWorld && _character != nullptr; }
 
     void setGravity(float gravity);
     float getGravity();
+
     void recomputeFlying();
 
     virtual void updateShapeIfNecessary() = 0;
 
-    // overrides from btCharacterControllerInterface
-    virtual void setWalkDirection(const btVector3 &walkDirection) override { assert(false); }
-    virtual void setVelocityForTimeInterval(const btVector3 &velocity, btScalar timeInterval) override { assert(false); }
-    virtual void reset(btCollisionWorld* collisionWorld) override {}
-    virtual void warp(const btVector3& origin) override {}
-    virtual void debugDraw(btIDebugDraw* debugDrawer) override {}
-    virtual void setUpInterpolate(bool value) override {}
-    virtual void updateAction(btCollisionWorld* collisionWorld, btScalar deltaTime) override;
-    virtual void preStep(btCollisionWorld *collisionWorld) override;
-    virtual void playerStep(btCollisionWorld *collisionWorld, btScalar dt) override;
-    virtual bool canJump() const override { assert(false); return false; } // never call this
-    virtual void jump(const btVector3& dir = btVector3(0.0f, 0.0f, 0.0f)) override;
-    virtual bool onGround() const override;
+    // the engine calls this before every substep of the world
+    void substep(float dt);
+
+    void jump(const glm::vec3& dir = glm::vec3(0.0f));
+    bool onGround() const;
+    // floor within reach straight below the capsule: what frame membership asks (an edge still holds a capsule up,
+    // as Jolt's ground state says, while the floor below has already ended)
+    bool hasFloorBelow() const;
 
     void clearMotors();
     void addMotor(const glm::vec3& velocity, const glm::quat& rotation, float horizTimescale, float vertTimescale = -1.0f);
-    void applyMotor(int index, btScalar dt, btVector3& worldVelocity, std::vector<btVector3>& velocities, std::vector<btScalar>& weights);
+    void applyMotor(int index, float dt, glm::vec3& worldVelocity, std::vector<glm::vec3>& velocities, std::vector<float>& weights);
     void setStepUpEnabled(bool enabled) { _stepUpEnabled = enabled; }
-    void computeNewVelocity(btScalar dt, btVector3& velocity);
-    void computeNewVelocity(btScalar dt, glm::vec3& velocity);
-    void setScaleFactor(btScalar scaleFactor) { _scaleFactor = scaleFactor; }
+    void computeNewVelocity(float dt, glm::vec3& velocity);
+
+    void setScaleFactor(float scaleFactor) { _scaleFactor = scaleFactor; }
 
     // HACK for legacy 'thrust' feature
-    void setLinearAcceleration(const glm::vec3& acceleration) { _linearAcceleration = glmToBullet(acceleration); }
+    void setLinearAcceleration(const glm::vec3& acceleration) { _linearAcceleration = acceleration; }
 
     void preSimulation();
     void postSimulation();
@@ -104,7 +106,6 @@ public:
     glm::vec3 getFollowLinearDisplacement() const;
     glm::quat getFollowAngularDisplacement() const;
     glm::vec3 getFollowVelocity() const;
-
     glm::vec3 getLinearVelocity() const;
     glm::vec3 getVelocityChange() const;
 
@@ -126,12 +127,23 @@ public:
     void setLocalBoundingBox(const glm::vec3& minCorner, const glm::vec3& scale);
 
     void setPhysicsEngine(const PhysicsEnginePointer& engine);
+    const PhysicsEnginePointer& getPhysicsEngine() const { return _physicsEngine; }
     bool isEnabledAndReady() const { return (bool)_physicsEngine; }
+
+    // The world the character moves through: the root (the domain) or a moving frame's. Positions, orientations
+    // and velocities given to and taken from the controller are in that world's coordinates. Changing the frame
+    // takes the character out of its world; it is put into the new one at the next preSimulation(), at the
+    // position set by then, with the velocity set by setLinearVelocity().
+    PhysicsWorld* getWorld() const { return _world; }
+    const QUuid& getFrameID() const { return _frameID; }
+    void setFrame(const QUuid& frameID);
+    void setLinearVelocity(const glm::vec3& velocity);
     bool isStuck() const { return _isStuck; }
     float getCollisionBrakeAttenuationFactor() const;
 
     void setCollisionless(bool collisionless);
 
+    // Only the controller for MyAvatar's avatar needs to know about the avatar's collision mask
     virtual int32_t computeCollisionMask() const = 0;
     virtual void handleChangedCollisionMask() = 0;
 
@@ -155,77 +167,82 @@ protected:
     void setState(State state);
 #endif
 
+    // sets _mass from the character's dimensions
     virtual void updateMassProperties() = 0;
     void updateCurrentGravity();
     void updateUpAxis(const glm::quat& rotation);
-    bool checkForSupport(btCollisionWorld* collisionWorld);
+    bool checkForSupport();
+    void measureFloorDistance(float rayLength, bool& rayHasHit);
+    void recordContacts();
+    JPH::ObjectLayer characterLayer() const;
 
 protected:
     struct CharacterMotor {
         CharacterMotor(const glm::vec3& vel, const glm::quat& rot, float horizTimescale, float vertTimescale = -1.0f);
 
-        btVector3 velocity { btVector3(0.0f, 0.0f, 0.0f) }; // local-frame
-        btQuaternion rotation; // local-to-world
-        btScalar hTimescale { MAX_CHARACTER_MOTOR_TIMESCALE }; // horizontal
-        btScalar vTimescale { MAX_CHARACTER_MOTOR_TIMESCALE }; // vertical
+        glm::vec3 velocity { 0.0f }; // local-frame
+        glm::quat rotation; // local-to-world
+        float hTimescale { MAX_CHARACTER_MOTOR_TIMESCALE }; // horizontal
+        float vTimescale { MAX_CHARACTER_MOTOR_TIMESCALE }; // vertical
     };
 
     std::vector<CharacterMotor> _motors;
-    CharacterGhostObject _ghost;
-    btVector3 _currentUp;
-    btVector3 _targetVelocity;
-    btVector3 _parentVelocity;
-    btVector3 _preSimulationVelocity;
-    btVector3 _velocityChange;
-    btTransform _followDesiredBodyTransform;
-    btScalar _followTimeRemaining;
-    btTransform _characterBodyTransform;
-    btVector3 _position;
-    btQuaternion _rotation;
+    JPH::Ref<JPH::CharacterVirtual> _character;
+    JPH::RefConst<JPH::Shape> _shape;
+    glm::vec3 _currentUp { 0.0f, 1.0f, 0.0f };
+    glm::vec3 _targetVelocity { 0.0f };
+    glm::vec3 _parentVelocity { 0.0f };
+    glm::vec3 _preSimulationVelocity { 0.0f };
+    glm::vec3 _velocityChange { 0.0f };
+    glm::vec3 _followDesiredPosition { 0.0f };
+    glm::quat _followDesiredRotation;
+    float _followTimeRemaining { 0.0f };
+    glm::vec3 _position { 0.0f };
+    glm::quat _rotation;
+    mutable glm::vec3 _readAhead { 0.0f }; // how far the last pose handed out was read ahead of the body
+    mutable glm::vec3 _handedOutPosition { 0.0f };
+    glm::vec3 _shapeLocalOffset { 0.0f };
 
-    glm::vec3 _shapeLocalOffset;
+    glm::vec3 _boxScale { 1.0f }; // used to compute capsule shape
 
-    glm::vec3 _boxScale; // used to compute capsule shape
+    quint64 _rayHitStartTime { 0 };
+    quint64 _takeoffToInAirStartTime { 0 };
+    quint64 _jumpButtonDownStartTime { 0 };
+    quint32 _jumpButtonDownCount { 0 };
+    quint32 _takeoffJumpButtonID { 0 };
 
-    quint64 _rayHitStartTime;
-    quint64 _takeoffToInAirStartTime;
-    quint64 _jumpButtonDownStartTime;
-    quint32 _jumpButtonDownCount;
-    quint32 _takeoffJumpButtonID;
+    float _minStepHeight { 0.0f };
+    float _maxStepHeight { 0.0f };
+    float _minFloorNormalDotUp { DEFAULT_MIN_FLOOR_NORMAL_DOT_UP };
 
-    // data for walking up steps
-    btVector3 _stepPoint { 0.0f, 0.0f, 0.0f };
-    btVector3 _stepNormal { 0.0f, 0.0f, 0.0f };
-    btScalar _stepHeight { 0.0f };
-    btScalar _minStepHeight { 0.0f };
-    btScalar _maxStepHeight { 0.0f };
-    btScalar _minFloorNormalDotUp { DEFAULT_MIN_FLOOR_NORMAL_DOT_UP };
+    float _halfHeight { 0.0f };
+    float _radius { 0.0f };
+    float _mass { 70.0f };
 
-    btScalar _halfHeight { 0.0f };
-    btScalar _radius { 0.0f };
-
-    btScalar _floorDistance;
-    bool _steppingUp { false };
+    float _floorDistance { 0.0f };
     bool _stepUpEnabled { true };
-    bool _hasSupport;
+    bool _hasSupport { false };
+    bool _floorBelowNow { false }; // the floor ray reached floor in this update, with none of the grace period below
 
-    btScalar _currentGravity { 0.0f };
-    btScalar _gravity { DEFAULT_AVATAR_GRAVITY };
+    float _currentGravity { 0.0f };
+    float _gravity { DEFAULT_AVATAR_GRAVITY };
 
-    btScalar _followTime;
-    btVector3 _followLinearDisplacement;
-    btQuaternion _followAngularDisplacement;
-    btVector3 _linearAcceleration;
-    btVector3 _netCollisionImpulse;
+    float _followTime { 0.0f };
+    glm::vec3 _followLinearDisplacement { 0.0f };
+    glm::quat _followAngularDisplacement;
+    glm::vec3 _linearAcceleration { 0.0f };
 
-    State _state;
-    bool _isPushingUp;
+    State _state { State::Hover };
+    bool _isPushingUp { false };
     bool _isStuck { false };
     bool _isSeated { false };
     float _collisionBrake { 0.0f };
 
     PhysicsEnginePointer _physicsEngine { nullptr };
-    btRigidBody* _rigidBody { nullptr };
+    PhysicsWorld* _world { nullptr };
+    QUuid _frameID;
+    glm::vec3 _pendingVelocity { 0.0f };
+    bool _hasPendingVelocity { false };
     uint32_t _pendingFlags { 0 };
     uint32_t _previousFlags { 0 };
     uint32_t _stuckTransitionCount { 0 };
@@ -234,11 +251,11 @@ protected:
     bool _inWorld { false };
     bool _zoneFlyingAllowed { true };
     bool _comfortFlyingAllowed { true };
-    bool _hoverWhenUnsupported{ true };
-    bool _collisionlessAllowed { true };
+    bool _hoverWhenUnsupported { true };
     bool _collisionless { false };
+    bool _collisionlessAllowed { true };
 
-    btScalar _scaleFactor { 1.0f };
+    float _scaleFactor { 1.0f };
 };
 
 #endif // hifi_CharacterController_h

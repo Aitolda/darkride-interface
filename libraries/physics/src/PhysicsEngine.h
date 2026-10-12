@@ -13,71 +13,41 @@
 #define hifi_PhysicsEngine_h
 
 #include <stdint.h>
-#include <set>
+
+#include <functional>
+#include <map>
+#include <memory>
 #include <vector>
 
 #include <QUuid>
-#include <btBulletDynamicsCommon.h>
-#include <BulletCollision/CollisionDispatch/btGhostObject.h>
+#include <QHash>
+#include <QSet>
 
-#include "BulletUtil.h"
-#include "ContactInfo.h"
+#include <Jolt/Jolt.h>
+
 #include "ObjectMotionState.h"
-#include "ThreadSafeDynamicsWorld.h"
 #include "ObjectAction.h"
 #include "ObjectConstraint.h"
+#include "PhysicsWorld.h"
+
+namespace JPH {
+    class TempAllocatorImpl;
+    class JobSystemThreadPool;
+    class BodyFilter;
+}
 
 const float HALF_SIMULATION_EXTENT = 512.0f; // meters
 
 class CharacterController;
 class PhysicsDebugDraw;
 
-// simple class for keeping track of contacts
-class ContactKey {
-public:
-    ContactKey() = delete;
-    ContactKey(void* a, void* b) : _a(a), _b(b) {}
-    bool operator<(const ContactKey& other) const { return _a < other._a || (_a == other._a && _b < other._b); }
-    bool operator==(const ContactKey& other) const { return _a == other._a && _b == other._b; }
-    void* _a; // ObjectMotionState pointer
-    void* _b; // ObjectMotionState pointer
-};
-
-struct ContactTestResult {
-    ContactTestResult() = delete;
-
-    ContactTestResult(const ContactTestResult& contactTestResult) :
-        foundID(contactTestResult.foundID),
-        testCollisionPoint(contactTestResult.testCollisionPoint),
-        foundCollisionPoint(contactTestResult.foundCollisionPoint),
-        collisionNormal(contactTestResult.collisionNormal) {
-    }
-
-    ContactTestResult(const QUuid& foundID, const glm::vec3& testCollisionPoint, const glm::vec3& otherCollisionPoint, const glm::vec3& collisionNormal) :
-        foundID(foundID),
-        testCollisionPoint(testCollisionPoint),
-        foundCollisionPoint(otherCollisionPoint),
-        collisionNormal(collisionNormal) {
-    }
-
-    QUuid foundID;
-    // The deepest point of an intersection within the volume of the test shape, in world space.
-    glm::vec3 testCollisionPoint;
-    // The deepest point of an intersection within the volume of the found object, in world space.
-    glm::vec3 foundCollisionPoint;
-    // The normal vector of this intersection
-    glm::vec3 collisionNormal;
-};
-
-using ContactMap = std::map<ContactKey, ContactInfo>;
-using CollisionEvents = std::vector<Collision>;
-
+// The client's physics: a root world for the domain and one world per moving reference frame (PHYSICS.md
+// 4.1), stepped together at 90 Hz. Every simulated object says which frame it belongs to (getFrameID) and
+// lives in that frame's world, in that frame's coordinates; the frame itself is a body in its parent's
+// world. The engine routes objects to worlds, feeds each frame's transform to its world before a substep,
+// merges what the worlds report, and keeps the actions and constraints.
 class PhysicsEngine {
 public:
-    using ContactAddedCallback = bool (*)(btManifoldPoint& cp,
-            const btCollisionObjectWrapper* colObj0Wrap, int partId0, int index0,
-            const btCollisionObjectWrapper* colObj1Wrap, int partId1, int index1);
-
     class Transaction {
     public:
         void clear() {
@@ -96,14 +66,13 @@ public:
     ~PhysicsEngine();
     void init();
 
-    uint32_t getNumSubsteps() const;
+    uint32_t getNumSubsteps() const { return _numSubsteps; }
     int32_t getNumCollisionObjects() const;
 
     void removeObjects(const VectorOfMotionStates& objects);
     void removeSetOfObjects(const SetOfMotionStates& objects); // only called during teardown
 
     void addObjects(const VectorOfMotionStates& objects);
-    void changeObjects(const VectorOfMotionStates& objects);
     void reinsertObject(ObjectMotionState* object);
 
     void processTransaction(Transaction& transaction);
@@ -118,15 +87,14 @@ public:
 
     /// \return reference to list of changed MotionStates.  The list is only valid until beginning of next simulation loop.
     const VectorOfMotionStates& getChangedMotionStates();
-    const VectorOfMotionStates& getDeactivatedMotionStates() const { return _dynamicsWorld->getDeactivatedMotionStates(); }
+    const VectorOfMotionStates& getDeactivatedMotionStates() const { return _deactivatedMotionStates; }
 
     /// \return reference to list of Collision events.  The list is only valid until beginning of next simulation loop.
     const CollisionEvents& getCollisionEvents();
 
-    /// \brief prints timings for last frame if stats have been requested.
+    /// \brief prints timings for last simulation step
     void dumpStatsIfNecessary();
-
-    /// \brief saves timings for last frame in filename
+    /// \brief saves timings for last simulation step in filename
     void saveNextPhysicsStats(QString filename);
 
     /// \param offset position of simulation origin in domain-frame
@@ -150,50 +118,78 @@ public:
     void setShowBulletConstraints(bool value);
     void setShowBulletConstraintLimits(bool value);
 
-    // Function for getting colliding objects in the world of specified type
-    // See PhysicsCollisionGroups.h for mask flags.
+    // Copies of these methods exist in PhysicsEntitySimulation.
+    // There is a possible performance improvement in avoiding the duplication of the ShapeInfo calculation.
+    // Tests the root world (the domain); a frame's interior is not searched.
     std::vector<ContactTestResult> contactTest(uint16_t mask, const ShapeInfo& regionShapeInfo, const Transform& regionTransform, uint16_t group = USER_COLLISION_GROUP_DYNAMIC, float threshold = 0.0f) const;
 
-    void setContactAddedCallback(ContactAddedCallback cb);
-
-    btDiscreteDynamicsWorld* getDynamicsWorld() const { return _dynamicsWorld; }
     void removeContacts(ObjectMotionState* motionState);
 
+    // Ray casts in the root world's coordinates (the simulation frame), filtered as a body of the given group
+    // and mask would be. A null body filter means "everything". castRayClosest tests the root world only;
+    // castRayAll also goes into every frame's world (a rider can be picked), hits sorted by distance.
+    bool castRayClosest(const glm::vec3& start, const glm::vec3& end, int32_t group, int32_t mask,
+                        const JPH::BodyFilter* bodyFilter, RayHit& result) const;
+    void castRayAll(const glm::vec3& start, const glm::vec3& end, int32_t group, int32_t mask,
+                    std::vector<RayHit>& results) const;
+
+    // Worlds. The root is the domain; a frame's world is made the first time something asks for it and
+    // dropped when it is empty.
+    PhysicsWorld* getRootWorld() const { return _rootWorld.get(); }
+    size_t getNumFrames() const { return _frameStates.size(); }
+    PhysicsWorld* getWorld(const QUuid& frameID);
+    PhysicsWorld* findWorld(const QUuid& frameID) const;
+    PhysicsWorld* worldFor(ObjectMotionState* motionState);
+    // The frame whose membership volume contains the point (in domain coordinates), with hysteresis against
+    // the frame the point is in now; null for the domain itself.
+    // the frame a point belongs to, with hysteresis for the frame it is in; `supported` says whether the thing is
+    // standing on something of that frame (a character on its floor), which keeps it in past the floor's edge, while
+    // something unsupported there (a walker who has just stepped off the edge, with the platform waiting outside)
+    // leaves at once, before it falls in a world where the platform does not exist
+    QUuid frameContaining(const glm::vec3& position, const QUuid& currentFrame, bool supported = true) const;
+    // the transform of a frame in the domain (its body's, or its entity's when it has no body yet)
+    bool getFrameTransform(const QUuid& frameID, glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const;
+
+    JPH::TempAllocator* getTempAllocator() const;
+    static ObjectMotionState* motionStateOf(const JPH::Body& body) { return PhysicsWorld::motionStateOf(body); }
+
 private:
-    QList<EntityDynamicPointer> removeDynamicsForBody(btRigidBody* body);
-    void addObjectToDynamicsWorld(ObjectMotionState* motionState);
+    void removeDynamicsForObject(ObjectMotionState* motionState);
+    void stepOnce(float dt);
+    void feedFrameTransforms();
+    void dropEmptyWorlds();
+    void rehomeObjects();
+    void registerFrame(ObjectMotionState* frameState);
+    void unregisterFrame(const QUuid& frameID);
+    PhysicsWorld* characterWorld() const;
 
-    /// \brief bump any objects that touch this one, then remove contact info
-    void bumpAndPruneContacts(ObjectMotionState* motionState);
-
-    void doOwnershipInfection(const btCollisionObject* objectA, const btCollisionObject* objectB);
-
-    btClock _clock;
-    btDefaultCollisionConfiguration* _collisionConfig = NULL;
-    btCollisionDispatcher* _collisionDispatcher = NULL;
-    btBroadphaseInterface* _broadphaseFilter = NULL;
-    btSequentialImpulseConstraintSolver* _constraintSolver = NULL;
-    ThreadSafeDynamicsWorld* _dynamicsWorld = NULL;
-    btGhostPairCallback* _ghostPairCallback = NULL;
+    std::unique_ptr<JPH::TempAllocatorImpl> _tempAllocator;
+    std::unique_ptr<JPH::JobSystemThreadPool> _jobSystem;
+    std::unique_ptr<PhysicsWorld> _rootWorld;
+    std::map<QUuid, std::unique_ptr<PhysicsWorld>> _frameWorlds;
+    std::map<QUuid, ObjectMotionState*> _frameStates; // the frame entities' own motion states, by entity ID
+    bool _framesChanged { false }; // a frame appeared or went: every object's world is rechecked
     std::unique_ptr<PhysicsDebugDraw> _physicsDebugDraw;
 
-    ContactMap _contactMap;
     CollisionEvents _collisionEvents;
     QHash<QUuid, EntityDynamicPointer> _objectDynamics;
-    QHash<btRigidBody*, QSet<QUuid>> _objectDynamicsByBody;
-    std::set<btRigidBody*> _activeStaticBodies;
+    QHash<QUuid, PhysicsWorld*> _dynamicWorlds; // the world a constraint was added to
+    std::map<std::pair<PhysicsWorld*, uint32_t>, QSet<QUuid>> _objectDynamicsByBody;
+    VectorOfMotionStates _changedMotionStates;
+    VectorOfMotionStates _deactivatedMotionStates;
     QString _statsFilename;
-
     glm::vec3 _originOffset;
-
-    CharacterController* _myAvatarController;
-
-    uint32_t _numContactFrames { 0 };
-
+    CharacterController* _myAvatarController { nullptr };
+    uint64_t _lastStepTime { 0 };
+    float _accumulatedTime { 0.0f };
+    float _smoothedFrameDuration { 0.0f }; // the paced clock's frame (see stepSimulation)
+    float _pacedClockLead { 0.0f }; // how far the paced clock is ahead of the wall clock
+    float _lastStepDuration { 0.0f };
+    uint32_t _numSubsteps { 0 };
+    uint32_t _debugDrawMode { 0 };
     bool _dumpNextStats { false };
     bool _saveNextStats { false };
     bool _hasOutgoingChanges { false };
-
 };
 
 typedef std::shared_ptr<PhysicsEngine> PhysicsEnginePointer;

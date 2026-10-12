@@ -1599,19 +1599,17 @@ void Avatar::computeMultiSphereShapes() {
     _multiSphereShapes.reserve(jointCount);
     for (int i = 0; i < jointCount; i++) {
         const HFMJointShapeInfo& shapeInfo = geometry.joints[i].shapeInfo;
-        std::vector<btVector3> btPoints;
+        std::vector<glm::vec3> points;
         int lineCount = (int)shapeInfo.debugLines.size();
-        btPoints.reserve(lineCount);
+        points.reserve(lineCount);
         glm::vec3 jointScale = rig.getJointPose(i).scale() / extractScale(rig.getGeometryToRigTransform());
         for (int j = 0; j < lineCount; j++) {
             const glm::vec3 &point = shapeInfo.debugLines[j];
-            auto rigPoint = jointScale * geometryScale * point;
-            btVector3 btPoint = glmToBullet(rigPoint);
-            btPoints.push_back(btPoint);
+            points.push_back(jointScale * geometryScale * point);
         }
         auto jointName = rig.nameOfJoint(i).toUpper();
         MultiSphereShape multiSphereShape;
-        if (multiSphereShape.computeMultiSphereShape(i, jointName, btPoints)) {
+        if (multiSphereShape.computeMultiSphereShape(i, jointName, points)) {
             multiSphereShape.calculateDebugLines();
             multiSphereShape.setScale(_targetScale);
         }
@@ -1762,7 +1760,7 @@ void Avatar::computeDetailedShapeInfo(ShapeInfo& shapeInfo, int jointIndex) {
         auto& data = _multiSphereShapes[jointIndex].getSpheresData();
         if (data.size() > 0) {
             std::vector<glm::vec3> positions;
-            std::vector<btScalar> radiuses;
+            std::vector<float> radiuses;
             positions.reserve(data.size());
             radiuses.reserve(data.size());
             for (auto& sphere : data) {

@@ -11,13 +11,16 @@
 
 #include "DetailedMotionState.h"
 
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Body/BodyInterface.h>
+
 #include <PhysicsCollisionGroups.h>
 #include <PhysicsEngine.h>
 #include <PhysicsHelpers.h>
+
 #include "MyAvatar.h"
 
-
-DetailedMotionState::DetailedMotionState(AvatarPointer avatar, const btCollisionShape* shape, int32_t jointIndex) : 
+DetailedMotionState::DetailedMotionState(AvatarPointer avatar, const JPH::Shape* shape, int32_t jointIndex) :
     ObjectMotionState(shape), _avatar(avatar), _jointIndex(jointIndex) {
     assert(_avatar);
     if (!_avatar->isMyAvatar()) {
@@ -28,8 +31,8 @@ DetailedMotionState::DetailedMotionState(AvatarPointer avatar, const btCollision
 
 void DetailedMotionState::handleEasyChanges(uint32_t& flags) {
     ObjectMotionState::handleEasyChanges(flags);
-    if (flags & Simulation::DIRTY_PHYSICS_ACTIVATION && !_body->isActive()) {
-        _body->activate();
+    if (flags & Simulation::DIRTY_PHYSICS_ACTIVATION && !isActive()) {
+        activateBody();
     }
 }
 
@@ -53,20 +56,16 @@ PhysicsMotionType DetailedMotionState::computePhysicsMotionType() const {
     return MOTION_TYPE_KINEMATIC;
 }
 
-// virtual
+// virtual and protected
 bool DetailedMotionState::isMoving() const {
     return false;
 }
 
-// virtual
-void DetailedMotionState::getWorldTransform(btTransform& worldTrans) const {
-    worldTrans.setOrigin(glmToBullet(getObjectPosition()));
-    worldTrans.setRotation(glmToBullet(getObjectRotation()));
-}
-
-// virtual
-void DetailedMotionState::setWorldTransform(const btTransform& worldTrans) {
-    _body->setWorldTransform(worldTrans);
+// Before every substep: follow the joint, with a velocity, so a hand can push a ball.
+void DetailedMotionState::pushTransformToBody(float dt) {
+    if (_body && bodyInterface()) {
+        bodyInterface()->MoveKinematic(_body->GetID(), glmToJoltR(getObjectPosition()), glmToJolt(getObjectRotation()), dt);
+    }
 }
 
 // These pure virtual methods must be implemented for each MotionState type
@@ -92,20 +91,37 @@ float DetailedMotionState::getObjectAngularDamping() const {
     return 0.5f;
 }
 
+// The joints are known in world coordinates; riding a frame, the body lives in the frame's world and the
+// pose goes in through the frame's transform.
 // virtual
 glm::vec3 DetailedMotionState::getObjectPosition() const {
-    if (_otherAvatar != nullptr) {
-        auto bodyLOD = _otherAvatar->getBodyLOD();
-        if (bodyLOD == OtherAvatar::BodyLOD::Sphere) {
-            return _avatar->getFitBounds().calcCenter();
-        }
+    glm::vec3 position;
+    if (_otherAvatar != nullptr && _otherAvatar->getBodyLOD() == OtherAvatar::BodyLOD::Sphere) {
+        position = _avatar->getFitBounds().calcCenter();
+    } else {
+        position = _avatar->getJointPosition(_jointIndex);
     }
-    return  _avatar->getJointPosition(_jointIndex);
+    Transform frameTransform;
+    if (ObjectMotionState::getFrameTransform(_avatar, frameTransform)) {
+        return glm::inverse(frameTransform.getRotation()) * (position - frameTransform.getTranslation());
+    }
+    return position;
 }
 
 // virtual
 glm::quat DetailedMotionState::getObjectRotation() const {
-    return _avatar->getWorldOrientation() * _avatar->getAbsoluteJointRotationInObjectFrame(_jointIndex);
+    glm::quat rotation = _avatar->getWorldOrientation() * _avatar->getAbsoluteJointRotationInObjectFrame(_jointIndex);
+    Transform frameTransform;
+    if (ObjectMotionState::getFrameTransform(_avatar, frameTransform)) {
+        return glm::inverse(frameTransform.getRotation()) * rotation;
+    }
+    return rotation;
+}
+
+// virtual
+QUuid DetailedMotionState::getFrameID() const {
+    SpatiallyNestablePointer frame = ObjectMotionState::findFrameAncestor(_avatar);
+    return frame ? frame->getID() : QUuid();
 }
 
 // virtual
@@ -148,15 +164,7 @@ float DetailedMotionState::getMass() const {
     return 0.0f;
 }
 
-void DetailedMotionState::setRigidBody(btRigidBody* body) {
-    ObjectMotionState::setRigidBody(body);
-    if (_body) {
-        // remove angular dynamics from this body
-        _body->setAngularFactor(0.0f);
-    }
-}
-
-void DetailedMotionState::setShape(const btCollisionShape* shape) {
+void DetailedMotionState::setShape(const JPH::Shape* shape) {
     if (_shape != shape) {
         if (_shape) {
             getShapeManager()->releaseShape(_shape);
@@ -164,7 +172,7 @@ void DetailedMotionState::setShape(const btCollisionShape* shape) {
         _shape = shape;
         if (_body) {
             assert(_shape);
-            _body->setCollisionShape(const_cast<btCollisionShape*>(_shape));
+            bodyInterface()->SetShape(_body->GetID(), _shape, false, JPH::EActivation::DontActivate);
         }
     } else if (shape) {
         // we need to release unused reference to shape
@@ -173,7 +181,7 @@ void DetailedMotionState::setShape(const btCollisionShape* shape) {
 }
 
 void DetailedMotionState::forceActive() {
-    if (_body && !_body->isActive()) {
-        _body->setActivationState(ACTIVE_TAG);
+    if (_body && !_body->IsActive()) {
+        activateBody();
     }
 }

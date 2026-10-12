@@ -88,6 +88,8 @@ public:
      *       <td>{@link Entities.EntityProperties-Material|EntityProperties-Material}</td></tr>
      *     <tr><td><code>"Terrain"</code></td><td>Voxel ground that can be shaped and dug.</td>
      *       <td>{@link Entities.EntityProperties-Terrain|EntityProperties-Terrain}</td></tr>
+     *     <tr><td><code>"Track"</code></td><td>A curve through control points that a train of entities rides along.</td>
+     *       <td>{@link Entities.EntityProperties-Track|EntityProperties-Track}</td></tr>
      *   </tbody>
      * </table>
      * @typedef {string} Entities.EntityType
@@ -111,6 +113,7 @@ public:
         Zone,
         Material,
         Terrain,
+        Track,
         NUM_TYPES
     } EntityType;
 

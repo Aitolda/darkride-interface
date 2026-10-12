@@ -15,13 +15,15 @@
 #include <QSet>
 
 #include <ObjectMotionState.h>
-#include <BulletUtil.h>
+#include <JoltUtil.h>
 
 #include "OtherAvatar.h"
 
+// One joint of an avatar in the physics world: a kinematic body that follows the joint, so that rays can
+// find which avatar and which joint they hit and so that hands can push things.
 class DetailedMotionState : public ObjectMotionState {
 public:
-    DetailedMotionState(AvatarPointer avatar, const btCollisionShape* shape, int jointIndex);
+    DetailedMotionState(AvatarPointer avatar, const JPH::Shape* shape, int jointIndex);
 
     void handleEasyChanges(uint32_t& flags) override;
 
@@ -34,37 +36,33 @@ public:
 
     bool isMoving() const override;
 
-    // this relays incoming position/rotation to the RigidBody
-    void getWorldTransform(btTransform& worldTrans) const override;
+    void pushTransformToBody(float dt) override;
 
-    // this relays outgoing position/rotation to the EntityItem
-    void setWorldTransform(const btTransform& worldTrans) override;
-
-
-    // These pure virtual methods must be implemented for each MotionState type
-    // and make it possible to implement more complicated methods in this base class.
-
-    // pure virtual overrides from ObjectMotionState
     float getObjectRestitution() const override;
     float getObjectFriction() const override;
     float getObjectLinearDamping() const override;
     float getObjectAngularDamping() const override;
 
+    // in the coordinates of the avatar's frame when it rides one, else the domain's
     glm::vec3 getObjectPosition() const override;
     glm::quat getObjectRotation() const override;
     glm::vec3 getObjectLinearVelocity() const override;
     glm::vec3 getObjectAngularVelocity() const override;
     glm::vec3 getObjectGravity() const override;
+    QUuid getFrameID() const override;
 
     const QUuid getObjectID() const override;
 
     QString getName() const override;
     ShapeType getShapeType() const override { return SHAPE_TYPE_HULL; }
+
     QUuid getSimulatorID() const override;
 
     void addDirtyFlags(uint32_t flags) { _dirtyFlags |= flags; }
 
     void computeCollisionGroupAndMask(int32_t& group, int32_t& mask) const override;
+
+    JPH::EAllowedDOFs getAllowedDOFs() const override { return JPH::EAllowedDOFs::TranslationX | JPH::EAllowedDOFs::TranslationY | JPH::EAllowedDOFs::TranslationZ; }
 
     float getMass() const override;
     void forceActive();
@@ -77,16 +75,15 @@ public:
     friend class Avatar;
 
 protected:
-    void setRigidBody(btRigidBody* body) override;
-    void setShape(const btCollisionShape* shape) override;
+    void setShape(const JPH::Shape* shape) override;
 
-    // the dtor had been made protected to force the compiler to verify that it is only
-    // ever called by the Avatar class dtor.
+    // The DetailedMotionState keeps a RAW backpointer to its Avatar because all AvatarMotionState
+    // instances are "owned" by their corresponding Avatar instance and are deleted in the Avatar dtor.
+    // In other words, the Avatar will always be around for the lifetime of AvatarMotionState.
     ~DetailedMotionState();
 
     AvatarPointer _avatar;
     float _diameter { 0.0f };
-
     uint32_t _dirtyFlags;
     int32_t _jointIndex { -1 };
     OtherAvatarPointer _otherAvatar { nullptr };

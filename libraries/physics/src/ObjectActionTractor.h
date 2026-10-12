@@ -49,7 +49,7 @@ protected:
     glm::vec3 _linearVelocityTarget;
     glm::vec3 _angularVelocityTarget;
 
-    virtual bool prepareForTractorUpdate(btScalar deltaTimeStep);
+    virtual bool prepareForTractorUpdate(float deltaTimeStep);
 
     void serializeParameters(QDataStream& dataStream) const;
     void deserializeParameters(QByteArray serializedArguments, QDataStream& dataStream);

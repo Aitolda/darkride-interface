@@ -14,6 +14,8 @@
 #include <QtCore/QObject>
 #include <QtEndian>
 #include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <NetworkingConstants.h>
 #include <NetworkAccessManager.h>
 #include <QtNetwork/QNetworkReply>
@@ -108,6 +110,9 @@ EntityPropertyFlags EntityItem::getEntityProperties(EncodeBitstreamParams& param
     requestedProperties += PROP_ENTITY_PRIORITY;
     requestedProperties += PROP_PRIMITIVE_MODE;
     requestedProperties += PROP_IGNORE_PICK_INTERSECTION;
+    requestedProperties += PROP_FRAME;
+    requestedProperties += PROP_TRACK_ID;
+    requestedProperties += PROP_TRACK_OFFSET;
     requestedProperties += _grabProperties.getEntityProperties(params);
 
     // Physics
@@ -308,6 +313,9 @@ OctreeElement::AppendState EntityItem::appendEntityData(
         APPEND_ENTITY_PROPERTY(PROP_ENTITY_PRIORITY, (uint32_t)getEntityPriority());
         APPEND_ENTITY_PROPERTY(PROP_PRIMITIVE_MODE, (uint32_t)getPrimitiveMode());
         APPEND_ENTITY_PROPERTY(PROP_IGNORE_PICK_INTERSECTION, getIgnorePickIntersection());
+        APPEND_ENTITY_PROPERTY(PROP_FRAME, getFrame());
+        APPEND_ENTITY_PROPERTY(PROP_TRACK_ID, getTrackID());
+        APPEND_ENTITY_PROPERTY(PROP_TRACK_OFFSET, getTrackOffset());
         withReadLock([&] {
             _grabProperties.appendSubclassData(packetData, params, entityTreeElementExtraEncodeData, requestedProperties,
                                                propertyFlags, propertiesDidntFit, propertyCount, appendState);
@@ -894,6 +902,9 @@ int EntityItem::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
 
     READ_ENTITY_PROPERTY(PROP_PRIMITIVE_MODE, PrimitiveMode, setPrimitiveMode);
     READ_ENTITY_PROPERTY(PROP_IGNORE_PICK_INTERSECTION, bool, setIgnorePickIntersection);
+    READ_ENTITY_PROPERTY(PROP_FRAME, bool, setFrame);
+    READ_ENTITY_PROPERTY(PROP_TRACK_ID, QUuid, setTrackID);
+    READ_ENTITY_PROPERTY(PROP_TRACK_OFFSET, float, setTrackOffset);
     withWriteLock([&] {
         int bytesFromGrab =
             _grabProperties.readEntitySubclassDataFromBuffer(dataAt, (bytesLeftToRead - bytesRead), args, propertyFlags,
@@ -1376,6 +1387,9 @@ EntityItemProperties EntityItem::getProperties(const EntityPropertyFlags& desire
     COPY_ENTITY_PROPERTY_TO_PROPERTIES(renderLayer, getRenderLayer);
     COPY_ENTITY_PROPERTY_TO_PROPERTIES(primitiveMode, getPrimitiveMode);
     COPY_ENTITY_PROPERTY_TO_PROPERTIES(ignorePickIntersection, getIgnorePickIntersection);
+    COPY_ENTITY_PROPERTY_TO_PROPERTIES(frame, getFrame);
+    COPY_ENTITY_PROPERTY_TO_PROPERTIES(trackID, getTrackID);
+    COPY_ENTITY_PROPERTY_TO_PROPERTIES(trackOffset, getTrackOffset);
     withReadLock([&] { _grabProperties.getProperties(properties); });
 
     // Physics
@@ -1524,6 +1538,9 @@ bool EntityItem::setProperties(const EntityItemProperties& properties) {
     SET_ENTITY_PROPERTY_FROM_PROPERTIES(renderLayer, setRenderLayer);
     SET_ENTITY_PROPERTY_FROM_PROPERTIES(primitiveMode, setPrimitiveMode);
     SET_ENTITY_PROPERTY_FROM_PROPERTIES(ignorePickIntersection, setIgnorePickIntersection);
+    SET_ENTITY_PROPERTY_FROM_PROPERTIES(frame, setFrame);
+    SET_ENTITY_PROPERTY_FROM_PROPERTIES(trackID, setTrackID);
+    SET_ENTITY_PROPERTY_FROM_PROPERTIES(trackOffset, setTrackOffset);
     withWriteLock([&] {
         bool grabPropertiesChanged = _grabProperties.setProperties(properties);
         somethingChanged |= grabPropertiesChanged;
@@ -2999,6 +3016,59 @@ void EntityItem::setIgnorePickIntersection(bool value) {
     withWriteLock([&] { _ignorePickIntersection = value; });
 }
 
+bool EntityItem::getFrame() const {
+    return resultWithReadLock<bool>([&] { return _frame; });
+}
+
+void EntityItem::setFrame(bool value) {
+    bool changed = false;
+    withWriteLock([&] {
+        changed = (_frame != value);
+        _frame = value;
+        if (changed) {
+            _flags |= Simulation::DIRTY_MOTION_TYPE;
+        }
+    });
+    if (changed) {
+        onFrameChanged();
+    }
+}
+
+QUuid EntityItem::getTrackID() const {
+    return resultWithReadLock<QUuid>([&] { return _trackID; });
+}
+
+void EntityItem::setTrackID(const QUuid& value) {
+    withWriteLock([&] {
+        if (_trackID != value) {
+            _trackID = value;
+            _flags |= Simulation::DIRTY_MOTION_TYPE;   // a car on a track is kinematic
+        }
+    });
+}
+
+float EntityItem::getTrackOffset() const {
+    return resultWithReadLock<float>([&] { return _trackOffset; });
+}
+
+void EntityItem::setTrackOffset(float value) {
+    withWriteLock([&] { _trackOffset = value; });
+}
+
+// A frame appeared or went: its contents change world, so each of them gets a new body.
+void EntityItem::onFrameChanged() {
+    EntityTreePointer tree = getTree();
+    forEachDescendant([&](SpatiallyNestablePointer object) {
+        if (object->getNestableType() == NestableType::Entity) {
+            EntityItemPointer entity = std::static_pointer_cast<EntityItem>(object);
+            entity->markDirtyFlags(Simulation::DIRTY_MOTION_TYPE);
+            if (tree) {
+                tree->entityChanged(entity);
+            }
+        }
+    });
+}
+
 bool EntityItem::getCanCastShadow() const {
     bool result;
     withReadLock([&] { result = _canCastShadow; });
@@ -3087,7 +3157,56 @@ QString EntityItem::getUserData() const {
 }
 
 void EntityItem::setUserData(const QString& value) {
-    withWriteLock([&] { _userData = value; });
+    bool frameChanged = false;
+    withWriteLock([&] {
+        _userData = value;
+        // A moving reference frame (PHYSICS.md 4.1) is marked in userData until it has a property of its own:
+        // {"frame": true}, optionally with the box (in the entity's own coordinates) inside which something
+        // belongs to the frame: {"frame": true, "frameVolume": {"min": [x, y, z], "max": [x, y, z]}}.
+        // Parsed once here, read every step by the physics.
+        bool isFrame = false;
+        bool hasVolume = false;
+        glm::vec3 volumeMin(0.0f), volumeMax(0.0f);
+        if (value.contains("frame")) {
+            QJsonParseError error;
+            QJsonDocument document = QJsonDocument::fromJson(value.toUtf8(), &error);
+            if (error.error == QJsonParseError::NoError && document.isObject()) {
+                QJsonObject object = document.object();
+                isFrame = object.value("frame").toBool(false);
+                QJsonObject volume = object.value("frameVolume").toObject();
+                QJsonArray minArray = volume.value("min").toArray();
+                QJsonArray maxArray = volume.value("max").toArray();
+                if (minArray.size() == 3 && maxArray.size() == 3) {
+                    hasVolume = true;
+                    for (int i = 0; i < 3; ++i) {
+                        volumeMin[i] = (float)minArray.at(i).toDouble();
+                        volumeMax[i] = (float)maxArray.at(i).toDouble();
+                    }
+                }
+            }
+        }
+        frameChanged = (isFrame != _isFrame);
+        _isFrame = isFrame;
+        _hasFrameVolume = hasVolume;
+        _frameVolumeMin = volumeMin;
+        _frameVolumeMax = volumeMax;
+        if (frameChanged) {
+            _flags |= Simulation::DIRTY_MOTION_TYPE;
+        }
+    });
+    if (frameChanged) {
+        onFrameChanged();
+    }
+}
+
+bool EntityItem::getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorner) const {
+    bool has = false;
+    withReadLock([&] {
+        has = _hasFrameVolume;
+        minCorner = _frameVolumeMin;
+        maxCorner = _frameVolumeMax;
+    });
+    return has;
 }
 
 QString EntityItem::getPrivateUserData() const {

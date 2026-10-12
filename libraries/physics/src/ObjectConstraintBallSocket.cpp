@@ -11,6 +11,8 @@
 
 #include "ObjectConstraintBallSocket.h"
 
+#include <Jolt/Physics/Constraints/PointConstraint.h>
+
 #include <LogHandler.h>
 
 #include "QVariantGLM.h"
@@ -21,6 +23,11 @@
 
 const uint16_t ObjectConstraintBallSocket::constraintVersion = 1;
 
+// A point given relative to the body's origin, as scripts give it, expressed relative to the body's centre of
+// mass, which is what Jolt's LocalToBodyCOM constraint space wants.
+static JPH::RVec3 toBodyCOMSpace(const JPH::Body* body, const glm::vec3& point) {
+    return glmToJoltR(point - joltToGLM(body->GetShape()->GetCenterOfMass()));
+}
 
 ObjectConstraintBallSocket::ObjectConstraintBallSocket(const QUuid& id, EntityItemPointer ownerEntity) :
     ObjectConstraint(DYNAMIC_TYPE_BALL_SOCKET, id, ownerEntity),
@@ -38,15 +45,17 @@ ObjectConstraintBallSocket::~ObjectConstraintBallSocket() {
     #endif
 }
 
-QList<btRigidBody*> ObjectConstraintBallSocket::getRigidBodies() {
-    QList<btRigidBody*> result;
-    result += getRigidBody();
+std::vector<JPH::BodyID> ObjectConstraintBallSocket::getBodyIDs() {
+    std::vector<JPH::BodyID> result = ObjectDynamic::getBodyIDs();
     QUuid otherEntityID;
     withReadLock([&]{
         otherEntityID = _otherID;
     });
     if (!otherEntityID.isNull()) {
-        result += getOtherRigidBody(otherEntityID);
+        JPH::Body* otherBody = getOtherBody(otherEntityID);
+        if (otherBody) {
+            result.push_back(otherBody->GetID());
+        }
     }
     return result;
 }
@@ -55,29 +64,38 @@ void ObjectConstraintBallSocket::prepareForPhysicsSimulation() {
 }
 
 void ObjectConstraintBallSocket::updateBallSocket() {
-    btPoint2PointConstraint* constraint { nullptr };
+    JPH::PointConstraint* constraint { nullptr };
+    QUuid otherEntityID;
+    glm::vec3 pivotInA;
+    glm::vec3 pivotInB;
 
     withReadLock([&]{
-        constraint = static_cast<btPoint2PointConstraint*>(_constraint);
+        constraint = static_cast<JPH::PointConstraint*>(_constraint.GetPtr());
+        otherEntityID = _otherID;
+        pivotInA = _pivotInA;
+        pivotInB = _pivotInB;
     });
 
     if (!constraint) {
         return;
     }
 
-    constraint->setPivotA(glmToBullet(_pivotInA));
-    constraint->setPivotB(glmToBullet(_pivotInB));
+    constraint->SetPoint1(JPH::EConstraintSpace::LocalToBodyCOM, toBodyCOMSpace(constraint->GetBody1(), pivotInA));
+    if (!otherEntityID.isNull()) {
+        constraint->SetPoint2(JPH::EConstraintSpace::LocalToBodyCOM, toBodyCOMSpace(constraint->GetBody2(), pivotInB));
+    }
+    // against the world, the second point stays where the entity's pivot was when the joint was made
 }
 
 
-btTypedConstraint* ObjectConstraintBallSocket::getConstraint() {
-    btPoint2PointConstraint* constraint { nullptr };
+JPH::Constraint* ObjectConstraintBallSocket::getConstraint() {
+    JPH::Constraint* constraint { nullptr };
     QUuid otherEntityID;
     glm::vec3 pivotInA;
     glm::vec3 pivotInB;
 
     withReadLock([&]{
-        constraint = static_cast<btPoint2PointConstraint*>(_constraint);
+        constraint = _constraint.GetPtr();
         pivotInA = _pivotInA;
         otherEntityID = _otherID;
         pivotInB = _pivotInB;
@@ -88,33 +106,43 @@ btTypedConstraint* ObjectConstraintBallSocket::getConstraint() {
 
     static int repeatMessageID = LogHandler::getInstance().newRepeatedMessageID();
 
-    btRigidBody* rigidBodyA = getRigidBody();
-    if (!rigidBodyA) {
-        HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintBallSocket::getConstraint -- no rigidBodyA");
+    JPH::Body* bodyA = getBody();
+    if (!bodyA) {
+        HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintBallSocket::getConstraint -- no bodyA");
         return nullptr;
     }
 
-    if (!otherEntityID.isNull()) {
-        // This constraint is between two entities... find the other rigid body.
+    JPH::PointConstraintSettings settings;
+    settings.mSpace = JPH::EConstraintSpace::LocalToBodyCOM;
+    settings.mPoint1 = toBodyCOMSpace(bodyA, pivotInA);
 
-        btRigidBody* rigidBodyB = getOtherRigidBody(otherEntityID);
-        if (!rigidBodyB) {
-            HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintBallSocket::getConstraint -- no rigidBodyB");
+    JPH::Body* bodyB { nullptr };
+    if (!otherEntityID.isNull()) {
+        // This constraint is between two entities... find the other body.
+        bodyB = getOtherBody(otherEntityID);
+        if (!bodyB) {
+            HIFI_FCDEBUG_ID(physics(), repeatMessageID, "ObjectConstraintBallSocket::getConstraint -- no bodyB");
             return nullptr;
         }
 
-        constraint = new btPoint2PointConstraint(*rigidBodyA, *rigidBodyB, glmToBullet(pivotInA), glmToBullet(pivotInB));
+        settings.mPoint2 = toBodyCOMSpace(bodyB, pivotInB);
     } else {
-        // This constraint is between an entity and the world-frame.
-
-        constraint = new btPoint2PointConstraint(*rigidBodyA, glmToBullet(pivotInA));
+        // This constraint is between an entity and the world-frame. The other body is Jolt's fixed-to-world body,
+        // whose own frame is the world frame, and the entity's pivot is held where it is now; otherPivot has no
+        // part in this.
+        bodyB = &JPH::Body::sFixedToWorld;
+        glm::vec3 positionA = joltToGLM(bodyA->GetPosition());
+        glm::quat rotationA = joltToGLM(bodyA->GetRotation());
+        settings.mPoint2 = glmToJoltR(positionA + rotationA * pivotInA);
     }
+
+    constraint = settings.Create(*bodyA, *bodyB);
 
     withWriteLock([&]{
         _constraint = constraint;
     });
 
-    // if we don't wake up rigidBodyA, we may not send the dynamicData property over the network
+    // if we don't wake up bodyA, we may not send the dynamicData property over the network
     forceBodyNonStatic();
     activateBody();
 
@@ -186,9 +214,11 @@ bool ObjectConstraintBallSocket::updateArguments(QVariantMap arguments) {
  * It has arguments in addition to the common {@link Entities.ActionArguments|ActionArguments}:
  *
  * @typedef {object} Entities.ActionArguments-BallSocket
- * @property {Uuid} otherEntityID=null - The ID of the other entity that is connected to the joint.
+ * @property {Uuid} otherEntityID=null - The ID of the other entity that is connected to the joint. If none is specified
+ *     then the entity's <code>pivot</code> is held where it is when the action is created.
  * @property {Vec3} pivot=0,0,0 - The local offset of the joint relative to the entity's position.
- * @property {Vec3} otherPivot=0,0,0 - The local offset of the joint relative to the other entity's position.
+ * @property {Vec3} otherPivot=0,0,0 - The local offset of the joint relative to the other entity's position. Not used
+ *     when there is no other entity.
  */
 QVariantMap ObjectConstraintBallSocket::getArguments() {
     QVariantMap arguments = ObjectDynamic::getArguments();

@@ -14,7 +14,8 @@
 
 #include "ObjectConstraint.h"
 
-// http://bulletphysics.org/Bullet/BulletFull/classbtHingeConstraint.html
+// A hinge joint: the entity pivots about an axis, against the world or against another entity.
+// Built on JPH::HingeConstraint (Jolt/Physics/Constraints/HingeConstraint.h).
 
 class ObjectConstraintHinge : public ObjectConstraint {
 public:
@@ -29,8 +30,8 @@ public:
     virtual QByteArray serialize() const override;
     virtual void deserialize(QByteArray serializedArguments) override;
 
-    virtual QList<btRigidBody*> getRigidBodies() override;
-    virtual btTypedConstraint* getConstraint() override;
+    virtual std::vector<JPH::BodyID> getBodyIDs() override;
+    virtual JPH::Constraint* getConstraint() override;
 
 protected:
     static const uint16_t constraintVersion;
@@ -46,11 +47,8 @@ protected:
     float _low { -TWO_PI };
     float _high { TWO_PI };
 
-    // https://gamedev.stackexchange.com/questions/71436/what-are-the-parameters-for-bthingeconstraintsetlimit
-    //
-    // softness: unused
-    // biasFactor: unused
-    // relaxationFactor: unused
+    // softness, biasFactor, relaxationFactor: Bullet-era arguments that were never used; serialization
+    // version 1 still carries them.
 };
 
 #endif // hifi_ObjectConstraintHinge_h

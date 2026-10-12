@@ -286,6 +286,7 @@ enum class EntityVersion : PacketVersion {
     SkeletonModelURLInIdentityPacket, // maki
     TerrainEntities, // darkride
     TerrainLayers, // darkride
+    TrackEntities, // darkride: the Track entity type, and frame, trackID and trackOffset on every entity (PHYSICS.md round 4)
     // TO DO - reinstate with tonemapping in zones
     // ToneMappingMode, // caitlyn
     

@@ -432,7 +432,7 @@ void AvatarManager::queuePhysicsChange(const OtherAvatarPointer& avatar) {
 DetailedMotionState* AvatarManager::createDetailedMotionState(OtherAvatarPointer avatar, int32_t jointIndex) {
     bool isBound = false;
     std::vector<int32_t> boundJoints;
-    const btCollisionShape* shape = avatar->createCollisionShape(jointIndex, isBound, boundJoints);
+    const JPH::Shape* shape = avatar->createCollisionShape(jointIndex, isBound, boundJoints);
     if (shape) {
         DetailedMotionState* motionState = new DetailedMotionState(avatar, shape, jointIndex);
         motionState->setMass(0.0f); // DetailedMotionState has KINEMATIC MotionType, so zero mass is ok
@@ -449,11 +449,11 @@ void AvatarManager::rebuildAvatarPhysics(PhysicsEngine::Transaction& transaction
     AvatarMotionState* motionState = avatar->_motionState;
     ShapeInfo shapeInfo;
     avatar->computeShapeInfo(shapeInfo);
-    const btCollisionShape* shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
+    const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
     assert(shape);
     motionState->setShape(shape);
     motionState->setMass(avatar->computeMass());
-    if (motionState->getRigidBody()) {
+    if (motionState->getBody()) {
         transaction.objectsToReinsert.push_back(motionState);
     } else {
         transaction.objectsToAdd.push_back(motionState);
@@ -513,7 +513,10 @@ void AvatarManager::buildPhysicsTransaction(PhysicsEngine::Transaction& transact
         } else if (isInPhysics) {
             AvatarMotionState* motionState = avatar->_motionState;
             uint32_t flags = motionState->getIncomingDirtyFlags();
-            if (flags & EASY_DIRTY_PHYSICS_FLAGS) {
+            // stepping on or off a frame: the body is rebuilt in the other world, from the pose in that
+            // world's coordinates, and so are the joint bodies (the easy changes would place it in the old one)
+            bool frameChanged = avatar->needsFrameChange();
+            if (!frameChanged && (flags & EASY_DIRTY_PHYSICS_FLAGS)) {
                 motionState->handleEasyChanges(flags);
             }
             // NOTE: we don't call detailedMotionState->handleEasyChanges() here because they are KINEMATIC
@@ -522,10 +525,13 @@ void AvatarManager::buildPhysicsTransaction(PhysicsEngine::Transaction& transact
             if (motionState->needsNewShape()) {
                 rebuildAvatarPhysics(transaction, avatar);
             } else {
-                if (flags & (Simulation::DIRTY_MOTION_TYPE | Simulation::DIRTY_COLLISION_GROUP)) {
+                if (frameChanged || (flags & (Simulation::DIRTY_MOTION_TYPE | Simulation::DIRTY_COLLISION_GROUP))) {
                     transaction.objectsToReinsert.push_back(motionState);
                 }
                 motionState->clearIncomingDirtyFlags();
+            }
+            if (frameChanged) {
+                avatar->_needsDetailedRebuild = true;
             }
 
             if (avatar->_needsDetailedRebuild) {
@@ -767,9 +773,9 @@ RayToAvatarIntersectionResult AvatarManager::findRayIntersectionVector(const Pic
 
     PROFILE_RANGE(simulation_physics, __FUNCTION__);
 
-    float bulletDistance = (float)INT_MAX;  // with FLT_MAX bullet rayTest does not return results 
+    const float MAX_RAY_LENGTH = 65536.0f;  // twice the domain; a ray this long still casts cleanly in single precision
     glm::vec3 rayDirection = glm::normalize(ray.direction);
-    std::vector<MyCharacterController::RayAvatarResult> physicsResults = _myAvatar->getCharacterController()->rayTest(glmToBullet(ray.origin), glmToBullet(rayDirection), bulletDistance, QVector<uint>());
+    std::vector<MyCharacterController::RayAvatarResult> physicsResults = _myAvatar->getCharacterController()->rayTest(ray.origin, rayDirection, MAX_RAY_LENGTH, QVector<uint>());
     if (physicsResults.size() > 0) {
         glm::vec3 rayDirectionInv = { rayDirection.x != 0.0f ? 1.0f / rayDirection.x : INFINITY,
                                       rayDirection.y != 0.0f ? 1.0f / rayDirection.y : INFINITY,

@@ -12,6 +12,7 @@
 #include "ShapeManager.h"
 
 #include <glm/gtx/norm.hpp>
+
 #include <QThreadPool>
 
 #include <NumericalConstants.h>
@@ -24,11 +25,7 @@ ShapeManager::ShapeManager() {
 }
 
 ShapeManager::~ShapeManager() {
-    int numShapes = _shapeMap.size();
-    for (int i = 0; i < numShapes; ++i) {
-        ShapeReference* shapeRef = _shapeMap.getAtIndex(i);
-        ShapeFactory::deleteShape(shapeRef->shape);
-    }
+    // the shapes let go of themselves with the references
     _shapeMap.clear();
     if (_deadWorker) {
         delete _deadWorker;
@@ -36,29 +33,22 @@ ShapeManager::~ShapeManager() {
     }
 }
 
-const btCollisionShape* ShapeManager::getShape(const ShapeInfo& info) {
+const JPH::Shape* ShapeManager::getShape(const ShapeInfo& info) {
     if (info.getType() == SHAPE_TYPE_NONE) {
         return nullptr;
     }
-    HashKey hashKey(info.getHash());
-    ShapeReference* shapeRef = _shapeMap.find(hashKey);
-    if (shapeRef) {
-        shapeRef->refCount++;
-        return shapeRef->shape;
+    uint64_t key = info.getHash();
+    auto itr = _shapeMap.find(key);
+    if (itr != _shapeMap.end()) {
+        itr->second.refCount++;
+        return itr->second.shape.GetPtr();
     }
-    const btCollisionShape* shape = nullptr;
     if (info.getType() == SHAPE_TYPE_STATIC_MESH) {
-        uint64_t hash = info.getHash();
-
-        // bump the request count to the caller knows we're 
-        // starting or waiting on a thread.
+        // mesh shapes are expensive to build (Jolt builds a tree over the triangles), so they go to a worker
         ++_workRequestCount;
-
-        const auto itr = std::find(_pendingMeshShapes.begin(), _pendingMeshShapes.end(), hash);
-        if (itr == _pendingMeshShapes.end()) {
-            // start a worker
-            _pendingMeshShapes.push_back(hash);
-            // try to recycle old deadWorker
+        const auto pendingItr = std::find(_pendingMeshShapes.begin(), _pendingMeshShapes.end(), key);
+        if (pendingItr == _pendingMeshShapes.end()) {
+            _pendingMeshShapes.push_back(key);
             ShapeFactory::Worker* worker = _deadWorker;
             if (!worker) {
                 worker = new ShapeFactory::Worker(info);
@@ -66,39 +56,34 @@ const btCollisionShape* ShapeManager::getShape(const ShapeInfo& info) {
                 worker->shapeInfo = info;
                 _deadWorker = nullptr;
             }
-            // we will delete worker manually later
             worker->setAutoDelete(false);
             QObject::connect(worker, &ShapeFactory::Worker::submitWork, this, &ShapeManager::acceptWork);
             QThreadPool::globalInstance()->start(worker);
         }
-        // else we're still waiting for the shape to be created on another thread
-    } else {
-        shape = ShapeFactory::createShapeFromInfo(info);
-        if (shape) {
-            ShapeReference newRef;
-            newRef.refCount = 1;
-            newRef.shape = shape;
-            newRef.key = info.getHash();
-            _shapeMap.insert(hashKey, newRef);
-        }
+        return nullptr;
     }
-    return shape;
+    ShapeFactory::ShapeRef shape = ShapeFactory::createShapeFromInfo(info);
+    if (shape) {
+        ShapeReference newRef;
+        newRef.refCount = 1;
+        newRef.shape = shape;
+        newRef.key = key;
+        _shapeMap[key] = newRef;
+    }
+    return shape.GetPtr();
 }
 
-const btCollisionShape* ShapeManager::getShapeByKey(uint64_t key) {
-    HashKey hashKey(key);
-    ShapeReference* shapeRef = _shapeMap.find(hashKey);
-    if (shapeRef) {
-        shapeRef->refCount++;
-        return shapeRef->shape;
+const JPH::Shape* ShapeManager::getShapeByKey(uint64_t key) {
+    auto itr = _shapeMap.find(key);
+    if (itr != _shapeMap.end()) {
+        itr->second.refCount++;
+        return itr->second.shape.GetPtr();
     }
     return nullptr;
 }
 
 bool ShapeManager::hasShapeWithKey(uint64_t key) const {
-    HashKey hashKey(key);
-    const ShapeReference* shapeRef = _shapeMap.find(hashKey);
-    return (bool)shapeRef;
+    return _shapeMap.find(key) != _shapeMap.end();
 }
 
 void ShapeManager::addToGarbage(uint64_t key) {
@@ -107,35 +92,30 @@ void ShapeManager::addToGarbage(uint64_t key) {
     for (int32_t i = 0; i < ringSize; ++i) {
         int32_t j = (_ringIndex + ringSize) % ringSize;
         if (_garbageRing[j] == key) {
-            // already on the list, don't add it again
+            // already in list
             return;
         }
     }
+    // add to list
     if (ringSize == MAX_RING_SIZE) {
         // remove one
-        HashKey hashKeyToRemove(_garbageRing[_ringIndex]);
-        ShapeReference* shapeRef = _shapeMap.find(hashKeyToRemove);
-        if (shapeRef && shapeRef->refCount == 0) {
-            ShapeFactory::deleteShape(shapeRef->shape);
-            _shapeMap.remove(hashKeyToRemove);
+        auto itr = _shapeMap.find(_garbageRing[_ringIndex]);
+        if (itr != _shapeMap.end() && itr->second.refCount == 0) {
+            _shapeMap.erase(itr);
         }
-        // replace at _ringIndex and advance
         _garbageRing[_ringIndex] = key;
         _ringIndex = (_ringIndex + 1) % ringSize;
     } else {
-        // add one
         _garbageRing.push_back(key);
     }
 }
 
-// private helper method
 bool ShapeManager::releaseShapeByKey(uint64_t key) {
-    HashKey hashKey(key);
-    ShapeReference* shapeRef = _shapeMap.find(hashKey);
-    if (shapeRef) {
-        if (shapeRef->refCount > 0) {
-            shapeRef->refCount--;
-            if (shapeRef->refCount == 0) {
+    auto itr = _shapeMap.find(key);
+    if (itr != _shapeMap.end()) {
+        if (itr->second.refCount > 0) {
+            itr->second.refCount--;
+            if (itr->second.refCount == 0) {
                 addToGarbage(key);
             }
             return true;
@@ -150,12 +130,10 @@ bool ShapeManager::releaseShapeByKey(uint64_t key) {
     return false;
 }
 
-bool ShapeManager::releaseShape(const btCollisionShape* shape) {
-    int numShapes = _shapeMap.size();
-    for (int i = 0; i < numShapes; ++i) {
-        ShapeReference* shapeRef = _shapeMap.getAtIndex(i);
-        if (shape == shapeRef->shape) {
-            return releaseShapeByKey(shapeRef->key);
+bool ShapeManager::releaseShape(const JPH::Shape* shape) {
+    for (auto& entry : _shapeMap) {
+        if (shape == entry.second.shape.GetPtr()) {
+            return releaseShapeByKey(entry.second.key);
         }
     }
     return false;
@@ -164,11 +142,9 @@ bool ShapeManager::releaseShape(const btCollisionShape* shape) {
 void ShapeManager::collectGarbage() {
     int numShapes = (int32_t)(_garbageRing.size());
     for (int i = 0; i < numShapes; ++i) {
-        HashKey key(_garbageRing[i]);
-        ShapeReference* shapeRef = _shapeMap.find(key);
-        if (shapeRef && shapeRef->refCount == 0) {
-            ShapeFactory::deleteShape(shapeRef->shape);
-            _shapeMap.remove(key);
+        auto itr = _shapeMap.find(_garbageRing[i]);
+        if (itr != _shapeMap.end() && itr->second.refCount == 0) {
+            _shapeMap.erase(itr);
         }
     }
     _ringIndex = 0;
@@ -176,45 +152,36 @@ void ShapeManager::collectGarbage() {
 }
 
 int ShapeManager::getNumReferences(const ShapeInfo& info) const {
-    HashKey hashKey(info.getHash());
-    const ShapeReference* shapeRef = _shapeMap.find(hashKey);
-    if (shapeRef) {
-        return shapeRef->refCount;
+    auto itr = _shapeMap.find(info.getHash());
+    if (itr != _shapeMap.end()) {
+        return itr->second.refCount;
     }
     return 0;
 }
 
-int ShapeManager::getNumReferences(const btCollisionShape* shape) const {
-    int numShapes = _shapeMap.size();
-    for (int i = 0; i < numShapes; ++i) {
-        const ShapeReference* shapeRef = _shapeMap.getAtIndex(i);
-        if (shape == shapeRef->shape) {
-            return shapeRef->refCount;
+int ShapeManager::getNumReferences(const JPH::Shape* shape) const {
+    for (const auto& entry : _shapeMap) {
+        if (shape == entry.second.shape.GetPtr()) {
+            return entry.second.refCount;
         }
     }
     return 0;
 }
 
-bool ShapeManager::hasShape(const btCollisionShape* shape) const {
-    int numShapes = _shapeMap.size();
-    for (int i = 0; i < numShapes; ++i) {
-        const ShapeReference* shapeRef = _shapeMap.getAtIndex(i);
-        if (shape == shapeRef->shape) {
+bool ShapeManager::hasShape(const JPH::Shape* shape) const {
+    for (const auto& entry : _shapeMap) {
+        if (shape == entry.second.shape.GetPtr()) {
             return true;
         }
     }
     return false;
 }
 
-// slot: called when ShapeFactory::Worker is done building shape
 void ShapeManager::acceptWork(ShapeFactory::Worker* worker) {
     auto itr = std::find(_pendingMeshShapes.begin(), _pendingMeshShapes.end(), worker->shapeInfo.getHash());
     if (itr == _pendingMeshShapes.end()) {
-        // we've received a shape but don't remember asking for it
-        // (should not fall in here, but if we do: delete the unwanted shape)
-        if (worker->shape) {
-            ShapeFactory::deleteShape(worker->shape);
-        }
+        // the work was canceled; the reference lets the shape go
+        worker->shape = nullptr;
     } else {
         // clear pending status
         *itr = _pendingMeshShapes.back();
@@ -223,19 +190,13 @@ void ShapeManager::acceptWork(ShapeFactory::Worker* worker) {
         // cache the new shape
         if (worker->shape) {
             ShapeReference newRef;
-            // refCount is zero because nothing is using the shape yet
             newRef.refCount = 0;
             newRef.shape = worker->shape;
             newRef.key = worker->shapeInfo.getHash();
-            HashKey hashKey(newRef.key);
-            _shapeMap.insert(hashKey, newRef);
+            _shapeMap[newRef.key] = newRef;
 
-            // This shape's refCount is zero because an object requested it but is not yet using it.  We expect it to be
-            // used later but there is a possibility it will never be used (e.g. the object that wanted it was removed
-            // before the shape could be added, or has changed its mind and now wants a different shape).
-            // Normally zero refCount shapes belong on _garbageRing for possible cleanup but we don't want to add it there
-            // because it might get reaped too soon.  So we add it to _orphans to check later.  If it still has zero
-            // refCount on expiry we will move it to _garbageRing.
+            // This shape's refCount is zero because an object requested it but then was deleted before
+            // the worker finished. If nothing claims it within a second it goes to the garbage.
             const int64_t SHAPE_EXPIRY = USECS_PER_SECOND;
             auto now = std::chrono::steady_clock::now();
             auto newExpiry = now + std::chrono::microseconds(SHAPE_EXPIRY);
@@ -246,14 +207,9 @@ void ShapeManager::acceptWork(ShapeFactory::Worker* worker) {
                 while (i < _orphans.size()) {
                     auto expiry = _orphans[i].expiry;
                     if (expiry < now) {
-                        uint64_t key = _orphans[i].key;
-                        HashKey hashKey(key);
-                        ShapeReference* shapeRef = _shapeMap.find(hashKey);
-                        if (shapeRef) {
-                            if (shapeRef->refCount == 0) {
-                                // shape unused after expiry
-                                addToGarbage(key);
-                            }
+                        auto orphanItr = _shapeMap.find(_orphans[i].key);
+                        if (orphanItr != _shapeMap.end() && orphanItr->second.refCount == 0) {
+                            addToGarbage(_orphans[i].key);
                         }
                         _orphans[i] = _orphans.back();
                         _orphans.pop_back();
@@ -268,6 +224,7 @@ void ShapeManager::acceptWork(ShapeFactory::Worker* worker) {
             _orphans.push_back(KeyExpiry(newRef.key, newExpiry));
         }
     }
+
     disconnect(worker, &ShapeFactory::Worker::submitWork, this, &ShapeManager::acceptWork);
 
     if (_deadWorker) {

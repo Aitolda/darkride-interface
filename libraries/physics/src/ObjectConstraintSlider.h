@@ -14,7 +14,9 @@
 
 #include "ObjectConstraint.h"
 
-// http://bulletphysics.org/Bullet/BulletFull/classbtSliderConstraint.html
+// A slider (prismatic) joint: the entity slides along an axis, against the world or against another entity.
+// Built on JPH::SliderConstraint (Jolt/Physics/Constraints/SliderConstraint.h), which, unlike Bullet's, allows
+// no rotation about the axis.
 
 class ObjectConstraintSlider : public ObjectConstraint {
 public:
@@ -29,8 +31,8 @@ public:
     virtual QByteArray serialize() const override;
     virtual void deserialize(QByteArray serializedArguments) override;
 
-    virtual QList<btRigidBody*> getRigidBodies() override;
-    virtual btTypedConstraint* getConstraint() override;
+    virtual std::vector<JPH::BodyID> getBodyIDs() override;
+    virtual JPH::Constraint* getConstraint() override;
 
 protected:
     static const uint16_t constraintVersion;
@@ -46,6 +48,8 @@ protected:
     float _linearLow { std::numeric_limits<float>::max() };
     float _linearHigh { std::numeric_limits<float>::min() };
 
+    // Bullet's slider could turn about its axis within these; Jolt's cannot, so they are stored, serialized and
+    // reported but have no effect on the joint.
     float _angularLow { -TWO_PI };
     float _angularHigh { TWO_PI };
 };

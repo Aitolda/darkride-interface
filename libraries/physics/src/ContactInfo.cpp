@@ -1,5 +1,5 @@
 //
-//  ContactEvent.cpp
+//  ContactInfo.cpp
 //  libraries/physics/src
 //
 //  Created by Andrew Meadows 2015.01.20
@@ -11,11 +11,11 @@
 
 #include "ContactInfo.h"
 
-void ContactInfo::update(uint32_t currentStep, const btManifoldPoint& p) {
+void ContactInfo::update(uint32_t currentStep, const glm::vec3& positionOnB, const glm::vec3& normalOnB, float penetrationDistance) {
     _lastStep = currentStep;
-    positionWorldOnB = p.m_positionWorldOnB;
-    normalWorldOnB = p.m_normalWorldOnB;
-    distance = p.m_distance1;
+    positionWorldOnB = positionOnB;
+    normalWorldOnB = normalOnB;
+    distance = penetrationDistance;
 }
 
 const uint32_t STEPS_BETWEEN_CONTINUE_EVENTS = 9;

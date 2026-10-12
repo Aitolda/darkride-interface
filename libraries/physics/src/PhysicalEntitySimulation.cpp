@@ -12,6 +12,8 @@
 
 #include "PhysicalEntitySimulation.h"
 
+#include "TrackSimulation.h"
+
 #include <Profile.h>
 
 #include "PhysicsHelpers.h"
@@ -20,6 +22,7 @@
 
 
 PhysicalEntitySimulation::PhysicalEntitySimulation() {
+    _trackSimulation = std::make_unique<TrackSimulation>();
 }
 
 PhysicalEntitySimulation::~PhysicalEntitySimulation() {
@@ -123,11 +126,8 @@ void PhysicalEntitySimulation::processChangedEntity(const EntityItemPointer& ent
     if (motionState) {
         if (!shouldBePhysical) {
             if (motionState->isLocallyOwned()) {
-                // zero velocities by first deactivating the RigidBody
-                btRigidBody* body = motionState->getRigidBody();
-                if (body) {
-                    body->forceActivationState(ISLAND_SLEEPING);
-                }
+                // zero velocities by first deactivating the body
+                motionState->deactivateBody();
 
                 // send packet to remove ownership
                 // NOTE: this packet will NOT be resent if lost, but the good news is:
@@ -261,10 +261,11 @@ void PhysicalEntitySimulation::removeDeadEntities() {
 
 void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
     // this lambda for when we decide to actually build the motionState
-    auto buildMotionState = [&](btCollisionShape* shape, EntityItemPointer entity) {
+    auto buildMotionState = [&](const JPH::Shape* shape, EntityItemPointer entity) {
         EntityMotionState* motionState = new EntityMotionState(shape, entity);
         entity->setPhysicsInfo(static_cast<void*>(motionState));
         motionState->setRegion(_space->getRegion(entity->getSpaceIndex()));
+        motionState->setTrackSimulation(_trackSimulation.get());
         _physicalObjects.insert(motionState);
         _incomingChanges.insert(motionState);
     };
@@ -280,7 +281,7 @@ void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
             EntityMotionState* motionState = static_cast<EntityMotionState*>(entity->getPhysicsInfo());
             if (!motionState) {
                 // this is an ADD because motionState doesn't exist yet
-                btCollisionShape* shape = const_cast<btCollisionShape*>(ObjectMotionState::getShapeManager()->getShapeByKey(requestItr->shapeHash));
+                const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShapeByKey(requestItr->shapeHash);
                 if (shape) {
                     // shape is ready at last!
                     // but the entity's physics desired physics status may have changed since last requested
@@ -299,7 +300,7 @@ void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
                         // bummer, the hashes are different and we no longer want the shape we've received
                         ObjectMotionState::getShapeManager()->releaseShape(shape);
                         // try again
-                        shape = const_cast<btCollisionShape*>(ObjectMotionState::getShapeManager()->getShape(shapeInfo));
+                        shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
                         if (shape) {
                             buildMotionState(shape, entity);
                             requestItr = _shapeRequests.erase(requestItr);
@@ -373,7 +374,7 @@ void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
                 ShapeInfo shapeInfo;
                 entity->computeShapeInfo(shapeInfo);
                 uint32_t requestCount = ObjectMotionState::getShapeManager()->getWorkRequestCount();
-                btCollisionShape* shape = const_cast<btCollisionShape*>(ObjectMotionState::getShapeManager()->getShape(shapeInfo));
+                const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
                 if (shape) {
                     buildMotionState(shape, entity);
                 } else if (requestCount != ObjectMotionState::getShapeManager()->getWorkRequestCount()) {
@@ -436,7 +437,7 @@ void PhysicalEntitySimulation::buildPhysicsTransaction(PhysicsEngine::Transactio
                     ShapeInfo shapeInfo;
                     object->_entity->computeShapeInfo(shapeInfo);
                     uint32_t requestCount = ObjectMotionState::getShapeManager()->getWorkRequestCount();
-                    btCollisionShape* shape = const_cast<btCollisionShape*>(ObjectMotionState::getShapeManager()->getShape(shapeInfo));
+                    const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
                     if (shape) {
                         object->setShape(shape);
                         handledFlags |= Simulation::DIRTY_SHAPE;
@@ -455,7 +456,7 @@ void PhysicalEntitySimulation::buildPhysicsTransaction(PhysicsEngine::Transactio
             } else {
                 ShapeInfo shapeInfo;
                 object->_entity->computeShapeInfo(shapeInfo);
-                btCollisionShape* shape = const_cast<btCollisionShape*>(ObjectMotionState::getShapeManager()->getShape(shapeInfo));
+                const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
                 if (shape) {
                     object->setShape(shape);
                     handledFlags |= Simulation::DIRTY_SHAPE;
@@ -479,10 +480,12 @@ void PhysicalEntitySimulation::buildPhysicsTransaction(PhysicsEngine::Transactio
         if (unhandledFlags & EASY_DIRTY_PHYSICS_FLAGS) {
             object->handleEasyChanges(unhandledFlags);
         }
-        if (unhandledFlags & (Simulation::DIRTY_MOTION_TYPE | Simulation::DIRTY_COLLISION_GROUP | (handledFlags & Simulation::DIRTY_SHAPE))) {
+        bool changedFrame = object->getWorld() && object->getWorld()->getFrameID() != object->getFrameID();
+        if (changedFrame || (unhandledFlags & (Simulation::DIRTY_MOTION_TYPE | Simulation::DIRTY_COLLISION_GROUP | (handledFlags & Simulation::DIRTY_SHAPE)))) {
+            // a new body: different type, shape, collision filter, or (reparented) a different frame's world
             transaction.objectsToReinsert.push_back(object);
             handledFlags |= HARD_DIRTY_PHYSICS_FLAGS;
-        } else if (unhandledFlags & Simulation::DIRTY_PHYSICS_ACTIVATION && object->getRigidBody()->isStaticObject()) {
+        } else if (unhandledFlags & Simulation::DIRTY_PHYSICS_ACTIVATION && object->getBody() && object->getBody()->IsStatic()) {
             transaction.activeStaticObjects.push_back(object);
         }
         object->clearIncomingDirtyFlags(handledFlags);
@@ -554,6 +557,19 @@ void PhysicalEntitySimulation::handleChangedMotionStates(const VectorOfMotionSta
                 } else {
                     entityState->getEntity()->updateQueryAACube();
                 }
+            }
+        }
+    }
+
+    // A car on a track needs a driver even while it stands still (a train at a station is not an active body, so it
+    // is not among the changed states above): whoever is near and finds it unowned bids for it (PHYSICS.md 4.8).
+    for (ObjectMotionState* state : _physicalObjects) {
+        if (state->getType() == MOTIONSTATE_TYPE_ENTITY) {
+            EntityMotionState* entityState = static_cast<EntityMotionState*>(state);
+            if (entityState->isTrackDriven() && entityState->getBody()
+                    && entityState->getOwnershipState() == EntityMotionState::OwnershipState::NotLocallyOwned
+                    && !entityState->isLocallyOwned() && entityState->shouldSendBid()) {
+                addOwnershipBid(entityState);
             }
         }
     }

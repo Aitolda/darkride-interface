@@ -15,9 +15,8 @@
 #include <stdint.h>
 #include <map>
 #include <set>
+#include <memory>
 
-#include <btBulletDynamicsCommon.h>
-#include <BulletCollision/CollisionDispatch/btGhostObject.h>
 
 #include <EntityDynamicInterface.h>
 #include <EntityItem.h>
@@ -28,6 +27,7 @@
 #include "EntityMotionState.h"
 
 class PhysicalEntitySimulation;
+class TrackSimulation;
 using PhysicalEntitySimulationPointer = std::shared_ptr<PhysicalEntitySimulation>;
 using SetOfEntityMotionStates = QSet<EntityMotionState*>;
 
@@ -132,6 +132,7 @@ private:
     QMutex _dynamicsMutex { QMutex::Recursive };
 
     workload::SpacePointer _space;
+    std::unique_ptr<TrackSimulation> _trackSimulation; // the trains on the tracks (PHYSICS.md 4.8)
     uint64_t _nextBidExpiry;
     uint32_t _lastStepSendPackets { 0 };
     uint32_t _lastWorkDeliveryCount { 0 };

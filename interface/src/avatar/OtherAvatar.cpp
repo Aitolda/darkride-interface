@@ -15,6 +15,7 @@
 
 #include "Application.h"
 #include "AvatarMotionState.h"
+#include <PhysicsWorld.h>
 #include "DetailedMotionState.h"
 #include "DebugDraw.h"
 
@@ -147,7 +148,7 @@ int OtherAvatar::parseDataFromBuffer(const QByteArray& buffer) {
     return bytesRead;
 }
 
-const btCollisionShape* OtherAvatar::createCollisionShape(int32_t jointIndex, bool& isBound, std::vector<int32_t>& boundJoints) {
+const JPH::Shape* OtherAvatar::createCollisionShape(int32_t jointIndex, bool& isBound, std::vector<int32_t>& boundJoints) {
     ShapeInfo shapeInfo;
     isBound = false;
     QString jointName = "";
@@ -238,7 +239,7 @@ void OtherAvatar::computeShapeLOD() {
 }
 
 bool OtherAvatar::isInPhysicsSimulation() const {
-    return _motionState && _motionState->getRigidBody();
+    return _motionState && _motionState->getBody();
 }
 
 bool OtherAvatar::shouldBeInPhysicsSimulation() const {
@@ -247,7 +248,13 @@ bool OtherAvatar::shouldBeInPhysicsSimulation() const {
 
 bool OtherAvatar::needsPhysicsUpdate() const {
     constexpr uint32_t FLAGS_OF_INTEREST = Simulation::DIRTY_SHAPE | Simulation::DIRTY_MASS | Simulation::DIRTY_POSITION | Simulation::DIRTY_COLLISION_GROUP;
-    return (_needsDetailedRebuild || (_motionState && (bool)(_motionState->getIncomingDirtyFlags() & FLAGS_OF_INTEREST)));
+    return (_needsDetailedRebuild || needsFrameChange() ||
+            (_motionState && (bool)(_motionState->getIncomingDirtyFlags() & FLAGS_OF_INTEREST)));
+}
+
+// the avatar stepped on or off a moving reference frame: its bodies belong in another world
+bool OtherAvatar::needsFrameChange() const {
+    return _motionState && _motionState->getWorld() && _motionState->getWorld()->getFrameID() != _motionState->getFrameID();
 }
 
 void OtherAvatar::rebuildCollisionShape() {

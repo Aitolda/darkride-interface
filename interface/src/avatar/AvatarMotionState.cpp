@@ -11,11 +11,14 @@
 
 #include "AvatarMotionState.h"
 
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Collision/Shape/Shape.h>
+
 #include <PhysicsCollisionGroups.h>
 #include <PhysicsEngine.h>
 #include <PhysicsHelpers.h>
 
-AvatarMotionState::AvatarMotionState(OtherAvatarPointer avatar, const btCollisionShape* shape) : ObjectMotionState(shape), _avatar(avatar) {
+AvatarMotionState::AvatarMotionState(OtherAvatarPointer avatar, const JPH::Shape* shape) : ObjectMotionState(shape), _avatar(avatar) {
     assert(_avatar);
     _type = MOTIONSTATE_TYPE_AVATAR;
     _collisionGroup = BULLET_COLLISION_GROUP_OTHER_AVATAR;
@@ -24,8 +27,8 @@ AvatarMotionState::AvatarMotionState(OtherAvatarPointer avatar, const btCollisio
 
 void AvatarMotionState::handleEasyChanges(uint32_t& flags) {
     ObjectMotionState::handleEasyChanges(flags);
-    if (flags & Simulation::DIRTY_PHYSICS_ACTIVATION && !_body->isActive()) {
-        _body->activate();
+    if (flags & Simulation::DIRTY_PHYSICS_ACTIVATION && !isActive()) {
+        activateBody();
     }
 }
 
@@ -50,45 +53,36 @@ PhysicsMotionType AvatarMotionState::computePhysicsMotionType() const {
     return MOTION_TYPE_DYNAMIC;
 }
 
-// virtual
+// virtual and protected
 bool AvatarMotionState::isMoving() const {
     return false;
 }
 
-// virtual
-void AvatarMotionState::getWorldTransform(btTransform& worldTrans) const {
-    worldTrans.setOrigin(glmToBullet(getObjectPosition()));
-    worldTrans.setRotation(glmToBullet(getObjectRotation()));
-    if (_body) {
-        _body->setLinearVelocity(glmToBullet(getObjectLinearVelocity()));
-        _body->setAngularVelocity(glmToBullet(getObjectAngularVelocity()));
+// After a step: the body is where the simulation put it, the avatar is where the network says it is.
+// Far apart, the body jumps to the avatar; close, it springs toward it so pushes still happen.
+void AvatarMotionState::pullTransformFromBody() {
+    if (!_body) {
+        return;
     }
-}
-
-// virtual
-void AvatarMotionState::setWorldTransform(const btTransform& worldTrans) {
     const float SPRING_TIMESCALE = 0.5f;
     float tau = PHYSICS_ENGINE_FIXED_SUBSTEP / SPRING_TIMESCALE;
-    btVector3 currentPosition = worldTrans.getOrigin();
-    btVector3 offsetToTarget = glmToBullet(getObjectPosition()) - currentPosition;
-    float distance = offsetToTarget.length();
+    glm::vec3 currentPosition;
+    glm::quat currentRotation;
+    getBodyTransform(currentPosition, currentRotation);
+    glm::vec3 offsetToTarget = getObjectPosition() - currentPosition;
+    float distance = glm::length(offsetToTarget);
     if ((1.0f - tau) * distance > _diameter) {
         // the avatar body is far from its target --> slam position
-        btTransform newTransform;
-        newTransform.setOrigin(currentPosition + offsetToTarget);
-        newTransform.setRotation(glmToBullet(getObjectRotation()));
-        _body->setWorldTransform(newTransform);
-        _body->setLinearVelocity(glmToBullet(getObjectLinearVelocity()));
-        _body->setAngularVelocity(glmToBullet(getObjectAngularVelocity()));
+        setBodyTransform(currentPosition + offsetToTarget, getObjectRotation(), true);
+        setBodyLinearVelocity(getObjectLinearVelocity());
+        setBodyAngularVelocity(getObjectAngularVelocity());
     } else {
         // the avatar body is near its target --> slam velocity
-        btVector3 velocity = glmToBullet(getObjectLinearVelocity()) + (1.0f / SPRING_TIMESCALE) * offsetToTarget;
-        _body->setLinearVelocity(velocity);
-        _body->setAngularVelocity(glmToBullet(getObjectAngularVelocity()));
+        glm::vec3 velocity = getObjectLinearVelocity() + (1.0f / SPRING_TIMESCALE) * offsetToTarget;
+        setBodyLinearVelocity(velocity);
+        setBodyAngularVelocity(getObjectAngularVelocity());
         // slam its rotation
-        btTransform newTransform = worldTrans;
-        newTransform.setRotation(glmToBullet(getObjectRotation()));
-        _body->setWorldTransform(newTransform);
+        setBodyTransform(currentPosition, getObjectRotation(), true);
     }
 }
 
@@ -115,26 +109,46 @@ float AvatarMotionState::getObjectAngularDamping() const {
     return 0.5f;
 }
 
+// Another person's avatar arrives as a parent and a local pose. Riding a frame, the body lives in the
+// frame's world and follows that local pose, so the rider holds still on the deck however the frame moves.
 // virtual
 glm::vec3 AvatarMotionState::getObjectPosition() const {
+    Transform parentInFrame;
+    glm::vec3 v, w;
+    if (ObjectMotionState::getParentTransformInFrame(_avatar, parentInFrame, v, w)) {
+        return parentInFrame.transform(_avatar->getLocalPosition());
+    }
     return _avatar->getWorldPosition();
 }
 
 // virtual
 glm::quat AvatarMotionState::getObjectRotation() const {
+    Transform parentInFrame;
+    glm::vec3 v, w;
+    if (ObjectMotionState::getParentTransformInFrame(_avatar, parentInFrame, v, w)) {
+        return parentInFrame.getRotation() * _avatar->getLocalOrientation();
+    }
     return _avatar->getWorldOrientation();
 }
 
 // virtual
 glm::vec3 AvatarMotionState::getObjectLinearVelocity() const {
+    Transform parentInFrame;
+    glm::vec3 v, w;
+    if (ObjectMotionState::getParentTransformInFrame(_avatar, parentInFrame, v, w)) {
+        return v + parentInFrame.getRotation() * _avatar->getLocalVelocity();
+    }
     return _avatar->getWorldVelocity();
 }
 
 // virtual
+QUuid AvatarMotionState::getFrameID() const {
+    SpatiallyNestablePointer frame = ObjectMotionState::findFrameAncestor(_avatar);
+    return frame ? frame->getID() : QUuid();
+}
+
+// virtual
 glm::vec3 AvatarMotionState::getObjectAngularVelocity() const {
-    // HACK: avatars use a capusle collision shape and their angularVelocity in the local simulation is unimportant.
-    // Therefore, as optimization toward support for larger crowds we ignore it and return zero.
-    //return _avatar->getWorldAngularVelocity();
     return glm::vec3(0.0f);
 }
 
@@ -173,26 +187,13 @@ float AvatarMotionState::getMass() const {
 
 void AvatarMotionState::cacheShapeDiameter() {
     if (_shape) {
-        // shape is capsuleY
-        btVector3 aabbMin, aabbMax;
-        btTransform transform;
-        transform.setIdentity();
-        _shape->getAabb(transform, aabbMin, aabbMax);
-        _diameter = (aabbMax - aabbMin).getX();
+        _diameter = _shape->GetLocalBounds().GetSize().GetX();
     } else {
         _diameter = 0.0f;
     }
 }
 
-void AvatarMotionState::setRigidBody(btRigidBody* body) {
-    ObjectMotionState::setRigidBody(body);
-    if (_body) {
-        // remove angular dynamics from this body
-        _body->setAngularFactor(0.0f);
-    }
-}
-
-void AvatarMotionState::setShape(const btCollisionShape* shape) {
+void AvatarMotionState::setShape(const JPH::Shape* shape) {
     ObjectMotionState::setShape(shape);
     cacheShapeDiameter();
 }

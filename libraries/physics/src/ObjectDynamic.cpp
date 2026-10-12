@@ -181,7 +181,7 @@ EntityItemPointer ObjectDynamic::getEntityByID(EntityItemID entityID) const {
 }
 
 
-btRigidBody* ObjectDynamic::getRigidBody() {
+ObjectMotionState* ObjectDynamic::getMotionState() const {
     ObjectMotionState* motionState = nullptr;
     withReadLock([&]{
         auto ownerEntity = _ownerEntity.lock();
@@ -194,18 +194,20 @@ btRigidBody* ObjectDynamic::getRigidBody() {
         }
         motionState = static_cast<ObjectMotionState*>(physicsInfo);
     });
-    if (motionState) {
-        return motionState->getRigidBody();
-    }
-    return nullptr;
+    return motionState;
+}
+
+JPH::Body* ObjectDynamic::getBody() {
+    ObjectMotionState* motionState = getMotionState();
+    return motionState ? motionState->getBody() : nullptr;
 }
 
 void ObjectDynamic::activateBody(bool forceActivation) {
-    auto rigidBody = getRigidBody();
-    if (rigidBody) {
-        rigidBody->activate(forceActivation);
+    ObjectMotionState* motionState = getMotionState();
+    if (motionState && motionState->getBody()) {
+        motionState->activateBody();
     } else {
-        qCDebug(physics) << "ObjectDynamic::activateBody -- no rigid body" << (void*)rigidBody;
+        qCDebug(physics) << "ObjectDynamic::activateBody -- no body";
     }
 }
 
@@ -261,28 +263,25 @@ quint64 ObjectDynamic::serverTimeToLocalTime(quint64 timeValue) const {
     return timeValue - serverClockSkew;
 }
 
-btRigidBody* ObjectDynamic::getOtherRigidBody(EntityItemID otherEntityID) {
+ObjectMotionState* ObjectDynamic::getOtherMotionState(EntityItemID otherEntityID) const {
     EntityItemPointer otherEntity = getEntityByID(otherEntityID);
     if (!otherEntity) {
         return nullptr;
     }
-
-    void* otherPhysicsInfo = otherEntity->getPhysicsInfo();
-    if (!otherPhysicsInfo) {
-        return nullptr;
-    }
-
-    ObjectMotionState* otherMotionState = static_cast<ObjectMotionState*>(otherPhysicsInfo);
-    if (!otherMotionState) {
-        return nullptr;
-    }
-
-    return otherMotionState->getRigidBody();
+    return static_cast<ObjectMotionState*>(otherEntity->getPhysicsInfo());
 }
 
-QList<btRigidBody*> ObjectDynamic::getRigidBodies() {
-    QList<btRigidBody*> result;
-    result += getRigidBody();
+JPH::Body* ObjectDynamic::getOtherBody(EntityItemID otherEntityID) {
+    ObjectMotionState* otherMotionState = getOtherMotionState(otherEntityID);
+    return otherMotionState ? otherMotionState->getBody() : nullptr;
+}
+
+std::vector<JPH::BodyID> ObjectDynamic::getBodyIDs() {
+    std::vector<JPH::BodyID> result;
+    JPH::Body* body = getBody();
+    if (body) {
+        result.push_back(body->GetID());
+    }
     return result;
 }
 

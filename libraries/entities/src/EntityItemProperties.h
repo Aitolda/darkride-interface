@@ -52,6 +52,7 @@
 #include "LightEntityItem.h"
 #include "ZoneEntityItem.h"
 #include "TerrainEntityItem.h"
+#include "TrackEntityItem.h"
 
 #include "AnimationPropertyGroup.h"
 #include "SkyboxPropertyGroup.h"
@@ -117,6 +118,7 @@ class EntityItemProperties {
     friend class PolyVoxEntityItem;
     friend class GridEntityItem;
     friend class GizmoEntityItem;
+    friend class TrackEntityItem;
     friend class LightEntityItem;
     friend class ZoneEntityItem;
     friend class TerrainEntityItem;
@@ -212,6 +214,9 @@ public:
     DEFINE_PROPERTY_REF_ENUM(PROP_RENDER_LAYER, RenderLayer, renderLayer, RenderLayer, RenderLayer::WORLD);
     DEFINE_PROPERTY_REF_ENUM(PROP_PRIMITIVE_MODE, PrimitiveMode, primitiveMode, PrimitiveMode, PrimitiveMode::SOLID);
     DEFINE_PROPERTY(PROP_IGNORE_PICK_INTERSECTION, IgnorePickIntersection, ignorePickIntersection, bool, false);
+    DEFINE_PROPERTY(PROP_FRAME, Frame, frame, bool, false);
+    DEFINE_PROPERTY_REF(PROP_TRACK_ID, TrackID, trackID, QUuid, UNKNOWN_ENTITY_ID);
+    DEFINE_PROPERTY(PROP_TRACK_OFFSET, TrackOffset, trackOffset, float, 0.0f);
     DEFINE_PROPERTY_GROUP(Grab, grab, GrabPropertyGroup);
 
 
@@ -391,6 +396,14 @@ public:
     DEFINE_PROPERTY_REF(PROP_TRANSPARENT_BACKGROUND, TransparentBackground, transparentBackground, bool, false);
 
     // Polyline
+    // Track
+    DEFINE_PROPERTY_REF(PROP_TRACK_POINTS, TrackPoints, trackPoints, QVector<glm::vec3>, ENTITY_ITEM_DEFAULT_EMPTY_VEC3_QVEC);
+    DEFINE_PROPERTY(PROP_TRACK_BANK, TrackBank, trackBank, QVector<float>, QVector<float>());
+    DEFINE_PROPERTY(PROP_TRACK_DWELL, TrackDwell, trackDwell, QVector<float>, QVector<float>());
+    DEFINE_PROPERTY(PROP_TRACK_CLOSED, TrackClosed, trackClosed, bool, false);
+    DEFINE_PROPERTY(PROP_TRACK_SPEED, TrackSpeed, trackSpeed, float, TrackEntityItem::DEFAULT_SPEED);
+    DEFINE_PROPERTY(PROP_TRACK_ACCELERATION, TrackAcceleration, trackAcceleration, float, TrackEntityItem::DEFAULT_ACCELERATION);
+
     DEFINE_PROPERTY_REF(PROP_LINE_POINTS, LinePoints, linePoints, QVector<glm::vec3>, ENTITY_ITEM_DEFAULT_EMPTY_VEC3_QVEC);
     DEFINE_PROPERTY(PROP_STROKE_WIDTHS, StrokeWidths, strokeWidths, QVector<float>, QVector<float>());
     DEFINE_PROPERTY(PROP_STROKE_NORMALS, Normals, normals, QVector<glm::vec3>, ENTITY_ITEM_DEFAULT_EMPTY_VEC3_QVEC);

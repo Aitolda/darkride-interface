@@ -10,6 +10,13 @@
 //
 
 #include "MultiSphereShape.h"
+
+#include <algorithm>
+#include <cassert>
+#include <cfloat>
+
+#include <glm/gtx/norm.hpp>
+
 #include "PhysicsLogging.h"
 
 void SphereRegion::translate(const glm::vec3& translation) {
@@ -117,21 +124,21 @@ MultiSphereShape::ExtractionMode MultiSphereShape::getExtractionModeByJointName(
     return mode;
 }
 
-void MultiSphereShape::filterUniquePoints(const std::vector<btVector3>& kdop, std::vector<glm::vec3>& uniquePoints) {
+void MultiSphereShape::filterUniquePoints(const std::vector<glm::vec3>& kdop, std::vector<glm::vec3>& uniquePoints) {
     for (size_t j = 0; j < kdop.size(); j++) {
-        btVector3 btPoint = kdop[j];
-        auto hit = std::find_if(uniquePoints.begin(), uniquePoints.end(), [btPoint](const glm::vec3& point) -> bool {
-            return (glm::length(btPoint.getX() - point.x) < FLT_EPSILON
-                && glm::length(btPoint.getY() - point.y) < FLT_EPSILON
-                && glm::length(btPoint.getZ() - point.z) < FLT_EPSILON);
+        const glm::vec3& kdopPoint = kdop[j];
+        auto hit = std::find_if(uniquePoints.begin(), uniquePoints.end(), [kdopPoint](const glm::vec3& point) -> bool {
+            return (glm::abs(kdopPoint.x - point.x) < FLT_EPSILON
+                && glm::abs(kdopPoint.y - point.y) < FLT_EPSILON
+                && glm::abs(kdopPoint.z - point.z) < FLT_EPSILON);
         });
         if (hit == uniquePoints.end()) {
-            uniquePoints.push_back(bulletToGLM(btPoint));
+            uniquePoints.push_back(kdopPoint);
         }
     }
 }
 
-bool MultiSphereShape::computeMultiSphereShape(int jointIndex, const QString& jointName, const std::vector<btVector3>& kdop, float scale) {
+bool MultiSphereShape::computeMultiSphereShape(int jointIndex, const QString& jointName, const std::vector<glm::vec3>& kdop, float scale) {
     _scale = scale;
     _jointIndex = jointIndex;
     _jointName = jointName;
@@ -151,7 +158,7 @@ bool MultiSphereShape::computeMultiSphereShape(int jointIndex, const QString& jo
     return mode != ExtractionMode::None;
 }
 
-MultiSphereShape::KdopData MultiSphereShape::getKdopData(const std::vector<btVector3>& kdop) {
+MultiSphereShape::KdopData MultiSphereShape::getKdopData(const std::vector<glm::vec3>& kdop) {
     KdopData data;
     std::vector<glm::vec3> points;
     filterUniquePoints(kdop, points);

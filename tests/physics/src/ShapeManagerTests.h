@@ -18,6 +18,7 @@ class ShapeManagerTests : public QObject {
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void testShapeAccounting();
     void addManyShapes();
     void addBoxShape();

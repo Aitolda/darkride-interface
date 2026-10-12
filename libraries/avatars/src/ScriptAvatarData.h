@@ -40,6 +40,15 @@ class ScriptAvatarData : public QObject {
     Q_PROPERTY(glm::vec3 angularVelocity READ getAngularVelocity)
 
     //
+    // PARENT PROPERTIES: what the avatar is parented to (a seat, a vehicle, a moving reference frame) and its
+    // position relative to that parent, as received from its owner; null and the world position when it has none
+    //
+    Q_PROPERTY(QUuid parentID READ getParentID)
+    Q_PROPERTY(quint16 parentJointIndex READ getParentJointIndex)
+    Q_PROPERTY(glm::vec3 localPosition READ getLocalPosition)
+    Q_PROPERTY(glm::quat localOrientation READ getLocalOrientation)
+
+    //
     // IDENTIFIER PROPERTIES
     //
     Q_PROPERTY(QUuid sessionUUID READ getSessionUUID)
@@ -92,6 +101,13 @@ public:
     //
     glm::vec3 getVelocity() const;
     glm::vec3 getAngularVelocity() const;
+    //
+    // PARENT PROPERTIES
+    //
+    QUuid getParentID() const;
+    quint16 getParentJointIndex() const;
+    glm::vec3 getLocalPosition() const;
+    glm::quat getLocalOrientation() const;
 
     //
     // IDENTIFIER PROPERTIES

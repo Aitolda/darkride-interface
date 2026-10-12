@@ -1,5 +1,5 @@
 //
-//  CharacterControllerInterface.cpp
+//  CharacterController.cpp
 //  libraries/physics/src
 //
 //  Created by Andrew Meadows 2015.10.21
@@ -11,59 +11,29 @@
 
 #include "CharacterController.h"
 
+#include <glm/gtx/norm.hpp>
+#include <glm/gtx/quaternion.hpp>
+
+#include <Jolt/Jolt.h>
+#include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
+#include <Jolt/Physics/Body/BodyInterface.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
+
 #include <AvatarConstants.h>
 #include <NumericalConstants.h>
 #include <PhysicsCollisionGroups.h>
 
+#include "JoltUtil.h"
 #include "ObjectMotionState.h"
 #include "PhysicsHelpers.h"
 #include "PhysicsLogging.h"
-#include "TemporaryPairwiseCollisionFilter.h"
+#include "PhysicsWorld.h"
 
-const float STUCK_PENETRATION = -0.05f; // always negative into the object.
-const float STUCK_IMPULSE = 500.0f;
-
-
-const btVector3 LOCAL_UP_AXIS(0.0f, 1.0f, 0.0f);
-static bool _appliedStuckRecoveryStrategy = false;
-
-static TemporaryPairwiseCollisionFilter _pairwiseFilter;
-
-// Note: applyPairwiseFilter is registered as a sub-callback to Bullet's gContactAddedCallback feature
-// when we detect MyAvatar is "stuck".  It will disable new ManifoldPoints between MyAvatar and mesh objects with
-// which it has deep penetration, and will continue disabling new contact until new contacts stop happening
-// (no overlap).  If MyAvatar is not trying to move its velocity is defaulted to "up", to help it escape overlap.
-bool applyPairwiseFilter(btManifoldPoint& cp,
-        const btCollisionObjectWrapper* colObj0Wrap, int partId0, int index0,
-        const btCollisionObjectWrapper* colObj1Wrap, int partId1, int index1) {
-    static int32_t numCalls = 0;
-    ++numCalls;
-    // This callback is ONLY called on objects with btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK flag
-    // and the flagged object will always be sorted to Obj0.  Hence the "other" is always Obj1.
-    const btCollisionObject* other = colObj1Wrap->m_collisionObject;
-
-    if (_pairwiseFilter.isFiltered(other)) {
-        _pairwiseFilter.incrementEntry(other);
-        // disable contact point by setting distance too large and normal to zero
-        cp.setDistance(1.0e6f);
-        cp.m_normalWorldOnB.setValue(0.0f, 0.0f, 0.0f);
-        _appliedStuckRecoveryStrategy = true;
-        return false;
-    }
-
-    if (other->getCollisionShape()->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE) {
-        if ( cp.getDistance() < 2.0f * STUCK_PENETRATION ||
-                cp.getAppliedImpulse() > 2.0f * STUCK_IMPULSE ||
-                (cp.getDistance() < STUCK_PENETRATION && cp.getAppliedImpulse() > STUCK_IMPULSE)) {
-            _pairwiseFilter.incrementEntry(other);
-            // disable contact point by setting distance too large and normal to zero
-            cp.setDistance(1.0e6f);
-            cp.m_normalWorldOnB.setValue(0.0f, 0.0f, 0.0f);
-            _appliedStuckRecoveryStrategy = true;
-        }
-    }
-    return false;
-}
+const glm::vec3 LOCAL_UP_AXIS(0.0f, 1.0f, 0.0f);
 
 #ifdef DEBUG_STATE_CHANGE
 #define SET_STATE(desiredState, reason) setState(desiredState, reason)
@@ -71,28 +41,9 @@ bool applyPairwiseFilter(btManifoldPoint& cp,
 #define SET_STATE(desiredState, reason) setState(desiredState)
 #endif
 
-// helper class for simple ray-traces from character
-class ClosestNotMe : public btCollisionWorld::ClosestRayResultCallback {
-public:
-    ClosestNotMe(btRigidBody* me) : btCollisionWorld::ClosestRayResultCallback(btVector3(0.0f, 0.0f, 0.0f), btVector3(0.0f, 0.0f, 0.0f)) {
-        _me = me;
-        // the RayResultCallback's group and mask must match MY_AVATAR
-        m_collisionFilterGroup = BULLET_COLLISION_GROUP_MY_AVATAR;
-        m_collisionFilterMask = BULLET_COLLISION_MASK_MY_AVATAR;
-    }
-    virtual btScalar addSingleResult(btCollisionWorld::LocalRayResult& rayResult,bool normalInWorldSpace) override {
-        if (rayResult.m_collisionObject == _me) {
-            return 1.0f;
-        }
-        return ClosestRayResultCallback::addSingleResult(rayResult, normalInWorldSpace);
-    }
-protected:
-    btRigidBody* _me;
-};
-
 CharacterController::CharacterMotor::CharacterMotor(const glm::vec3& vel, const glm::quat& rot, float horizTimescale, float vertTimescale) {
-    velocity = glmToBullet(vel);
-    rotation = glmToBullet(rot);
+    velocity = vel;
+    rotation = rot;
     hTimescale = horizTimescale;
     if (hTimescale < MIN_CHARACTER_MOTOR_TIMESCALE) {
         hTimescale = MIN_CHARACTER_MOTOR_TIMESCALE;
@@ -109,99 +60,84 @@ static uint32_t _numCharacterControllers { 0 };
 
 CharacterController::CharacterController() {
     _floorDistance = _scaleFactor * DEFAULT_AVATAR_FALL_HEIGHT;
-
-    _targetVelocity.setValue(0.0f, 0.0f, 0.0f);
-    _followDesiredBodyTransform.setIdentity();
-    _followTimeRemaining = 0.0f;
     _state = State::Hover;
-    _isPushingUp = false;
-    _rayHitStartTime = 0;
-    _takeoffToInAirStartTime = 0;
-    _jumpButtonDownStartTime = 0;
-    _jumpButtonDownCount = 0;
-    _followTime = 0.0f;
-    _followLinearDisplacement = btVector3(0, 0, 0);
-    _followAngularDisplacement = btQuaternion::getIdentity();
-    _hasSupport = false;
-
     _pendingFlags = PENDING_FLAG_UPDATE_SHAPE;
 
-    // ATM CharacterController is a singleton.  When we want more we'll have to
-    // overhaul the applyPairwiseFilter() logic to handle multiple instances.
+    // ATM CharacterController is a singleton.
     ++_numCharacterControllers;
     assert(_numCharacterControllers == 1);
 }
 
 CharacterController::~CharacterController() {
-    if (_rigidBody) {
-        btCollisionShape* shape = _rigidBody->getCollisionShape();
-        if (shape) {
-            delete shape;
-        }
-        delete _rigidBody;
-        _rigidBody = nullptr;
-    }
+    _character = nullptr;
+    _shape = nullptr;
 }
 
 bool CharacterController::needsRemoval() const {
-    return (_physicsEngine && (_pendingFlags & PENDING_FLAG_REMOVE_FROM_SIMULATION) == PENDING_FLAG_REMOVE_FROM_SIMULATION);
+    return (_world && (_pendingFlags & PENDING_FLAG_REMOVE_FROM_SIMULATION) == PENDING_FLAG_REMOVE_FROM_SIMULATION);
 }
 
 bool CharacterController::needsAddition() const {
-    return (_physicsEngine && (_pendingFlags & PENDING_FLAG_ADD_TO_SIMULATION) == PENDING_FLAG_ADD_TO_SIMULATION);
+    return (_world && (_pendingFlags & PENDING_FLAG_ADD_TO_SIMULATION) == PENDING_FLAG_ADD_TO_SIMULATION);
+}
+
+JPH::BodyID CharacterController::getInnerBodyID() const {
+    return _character ? _character->GetInnerBodyID() : JPH::BodyID();
+}
+
+JPH::ObjectLayer CharacterController::characterLayer() const {
+    return JoltLayers::layerFor(BULLET_COLLISION_GROUP_MY_AVATAR, computeCollisionMask());
 }
 
 void CharacterController::removeFromWorld() {
     if (_inWorld) {
-        if (_rigidBody) {
-            _physicsEngine->getDynamicsWorld()->removeRigidBody(_rigidBody);
-            _physicsEngine->getDynamicsWorld()->removeAction(this);
+        // the character takes its inner body with it
+        if (_world) {
+            _world->removeContacts(nullptr);
         }
+        _character = nullptr;
         _inWorld = false;
     }
     _pendingFlags &= ~PENDING_FLAG_REMOVE_FROM_SIMULATION;
 }
 
 void CharacterController::addToWorld() {
-    if (!_rigidBody) {
+    if (!_shape || !_world || !_world->getPhysicsSystem()) {
         return;
     }
     if (_inWorld) {
         _pendingFlags &= ~PENDING_FLAG_ADD_DETAILED_TO_SIMULATION;
         return;
     }
-    btDiscreteDynamicsWorld* world = _physicsEngine->getDynamicsWorld();
-    int32_t collisionMask = computeCollisionMask();
-    int32_t collisionGroup = BULLET_COLLISION_GROUP_MY_AVATAR;
 
     updateMassProperties();
     _pendingFlags &= ~PENDING_FLAG_ADD_DETAILED_TO_SIMULATION;
-
-    // add to new world
     _pendingFlags &= ~PENDING_FLAG_JUMP;
-    world->addRigidBody(_rigidBody, collisionGroup, collisionMask);
-    world->addAction(this);
+
+    JPH::CharacterVirtualSettings settings;
+    settings.mShape = _shape;
+    settings.mMass = _mass;
+    settings.mMaxSlopeAngle = acosf(glm::clamp(_minFloorNormalDotUp, -1.0f, 1.0f));
+    settings.mUp = glmToJolt(_currentUp);
+    // contacts below the centre of the bottom hemisphere count as standing on something
+    settings.mSupportingVolume = JPH::Plane(glmToJolt(_currentUp), -_halfHeight);
+    settings.mMaxStrength = 100.0f;
+    settings.mCharacterPadding = 0.02f;
+    settings.mPenetrationRecoverySpeed = 1.0f;
+    settings.mPredictiveContactDistance = 0.1f;
+    settings.mEnhancedInternalEdgeRemoval = true;
+    // what everything else collides with and what rays hit: a kinematic body in the MY_AVATAR group
+    settings.mInnerBodyShape = _shape;
+    settings.mInnerBodyLayer = characterLayer();
+
+    _character = new JPH::CharacterVirtual(&settings, glmToJoltR(_position), glmToJolt(_rotation), 0, _world->getPhysicsSystem());
     _inWorld = true;
-
-    // restore gravity settings because adding an object to the world overwrites its gravity setting
-    _rigidBody->setGravity(_currentGravity * _currentUp);
-    // set flag to enable custom contactAddedCallback
-    _rigidBody->setCollisionFlags(btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK);
-
-    // enable CCD
-    _rigidBody->setCcdSweptSphereRadius(_halfHeight);
-    _rigidBody->setCcdMotionThreshold(_radius);
-
-    btCollisionShape* shape = _rigidBody->getCollisionShape();
-    assert(shape && shape->getShapeType() == CONVEX_HULL_SHAPE_PROXYTYPE);
-    _ghost.setCharacterShape(static_cast<btConvexHullShape*>(shape));
-
-    _ghost.setCollisionGroupAndMask(collisionGroup, collisionMask & (~ collisionGroup));
-    _ghost.setCollisionWorld(world);
-    _ghost.setRadiusAndHalfHeight(_radius, _halfHeight);
-    if (_rigidBody) {
-        _ghost.setWorldTransform(_rigidBody->getWorldTransform());
+    if (_hasPendingVelocity) {
+        // arriving from another world, still moving
+        _character->SetLinearVelocity(glmToJolt(_pendingVelocity));
+        _hasPendingVelocity = false;
     }
+
     if (_pendingFlags & PENDING_FLAG_UPDATE_SHAPE) {
         // shouldn't fall in here, but if we do make sure both ADD and REMOVE bits are still set
         _pendingFlags |= PENDING_FLAG_ADD_TO_SIMULATION | PENDING_FLAG_REMOVE_FROM_SIMULATION |
@@ -209,172 +145,122 @@ void CharacterController::addToWorld() {
     } else {
         _pendingFlags &= ~PENDING_FLAG_ADD_TO_SIMULATION;
     }
+    updateCurrentGravity();
 }
 
-bool CharacterController::checkForSupport(btCollisionWorld* collisionWorld) {
-    bool pushing = _targetVelocity.length2() > FLT_EPSILON;
+// Is the character standing on something it can stand on? Jolt answers from its last update.
+bool CharacterController::checkForSupport() {
+    if (!_character) {
+        return false;
+    }
+    JPH::CharacterVirtual::EGroundState groundState = _character->GetGroundState();
+    if (groundState == JPH::CharacterVirtual::EGroundState::OnGround) {
+        return true;
+    }
+    if (groundState == JPH::CharacterVirtual::EGroundState::OnSteepGround) {
+        return glm::dot(joltToGLM(_character->GetGroundNormal()), _currentUp) > _minFloorNormalDotUp;
+    }
+    return false;
+}
 
-    btDispatcher* dispatcher = collisionWorld->getDispatcher();
-    int numManifolds = dispatcher->getNumManifolds();
-    bool hasFloor = false;
-    bool probablyStuck = _isStuck && _appliedStuckRecoveryStrategy;
-
-    btTransform rotation = _rigidBody->getWorldTransform();
-    rotation.setOrigin(btVector3(0.0f, 0.0f, 0.0f)); // clear translation part
-
-    float deepestDistance = 0.0f;
-    float strongestImpulse = 0.0f;
-
-    _netCollisionImpulse = btVector3(0.0f, 0.0f, 0.0f);
-    for (int i = 0; i < numManifolds; i++) {
-        btPersistentManifold* contactManifold = dispatcher->getManifoldByIndexInternal(i);
-        if (_rigidBody == contactManifold->getBody1() || _rigidBody == contactManifold->getBody0()) {
-            bool characterIsFirst = _rigidBody == contactManifold->getBody0();
-            int numContacts = contactManifold->getNumContacts();
-            int stepContactIndex = -1;
-            bool stepValid = true;
-            float highestStep = _minStepHeight;
-            for (int j = 0; j < numContacts; j++) {
-                // check for "floor"
-                btManifoldPoint& contact = contactManifold->getContactPoint(j);
-                btVector3 pointOnCharacter = characterIsFirst ? contact.m_localPointA : contact.m_localPointB; // object-local-frame
-                btVector3 normal = characterIsFirst ? contact.m_normalWorldOnB : -contact.m_normalWorldOnB; // points toward character
-                btScalar hitHeight = _halfHeight + _radius + pointOnCharacter.dot(_currentUp);
-
-                float distance = contact.getDistance();
-                if (distance < deepestDistance) {
-                    deepestDistance = distance;
-                }
-                float impulse = contact.getAppliedImpulse();
-                _netCollisionImpulse += impulse * normal;
-                if (impulse > strongestImpulse) {
-                    strongestImpulse = impulse;
-                }
-
-                if (hitHeight < _maxStepHeight && normal.dot(_currentUp) > _minFloorNormalDotUp) {
-                    hasFloor = true;
-                }
-                if (stepValid && pushing && _targetVelocity.dot(normal) < 0.0f) {
-                    // remember highest step obstacle
-                    if (!_stepUpEnabled || hitHeight > _maxStepHeight) {
-                        // this manifold is invalidated by point that is too high
-                        stepValid = false;
-                    } else if (hitHeight > highestStep && normal.dot(_targetVelocity) < 0.0f ) {
-                        highestStep = hitHeight;
-                        stepContactIndex = j;
-                        hasFloor = true;
-                    }
-                }
-            }
-            if (stepValid && stepContactIndex > -1 && highestStep > _stepHeight) {
-                // remember step info for later
-                btManifoldPoint& contact = contactManifold->getContactPoint(stepContactIndex);
-                btVector3 pointOnCharacter = characterIsFirst ? contact.m_localPointA : contact.m_localPointB; // object-local-frame
-                _stepNormal = characterIsFirst ? contact.m_normalWorldOnB : -contact.m_normalWorldOnB; // points toward character
-                _stepHeight = highestStep;
-                _stepPoint = rotation * pointOnCharacter; // rotate into world-frame
-            }
+// The contacts the character made during its last update go to the engine's contact map, so that scripts
+// get collision events for the avatar and so that what the avatar bumps gets simulated here.
+void CharacterController::recordContacts() {
+    if (!_character || !_world) {
+        return;
+    }
+    const JPH::BodyLockInterfaceNoLock& lockInterface = _world->getPhysicsSystem()->GetBodyLockInterfaceNoLock();
+    for (const JPH::CharacterContact& contact : _character->GetActiveContacts()) {
+        if (!contact.mHadCollision || contact.mBodyB.IsInvalid()) {
+            continue;
+        }
+        JPH::BodyLockRead lock(lockInterface, contact.mBodyB);
+        if (!lock.Succeeded()) {
+            continue;
+        }
+        ObjectMotionState* other = PhysicsEngine::motionStateOf(lock.GetBody());
+        if (other) {
+            _world->recordCharacterContact(other, joltToGLM(contact.mPosition), joltToGLM(contact.mContactNormal), contact.mDistance);
         }
     }
+}
 
-    // If there's deep penetration and big impulse we're probably stuck.
-    probablyStuck = probablyStuck
-        || deepestDistance < 2.0f * STUCK_PENETRATION
-        || strongestImpulse > 2.0f * STUCK_IMPULSE
-        || (deepestDistance < STUCK_PENETRATION && strongestImpulse > STUCK_IMPULSE);
-
-    if (_isStuck != probablyStuck) {
-        ++_stuckTransitionCount;
-        if (_stuckTransitionCount > NUM_SUBSTEPS_FOR_STUCK_TRANSITION) {
-            // we've been in this "probablyStuck" state for several consecutive substeps
-            // --> make it official by changing state
-            qCDebug(physics) << "CharacterController::_isStuck :" << _isStuck << "-->" << probablyStuck;
-            _isStuck = probablyStuck;
-            // init _numStuckSubsteps at NUM_SUBSTEPS_FOR_SAFE_LANDING_RETRY so SafeLanding tries to help immediately
-            _numStuckSubsteps = NUM_SUBSTEPS_FOR_SAFE_LANDING_RETRY;
-            _stuckTransitionCount = 0;
-            if (_isStuck) {
-                // enable pairwise filter
-                _physicsEngine->setContactAddedCallback(applyPairwiseFilter);
-                _pairwiseFilter.incrementStepCount();
-            } else {
-                // disable pairwise filter
-                _physicsEngine->setContactAddedCallback(nullptr);
-                _appliedStuckRecoveryStrategy = false;
-                _pairwiseFilter.clearAllEntries();
-            }
-            updateCurrentGravity();
-        }
-    } else {
-        _stuckTransitionCount = 0;
-        if (_isStuck) {
-            ++_numStuckSubsteps;
-            _appliedStuckRecoveryStrategy = false;
-        }
+// a ray straight down from the centre of the bottom sphere, to know how far the floor is
+void CharacterController::measureFloorDistance(float rayLength, bool& rayHasHit) {
+    rayHasHit = false;
+    if (!_character || !_world) {
+        return;
     }
-    return hasFloor;
+    glm::vec3 rayStart = joltToGLM(_character->GetPosition()) - _halfHeight * _currentUp;
+    glm::vec3 rayEnd = rayStart - rayLength * _currentUp;
+    JPH::IgnoreSingleBodyFilter ignoreMe(getInnerBodyID());
+    RayHit hit;
+    if (_world->castRayClosest(rayStart, rayEnd, BULLET_COLLISION_GROUP_MY_AVATAR, computeCollisionMask(), &ignoreMe, hit)) {
+        rayHasHit = true;
+        _floorDistance = rayLength * hit.fraction - _radius;
+    }
 }
 
-void CharacterController::updateAction(btCollisionWorld* collisionWorld, btScalar deltaTime) {
-    preStep(collisionWorld);
-    playerStep(collisionWorld, deltaTime);
-}
+const float MIN_TARGET_SPEED = 0.001f;
+const float MIN_TARGET_SPEED_SQUARED = MIN_TARGET_SPEED * MIN_TARGET_SPEED;
 
-void CharacterController::preStep(btCollisionWorld* collisionWorld) {
-    // trace a ray straight down to see if we're standing on the ground
-    const btTransform& transform = _rigidBody->getWorldTransform();
-
-    // rayStart is at center of bottom sphere
-    btVector3 rayStart = transform.getOrigin() - _halfHeight * _currentUp;
-
-    // rayEnd is some short distance outside bottom sphere
-    const btScalar FLOOR_PROXIMITY_THRESHOLD = 0.3f * _radius;
-    btScalar rayLength = _radius + FLOOR_PROXIMITY_THRESHOLD;
-    btVector3 rayEnd = rayStart - rayLength * _currentUp;
+void CharacterController::substep(float dt) {
+    if (!_character || !_inWorld || !_world) {
+        return;
+    }
 
     // scan down for nearby floor
-    ClosestNotMe rayCallback(_rigidBody);
-    rayCallback.m_closestHitFraction = 1.0f;
-    collisionWorld->rayTest(rayStart, rayEnd, rayCallback);
-    if (rayCallback.hasHit()) {
-        _floorDistance = rayLength * rayCallback.m_closestHitFraction - _radius;
+    const float FLOOR_PROXIMITY_THRESHOLD = 0.3f * _radius;
+    bool rayHasHit = false;
+    measureFloorDistance(_radius + FLOOR_PROXIMITY_THRESHOLD, rayHasHit);
+
+    _hasSupport = checkForSupport();
+
+    // The reference the motors work against: the parent's velocity when the avatar is parented, else the
+    // velocity of the floor it stands on, so a platform carries whoever stands on it.
+    glm::vec3 referenceVelocity = _parentVelocity;
+    if (glm::length2(referenceVelocity) == 0.0f && _hasSupport) {
+        referenceVelocity = joltToGLM(_character->GetGroundVelocity());
     }
-}
 
-const btScalar MIN_TARGET_SPEED = 0.001f;
-const btScalar MIN_TARGET_SPEED_SQUARED = MIN_TARGET_SPEED * MIN_TARGET_SPEED;
-
-void CharacterController::playerStep(btCollisionWorld* collisionWorld, btScalar dt) {
-    _stepHeight = _minStepHeight; // clears memory of last step obstacle
-    _hasSupport = checkForSupport(collisionWorld);
-    btVector3 velocity = _rigidBody->getLinearVelocity() - _parentVelocity;
+    glm::vec3 velocity = joltToGLM(_character->GetLinearVelocity()) - referenceVelocity;
     computeNewVelocity(dt, velocity);
+
+    // gravity: the character is not a rigid body, so it falls because we say so
+    if (!_hasSupport || _state == State::InAir || _state == State::Takeoff) {
+        velocity += (dt * _currentGravity) * _currentUp;
+    } else if (_state == State::Ground && glm::dot(velocity, _currentUp) < 0.0f) {
+        // standing on something: no sinking into it
+        velocity -= glm::dot(velocity, _currentUp) * _currentUp;
+    }
 
     const float MINIMUM_TIME_REMAINING = 0.005f;
     const float MAX_DISPLACEMENT = 0.5f * _radius;
     _followTimeRemaining -= dt;
     if (_followTimeRemaining >= MINIMUM_TIME_REMAINING) {
-        btTransform bodyTransform = _rigidBody->getWorldTransform();
-
-        btVector3 startPos = bodyTransform.getOrigin();
-        btVector3 deltaPos = _followDesiredBodyTransform.getOrigin() - startPos;
-        btVector3 vel = deltaPos / _followTimeRemaining;
-        btVector3 linearDisplacement = clampLength(vel * dt, MAX_DISPLACEMENT);  // clamp displacement to prevent tunneling.
-        btVector3 endPos = startPos + linearDisplacement;
+        glm::vec3 startPos = joltToGLM(_character->GetPosition());
+        glm::vec3 deltaPos = _followDesiredPosition - startPos;
+        glm::vec3 vel = deltaPos / _followTimeRemaining;
+        glm::vec3 linearDisplacement = vel * dt;
+        float displacementLength = glm::length(linearDisplacement);
+        if (displacementLength > MAX_DISPLACEMENT) {
+            linearDisplacement *= MAX_DISPLACEMENT / displacementLength; // clamp displacement to prevent tunneling.
+        }
+        glm::vec3 endPos = startPos + linearDisplacement;
 
         // resolve the simple linearDisplacement
         _followLinearDisplacement += linearDisplacement;
 
         // now for the rotational part...
-        btQuaternion startRot = bodyTransform.getRotation();
-        btQuaternion desiredRot = _followDesiredBodyTransform.getRotation();
+        glm::quat startRot = joltToGLM(_character->GetRotation());
+        glm::quat desiredRot = _followDesiredRotation;
 
         // startRot as default rotation
-        btQuaternion endRot = startRot;
+        glm::quat endRot = startRot;
 
         // the dot product between two quaternions is equal to +/- cos(angle/2)
         // where 'angle' is that of the rotation between them
-        float qDot = desiredRot.dot(startRot);
+        float qDot = glm::dot(desiredRot, startRot);
 
         // when the abs() value of the dot product is approximately 1.0
         // then the two rotations are effectively adjacent
@@ -386,10 +272,10 @@ void CharacterController::playerStep(btCollisionWorld* collisionWorld, btScalar 
                 desiredRot = -desiredRot;
                 qDot = -qDot;
             }
-            btQuaternion deltaRot = desiredRot * startRot.inverse();
+            glm::quat deltaRot = desiredRot * glm::inverse(startRot);
 
             // the axis is the imaginary part, but scaled by sin(angle/2)
-            btVector3 axis(deltaRot.getX(), deltaRot.getY(), deltaRot.getZ());
+            glm::vec3 axis(deltaRot.x, deltaRot.y, deltaRot.z);
             axis /= sqrtf(1.0f - qDot * qDot);
 
             // compute the angle we will resolve for this dt, but don't overshoot
@@ -399,69 +285,51 @@ void CharacterController::playerStep(btCollisionWorld* collisionWorld, btScalar 
             }
 
             // accumulate rotation
-            deltaRot = btQuaternion(axis, angle);
-            _followAngularDisplacement = (deltaRot * _followAngularDisplacement).normalize();
+            deltaRot = glm::angleAxis(angle, glm::normalize(axis));
+            _followAngularDisplacement = glm::normalize(deltaRot * _followAngularDisplacement);
 
             // in order to accumulate displacement of avatar position, we need to take _shapeLocalOffset into account.
-            btVector3 shapeLocalOffset = glmToBullet(_shapeLocalOffset);
-
             endRot = deltaRot * startRot;
-            btVector3 swingDisplacement = rotateVector(endRot, -shapeLocalOffset) - rotateVector(startRot, -shapeLocalOffset);
+            glm::vec3 swingDisplacement = endRot * (-_shapeLocalOffset) - startRot * (-_shapeLocalOffset);
             _followLinearDisplacement += swingDisplacement;
         }
-        _rigidBody->setWorldTransform(btTransform(endRot, endPos));
+        _character->SetPosition(glmToJoltR(endPos));
+        _character->SetRotation(glmToJolt(endRot));
     }
     _followTime += dt;
 
-    if (_steppingUp) {
-        float horizontalTargetSpeed = (_targetVelocity - _targetVelocity.dot(_currentUp) * _currentUp).length();
-        if (horizontalTargetSpeed > FLT_EPSILON) {
-            // compute a stepUpSpeed that will reach the top of the step in the time it would take
-            // to move over the _stepPoint at target speed
-            float horizontalDistance = (_stepPoint - _stepPoint.dot(_currentUp) * _currentUp).length();
-            float timeToStep = horizontalDistance / horizontalTargetSpeed;
-            float stepUpSpeed = _stepHeight / timeToStep;
+    _character->SetLinearVelocity(glmToJolt(velocity + referenceVelocity));
 
-            // magically clamp stepUpSpeed to a fraction of horizontalTargetSpeed
-            // to prevent the avatar from moving unreasonably fast according to human eye
-            const float MAX_STEP_UP_SPEED = 0.65f * horizontalTargetSpeed;
-            if (stepUpSpeed > MAX_STEP_UP_SPEED) {
-                stepUpSpeed = MAX_STEP_UP_SPEED;
-            }
+    // let Jolt move the character through the world: collide and slide, stairs, and sticking to the floor
+    JPH::CharacterVirtual::ExtendedUpdateSettings updateSettings;
+    updateSettings.mStickToFloorStepDown = glmToJolt(-_currentUp * _maxStepHeight);
+    updateSettings.mWalkStairsStepUp = _stepUpEnabled ? glmToJolt(_currentUp * _maxStepHeight) : JPH::Vec3::sZero();
+    JPH::ObjectLayer layer = characterLayer();
+    const JoltLayers::Tables& layers = _world->getLayers();
+    JPH::DefaultBroadPhaseLayerFilter broadPhaseFilter(layers.objectVsBroadPhase, layer);
+    JPH::DefaultObjectLayerFilter objectLayerFilter(layers.objectLayerPairs, layer);
+    JPH::IgnoreSingleBodyFilter bodyFilter(getInnerBodyID());
+    JPH::ShapeFilter shapeFilter;
+    _character->ExtendedUpdate(dt, glmToJolt(_currentGravity * _currentUp), updateSettings,
+                               broadPhaseFilter, objectLayerFilter, bodyFilter, shapeFilter, *_world->getTempAllocator());
+    _character->UpdateGroundVelocity();
 
-            // add minimum velocity to counteract gravity's displacement during one step
-            // Note: the 0.5 factor comes from the fact that we really want the
-            // average velocity contribution from gravity during the step
-            stepUpSpeed -= 0.5f * _currentGravity * timeToStep; // remember: _gravity is negative scalar
-
-            btScalar vDotUp = velocity.dot(_currentUp);
-            if (vDotUp < stepUpSpeed) {
-                // character doesn't have enough upward velocity to cover the step so we help using a "sky hook"
-                // which uses micro-teleports rather than applying real velocity
-                // to prevent the avatar from popping up after the step is done
-                btTransform transform = _rigidBody->getWorldTransform();
-                transform.setOrigin(transform.getOrigin() + (dt * stepUpSpeed) * _currentUp);
-                _rigidBody->setWorldTransform(transform);
-            }
-
-            // don't allow the avatar to fall downward when stepping up
-            // since otherwise this would tend to defeat the step-up behavior
-            if (vDotUp < 0.0f) {
-                velocity -= vDotUp * _currentUp;
-            }
-        }
-    }
-    _rigidBody->setLinearVelocity(velocity + _parentVelocity);
-    _ghost.setWorldTransform(_rigidBody->getWorldTransform());
+    recordContacts();
 }
 
-void CharacterController::jump(const btVector3& dir) {
+void CharacterController::jump(const glm::vec3& dir) {
     _pendingFlags |= PENDING_FLAG_JUMP;
 }
 
 bool CharacterController::onGround() const {
-    const btScalar FLOOR_PROXIMITY_THRESHOLD = 0.3f * _radius;
+    const float FLOOR_PROXIMITY_THRESHOLD = 0.3f * _radius;
     return _floorDistance < FLOOR_PROXIMITY_THRESHOLD || _hasSupport;
+}
+
+bool CharacterController::hasFloorBelow() const {
+    // not onGround(): that keeps a lost floor for half a second so the state machine does not flap, and in half a
+    // second a walker is well past the edge
+    return _floorBelowNow;
 }
 
 #ifdef DEBUG_STATE_CHANGE
@@ -490,11 +358,7 @@ void CharacterController::updateCurrentGravity() {
     } else {
         _currentGravity = _gravity;
     }
-    if (_rigidBody) {
-        _rigidBody->setGravity(_currentGravity * _currentUp);
-    }
 }
-
 
 void CharacterController::setGravity(float gravity) {
     _gravity = gravity;
@@ -538,8 +402,8 @@ void CharacterController::setLocalBoundingBox(const glm::vec3& minCorner, const 
     if (glm::abs(radius - _radius) > FLT_EPSILON || glm::abs(halfHeight - _halfHeight) > FLT_EPSILON) {
         _radius = radius;
         _halfHeight = halfHeight;
-        const btScalar DEFAULT_MIN_STEP_HEIGHT_FACTOR = 0.005f;
-        const btScalar DEFAULT_MAX_STEP_HEIGHT_FACTOR = 0.65f;
+        const float DEFAULT_MIN_STEP_HEIGHT_FACTOR = 0.005f;
+        const float DEFAULT_MAX_STEP_HEIGHT_FACTOR = 0.65f;
         _minStepHeight = DEFAULT_MIN_STEP_HEIGHT_FACTOR * (_halfHeight + _radius);
         _maxStepHeight = DEFAULT_MAX_STEP_HEIGHT_FACTOR * (_halfHeight + _radius);
 
@@ -549,12 +413,6 @@ void CharacterController::setLocalBoundingBox(const glm::vec3& minCorner, const 
 
     // it's ok to change offset immediately -- there are no thread safety issues here
     _shapeLocalOffset = minCorner + 0.5f * scale;
-
-    if (_rigidBody) {
-        // update CCD with new _radius
-        _rigidBody->setCcdSweptSphereRadius(_halfHeight);
-        _rigidBody->setCcdMotionThreshold(_radius);
-    }
 }
 
 void CharacterController::setPhysicsEngine(const PhysicsEnginePointer& engine) {
@@ -563,6 +421,37 @@ void CharacterController::setPhysicsEngine(const PhysicsEnginePointer& engine) {
         // of that assumption here.  If we ever introduce more and allow for this backpointer
         // to change then we'll have to overhaul this method.
         _physicsEngine = engine;
+        _world = engine->getWorld(_frameID);
+    }
+}
+
+void CharacterController::setFrame(const QUuid& frameID) {
+    if (frameID == _frameID && (_world || !_physicsEngine)) {
+        return;
+    }
+    _frameID = frameID;
+    if (!_physicsEngine) {
+        return;
+    }
+    PhysicsWorld* world = _physicsEngine->getWorld(frameID);
+    if (world == _world) {
+        return;
+    }
+    // out of the old world now; into the new one at the next preSimulation(), where the position is fresh
+    if (_inWorld) {
+        removeFromWorld();
+        _pendingFlags |= PENDING_FLAG_ADD_TO_SIMULATION;
+    }
+    _world = world;
+    qCDebug(physics) << "CharacterController: avatar now in the world of frame" << frameID;
+}
+
+void CharacterController::setLinearVelocity(const glm::vec3& velocity) {
+    if (_character && _inWorld) {
+        _character->SetLinearVelocity(glmToJolt(velocity));
+    } else {
+        _pendingVelocity = velocity;
+        _hasPendingVelocity = true;
     }
 }
 
@@ -580,9 +469,9 @@ void CharacterController::setCollisionless(bool collisionless) {
 }
 
 void CharacterController::updateUpAxis(const glm::quat& rotation) {
-    _currentUp = quatRotate(glmToBullet(rotation), LOCAL_UP_AXIS);
-    if (_rigidBody) {
-        _rigidBody->setGravity(_currentGravity * _currentUp);
+    _currentUp = rotation * LOCAL_UP_AXIS;
+    if (_character) {
+        _character->SetUp(glmToJolt(_currentUp));
     }
 }
 
@@ -590,38 +479,57 @@ void CharacterController::setPositionAndOrientation(
         const glm::vec3& position,
         const glm::quat& orientation) {
     updateUpAxis(orientation);
-    _rotation = glmToBullet(orientation);
-    _position = glmToBullet(position + orientation * _shapeLocalOffset);
+    _rotation = orientation;
+    glm::vec3 bodyPosition = position;
+    const float UNCHANGED_DISTANCE2 = 1.0e-8f; // a tenth of a millimetre, squared
+    if (glm::distance2(position, _handedOutPosition) < UNCHANGED_DISTANCE2) {
+        // the pose read ahead at the last harvest came back untouched: the body stays where the simulation
+        // left it, so the read-ahead is not integrated twice
+        bodyPosition -= _readAhead;
+    }
+    _position = bodyPosition + orientation * _shapeLocalOffset;
 }
 
+// The pose is read ahead to the present along the character's velocity (ObjectMotionState::getLeftoverTime),
+// as every simulated object's is; setPositionAndOrientation takes the read-ahead back out when the pose
+// comes back unchanged.
 void CharacterController::getPositionAndOrientation(glm::vec3& position, glm::quat& rotation) const {
-    if (_rigidBody) {
-        const btTransform& avatarTransform = _rigidBody->getWorldTransform();
-        rotation = bulletToGLM(avatarTransform.getRotation());
-        position = bulletToGLM(avatarTransform.getOrigin()) - rotation * _shapeLocalOffset;
+    if (_character) {
+        rotation = joltToGLM(_character->GetRotation());
+        _readAhead = ObjectMotionState::getLeftoverTime() * joltToGLM(_character->GetLinearVelocity());
+        position = joltToGLM(_character->GetPosition()) + _readAhead - rotation * _shapeLocalOffset;
+        _handedOutPosition = position;
     }
 }
 
 void CharacterController::setParentVelocity(const glm::vec3& velocity) {
-    _parentVelocity = glmToBullet(velocity);
+    _parentVelocity = velocity;
 }
 
 void CharacterController::setFollowParameters(const glm::mat4& desiredWorldBodyMatrix, float timeRemaining) {
     _followTimeRemaining = timeRemaining;
-    _followDesiredBodyTransform = glmToBullet(desiredWorldBodyMatrix) * btTransform(btQuaternion::getIdentity(), glmToBullet(_shapeLocalOffset));
+    // the desired pose comes from the HMD, in the domain; the character wants it in its own world
+    glm::quat rotation = glm::normalize(glm::quat_cast(desiredWorldBodyMatrix));
+    glm::vec3 position = glm::vec3(desiredWorldBodyMatrix[3]);
+    if (_world && !_world->isRoot()) {
+        rotation = _world->toLocal(rotation);
+        position = _world->toLocal(position);
+    }
+    _followDesiredRotation = rotation;
+    _followDesiredPosition = position + rotation * _shapeLocalOffset;
 }
 
 glm::vec3 CharacterController::getFollowLinearDisplacement() const {
-    return bulletToGLM(_followLinearDisplacement);
+    return _followLinearDisplacement;
 }
 
 glm::quat CharacterController::getFollowAngularDisplacement() const {
-    return bulletToGLM(_followAngularDisplacement);
+    return _followAngularDisplacement;
 }
 
 glm::vec3 CharacterController::getFollowVelocity() const {
     if (_followTime > 0.0f) {
-        return bulletToGLM(_followLinearDisplacement) / _followTime;
+        return _followLinearDisplacement / _followTime;
     } else {
         return glm::vec3();
     }
@@ -629,15 +537,15 @@ glm::vec3 CharacterController::getFollowVelocity() const {
 
 glm::vec3 CharacterController::getLinearVelocity() const {
     glm::vec3 velocity(0.0f);
-    if (_rigidBody) {
-        velocity = bulletToGLM(_rigidBody->getLinearVelocity());
+    if (_character) {
+        velocity = joltToGLM(_character->GetLinearVelocity());
     }
     return velocity;
 }
 
 glm::vec3 CharacterController::getVelocityChange() const {
-    if (_rigidBody) {
-        return bulletToGLM(_velocityChange);
+    if (_character) {
+        return _velocityChange;
     }
     return glm::vec3(0.0f);
 }
@@ -650,7 +558,7 @@ void CharacterController::addMotor(const glm::vec3& velocity, const glm::quat& r
     _motors.push_back(CharacterController::CharacterMotor(velocity, rotation, horizTimescale, vertTimescale));
 }
 
-void CharacterController::applyMotor(int index, btScalar dt, btVector3& worldVelocity, std::vector<btVector3>& velocities, std::vector<btScalar>& weights) {
+void CharacterController::applyMotor(int index, float dt, glm::vec3& worldVelocity, std::vector<glm::vec3>& velocities, std::vector<float>& weights) {
     assert(index < (int)(_motors.size()));
     CharacterController::CharacterMotor& motor = _motors[index];
     if (motor.hTimescale >= MAX_CHARACTER_MOTOR_TIMESCALE && motor.vTimescale >= MAX_CHARACTER_MOTOR_TIMESCALE) {
@@ -659,55 +567,45 @@ void CharacterController::applyMotor(int index, btScalar dt, btVector3& worldVel
     }
 
     // rotate into motor-frame
-    btVector3 axis = motor.rotation.getAxis();
-    btScalar angle = motor.rotation.getAngle();
-    btVector3 velocity = worldVelocity.rotate(axis, -angle);
+    glm::quat toMotor = glm::inverse(motor.rotation);
+    glm::vec3 velocity = toMotor * worldVelocity;
 
     int32_t collisionMask = computeCollisionMask();
     if (collisionMask == BULLET_COLLISION_MASK_COLLISIONLESS ||
             _state == State::Hover || motor.hTimescale == motor.vTimescale) {
         // modify velocity
-        btScalar tau = dt / motor.hTimescale;
+        float tau = dt / motor.hTimescale;
         if (tau > 1.0f) {
             tau = 1.0f;
         }
         velocity += tau * (motor.velocity - velocity);
 
         // rotate back into world-frame
-        velocity = velocity.rotate(axis, angle);
-        _targetVelocity += (tau * motor.velocity).rotate(axis, angle);
+        velocity = motor.rotation * velocity;
+        _targetVelocity += motor.rotation * (tau * motor.velocity);
 
         // store the velocity and weight
         velocities.push_back(velocity);
         weights.push_back(tau);
     } else {
         // compute local UP
-        btVector3 up = _currentUp.rotate(axis, -angle);
-        btVector3 motorVelocity = motor.velocity;
+        glm::vec3 up = toMotor * _currentUp;
+        glm::vec3 motorVelocity = motor.velocity;
 
         // save these non-adjusted components for later
-        btVector3 vTargetVelocity = motorVelocity.dot(up) * up;
-        btVector3 hTargetVelocity = motorVelocity - vTargetVelocity;
-
-        if (_stepHeight > _minStepHeight && !_steppingUp) {
-            // there is a step --> compute velocity direction to go over step
-            btVector3 motorVelocityWF = motorVelocity.rotate(axis, angle);
-            if (motorVelocityWF.dot(_stepNormal) < 0.0f) {
-                // the motor pushes against step
-                _steppingUp = true;
-            }
-        }
+        glm::vec3 vTargetVelocity = glm::dot(motorVelocity, up) * up;
+        glm::vec3 hTargetVelocity = motorVelocity - vTargetVelocity;
 
         // split velocity into horizontal and vertical components
-        btVector3 vVelocity = velocity.dot(up) * up;
-        btVector3 hVelocity = velocity - vVelocity;
-        btVector3 vMotorVelocity = motorVelocity.dot(up) * up;
-        btVector3 hMotorVelocity = motorVelocity - vMotorVelocity;
+        glm::vec3 vVelocity = glm::dot(velocity, up) * up;
+        glm::vec3 hVelocity = velocity - vVelocity;
+        glm::vec3 vMotorVelocity = glm::dot(motorVelocity, up) * up;
+        glm::vec3 hMotorVelocity = motorVelocity - vMotorVelocity;
 
         // modify each component separately
-        btScalar maxTau = 0.0f;
+        float maxTau = 0.0f;
         if (motor.hTimescale < MAX_CHARACTER_MOTOR_TIMESCALE) {
-            btScalar tau = dt / motor.hTimescale;
+            float tau = dt / motor.hTimescale;
             if (tau > 1.0f) {
                 tau = 1.0f;
             }
@@ -715,7 +613,7 @@ void CharacterController::applyMotor(int index, btScalar dt, btVector3& worldVel
             hVelocity += (hMotorVelocity - hVelocity) * tau;
         }
         if (motor.vTimescale < MAX_CHARACTER_MOTOR_TIMESCALE) {
-            btScalar tau = dt / motor.vTimescale;
+            float tau = dt / motor.vTimescale;
             if (tau > 1.0f) {
                 tau = 1.0f;
             }
@@ -726,8 +624,8 @@ void CharacterController::applyMotor(int index, btScalar dt, btVector3& worldVel
         }
 
         // add components back together and rotate into world-frame
-        velocity = (hVelocity + vVelocity).rotate(axis, angle);
-        _targetVelocity += maxTau * (hTargetVelocity + vTargetVelocity).rotate(axis, angle);
+        velocity = motor.rotation * (hVelocity + vVelocity);
+        _targetVelocity += maxTau * (motor.rotation * (hTargetVelocity + vTargetVelocity));
 
         // store velocity and weights
         velocities.push_back(velocity);
@@ -735,45 +633,36 @@ void CharacterController::applyMotor(int index, btScalar dt, btVector3& worldVel
     }
 }
 
-void CharacterController::computeNewVelocity(btScalar dt, btVector3& velocity) {
-    btVector3 currentVelocity = velocity;
-
-    if (velocity.length2() < MIN_TARGET_SPEED_SQUARED) {
-        velocity = btVector3(0.0f, 0.0f, 0.0f);
+void CharacterController::computeNewVelocity(float dt, glm::vec3& velocity) {
+    if (glm::length2(velocity) < MIN_TARGET_SPEED_SQUARED) {
+        velocity = glm::vec3(0.0f);
     }
 
     // measure velocity changes and their weights
-    std::vector<btVector3> velocities;
+    std::vector<glm::vec3> velocities;
     velocities.reserve(_motors.size());
-    std::vector<btScalar> weights;
+    std::vector<float> weights;
     weights.reserve(_motors.size());
-    _targetVelocity = btVector3(0.0f, 0.0f, 0.0f);
-    _steppingUp = false;
+    _targetVelocity = glm::vec3(0.0f);
     for (int i = 0; i < (int)_motors.size(); ++i) {
         applyMotor(i, dt, velocity, velocities, weights);
     }
     assert(velocities.size() == weights.size());
 
     // blend velocity changes according to relative weights
-    btScalar totalWeight = 0.0f;
+    float totalWeight = 0.0f;
     for (size_t i = 0; i < weights.size(); ++i) {
         totalWeight += weights[i];
     }
     if (totalWeight > 0.0f) {
-        velocity = btVector3(0.0f, 0.0f, 0.0f);
+        velocity = glm::vec3(0.0f);
         for (size_t i = 0; i < velocities.size(); ++i) {
             velocity += (weights[i] / totalWeight) * velocities[i];
         }
         _targetVelocity /= totalWeight;
     }
-    if (velocity.length2() < MIN_TARGET_SPEED_SQUARED) {
-        velocity = btVector3(0.0f, 0.0f, 0.0f);
-    }
-    if (_isStuck && _targetVelocity.length2() < MIN_TARGET_SPEED_SQUARED) {
-        // we're stuck, but not trying to move --> move UP by default
-        // in the hopes we'll get unstuck
-        const float STUCK_EXTRACTION_SPEED = 1.0f;
-        velocity = STUCK_EXTRACTION_SPEED * _currentUp;
+    if (glm::length2(velocity) < MIN_TARGET_SPEED_SQUARED) {
+        velocity = glm::vec3(0.0f);
     }
 
     // 'thrust' is applied at the very end
@@ -783,118 +672,52 @@ void CharacterController::computeNewVelocity(btScalar dt, btVector3& velocity) {
     // _targetVelocity = ideal final velocity according to input
     // velocity = new final velocity after motors are applied to currentVelocity
 
-    // but we want to avoid getting stuck and tunelling through geometry so we perform
-    // further checks and modify/abandon our velocity calculations
-
-    const float SAFE_COLLISION_SPEED = glm::abs(STUCK_PENETRATION) * (float)NUM_SUBSTEPS_PER_SECOND;
-    const float SAFE_COLLISION_SPEED_SQUARED = SAFE_COLLISION_SPEED * SAFE_COLLISION_SPEED;
-
-    // NOTE: the thresholds are negative which indicates the vectors oppose each other
-    // and which means comparison operators against them may look wrong at first glance.
-    // The magnitudes of the thresholds have been tuned manually.
-    const float STRONG_OPPOSING_IMPACT_THRESHOLD = -1000.0f;
-    const float VERY_STRONG_OPPOSING_IMPACT_THRESHOLD = -2000.0f;
-    float velocityDotImpulse = velocity.dot(_netCollisionImpulse);
-
-    const float COLLISION_BRAKE_TIMESCALE = 0.20f; // must be > PHYSICS_ENGINE_FIXED_SUBSTEP for stability
-    const float MIN_COLLISION_BRAKE = 0.05f;
-    if ((velocityDotImpulse > VERY_STRONG_OPPOSING_IMPACT_THRESHOLD && _stuckTransitionCount == 0) || _isStuck) {
-        // we are either definitely NOT stuck (in which case nothing to do)
-        // or definitely are (in which case we'll be temporarily disabling collisions with the offending object
-        // and we don't mind tunnelling as an escape route out of stuck)
-        if (_collisionBrake > MIN_COLLISION_BRAKE) {
-            _collisionBrake *= (1.0f - dt / COLLISION_BRAKE_TIMESCALE);
-            if (_collisionBrake < MIN_COLLISION_BRAKE) {
-                _collisionBrake = 0.0f;
-            }
-        }
-        return;
-    }
-
-    if (velocityDotImpulse < VERY_STRONG_OPPOSING_IMPACT_THRESHOLD ||
-            (velocityDotImpulse < STRONG_OPPOSING_IMPACT_THRESHOLD && velocity.length2() > SAFE_COLLISION_SPEED_SQUARED)) {
-        if (_collisionBrake < 1.0f) {
-            _collisionBrake += (1.0f - _collisionBrake) * (dt / COLLISION_BRAKE_TIMESCALE);
-            const float MAX_COLLISION_BRAKE = 1.0f - MIN_COLLISION_BRAKE;
-            if (_collisionBrake > MAX_COLLISION_BRAKE) {
-                _collisionBrake = 1.0f;
-            }
-        }
-
-        // NOTE about REFLECTION_COEFFICIENT: a value of 2.0 provides full reflection
-        // (zero attenuation) whereas a value of 1.0 zeros it (full attenuation).
-        const float REFLECTION_COEFFICIENT = 1.1f;
-
-        if (velocity.dot(currentVelocity) > 0.0f) {
-            // our new velocity points in the same direction as our currentVelocity
-            // but negative "impact" means new velocity points against netCollisionImpulse
-            if (currentVelocity.dot(_netCollisionImpulse) > 0.0f) {
-                // currentVelocity points positively with netCollisionImpulse --> trust physics to save us
-                velocity = currentVelocity;
-            } else {
-                // can't trust physics --> use new velocity but reflect it
-                btVector3 impulseDirection = _netCollisionImpulse.normalized();
-                velocity -= (REFLECTION_COEFFICIENT * velocity.dot(impulseDirection)) * impulseDirection;
-            }
-        } else {
-            // currentVelocity points against new velocity, which means it is probably better but...
-            // when the physical simulation starts to fail (e.g. in deep penetration in mesh geometry)
-            // the currentVelocity can point in unhelpful directions, so we check it and reflect any component
-            // opposing netCollisionImpulse in hopes netCollisionImpulse points toward good exit
-            if (currentVelocity.dot(_netCollisionImpulse) < 0.0f) {
-                // currentVelocity points against netCollisionImpulse --> reflect
-                btVector3 impulseDirection = _netCollisionImpulse.normalized();
-                currentVelocity -= (REFLECTION_COEFFICIENT * currentVelocity.dot(impulseDirection)) * impulseDirection;
-            }
-            velocity = currentVelocity;
-        }
-    }
-}
-
-void CharacterController::computeNewVelocity(btScalar dt, glm::vec3& velocity) {
-    btVector3 btVelocity = glmToBullet(velocity);
-    computeNewVelocity(dt, btVelocity);
-    velocity = bulletToGLM(btVelocity);
+    // Jolt's character never tunnels or gets stuck in meshes the way a rigid body could, so the collision
+    // brake Bullet needed stays released.
+    _collisionBrake = 0.0f;
 }
 
 void CharacterController::updateState() {
-    if (!_physicsEngine) {
+    if (!_physicsEngine || !_character) {
         return;
     }
     if (_pendingFlags & PENDING_FLAG_RECOMPUTE_FLYING) {
          SET_STATE(CharacterController::State::Hover, "recomputeFlying");
          _hasSupport = false;
-         _stepHeight = _minStepHeight; // clears memory of last step obstacle
          _pendingFlags &= ~PENDING_FLAG_RECOMPUTE_FLYING;
     }
 
-    const btScalar FLY_TO_GROUND_THRESHOLD = 0.1f * _radius;
-    const btScalar GROUND_TO_FLY_THRESHOLD = 0.8f * _radius + _halfHeight;
+    const float FLY_TO_GROUND_THRESHOLD = 0.1f * _radius;
+    const float GROUND_TO_FLY_THRESHOLD = 0.8f * _radius + _halfHeight;
     const quint64 TAKE_OFF_TO_IN_AIR_PERIOD = 250 * MSECS_PER_SECOND;
-    const btScalar MIN_HOVER_HEIGHT = _scaleFactor * DEFAULT_AVATAR_MIN_HOVER_HEIGHT;
+    const float MIN_HOVER_HEIGHT = _scaleFactor * DEFAULT_AVATAR_MIN_HOVER_HEIGHT;
     const quint64 JUMP_TO_HOVER_PERIOD = _scaleFactor < 1.0f ? _scaleFactor * 1100 * MSECS_PER_SECOND : 1100 * MSECS_PER_SECOND;
 
     // scan for distant floor
     // rayStart is at center of bottom sphere
-    btVector3 rayStart = _position;
-
-    btScalar rayLength = _radius;
+    float rayLength = _radius;
     int32_t collisionMask = computeCollisionMask();
     if (collisionMask == BULLET_COLLISION_MASK_COLLISIONLESS) {
         rayLength += MIN_HOVER_HEIGHT;
     } else {
         rayLength += _scaleFactor * DEFAULT_AVATAR_FALL_HEIGHT;
     }
-    btVector3 rayEnd = rayStart - rayLength * _currentUp;
 
-    ClosestNotMe rayCallback(_rigidBody);
-    rayCallback.m_closestHitFraction = 1.0f;
-    _physicsEngine->getDynamicsWorld()->rayTest(rayStart, rayEnd, rayCallback);
-    bool rayHasHit = rayCallback.hasHit();
+    bool rayHasHit = false;
+    {
+        glm::vec3 rayStart = _position;
+        glm::vec3 rayEnd = rayStart - rayLength * _currentUp;
+        JPH::IgnoreSingleBodyFilter ignoreMe(getInnerBodyID());
+        RayHit hit;
+        if (_world->castRayClosest(rayStart, rayEnd, BULLET_COLLISION_GROUP_MY_AVATAR, collisionMask, &ignoreMe, hit)) {
+            rayHasHit = true;
+            _floorDistance = rayLength * hit.fraction - (_radius + _halfHeight);
+        }
+        _floorBelowNow = rayHasHit && _floorDistance < 0.3f * _radius;
+    }
     quint64 now = usecTimestampNow();
     if (rayHasHit) {
         _rayHitStartTime = now;
-        _floorDistance = rayLength * rayCallback.m_closestHitFraction - (_radius + _halfHeight);
     } else {
         const quint64 RAY_HIT_START_PERIOD = 500 * MSECS_PER_SECOND;
         if ((now - _rayHitStartTime) < RAY_HIT_START_PERIOD) {
@@ -913,17 +736,17 @@ void CharacterController::updateState() {
         }
     }
 
-    btVector3 velocity = _preSimulationVelocity;
+    glm::vec3 velocity = _preSimulationVelocity;
 
     // disable normal state transitions while collisionless
-    const btScalar MAX_WALKING_SPEED = 2.65f;
+    const float MAX_WALKING_SPEED = 2.65f;
     if (collisionMask == BULLET_COLLISION_MASK_COLLISIONLESS) {
         // when collisionless: only switch between State::Ground, State::Hover and State::Seated
         // and bypass state debugging
         if (_isSeated) {
             _state = State::Seated;
         } else if (rayHasHit) {
-            if (velocity.length() > (MAX_WALKING_SPEED)) {
+            if (glm::length(velocity) > (MAX_WALKING_SPEED)) {
                 _state = State::Hover;
             } else {
                 _state = State::Ground;
@@ -958,20 +781,20 @@ void CharacterController::updateState() {
                     const float jumpHeight = std::max(_scaleFactor * DEFAULT_AVATAR_JUMP_HEIGHT, DEFAULT_AVATAR_MIN_JUMP_HEIGHT);
                     const float jumpSpeed = sqrtf(2.0f * -DEFAULT_AVATAR_GRAVITY * jumpHeight);
                     velocity += jumpSpeed * _currentUp;
-                    _rigidBody->setLinearVelocity(velocity);
+                    _character->SetLinearVelocity(glmToJolt(velocity));
                 }
                 break;
             case State::InAir: {
                 const float jumpHeight = std::max(_scaleFactor * DEFAULT_AVATAR_JUMP_HEIGHT, DEFAULT_AVATAR_MIN_JUMP_HEIGHT);
                 const float jumpSpeed = sqrtf(2.0f * -DEFAULT_AVATAR_GRAVITY * jumpHeight);
-                if ((velocity.dot(_currentUp) <= (jumpSpeed / 2.0f)) && ((_floorDistance < FLY_TO_GROUND_THRESHOLD) || _hasSupport)) {
+                if ((glm::dot(velocity, _currentUp) <= (jumpSpeed / 2.0f)) && ((_floorDistance < FLY_TO_GROUND_THRESHOLD) || _hasSupport)) {
                     SET_STATE(State::Ground, "hit ground");
                 } else if (_zoneFlyingAllowed) {
-                    btVector3 desiredVelocity = _targetVelocity;
-                    if (desiredVelocity.length2() < MIN_TARGET_SPEED_SQUARED) {
-                        desiredVelocity = btVector3(0.0f, 0.0f, 0.0f);
+                    glm::vec3 desiredVelocity = _targetVelocity;
+                    if (glm::length2(desiredVelocity) < MIN_TARGET_SPEED_SQUARED) {
+                        desiredVelocity = glm::vec3(0.0f);
                     }
-                    bool vertTargetSpeedIsNonZero = desiredVelocity.dot(_currentUp) > MIN_TARGET_SPEED;
+                    bool vertTargetSpeedIsNonZero = glm::dot(desiredVelocity, _currentUp) > MIN_TARGET_SPEED;
                     if (_comfortFlyingAllowed && (jumpButtonHeld || vertTargetSpeedIsNonZero) && (_takeoffJumpButtonID != _jumpButtonDownCount)) {
                         SET_STATE(State::Hover, "double jump button");
                     } else if (_comfortFlyingAllowed && (jumpButtonHeld || vertTargetSpeedIsNonZero) && (now - _jumpButtonDownStartTime) > JUMP_TO_HOVER_PERIOD) {
@@ -984,7 +807,7 @@ void CharacterController::updateState() {
                 break;
             }
             case State::Hover: {
-                btScalar horizontalSpeed = (velocity - velocity.dot(_currentUp) * _currentUp).length();
+                float horizontalSpeed = glm::length(velocity - glm::dot(velocity, _currentUp) * _currentUp);
                 bool flyingFast = horizontalSpeed > (MAX_WALKING_SPEED * 0.75f);
                 if (!_zoneFlyingAllowed) {
                     SET_STATE(State::InAir, "zone flying not allowed");
@@ -1008,23 +831,17 @@ void CharacterController::updateState() {
 void CharacterController::preSimulation() {
     if (needsRemoval()) {
         removeFromWorld();
-
-        // We must remove any existing contacts for the avatar so that any new contacts will have
-        // valid data.  MyAvatar's RigidBody is the ONLY one in the simulation that does not yet
-        // have a MotionState so we pass nullptr to removeContacts().
-        if (_physicsEngine) {
-            _physicsEngine->removeContacts(nullptr);
-        }
     }
     updateShapeIfNecessary();
     if (needsAddition()) {
         addToWorld();
     }
 
-    if (_rigidBody) {
-        // slam body transform and remember velocity
-        _rigidBody->setWorldTransform(btTransform(btTransform(_rotation, _position)));
-        _preSimulationVelocity = _rigidBody->getLinearVelocity();
+    if (_character) {
+        // slam the character's transform and remember velocity
+        _character->SetPosition(glmToJoltR(_position));
+        _character->SetRotation(glmToJolt(_rotation));
+        _preSimulationVelocity = joltToGLM(_character->GetLinearVelocity());
 
         updateState();
     }
@@ -1033,29 +850,28 @@ void CharacterController::preSimulation() {
     _pendingFlags &= ~PENDING_FLAG_JUMP;
 
     _followTime = 0.0f;
-    _followLinearDisplacement = btVector3(0, 0, 0);
-    _followAngularDisplacement = btQuaternion::getIdentity();
-
-    if (_isStuck) {
-        _pairwiseFilter.expireOldEntries();
-        _pairwiseFilter.incrementStepCount();
-    }
+    _followLinearDisplacement = glm::vec3(0.0f);
+    _followAngularDisplacement = glm::quat();
 }
 
 void CharacterController::postSimulation() {
-    if (_rigidBody) {
-        _velocityChange = _rigidBody->getLinearVelocity() - _preSimulationVelocity;
+    if (_character) {
+        _velocityChange = joltToGLM(_character->GetLinearVelocity()) - _preSimulationVelocity;
     }
 }
 
 bool CharacterController::getRigidBodyLocation(glm::vec3& avatarRigidBodyPosition, glm::quat& avatarRigidBodyRotation) {
-    if (!_rigidBody) {
+    if (!_character) {
         return false;
     }
-
-    const btTransform& worldTrans = _rigidBody->getCenterOfMassTransform();
-    avatarRigidBodyPosition = bulletToGLM(worldTrans.getOrigin()) + ObjectMotionState::getWorldOffset();
-    avatarRigidBodyRotation = bulletToGLM(worldTrans.getRotation());
+    // in the domain, whichever world the character is in
+    avatarRigidBodyPosition = joltToGLM(_character->GetPosition());
+    avatarRigidBodyRotation = joltToGLM(_character->GetRotation());
+    if (_world && !_world->isRoot()) {
+        avatarRigidBodyPosition = _world->toParent(avatarRigidBodyPosition);
+        avatarRigidBodyRotation = _world->toParent(avatarRigidBodyRotation);
+    }
+    avatarRigidBodyPosition += ObjectMotionState::getWorldOffset();
     return true;
 }
 

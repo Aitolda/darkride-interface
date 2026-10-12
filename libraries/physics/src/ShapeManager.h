@@ -14,40 +14,31 @@
 
 #include <atomic>
 #include <chrono>
+#include <unordered_map>
 #include <vector>
 
 #include <QObject>
-#include <btBulletDynamicsCommon.h>
-#include <LinearMath/btHashMap.h>
+
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Collision/Shape/Shape.h>
 
 #include <ShapeInfo.h>
 
 #include "ShapeFactory.h"
 #include "HashKey.h"
 
-// The ShapeManager handles the ref-counting on shared shapes:
+// The ShapeManager handles the ref-counting on shapes:
 //
-// Each object added to the physics simulation gets a corresponding btRigidBody.
-// The body has a btCollisionShape that represents the contours of its collision
-// surface.  Multiple bodies may have the same shape.  Rather than create a unique
-// btCollisionShape instance for every body with a particular shape we can instead
-// use a single shape instance for all of the bodies.  This is called "shape
-// sharing".
+// Each object added to the physics simulation must have a shape.  Separate objects
+// can share the same shape, and there is a cost to creating and tearing down the shapes,
+// so the ShapeManager keeps a cache of them, keyed by the ShapeInfo hash. Jolt's own
+// reference counting keeps a shape alive for as long as a body uses it; the manager's count
+// decides when the cache lets go.
 //
-// When body needs a new shape a description of ths shape (ShapeInfo) is assembled
-// and a request is sent to the ShapeManager for a corresponding btCollisionShape
-// pointer.  The ShapeManager will compute a hash of the ShapeInfo's data and use
-// that to find the shape in its map.  If it finds one it increments the ref-count
-// and returns the pointer.  If not it asks the ShapeFactory to create it, adds an
-// entry in the map with a ref-count of 1, and returns the pointer.
+// Shapes are deleted after being released for a while. Big mesh shapes are built
+// on a worker thread, and the result arrives through acceptWork(); until then
+// getShape() returns nothing for them and the caller waits for the delivery count to change.
 //
-// When a body stops using a shape the ShapeManager must be informed so it can
-// decrement its ref-count.  When a ref-count drops to zero the ShapeManager
-// doesn't delete it right away.  Instead it puts the shape's key on a list delete
-// later.  When that list grows big enough the ShapeManager will remove any matching
-// entries that still have zero ref-count.
-
-
 class ShapeManager : public QObject {
     Q_OBJECT
 public:
@@ -55,22 +46,23 @@ public:
     ShapeManager();
     ~ShapeManager();
 
-    /// \return pointer to shape
-    const btCollisionShape* getShape(const ShapeInfo& info);
-    const btCollisionShape* getShapeByKey(uint64_t key);
+    /// \return pointer to shape (null when none yet) and increments the count for the ShapeInfo
+    const JPH::Shape* getShape(const ShapeInfo& info);
+    const JPH::Shape* getShapeByKey(uint64_t key);
     bool hasShapeWithKey(uint64_t key) const;
 
     /// \return true if shape was found and released
-    bool releaseShape(const btCollisionShape* shape);
+    bool releaseShape(const JPH::Shape* shape);
 
     /// delete shapes that have zero references
     void collectGarbage();
 
     // validation methods
-    int getNumShapes() const { return _shapeMap.size(); }
+    int getNumShapes() const { return (int)_shapeMap.size(); }
     int getNumReferences(const ShapeInfo& info) const;
-    int getNumReferences(const btCollisionShape* shape) const;
-    bool hasShape(const btCollisionShape* shape) const;
+    int getNumReferences(const JPH::Shape* shape) const;
+    bool hasShape(const JPH::Shape* shape) const;
+
     uint32_t getWorkRequestCount() const { return _workRequestCount; }
     uint32_t getWorkDeliveryCount() const { return _workDeliveryCount; }
 
@@ -83,13 +75,13 @@ private:
 
     class ShapeReference {
     public:
-        int refCount;
-        const btCollisionShape* shape;
+        int refCount { 0 };
+        ShapeFactory::ShapeRef shape;
         uint64_t key { 0 };
-        ShapeReference() : refCount(0), shape(nullptr) {}
     };
 
     using TimePoint = std::chrono::time_point<std::chrono::steady_clock>;
+
     class KeyExpiry {
     public:
         KeyExpiry(uint64_t k, std::chrono::time_point<std::chrono::steady_clock> e) : expiry(e), key(k) {}
@@ -97,8 +89,7 @@ private:
         uint64_t key;
     };
 
-    // btHashMap is required because it supports memory alignment of the btCollisionShapes
-    btHashMap<HashKey, ShapeReference> _shapeMap;
+    std::unordered_map<uint64_t, ShapeReference> _shapeMap;
     std::vector<uint64_t> _garbageRing;
     std::vector<uint64_t> _pendingMeshShapes;
     std::vector<KeyExpiry> _orphans;

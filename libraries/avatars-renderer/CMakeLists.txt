@@ -15,4 +15,3 @@ include_hifi_library_headers(task)
 include_hifi_library_headers(workload)
 include_hifi_library_headers(graphics-scripting) # for ScriptableModel.h
 
-target_bullet()

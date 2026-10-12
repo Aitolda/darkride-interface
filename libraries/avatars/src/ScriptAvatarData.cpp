@@ -129,6 +129,43 @@ glm::vec3 ScriptAvatarData::getAngularVelocity() const {
 // END
 //
 
+//
+// PARENT PROPERTIES
+// START
+//
+QUuid ScriptAvatarData::getParentID() const {
+    if (AvatarSharedPointer sharedAvatarData = _avatarData.lock()) {
+        return sharedAvatarData->getParentID();
+    } else {
+        return QUuid();
+    }
+}
+quint16 ScriptAvatarData::getParentJointIndex() const {
+    if (AvatarSharedPointer sharedAvatarData = _avatarData.lock()) {
+        return sharedAvatarData->getParentJointIndex();
+    } else {
+        return 0;
+    }
+}
+glm::vec3 ScriptAvatarData::getLocalPosition() const {
+    if (AvatarSharedPointer sharedAvatarData = _avatarData.lock()) {
+        return sharedAvatarData->getLocalPosition();
+    } else {
+        return glm::vec3();
+    }
+}
+glm::quat ScriptAvatarData::getLocalOrientation() const {
+    if (AvatarSharedPointer sharedAvatarData = _avatarData.lock()) {
+        return sharedAvatarData->getLocalOrientation();
+    } else {
+        return glm::quat();
+    }
+}
+//
+// PARENT PROPERTIES
+// END
+//
+
 
 //
 // IDENTIFIER PROPERTIES

@@ -19,6 +19,8 @@
 
 #include "ObjectMotionState.h"
 
+class TrackSimulation;
+
 
 // From the MotionState's perspective:
 //      Inside = physics simulation
@@ -34,11 +36,15 @@ public:
     };
 
     EntityMotionState() = delete;
-    EntityMotionState(btCollisionShape* shape, EntityItemPointer item);
+    EntityMotionState(const JPH::Shape* shape, EntityItemPointer item);
     virtual ~EntityMotionState();
 
     void handleDeactivation();
     virtual void handleEasyChanges(uint32_t& flags) override;
+
+    // The chain of transforms between the entity's parent and its frame, composed: the transform of the parent
+    // in the frame's coordinates. Returns false when the entity has no frame.
+    bool getParentTransformInFrame(Transform& transform, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const;
 
     /// \return PhysicsMotionType based on params set in EntityItem
     virtual PhysicsMotionType computePhysicsMotionType() const override;
@@ -46,12 +52,16 @@ public:
     virtual bool isMoving() const override;
 
     // this relays incoming position/rotation to the RigidBody
-    virtual void getWorldTransform(btTransform& worldTrans) const override;
+    void pushTransformToBody(float dt) override;
 
     // this relays outgoing position/rotation to the EntityItem
-    virtual void setWorldTransform(const btTransform& worldTrans) override;
+    void pullTransformFromBody() override;
+    int getNestingDepth() const override;
 
     bool shouldSendUpdate(uint32_t simulationStep);
+    // a car on a track (PHYSICS.md 4.8): driven along the curve by the client that owns it, through the TrackSimulation
+    bool isTrackDriven() const { return _trackDriven; }
+    void setTrackSimulation(TrackSimulation* tracks) { _tracks = tracks; }
     void sendBid(OctreeEditPacketSender* packetSender, uint32_t step);
     void sendUpdate(OctreeEditPacketSender* packetSender, uint32_t step);
 
@@ -63,11 +73,16 @@ public:
     virtual float getObjectLinearDamping() const override { return _entity->getDamping(); }
     virtual float getObjectAngularDamping() const override { return _entity->getAngularDamping(); }
 
-    virtual glm::vec3 getObjectPosition() const override { return _entity->getWorldPosition() - ObjectMotionState::getWorldOffset(); }
-    virtual glm::quat getObjectRotation() const override { return _entity->getWorldOrientation(); }
-    virtual glm::vec3 getObjectLinearVelocity() const override { return _entity->getWorldVelocity(); }
-    virtual glm::vec3 getObjectAngularVelocity() const override { return _entity->getWorldAngularVelocity(); }
+    // In the coordinates of the entity's frame when it has one (PHYSICS.md 4.1), else the domain's.
+    virtual glm::vec3 getObjectPosition() const override;
+    virtual glm::quat getObjectRotation() const override;
+    virtual glm::vec3 getObjectLinearVelocity() const override;
+    virtual glm::vec3 getObjectAngularVelocity() const override;
     virtual glm::vec3 getObjectGravity() const override { return _entity->getGravity(); }
+
+    QUuid getFrameID() const override;
+    bool isFrame() const override;
+    bool getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorner) const override;
     virtual glm::vec3 getObjectLinearVelocityChange() const override;
 
     virtual const QUuid getObjectID() const override { return _entity->getID(); }
@@ -98,10 +113,9 @@ public:
     OwnershipState getOwnershipState() const { return _ownershipState; }
 
     void setRegion(uint8_t region);
-    void saveKinematicState(btScalar timeStep) override;
 
 protected:
-    void setRigidBody(btRigidBody* body) override;
+    void setBody(JPH::Body* body, PhysicsWorld* world) override;
 
     uint8_t computeFinalBidPriority() const;
     void updateSendVelocities();
@@ -116,7 +130,6 @@ protected:
 
     void clearObjectVelocities() const;
 
-    bool isInPhysicsSimulation() const { return _body != nullptr; }
     bool shouldBeInPhysicsSimulation() const;
     void setMotionType(PhysicsMotionType motionType) override;
 
@@ -157,6 +170,11 @@ protected:
     uint8_t _numInactiveUpdates { 1 };
     uint8_t _bumpedPriority { 0 }; // the target simulation priority according to collision history
     uint8_t _region { workload::Region::INVALID };
+
+    mutable bool _trackDriven { false }; // the entity has a trackID (refreshed with its motion type)
+    TrackSimulation* _tracks { nullptr };
+    uint32_t _lastTrackUpdateStep { 0 }; // the substep an owned car last sent an update at
+    bool trackCarOutOfSync(uint32_t simulationStep);
 
     bool isServerlessMode();
 };

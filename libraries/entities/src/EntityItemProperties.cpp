@@ -504,6 +504,9 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
     CHECK_PROPERTY_CHANGE(PROP_ENTITY_PRIORITY, entityPriority);
     CHECK_PROPERTY_CHANGE(PROP_PRIMITIVE_MODE, primitiveMode);
     CHECK_PROPERTY_CHANGE(PROP_IGNORE_PICK_INTERSECTION, ignorePickIntersection);
+    CHECK_PROPERTY_CHANGE(PROP_FRAME, frame);
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_ID, trackID);
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_OFFSET, trackOffset);
     changedProperties += _grab.getChangedProperties();
 
     // Physics
@@ -678,6 +681,14 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
     CHECK_PROPERTY_CHANGE(PROP_TRANSPARENT_BACKGROUND, transparentBackground);
 
     // Polyline
+    // Track
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_POINTS, trackPoints);
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_BANK, trackBank);
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_DWELL, trackDwell);
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_CLOSED, trackClosed);
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_SPEED, trackSpeed);
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_ACCELERATION, trackAcceleration);
+
     CHECK_PROPERTY_CHANGE(PROP_LINE_POINTS, linePoints);
     CHECK_PROPERTY_CHANGE(PROP_STROKE_WIDTHS, strokeWidths);
     CHECK_PROPERTY_CHANGE(PROP_STROKE_NORMALS, normals);
@@ -776,6 +787,10 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
  * @property {Entities.PrimitiveMode} primitiveMode="solid" - How the entity's geometry is rendered.
  * @property {boolean} ignorePickIntersection=false - <code>true</code> if {@link Picks} and {@link RayPick} ignore the entity, 
  *     <code>false</code> if they don't.
+ * @property {boolean} frame=false - <code>true</code> if the entity is a moving reference frame: what stands in it is
+ *     simulated in its own physics world and rides with it (PHYSICS.md).
+ * @property {Uuid} trackID=null - The Track entity this entity rides along, if any; the physics moves it.
+ * @property {number} trackOffset=0 - Where along the train this entity sits, in meters along the track.
  *
  * @property {Vec3} position=0,0,0 - The position of the entity in world coordinates.
  * @property {Quat} rotation=0,0,0,1 - The orientation of the entity in world coordinates.
@@ -921,6 +936,7 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
  * @see {@link Entities.EntityProperties-Model|EntityProperties-Model}
  * @see {@link Entities.EntityProperties-ParticleEffect|EntityProperties-ParticleEffect}
  * @see {@link Entities.EntityProperties-PolyLine|EntityProperties-PolyLine}
+ * @see {@link Entities.EntityProperties-Track|EntityProperties-Track}
  * @see {@link Entities.EntityProperties-PolyVox|EntityProperties-PolyVox}
  * @see {@link Entities.EntityProperties-Shape|EntityProperties-Shape}
  * @see {@link Entities.EntityProperties-Sphere|EntityProperties-Sphere}
@@ -1248,6 +1264,25 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
  *     alphaFinish: 0,
  *     lifetime: 300  // Delete after 5 minutes.
  * });
+ */
+
+/**jsdoc
+ * The <code>"Track"</code> {@link Entities.EntityType|EntityType} is a curve through control points, in the entity's own
+ * space, that a train of entities rides along: an entity with <code>trackID</code> set to the track is moved along it by
+ * the physics, on a schedule of stations. It has properties in addition to the common
+ * {@link Entities.EntityProperties|EntityProperties}.
+ *
+ * @typedef {object} Entities.EntityProperties-Track
+ * @property {Vec3[]} trackPoints=[]] - The control points, in the entity's local coordinates: a centripetal Catmull-Rom
+ *     curve passes through each of them. Two at least, 256 at most.
+ * @property {number[]} trackBank=[]] - The bank at each control point, in degrees: a roll about the track's direction.
+ *     A short list is padded with zero.
+ * @property {number[]} trackDwell=[]] - The stop at each control point, in seconds: more than zero makes the point a
+ *     station the train stops at for that long.
+ * @property {boolean} trackClosed=false - <code>true</code> if the track is a loop; otherwise a train shuttles back and
+ *     forth between its ends.
+ * @property {number} trackSpeed=5 - The train's cruising speed, in m/s.
+ * @property {number} trackAcceleration=1 - The train's acceleration and braking, in m/s^2.
  */
 
 /**jsdoc
@@ -1704,6 +1739,9 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
     COPY_PROPERTY_TO_QSCRIPTVALUE_GETTER(PROP_ENTITY_PRIORITY, entityPriority, getEntityPriorityAsString());
     COPY_PROPERTY_TO_QSCRIPTVALUE_GETTER(PROP_PRIMITIVE_MODE, primitiveMode, getPrimitiveModeAsString());
     COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_IGNORE_PICK_INTERSECTION, ignorePickIntersection);
+    COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_FRAME, frame);
+    COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_ID, trackID);
+    COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_OFFSET, trackOffset);
     _grab.copyToScriptValue(_desiredProperties, properties, engine, skipDefaults, defaultEntityProperties);
 
     // Physics
@@ -1948,6 +1986,16 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
     }
 
     // Polylines
+    // Track only
+    if (_type == EntityTypes::Track) {
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_POINTS, trackPoints);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_BANK, trackBank);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_DWELL, trackDwell);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_CLOSED, trackClosed);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_SPEED, trackSpeed);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_ACCELERATION, trackAcceleration);
+    }
+
     if (_type == EntityTypes::PolyLine) {
         COPY_PROPERTY_TO_QSCRIPTVALUE_TYPED(PROP_COLOR, color, u8vec3Color);
         COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TEXTURES, textures);
@@ -2136,6 +2184,9 @@ void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool 
     COPY_PROPERTY_FROM_QSCRIPTVALUE_ENUM(renderLayer, RenderLayer);
     COPY_PROPERTY_FROM_QSCRIPTVALUE_ENUM(primitiveMode, PrimitiveMode);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(ignorePickIntersection, bool, setIgnorePickIntersection);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(frame, bool, setFrame);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackID, QUuid, setTrackID);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackOffset, float, setTrackOffset);
     _grab.copyFromScriptValue(object, _defaultSettings);
 
     // Physics
@@ -2317,6 +2368,12 @@ void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool 
     COPY_PROPERTY_FROM_QSCRIPTVALUE(transparentBackground, bool, setTransparentBackground);
 
     // Polyline
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackPoints, qVectorVec3, setTrackPoints);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackBank, qVectorFloat, setTrackBank);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackDwell, qVectorFloat, setTrackDwell);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackClosed, bool, setTrackClosed);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackSpeed, float, setTrackSpeed);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackAcceleration, float, setTrackAcceleration);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(linePoints, qVectorVec3, setLinePoints);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(strokeWidths, qVectorFloat, setStrokeWidths);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(normals, qVectorVec3, setNormals);
@@ -2444,6 +2501,9 @@ void EntityItemProperties::merge(const EntityItemProperties& other) {
     COPY_PROPERTY_IF_CHANGED(renderLayer);
     COPY_PROPERTY_IF_CHANGED(primitiveMode);
     COPY_PROPERTY_IF_CHANGED(ignorePickIntersection);
+    COPY_PROPERTY_IF_CHANGED(frame);
+    COPY_PROPERTY_IF_CHANGED(trackID);
+    COPY_PROPERTY_IF_CHANGED(trackOffset);
     _grab.merge(other._grab);
 
     // Physics
@@ -2616,6 +2676,12 @@ void EntityItemProperties::merge(const EntityItemProperties& other) {
     COPY_PROPERTY_IF_CHANGED(transparentBackground);
 
     // Polyline
+    COPY_PROPERTY_IF_CHANGED(trackPoints);
+    COPY_PROPERTY_IF_CHANGED(trackBank);
+    COPY_PROPERTY_IF_CHANGED(trackDwell);
+    COPY_PROPERTY_IF_CHANGED(trackClosed);
+    COPY_PROPERTY_IF_CHANGED(trackSpeed);
+    COPY_PROPERTY_IF_CHANGED(trackAcceleration);
     COPY_PROPERTY_IF_CHANGED(linePoints);
     COPY_PROPERTY_IF_CHANGED(strokeWidths);
     COPY_PROPERTY_IF_CHANGED(normals);
@@ -2747,6 +2813,9 @@ bool EntityItemProperties::getPropertyInfo(const QString& propertyName, EntityPr
         ADD_PROPERTY_TO_MAP(PROP_ENTITY_PRIORITY, EntityPriority, entityPriority, EntityPriority);
         ADD_PROPERTY_TO_MAP(PROP_PRIMITIVE_MODE, PrimitiveMode, primitiveMode, PrimitiveMode);
         ADD_PROPERTY_TO_MAP(PROP_IGNORE_PICK_INTERSECTION, IgnorePickIntersection, ignorePickIntersection, bool);
+        ADD_PROPERTY_TO_MAP(PROP_FRAME, Frame, frame, bool);
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_ID, TrackID, trackID, QUuid);
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_OFFSET, TrackOffset, trackOffset, float);
         { // Grab
             ADD_GROUP_PROPERTY_TO_MAP(PROP_GRAB_GRABBABLE, Grab, grab, Grabbable, grabbable);
             ADD_GROUP_PROPERTY_TO_MAP(PROP_GRAB_KINEMATIC, Grab, grab, GrabKinematic, grabKinematic);
@@ -3030,6 +3099,14 @@ bool EntityItemProperties::getPropertyInfo(const QString& propertyName, EntityPr
         ADD_PROPERTY_TO_MAP(PROP_TRANSPARENT_BACKGROUND, TransparentBackground, transparentBackground, bool);
 
         // Polyline
+        // Track
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_POINTS, TrackPoints, trackPoints, QVector<vec3>);
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_BANK, TrackBank, trackBank, QVector<float>);
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_DWELL, TrackDwell, trackDwell, QVector<float>);
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_CLOSED, TrackClosed, trackClosed, bool);
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_SPEED, TrackSpeed, trackSpeed, float);
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_ACCELERATION, TrackAcceleration, trackAcceleration, float);
+
         ADD_PROPERTY_TO_MAP(PROP_LINE_POINTS, LinePoints, linePoints, QVector<vec3>);
         ADD_PROPERTY_TO_MAP(PROP_STROKE_WIDTHS, StrokeWidths, strokeWidths, QVector<float>);
         ADD_PROPERTY_TO_MAP(PROP_STROKE_NORMALS, Normals, normals, QVector<vec3>);
@@ -3253,6 +3330,9 @@ OctreeElement::AppendState EntityItemProperties::encodeEntityEditPacket(PacketTy
             APPEND_ENTITY_PROPERTY(PROP_ENTITY_PRIORITY, (uint32_t)properties.getEntityPriority());
             APPEND_ENTITY_PROPERTY(PROP_PRIMITIVE_MODE, (uint32_t)properties.getPrimitiveMode());
             APPEND_ENTITY_PROPERTY(PROP_IGNORE_PICK_INTERSECTION, properties.getIgnorePickIntersection());
+            APPEND_ENTITY_PROPERTY(PROP_FRAME, properties.getFrame());
+            APPEND_ENTITY_PROPERTY(PROP_TRACK_ID, properties.getTrackID());
+            APPEND_ENTITY_PROPERTY(PROP_TRACK_OFFSET, properties.getTrackOffset());
             _staticGrab.setProperties(properties);
             _staticGrab.appendToEditPacket(packetData, requestedProperties, propertyFlags,
                                            propertiesDidntFit, propertyCount, appendState);
@@ -3476,6 +3556,15 @@ OctreeElement::AppendState EntityItemProperties::encodeEntityEditPacket(PacketTy
                 APPEND_ENTITY_PROPERTY(PROP_INPUT_MODE, (uint32_t)properties.getInputMode());
                 APPEND_ENTITY_PROPERTY(PROP_SHOW_KEYBOARD_FOCUS_HIGHLIGHT, properties.getShowKeyboardFocusHighlight());
                 APPEND_ENTITY_PROPERTY(PROP_TRANSPARENT_BACKGROUND, properties.getTransparentBackground());
+            }
+
+            if (properties.getType() == EntityTypes::Track) {
+                APPEND_ENTITY_PROPERTY(PROP_TRACK_POINTS, properties.getTrackPoints());
+                APPEND_ENTITY_PROPERTY(PROP_TRACK_BANK, properties.getTrackBank());
+                APPEND_ENTITY_PROPERTY(PROP_TRACK_DWELL, properties.getTrackDwell());
+                APPEND_ENTITY_PROPERTY(PROP_TRACK_CLOSED, properties.getTrackClosed());
+                APPEND_ENTITY_PROPERTY(PROP_TRACK_SPEED, properties.getTrackSpeed());
+                APPEND_ENTITY_PROPERTY(PROP_TRACK_ACCELERATION, properties.getTrackAcceleration());
             }
 
             if (properties.getType() == EntityTypes::Line) {
@@ -3765,6 +3854,9 @@ bool EntityItemProperties::decodeEntityEditPacket(const unsigned char* data, int
     READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_ENTITY_PRIORITY, EntityPriority, setEntityPriority);
     READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_PRIMITIVE_MODE, PrimitiveMode, setPrimitiveMode);
     READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_IGNORE_PICK_INTERSECTION, bool, setIgnorePickIntersection);
+    READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_FRAME, bool, setFrame);
+    READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_ID, QUuid, setTrackID);
+    READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_OFFSET, float, setTrackOffset);
     properties.getGrab().decodeFromEditPacket(propertyFlags, dataAt, processedBytes);
 
     // Physics
@@ -3964,6 +4056,15 @@ bool EntityItemProperties::decodeEntityEditPacket(const unsigned char* data, int
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_INPUT_MODE, WebInputMode, setInputMode);
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_SHOW_KEYBOARD_FOCUS_HIGHLIGHT, bool, setShowKeyboardFocusHighlight);
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRANSPARENT_BACKGROUND, bool, setTransparentBackground);
+    }
+
+    if (properties.getType() == EntityTypes::Track) {
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_POINTS, QVector<vec3>, setTrackPoints);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_BANK, QVector<float>, setTrackBank);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_DWELL, QVector<float>, setTrackDwell);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_CLOSED, bool, setTrackClosed);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_SPEED, float, setTrackSpeed);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_ACCELERATION, float, setTrackAcceleration);
     }
 
     if (properties.getType() == EntityTypes::Line) {
@@ -4198,6 +4299,9 @@ void EntityItemProperties::markAllChanged() {
     _renderLayerChanged = true;
     _primitiveModeChanged = true;
     _ignorePickIntersectionChanged = true;
+    _frameChanged = true;
+    _trackIDChanged = true;
+    _trackOffsetChanged = true;
     _grab.markAllChanged();
 
     // Physics
@@ -4365,6 +4469,12 @@ void EntityItemProperties::markAllChanged() {
     _transparentBackgroundChanged = true;
 
     // Polyline
+    _trackPointsChanged = true;
+    _trackBankChanged = true;
+    _trackDwellChanged = true;
+    _trackClosedChanged = true;
+    _trackSpeedChanged = true;
+    _trackAccelerationChanged = true;
     _linePointsChanged = true;
     _strokeWidthsChanged = true;
     _normalsChanged = true;
@@ -4616,6 +4726,15 @@ QList<QString> EntityItemProperties::listChangedProperties() {
     }
     if (ignorePickIntersectionChanged()) {
         out += "ignorePickIntersection";
+    }
+    if (frameChanged()) {
+        out += "frame";
+    }
+    if (trackIDChanged()) {
+        out += "trackID";
+    }
+    if (trackOffsetChanged()) {
+        out += "trackOffset";
     }
     getGrab().listChangedProperties(out);
 
@@ -5046,6 +5165,24 @@ QList<QString> EntityItemProperties::listChangedProperties() {
     }
 
     // Polyline
+    if (trackPointsChanged()) {
+        out += "trackPoints";
+    }
+    if (trackBankChanged()) {
+        out += "trackBank";
+    }
+    if (trackDwellChanged()) {
+        out += "trackDwell";
+    }
+    if (trackClosedChanged()) {
+        out += "trackClosed";
+    }
+    if (trackSpeedChanged()) {
+        out += "trackSpeed";
+    }
+    if (trackAccelerationChanged()) {
+        out += "trackAcceleration";
+    }
     if (linePointsChanged()) {
         out += "linePoints";
     }
