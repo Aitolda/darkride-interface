@@ -217,7 +217,7 @@ link_hifi_libraries(
   model-networking model-baker entities avatars
   audio audio-client animation script-engine physics vehicles
   render-utils entities-renderer avatars-renderer ui qml auto-updater midi terrain
-  controllers plugins image platform
+  controllers plugins image platform auto-rigging
   ui-plugins display-plugins input-plugins
   # Platform specific GL libraries
   ${PLATFORM_GL_BACKEND}

@@ -417,6 +417,7 @@ public slots:
     void goToErrorDomainURL(QUrl errorDomainURL);
 
     Q_INVOKABLE void loadDialog();
+    void importAvatarDialog();
     Q_INVOKABLE void loadScriptURLDialog() const;
     void toggleLogDialog();
     void recreateLogWindow(int);

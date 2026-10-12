@@ -92,6 +92,9 @@ Menu::Menu() {
                 dialogsManager.data(), &DialogsManager::toggleLoginDialog);
     }
 
+    // File > Import Avatar: wear an .fst, or auto rig a character file (AUTO-RIGGING.md)
+    addActionToQMenuAndActionHash(fileMenu, MenuOption::ImportAvatar, 0, qApp, SLOT(importAvatarDialog()));
+
     // File > Quit
     addActionToQMenuAndActionHash(fileMenu, MenuOption::Quit, Qt::CTRL | Qt::Key_Q, qApp, SLOT(quit()), QAction::QuitRole);
 

@@ -168,6 +168,7 @@
 #include "audio/AudioScope.h"
 #include "avatar/AvatarManager.h"
 #include "avatar/MyHead.h"
+#include "avatar/AvatarImporter.h"
 #include "avatar/AvatarPackager.h"
 #include "avatar/MyCharacterController.h"
 #include "CrashRecoveryHandler.h"
@@ -8688,6 +8689,19 @@ void Application::loadDialog() {
             DependencyManager::get<ScriptEngines>()->loadScript(response, true, false, false, true);  // Don't load from cache
         }
     });
+}
+
+void Application::importAvatarDialog() {
+    static Setting::Handle<QString> previousLocation("previousAvatarImportLocation",
+                                                     QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
+    // Qt's standard file dialog, as ModelSelector uses: the macOS panel that OffscreenUi's modeless dialog opens
+    // showed every file greyed out (10-12), whatever the filter
+    const QString path = QFileDialog::getOpenFileName(nullptr, tr("Import Avatar"), previousLocation.get(),
+                                                      tr("Characters and avatars (*)"));
+    if (!path.isEmpty() && QFile(path).exists()) {
+        previousLocation.set(QFileInfo(path).absolutePath());
+        AvatarImporter::importFile(path);
+    }
 }
 
 QString Application::getPreviousScriptLocation() {

@@ -131,6 +131,7 @@ namespace MenuOption {
     const QString FrameTimer = "Show Timer";
     const QString Help = "Help...";
     const QString HomeLocation = "Home ";
+    const QString ImportAvatar = "Import Avatar...";
     const QString IncreaseAvatarSize = "Increase Avatar Size";
     const QString ActionMotorControl = "Enable Default Motor Control";
     const QString LastLocation = "Last Location";
