@@ -20,6 +20,7 @@
 
 #include "JoltUtil.h"
 #include "PhysicsEngine.h"
+#include "PhysicsWorld.h"
 #include "PhysicsHelpers.h"
 #include "PhysicsLogging.h"
 
@@ -117,14 +118,14 @@ float ObjectMotionState::getMass() const {
 }
 
 void ObjectMotionState::setBodyLinearVelocity(const glm::vec3& velocity) const {
-    if (_body && _bodyInterface && !_body->IsStatic()) {
-        _bodyInterface->SetLinearVelocity(_body->GetID(), glmToJolt(velocity));
+    if (_body && bodyInterface() && !_body->IsStatic()) {
+        bodyInterface()->SetLinearVelocity(_body->GetID(), glmToJolt(velocity));
     }
 }
 
 void ObjectMotionState::setBodyAngularVelocity(const glm::vec3& velocity) const {
-    if (_body && _bodyInterface && !_body->IsStatic()) {
-        _bodyInterface->SetAngularVelocity(_body->GetID(), glmToJolt(velocity));
+    if (_body && bodyInterface() && !_body->IsStatic()) {
+        bodyInterface()->SetAngularVelocity(_body->GetID(), glmToJolt(velocity));
     }
 }
 
@@ -166,22 +167,37 @@ void ObjectMotionState::setMotionType(PhysicsMotionType motionType) {
 // pass through walls; big and mesh shapes don't need it.
 void ObjectMotionState::updateCCDConfiguration() {
     assert(_body);
-    if (!_bodyInterface || _body->IsStatic()) {
+    if (!bodyInterface() || _body->IsStatic()) {
         return;
     }
     const float MAX_RADIUS_FOR_CCD = 0.5f; // meters
     bool wantsCCD = _shape && _shape->GetType() != JPH::EShapeType::Mesh && _shape->GetInnerRadius() < MAX_RADIUS_FOR_CCD;
-    _bodyInterface->SetMotionQuality(_body->GetID(), wantsCCD ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete);
+    bodyInterface()->SetMotionQuality(_body->GetID(), wantsCCD ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete);
 }
 
-void ObjectMotionState::setBody(JPH::Body* body, JPH::BodyInterface* bodyInterface) {
+bool ObjectMotionState::getFrameTransformInDomain(glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const {
+    if (!isFrame()) {
+        return false;
+    }
+    position = getObjectPosition();
+    rotation = getObjectRotation();
+    linearVelocity = getObjectLinearVelocity();
+    angularVelocity = getObjectAngularVelocity();
+    return true;
+}
+
+JPH::BodyInterface* ObjectMotionState::bodyInterface() const {
+    return _world ? &_world->getBodyInterface() : nullptr;
+}
+
+void ObjectMotionState::setBody(JPH::Body* body, PhysicsWorld* world) {
     // give the body a back-pointer to this ObjectMotionState
     if (_body != body) {
         if (_body) {
             _body->SetUserData(0);
         }
         _body = body;
-        _bodyInterface = body ? bodyInterface : nullptr;
+        _world = body ? world : nullptr;
         if (_body) {
             _body->SetUserData((JPH::uint64)(uintptr_t)this);
             assert(_body->GetShape() == _shape);
@@ -198,7 +214,7 @@ void ObjectMotionState::setShape(const JPH::Shape* shape) {
         _shape = shape;
         if (_body) {
             assert(_shape);
-            _bodyInterface->SetShape(_body->GetID(), _shape, false, JPH::EActivation::DontActivate);
+            bodyInterface()->SetShape(_body->GetID(), _shape, false, JPH::EActivation::DontActivate);
             updateCCDConfiguration();
         }
     } else if (shape) {
@@ -208,8 +224,8 @@ void ObjectMotionState::setShape(const JPH::Shape* shape) {
 }
 
 void ObjectMotionState::setBodyTransform(const glm::vec3& position, const glm::quat& rotation, bool activate) {
-    if (_body && _bodyInterface) {
-        _bodyInterface->SetPositionAndRotation(_body->GetID(), glmToJoltR(position), glmToJolt(rotation),
+    if (_body && bodyInterface()) {
+        bodyInterface()->SetPositionAndRotation(_body->GetID(), glmToJoltR(position), glmToJolt(rotation),
                                                activate ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
     }
 }
@@ -222,14 +238,14 @@ void ObjectMotionState::getBodyTransform(glm::vec3& position, glm::quat& rotatio
 }
 
 void ObjectMotionState::activateBody() {
-    if (_body && _bodyInterface && !_body->IsStatic()) {
-        _bodyInterface->ActivateBody(_body->GetID());
+    if (_body && bodyInterface() && !_body->IsStatic()) {
+        bodyInterface()->ActivateBody(_body->GetID());
     }
 }
 
 void ObjectMotionState::deactivateBody() {
-    if (_body && _bodyInterface && !_body->IsStatic()) {
-        _bodyInterface->DeactivateBody(_body->GetID());
+    if (_body && bodyInterface() && !_body->IsStatic()) {
+        bodyInterface()->DeactivateBody(_body->GetID());
     }
 }
 
@@ -311,11 +327,11 @@ static float joltDamping(float damping) {
 }
 
 void ObjectMotionState::updateBodyMaterialProperties() {
-    if (!_body || !_bodyInterface) {
+    if (!_body || !bodyInterface()) {
         return;
     }
-    _bodyInterface->SetRestitution(_body->GetID(), getObjectRestitution());
-    _bodyInterface->SetFriction(_body->GetID(), getObjectFriction());
+    bodyInterface()->SetRestitution(_body->GetID(), getObjectRestitution());
+    bodyInterface()->SetFriction(_body->GetID(), getObjectFriction());
     JPH::MotionProperties* motion = _body->GetMotionPropertiesUnchecked();
     if (motion) {
         motion->SetLinearDamping(joltDamping(getObjectLinearDamping()));

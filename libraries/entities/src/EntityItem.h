@@ -346,6 +346,12 @@ public:
     void setLocked(bool value);
 
     QString getUserData() const;
+
+    // true when this entity is a moving reference frame: things inside it are simulated in its own physics world
+
+    bool isFrame() const { return _isFrame; }
+    // the box named in userData inside which something belongs to this frame, in the entity's coordinates; false when none
+    bool getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorner) const;
     virtual void setUserData(const QString& value); // FIXME: This is suspicious(?)
 
     QString getPrivateUserData() const;
@@ -674,6 +680,10 @@ protected:
     bool _dynamic { ENTITY_ITEM_DEFAULT_DYNAMIC };
     bool _locked { ENTITY_ITEM_DEFAULT_LOCKED };
     QString _userData { ENTITY_ITEM_DEFAULT_USER_DATA };
+    bool _isFrame { false }; // userData {"frame": true}: this entity is a moving reference frame
+    bool _hasFrameVolume { false };
+    glm::vec3 _frameVolumeMin { 0.0f };
+    glm::vec3 _frameVolumeMax { 0.0f };
     QString _privateUserData{ ENTITY_ITEM_DEFAULT_PRIVATE_USER_DATA };
     SimulationOwner _simulationOwner;
     bool _shouldHighlight { false };

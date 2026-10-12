@@ -30,6 +30,8 @@ namespace JPH {
     class BodyInterface;
 }
 
+class PhysicsWorld;
+
 enum PhysicsMotionType {
     MOTION_TYPE_STATIC,     // no motion
     MOTION_TYPE_DYNAMIC,    // motion according to physical laws
@@ -150,6 +152,20 @@ public:
     JPH::Body* getBody() const { return _body; }
     JPH::BodyID getBodyID() const;
     bool isInPhysicsSimulation() const { return _body != nullptr; }
+    // the world the body lives in (null without a body)
+    PhysicsWorld* getWorld() const { return _world; }
+
+    // The moving reference frame this object belongs to: the frame entity's ID, or null for the domain itself.
+    // The engine simulates the object in that frame's world, and the object's position, rotation and
+    // velocities (getObject*) are then in that frame's coordinates.
+    virtual QUuid getFrameID() const { return QUuid(); }
+    // true when this object is itself a frame, whose own interior is a world of its own
+    virtual bool isFrame() const { return false; }
+    // For a frame: its transform and velocities in the world it moves in (its parent's, the domain for an
+    // unnested frame), from the object's own record (the entity), which is what the renderer composes against too.
+    bool getFrameTransformInDomain(glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const;
+    // For a frame: the box, in the frame's coordinates, inside which something belongs to the frame.
+    virtual bool getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorner) const { return false; }
 
     virtual bool isMoving() const = 0;
 
@@ -208,13 +224,16 @@ public:
 
     friend class PhysicsEngine;
 
+    friend class PhysicsWorld;
+
 protected:
     virtual void setMotionType(PhysicsMotionType motionType);
     void updateCCDConfiguration();
 
-    // The body is created and destroyed by the PhysicsEngine; the interface is the engine's no-lock body interface,
-    // valid for the body's lifetime and only to be used between steps on the simulation thread.
-    virtual void setBody(JPH::Body* body, JPH::BodyInterface* bodyInterface);
+    // The body is created and destroyed by its PhysicsWorld; while it exists, the world's no-lock body
+    // interface is used, between steps, on the simulation thread.
+    virtual void setBody(JPH::Body* body, PhysicsWorld* world);
+    JPH::BodyInterface* bodyInterface() const;
     virtual void setShape(const JPH::Shape* shape);
 
 
@@ -223,7 +242,7 @@ protected:
 
     const JPH::Shape* _shape { nullptr };
     JPH::Body* _body { nullptr };
-    JPH::BodyInterface* _bodyInterface { nullptr };
+    PhysicsWorld* _world { nullptr };
     glm::vec3 _gravity { 0.0f };
     float _density { 1.0f };
 

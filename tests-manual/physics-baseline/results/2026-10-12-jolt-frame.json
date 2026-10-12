@@ -1,0 +1,260 @@
+{
+ "phases": [
+  {
+   "name": "boot",
+   "t0": 0
+  },
+  {
+   "name": "spawn",
+   "t0": 8.001000165939331
+  },
+  {
+   "name": "settle",
+   "t0": 9.017000198364258
+  },
+  {
+   "name": "straight-unparented",
+   "t0": 13.017000198364258
+  },
+  {
+   "name": "reset-1",
+   "t0": 21.01800012588501
+  },
+  {
+   "name": "straight-parented",
+   "t0": 25.03500008583069
+  },
+  {
+   "name": "reset-2",
+   "t0": 33.051000118255615
+  },
+  {
+   "name": "curve-unparented",
+   "t0": 37.051000118255615
+  },
+  {
+   "name": "reset-3",
+   "t0": 47.0530002117157
+  },
+  {
+   "name": "curve-parented",
+   "t0": 51.069000005722046
+  },
+  {
+   "name": "reset-4",
+   "t0": 61.069000005722046
+  },
+  {
+   "name": "walk-parented",
+   "t0": 65.08500003814697
+  },
+  {
+   "name": "reset-5",
+   "t0": 71.0860002040863
+  },
+  {
+   "name": "step-off",
+   "t0": 75.0860002040863
+  },
+  {
+   "name": "end",
+   "t0": 83.0860002040863
+  }
+ ],
+ "summary": [
+  {
+   "crossings": [],
+   "driftHorizontalM": 0,
+   "driftM": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "frames": 480,
+   "jitterHorizontalMaxMm": 0,
+   "jitterHorizontalRmsMm": 0,
+   "jitterVerticalMaxMm": 0,
+   "jitterVerticalRmsMm": 0,
+   "localEnd": {
+    "x": 0,
+    "y": 1.0784770250320435,
+    "z": 0
+   },
+   "localStart": {
+    "x": 0,
+    "y": 1.0784770250320435,
+    "z": 0
+   },
+   "parentedFrames": 480,
+   "phase": "straight-unparented",
+   "seconds": 7.983000040054321,
+   "storedLocalJitter": {
+    "maxMm": 0,
+    "rmsMm": 0
+   }
+  },
+  {
+   "crossings": [],
+   "driftHorizontalM": 0,
+   "driftM": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "frames": 481,
+   "jitterHorizontalMaxMm": 55.55534362792969,
+   "jitterHorizontalRmsMm": 6.211276243270529,
+   "jitterVerticalMaxMm": 0,
+   "jitterVerticalRmsMm": 0,
+   "localEnd": {
+    "x": 0,
+    "y": 1.0784770250320435,
+    "z": 0
+   },
+   "localStart": {
+    "x": 0,
+    "y": 1.0784770250320435,
+    "z": 0
+   },
+   "parentedFrames": 481,
+   "phase": "straight-parented",
+   "seconds": 7.999000072479248,
+   "storedLocalJitter": {
+    "maxMm": 0,
+    "rmsMm": 0
+   }
+  },
+  {
+   "crossings": [],
+   "driftHorizontalM": 0,
+   "driftM": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "frames": 600,
+   "jitterHorizontalMaxMm": 0,
+   "jitterHorizontalRmsMm": 0,
+   "jitterVerticalMaxMm": 0,
+   "jitterVerticalRmsMm": 0,
+   "localEnd": {
+    "x": 0,
+    "y": 1.0784770250320435,
+    "z": 0
+   },
+   "localStart": {
+    "x": 0,
+    "y": 1.0784770250320435,
+    "z": 0
+   },
+   "parentedFrames": 600,
+   "phase": "curve-unparented",
+   "seconds": 9.984000205993652,
+   "storedLocalJitter": {
+    "maxMm": 0,
+    "rmsMm": 0
+   }
+  },
+  {
+   "crossings": [],
+   "driftHorizontalM": 0,
+   "driftM": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "frames": 600,
+   "jitterHorizontalMaxMm": 0,
+   "jitterHorizontalRmsMm": 0,
+   "jitterVerticalMaxMm": 0,
+   "jitterVerticalRmsMm": 0,
+   "localEnd": {
+    "x": 0,
+    "y": 1.0784770250320435,
+    "z": 0
+   },
+   "localStart": {
+    "x": 0,
+    "y": 1.0784770250320435,
+    "z": 0
+   },
+   "parentedFrames": 600,
+   "phase": "curve-parented",
+   "seconds": 9.983999967575073,
+   "storedLocalJitter": {
+    "maxMm": 0,
+    "rmsMm": 0
+   }
+  },
+  {
+   "crossings": [],
+   "driftHorizontalM": 0.8629447221755981,
+   "driftM": {
+    "x": -0.8629447221755981,
+    "y": 0,
+    "z": 0
+   },
+   "frames": 360,
+   "jitterHorizontalMaxMm": 24.62507225573063,
+   "jitterHorizontalRmsMm": 14.679662002804912,
+   "jitterVerticalMaxMm": 0,
+   "jitterVerticalRmsMm": 0,
+   "localEnd": {
+    "x": -0.8617750406265259,
+    "y": 1.0784770250320435,
+    "z": 0
+   },
+   "localStart": {
+    "x": 0.0011696652509272099,
+    "y": 1.0784770250320435,
+    "z": 0
+   },
+   "parentedFrames": 360,
+   "phase": "walk-parented",
+   "seconds": 5.983000040054321,
+   "storedLocalJitter": {
+    "maxMm": 24.62507225573063,
+    "rmsMm": 14.679662002804912
+   }
+  },
+  {
+   "crossings": [
+    {
+     "parented": false,
+     "previousStepMm": 79.75232601165771,
+     "t": 80.48600006103516,
+     "worldStepMm": 39.72233459353447
+    }
+   ],
+   "driftHorizontalM": 17.13932228088379,
+   "driftM": {
+    "x": 0,
+    "y": -0.5000000596046448,
+    "z": 17.13932228088379
+   },
+   "frames": 480,
+   "jitterHorizontalMaxMm": 91.33704751729965,
+   "jitterHorizontalRmsMm": 36.311457509671726,
+   "jitterVerticalMaxMm": 81.62660896778107,
+   "jitterVerticalRmsMm": 5.113241995991271,
+   "localEnd": {
+    "x": -0.1886904537677765,
+    "y": 0.5784769654273987,
+    "z": 17.13932228088379
+   },
+   "localStart": {
+    "x": -0.1886904537677765,
+    "y": 1.0784770250320435,
+    "z": 0
+   },
+   "parentedFrames": 323,
+   "phase": "step-off",
+   "seconds": 7.984000205993652,
+   "storedLocalJitter": {
+    "maxMm": 18.478674814105034,
+    "rmsMm": 13.408875524058091
+   }
+  }
+ ],
+ "note": "PHYSICS.md round 2, cabin as a moving reference frame (run.sh ... frame); samples dropped, summary and phases kept"
+}

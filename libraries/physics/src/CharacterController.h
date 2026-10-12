@@ -124,7 +124,17 @@ public:
     void setLocalBoundingBox(const glm::vec3& minCorner, const glm::vec3& scale);
 
     void setPhysicsEngine(const PhysicsEnginePointer& engine);
+    const PhysicsEnginePointer& getPhysicsEngine() const { return _physicsEngine; }
     bool isEnabledAndReady() const { return (bool)_physicsEngine; }
+
+    // The world the character moves through: the root (the domain) or a moving frame's. Positions, orientations
+    // and velocities given to and taken from the controller are in that world's coordinates. Changing the frame
+    // takes the character out of its world; it is put into the new one at the next preSimulation(), at the
+    // position set by then, with the velocity set by setLinearVelocity().
+    PhysicsWorld* getWorld() const { return _world; }
+    const QUuid& getFrameID() const { return _frameID; }
+    void setFrame(const QUuid& frameID);
+    void setLinearVelocity(const glm::vec3& velocity);
     bool isStuck() const { return _isStuck; }
     float getCollisionBrakeAttenuationFactor() const;
 
@@ -223,6 +233,10 @@ protected:
     float _collisionBrake { 0.0f };
 
     PhysicsEnginePointer _physicsEngine { nullptr };
+    PhysicsWorld* _world { nullptr };
+    QUuid _frameID;
+    glm::vec3 _pendingVelocity { 0.0f };
+    bool _hasPendingVelocity { false };
     uint32_t _pendingFlags { 0 };
     uint32_t _previousFlags { 0 };
     uint32_t _stuckTransitionCount { 0 };

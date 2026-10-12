@@ -32,6 +32,8 @@ const int MAX_NESTING_DEPTH = 16;
 // A child of something that moves has to move with it in the simulation, as a kinematic body with a velocity,
 // so that it carries and pushes whatever it touches: the walls of a moving cabin, the seat of a car. Before this
 // such children were static bodies that stayed behind when their parent moved under them.
+// The walk stops at a moving reference frame: the frame moves in its parent's world, not in its own, so its
+// contents hold still there.
 static bool hasMovingEntityAncestor(const EntityItemPointer& entity) {
     bool success = false;
     SpatiallyNestablePointer parent = entity->getParentPointer(success);
@@ -39,6 +41,9 @@ static bool hasMovingEntityAncestor(const EntityItemPointer& entity) {
     while (success && parent && depth < MAX_NESTING_DEPTH) {
         if (parent->getNestableType() == NestableType::Entity) {
             EntityItemPointer parentEntity = std::static_pointer_cast<EntityItem>(parent);
+            if (parentEntity->isFrame()) {
+                return false;
+            }
             if (parentEntity->getDynamic() || parentEntity->hasActions() || parentEntity->isMovingRelativeToParent()) {
                 return true;
             }
@@ -49,6 +54,32 @@ static bool hasMovingEntityAncestor(const EntityItemPointer& entity) {
         ++depth;
     }
     return false;
+}
+
+// The nearest ancestor that is a moving reference frame, looking through entities and avatars alike (what a
+// rider holds belongs to the rider's frame). Null when there is none.
+static EntityItemPointer findFrameAncestor(const EntityItemPointer& entity) {
+    bool success = false;
+    SpatiallyNestablePointer parent = entity->getParentPointer(success);
+    int depth = 0;
+    while (success && parent && depth < MAX_NESTING_DEPTH) {
+        if (parent->getNestableType() == NestableType::Entity) {
+            EntityItemPointer parentEntity = std::static_pointer_cast<EntityItem>(parent);
+            if (parentEntity->isFrame()) {
+                return parentEntity;
+            }
+        }
+        parent = parent->getParentPointer(success);
+        ++depth;
+    }
+    return nullptr;
+}
+
+static bool parentIsFrame(const EntityItemPointer& entity) {
+    bool success = false;
+    SpatiallyNestablePointer parent = entity->getParentPointer(success);
+    return success && parent && parent->getNestableType() == NestableType::Entity &&
+        std::static_pointer_cast<EntityItem>(parent)->isFrame();
 }
 
 
@@ -139,7 +170,7 @@ void EntityMotionState::handleDeactivation() {
         localTransform.setRotation(_serverRotation);
         _entity->setLocalTransformAndVelocities(localTransform, ENTITY_ITEM_ZERO_VEC3, ENTITY_ITEM_ZERO_VEC3);
         // and also to the body
-        setBodyTransform(getObjectPosition(), _entity->getWorldOrientation(), false);
+        setBodyTransform(getObjectPosition(), getObjectRotation(), false);
         // no need to update velocities... should already be zero
     }
     if (!isLocallyOwned()) {
@@ -208,8 +239,9 @@ PhysicsMotionType EntityMotionState::computePhysicsMotionType() const {
     }
 
     if (_entity->getDynamic()) {
-        if (!_entity->getParentID().isNull()) {
+        if (!_entity->getParentID().isNull() && !parentIsFrame(_entity)) {
             // if something would have been dynamic but is a child of something else, force it to be kinematic, instead.
+            // (A child of a frame is the exception: it is dynamic in the frame's own world.)
             return MOTION_TYPE_KINEMATIC;
         }
         return MOTION_TYPE_DYNAMIC;
@@ -236,6 +268,107 @@ int EntityMotionState::getNestingDepth() const {
 
 bool EntityMotionState::isMoving() const {
     return _entity && _entity->isMovingRelativeToParent();
+}
+
+QUuid EntityMotionState::getFrameID() const {
+    EntityItemPointer frame = _entity ? findFrameAncestor(_entity) : nullptr;
+    return frame ? frame->getID() : QUuid();
+}
+
+bool EntityMotionState::isFrame() const {
+    return _entity && _entity->isFrame();
+}
+
+// The box, in the frame's coordinates, inside which something belongs to the frame: the one the entity names
+// in its userData, else its own bounds with room above for whoever stands on it.
+bool EntityMotionState::getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorner) const {
+    if (!_entity || !_entity->isFrame()) {
+        return false;
+    }
+    if (_entity->getFrameVolume(minCorner, maxCorner)) {
+        return true;
+    }
+    const glm::vec3 SIDE_MARGIN(0.5f, 0.5f, 0.5f);
+    const glm::vec3 HEADROOM(0.0f, 3.0f, 0.0f);
+    glm::vec3 dimensions = _entity->getScaledDimensions();
+    glm::vec3 registration = _entity->getRegistrationPoint();
+    minCorner = -registration * dimensions - SIDE_MARGIN;
+    maxCorner = (glm::vec3(1.0f) - registration) * dimensions + SIDE_MARGIN + HEADROOM;
+    return true;
+}
+
+// Walks from the entity's parent up to its frame, composing local transforms and velocities (each local
+// velocity is in its parent's rotation; angular motion of the chain is left out, as SpatiallyNestable does).
+bool EntityMotionState::getParentTransformInFrame(Transform& transform, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const {
+    transform = Transform();
+    linearVelocity = glm::vec3(0.0f);
+    angularVelocity = glm::vec3(0.0f);
+    if (!_entity) {
+        return false;
+    }
+    bool success = false;
+    SpatiallyNestablePointer parent = _entity->getParentPointer(success);
+    if (!success || !parent) {
+        return false;
+    }
+    // the chain from the parent up to (not including) the frame
+    std::vector<SpatiallyNestablePointer> chain;
+    int depth = 0;
+    while (success && parent && depth < MAX_NESTING_DEPTH) {
+        if (parent->getNestableType() == NestableType::Entity && std::static_pointer_cast<EntityItem>(parent)->isFrame()) {
+            // frame found: compose top-down
+            for (auto itr = chain.rbegin(); itr != chain.rend(); ++itr) {
+                const SpatiallyNestablePointer& node = *itr;
+                glm::quat rotationSoFar = transform.getRotation();
+                linearVelocity += rotationSoFar * node->getLocalVelocity();
+                angularVelocity += rotationSoFar * node->getLocalAngularVelocity();
+                Transform composed;
+                Transform::mult(composed, transform, node->getLocalTransform());
+                transform = composed;
+            }
+            return true;
+        }
+        chain.push_back(parent);
+        parent = parent->getParentPointer(success);
+        ++depth;
+    }
+    return false;
+}
+
+glm::vec3 EntityMotionState::getObjectPosition() const {
+    Transform parentInFrame;
+    glm::vec3 v, w;
+    if (getParentTransformInFrame(parentInFrame, v, w)) {
+        return parentInFrame.transform(_entity->getLocalPosition());
+    }
+    return _entity->getWorldPosition() - ObjectMotionState::getWorldOffset();
+}
+
+glm::quat EntityMotionState::getObjectRotation() const {
+    Transform parentInFrame;
+    glm::vec3 v, w;
+    if (getParentTransformInFrame(parentInFrame, v, w)) {
+        return parentInFrame.getRotation() * _entity->getLocalOrientation();
+    }
+    return _entity->getWorldOrientation();
+}
+
+glm::vec3 EntityMotionState::getObjectLinearVelocity() const {
+    Transform parentInFrame;
+    glm::vec3 v, w;
+    if (getParentTransformInFrame(parentInFrame, v, w)) {
+        return v + parentInFrame.getRotation() * _entity->getLocalVelocity();
+    }
+    return _entity->getWorldVelocity();
+}
+
+glm::vec3 EntityMotionState::getObjectAngularVelocity() const {
+    Transform parentInFrame;
+    glm::vec3 v, w;
+    if (getParentTransformInFrame(parentInFrame, v, w)) {
+        return w + parentInFrame.getRotation() * _entity->getLocalAngularVelocity();
+    }
+    return _entity->getWorldAngularVelocity();
 }
 
 // Called by the engine before every substep. Kinematic entities integrate their keyframed motion here and
@@ -266,9 +399,13 @@ void EntityMotionState::pushTransformToBody(float dt) {
     // it will use the correct acceleration for remote simulations
     _accelerationNearlyGravityCount = (uint8_t)(-1);
 
-    _bodyInterface->MoveKinematic(_body->GetID(), glmToJoltR(getObjectPosition()), glmToJolt(_entity->getWorldOrientation()), dt);
+    bodyInterface()->MoveKinematic(_body->GetID(), glmToJoltR(getObjectPosition()), glmToJolt(getObjectRotation()), dt);
 
-    // a child that is still a static body has to become kinematic now that its parent moves
+    // a child that is still a static body has to become kinematic now that its parent moves (not so for a
+    // frame: its children live in its own world, where it does not move)
+    if (_entity->isFrame()) {
+        return;
+    }
     EntityTreePointer tree = _entity->getTree();
     _entity->forEachChild([&](SpatiallyNestablePointer child) {
         if (child->getNestableType() == NestableType::Entity) {
@@ -294,6 +431,40 @@ void EntityMotionState::pullTransformFromBody() {
     glm::vec3 position;
     glm::quat rotation;
     getBodyTransform(position, rotation);
+
+    Transform parentInFrame;
+    glm::vec3 parentVelocity, parentAngularVelocity;
+    if (getParentTransformInFrame(parentInFrame, parentVelocity, parentAngularVelocity)) {
+        // the body is in its frame's coordinates; the entity keeps its pose relative to its parent
+        Transform bodyInFrame;
+        bodyInFrame.setTranslation(position);
+        bodyInFrame.setRotation(rotation);
+        Transform relative;
+        Transform::inverseMult(relative, parentInFrame, bodyInFrame);
+        Transform local = _entity->getLocalTransform();
+        local.setTranslation(relative.getTranslation());
+        local.setRotation(relative.getRotation());
+        glm::quat toParent = glm::inverse(parentInFrame.getRotation());
+
+        uint32_t flags = _entity->getDirtyFlags() & (Simulation::DIRTY_TRANSFORM | Simulation::DIRTY_VELOCITIES);
+        glm::vec3 linearVelocity = _entity->getLocalVelocity();
+        glm::vec3 angularVelocity = _entity->getLocalAngularVelocity();
+        if (!_body->IsKinematic()) {
+            // (a keyframed body's velocity is never written back, see below)
+            if (!(flags & Simulation::DIRTY_LINEAR_VELOCITY)) {
+                linearVelocity = toParent * (getBodyLinearVelocity() - parentVelocity);
+            }
+            if (!(flags & Simulation::DIRTY_ANGULAR_VELOCITY)) {
+                angularVelocity = toParent * (getBodyAngularVelocity() - parentAngularVelocity);
+            }
+        }
+        if (flags & Simulation::DIRTY_TRANSFORM) {
+            local = _entity->getLocalTransform();
+        }
+        _entity->setLocalTransformAndVelocities(local, linearVelocity, angularVelocity);
+        _entity->setLastSimulated(usecTimestampNow());
+        return;
+    }
     position += ObjectMotionState::getWorldOffset();
 
     if (_body->IsKinematic()) {
@@ -804,8 +975,8 @@ bool EntityMotionState::shouldSendBid() const {
         && (!(_body->IsStatic() || _body->IsKinematic()) || _entity->stillHasMyGrab());
 }
 
-void EntityMotionState::setBody(JPH::Body* body, JPH::BodyInterface* bodyInterface) {
-    ObjectMotionState::setBody(body, bodyInterface);
+void EntityMotionState::setBody(JPH::Body* body, PhysicsWorld* world) {
+    ObjectMotionState::setBody(body, world);
     if (_body) {
         _entity->markSpecialFlags(Simulation::SPECIAL_FLAG_IN_PHYSICS_SIMULATION);
     } else {

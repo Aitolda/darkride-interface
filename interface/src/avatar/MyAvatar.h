@@ -1410,6 +1410,10 @@ public:
     void nextAttitude(glm::vec3 position, glm::quat orientation); // Can be safely called at any time.
     void harvestResultsFromPhysicsSimulation(float deltaTime);
 
+    // The moving reference frame the avatar is in (PHYSICS.md 4.1): its parent, when that is a frame entity;
+    // null in the domain itself. The character then moves in that frame's physics world, in its coordinates.
+    QUuid getFrameID() const;
+
     const QString& getCollisionSoundURL() { return _collisionSoundURL; }
     void setCollisionSoundURL(const QString& url);
 
@@ -2808,6 +2812,11 @@ private:
     QString _collisionSoundURL;
 
     SharedSoundPointer _collisionSound;
+
+    // the physics result as a pose relative to the frame the avatar is in
+    void nextLocalAttitude(const glm::vec3& position, const glm::quat& orientation, const glm::vec3& velocity);
+    // steps into or out of a frame when the avatar's position says so, with an exact handover of pose and velocity
+    void updateFrameMembership();
 
     MyCharacterController _characterController;
     int32_t _previousCollisionMask { BULLET_COLLISION_MASK_MY_AVATAR };

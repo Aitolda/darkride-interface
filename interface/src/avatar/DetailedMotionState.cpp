@@ -63,8 +63,8 @@ bool DetailedMotionState::isMoving() const {
 
 // Before every substep: follow the joint, with a velocity, so a hand can push a ball.
 void DetailedMotionState::pushTransformToBody(float dt) {
-    if (_body && _bodyInterface) {
-        _bodyInterface->MoveKinematic(_body->GetID(), glmToJoltR(getObjectPosition()), glmToJolt(getObjectRotation()), dt);
+    if (_body && bodyInterface()) {
+        bodyInterface()->MoveKinematic(_body->GetID(), glmToJoltR(getObjectPosition()), glmToJolt(getObjectRotation()), dt);
     }
 }
 
@@ -155,7 +155,7 @@ void DetailedMotionState::setShape(const JPH::Shape* shape) {
         _shape = shape;
         if (_body) {
             assert(_shape);
-            _bodyInterface->SetShape(_body->GetID(), _shape, false, JPH::EActivation::DontActivate);
+            bodyInterface()->SetShape(_body->GetID(), _shape, false, JPH::EActivation::DontActivate);
         }
     } else if (shape) {
         // we need to release unused reference to shape

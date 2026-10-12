@@ -14,6 +14,8 @@
 #include <QtCore/QObject>
 #include <QtEndian>
 #include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <NetworkingConstants.h>
 #include <NetworkAccessManager.h>
 #include <QtNetwork/QNetworkReply>
@@ -3087,7 +3089,66 @@ QString EntityItem::getUserData() const {
 }
 
 void EntityItem::setUserData(const QString& value) {
-    withWriteLock([&] { _userData = value; });
+    bool frameChanged = false;
+    withWriteLock([&] {
+        _userData = value;
+        // A moving reference frame (PHYSICS.md 4.1) is marked in userData until it has a property of its own:
+        // {"frame": true}, optionally with the box (in the entity's own coordinates) inside which something
+        // belongs to the frame: {"frame": true, "frameVolume": {"min": [x, y, z], "max": [x, y, z]}}.
+        // Parsed once here, read every step by the physics.
+        bool isFrame = false;
+        bool hasVolume = false;
+        glm::vec3 volumeMin(0.0f), volumeMax(0.0f);
+        if (value.contains("frame")) {
+            QJsonParseError error;
+            QJsonDocument document = QJsonDocument::fromJson(value.toUtf8(), &error);
+            if (error.error == QJsonParseError::NoError && document.isObject()) {
+                QJsonObject object = document.object();
+                isFrame = object.value("frame").toBool(false);
+                QJsonObject volume = object.value("frameVolume").toObject();
+                QJsonArray minArray = volume.value("min").toArray();
+                QJsonArray maxArray = volume.value("max").toArray();
+                if (minArray.size() == 3 && maxArray.size() == 3) {
+                    hasVolume = true;
+                    for (int i = 0; i < 3; ++i) {
+                        volumeMin[i] = (float)minArray.at(i).toDouble();
+                        volumeMax[i] = (float)maxArray.at(i).toDouble();
+                    }
+                }
+            }
+        }
+        frameChanged = (isFrame != _isFrame);
+        _isFrame = isFrame;
+        _hasFrameVolume = hasVolume;
+        _frameVolumeMin = volumeMin;
+        _frameVolumeMax = volumeMax;
+        if (frameChanged) {
+            _flags |= Simulation::DIRTY_MOTION_TYPE;
+        }
+    });
+    if (frameChanged) {
+        // the contents change world: a new body for each of them
+        EntityTreePointer tree = getTree();
+        forEachDescendant([&](SpatiallyNestablePointer object) {
+            if (object->getNestableType() == NestableType::Entity) {
+                EntityItemPointer entity = std::static_pointer_cast<EntityItem>(object);
+                entity->markDirtyFlags(Simulation::DIRTY_MOTION_TYPE);
+                if (tree) {
+                    tree->entityChanged(entity);
+                }
+            }
+        });
+    }
+}
+
+bool EntityItem::getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorner) const {
+    bool has = false;
+    withReadLock([&] {
+        has = _hasFrameVolume;
+        minCorner = _frameVolumeMin;
+        maxCorner = _frameVolumeMax;
+    });
+    return has;
 }
 
 QString EntityItem::getPrivateUserData() const {

@@ -12,6 +12,11 @@
 //  Run (serverless, no domain needed):
 //    interface --url file:///<this dir>/world.json --testScript <this dir>/baseline.js --testResultsLocation <dir>
 //
+//  Round 2 (frames): run baseline-frame.js instead, which sets PHYSICS_BASELINE_FRAME and includes this file.
+//  The cabin is then a moving reference frame (userData {"frame": true}): the avatar is parented to it by the
+//  engine itself when it stands in the cabin's volume, so the "unparented" phases measure the automatic
+//  membership, and a last phase walks the avatar off the open end of the moving cabin to measure the handover.
+//
 //  Distributed under the Apache License, Version 2.0.
 //
 
@@ -21,6 +26,7 @@
     var WALK_SPEED = 1.0;         // m/s, the scripted motor
     var NO_JOINT = 65535;         // INVALID_JOINT_INDEX as a quint16: parented to the entity, not to a joint
     var CABIN_TOP = 0.5;          // the cabin floor's top surface, m
+    var FRAME = (typeof PHYSICS_BASELINE_FRAME !== "undefined") && PHYSICS_BASELINE_FRAME;
 
     var cabin = null;
     var walls = [];
@@ -47,14 +53,17 @@
             color: { red: 200, green: 160, blue: 60 },
             dynamic: false, collisionless: false,
             damping: 0, angularDamping: 0,
-            grab: { grabbable: false }
+            grab: { grabbable: false },
+            userData: FRAME ? JSON.stringify({ frame: true }) : ""
         });
-        // low walls, children of the cabin, so the rider has something to bump against
+        // low walls, children of the cabin, so the rider has something to bump against; the back end (+z; the
+        // cabin travels toward -z) is open in the middle so the rider can step off behind it
         var wallSpecs = [
             { pos: { x: 2.1, y: 0.5, z: 0 }, dim: { x: 0.2, y: 1.0, z: 8 } },
             { pos: { x: -2.1, y: 0.5, z: 0 }, dim: { x: 0.2, y: 1.0, z: 8 } },
-            { pos: { x: 0, y: 0.5, z: 4.1 }, dim: { x: 4.4, y: 1.0, z: 0.2 } },
-            { pos: { x: 0, y: 0.5, z: -4.1 }, dim: { x: 4.4, y: 1.0, z: 0.2 } }
+            { pos: { x: 0, y: 0.5, z: -4.1 }, dim: { x: 4.4, y: 1.0, z: 0.2 } },
+            { pos: { x: 1.5, y: 0.5, z: 4.1 }, dim: { x: 1.4, y: 1.0, z: 0.2 } },
+            { pos: { x: -1.5, y: 0.5, z: 4.1 }, dim: { x: 1.4, y: 1.0, z: 0.2 } }
         ];
         wallSpecs.forEach(function (w) {
             walls.push(Entities.addEntity({
@@ -64,7 +73,7 @@
                 dynamic: false, collisionless: false, grab: { grabbable: false }
             }));
         });
-        log("cabin " + cabin + " with " + walls.length + " walls");
+        log("cabin " + cabin + " with " + walls.length + " walls" + (FRAME ? ", a frame" : ""));
     }
 
     function cabinState() {
@@ -84,6 +93,11 @@
     }
 
     function parentAvatar(on) {
+        if (FRAME) {
+            // the engine decides membership; the script only reports it
+            log("avatar parentID is " + MyAvatar.parentID + " (frame mode: not set by the script)");
+            return;
+        }
         if (on) {
             MyAvatar.parentJointIndex = NO_JOINT;
             MyAvatar.parentID = cabin;
@@ -152,6 +166,24 @@
             var tt = now() - phase.t0;
             MyAvatar.motorVelocity = { x: (tt < 3 ? WALK_SPEED : -WALK_SPEED), y: 0, z: 0 };
         } },
+        { name: "reset-5", dur: 4, enter: function () { MyAvatar.motorVelocity = Vec3.ZERO; parentAvatar(false); resetCabin(); putAvatarOnCabin(); } },
+
+        // frames only: after two seconds of riding, walk off the open back end of the moving cabin (toward +z,
+        // against its travel) and drop to the ground behind it; the handover is measured as the world-position
+        // continuity around the parent change
+        { name: "step-off", dur: 8, frameOnly: true, enter: function () {
+            Entities.editEntity(cabin, { velocity: { x: 0, y: 0, z: -SPEED } });
+            MyAvatar.motorReferenceFrame = "world";
+            MyAvatar.motorTimescale = 0.2;
+            MyAvatar.motorVelocity = Vec3.ZERO;
+        }, update: function () {
+            var tt = now() - phase.t0;
+            if (MyAvatar.parentID == Uuid.NULL) {
+                MyAvatar.motorVelocity = Vec3.ZERO;
+            } else if (tt > 2) {
+                MyAvatar.motorVelocity = { x: 0, y: 0, z: WALK_SPEED * 1.5 };
+            }
+        } },
         { name: "end", dur: 1, enter: function () {
             MyAvatar.motorVelocity = Vec3.ZERO;
             parentAvatar(false);
@@ -167,6 +199,10 @@
             return;
         }
         var s = steps[stepIndex];
+        if (s.frameOnly && !FRAME) {
+            nextStep();
+            return;
+        }
         setPhase(s.name);
         s.enter();
     }
@@ -193,8 +229,19 @@
             if (h > maxH) { maxH = h; }
             if (v > maxV) { maxV = v; }
         });
+        var parentedFrames = rows.filter(function (r) { return r.parented; }).length;
+        // the frames at which the avatar's parent changed, and the world-position step there (the pop)
+        var crossings = [];
+        for (var k = 1; k < rows.length; k++) {
+            if (rows[k].parented !== rows[k - 1].parented) {
+                var before = Vec3.subtract(rows[k - 1].avatarPos, rows[k - 2 >= 0 ? k - 2 : 0].avatarPos);
+                var at = Vec3.subtract(rows[k].avatarPos, rows[k - 1].avatarPos);
+                crossings.push({ t: rows[k].t, parented: rows[k].parented,
+                    worldStepMm: 1000 * Vec3.length(at), previousStepMm: 1000 * Vec3.length(before) });
+            }
+        }
         var jitterProp = null;
-        if (parented) {
+        if (parented || parentedFrames > 1) {
             // the engine's own stored local position, the value other clients receive
             var pd = [];
             for (var j = 1; j < rows.length; j++) {
@@ -221,13 +268,14 @@
             jitterHorizontalRmsMm: 1000 * Math.sqrt(sumH / deltas.length), jitterHorizontalMaxMm: 1000 * maxH,
             jitterVerticalRmsMm: 1000 * Math.sqrt(sumV / deltas.length), jitterVerticalMaxMm: 1000 * maxV,
             storedLocalJitter: jitterProp,
+            parentedFrames: parentedFrames, crossings: crossings,
             localStart: first.local, localEnd: last.local
         };
     }
 
     function finish() {
         Script.update.disconnect(onUpdate);
-        var summary = ["straight-unparented", "straight-parented", "curve-unparented", "curve-parented", "walk-parented"]
+        var summary = ["straight-unparented", "straight-parented", "curve-unparented", "curve-parented", "walk-parented", "step-off"]
             .map(function (n) { return stats(n, n.indexOf("parented") >= 0 && n.indexOf("unparented") < 0); })
             .filter(function (s) { return s; });
         summary.forEach(function (s) {
@@ -236,7 +284,11 @@
                 "jitter rms " + s.jitterHorizontalRmsMm.toFixed(1) + " mm, max " + s.jitterHorizontalMaxMm.toFixed(1) +
                 " mm horizontal; rms " + s.jitterVerticalRmsMm.toFixed(1) + " mm, max " + s.jitterVerticalMaxMm.toFixed(1) + " mm vertical" +
                 (s.storedLocalJitter ? "; stored local position jitter rms " + s.storedLocalJitter.rmsMm.toFixed(1) +
-                    " mm, max " + s.storedLocalJitter.maxMm.toFixed(1) + " mm" : ""));
+                    " mm, max " + s.storedLocalJitter.maxMm.toFixed(1) + " mm" : "") +
+                "; parented " + s.parentedFrames + "/" + s.frames + " frames" +
+                (s.crossings.length ? "; crossings: " + s.crossings.map(function (c) {
+                    return (c.parented ? "in" : "out") + " at " + c.t.toFixed(2) + " s, world step " + c.worldStepMm.toFixed(1) +
+                        " mm (previous " + c.previousStepMm.toFixed(1) + " mm)"; }).join(", ") : ""));
         });
         Test.saveObject({ summary: summary, phases: phaseLog, samples: samples }, "physics-baseline.json");
         log("done, " + samples.length + " samples");
@@ -255,7 +307,7 @@
 
     Script.update.connect(onUpdate);
     Script.scriptEnding.connect(function () {
-        if (MyAvatar.parentID == cabin) { parentAvatar(false); }
+        if (MyAvatar.parentID == cabin && !FRAME) { parentAvatar(false); }
     });
-    log("started");
+    log("started" + (FRAME ? " (frame mode)" : ""));
 }());

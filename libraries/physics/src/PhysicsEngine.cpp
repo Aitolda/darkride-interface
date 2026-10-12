@@ -21,19 +21,9 @@
 #include <Jolt/Jolt.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
-#include <Jolt/Physics/PhysicsSettings.h>
-#include <Jolt/Physics/Body/BodyCreationSettings.h>
-#include <Jolt/Physics/Body/BodyInterface.h>
-#include <Jolt/Physics/Body/BodyLock.h>
-#include <Jolt/Physics/Body/BodyFilter.h>
-#include <Jolt/Physics/Collision/CastResult.h>
-#include <Jolt/Physics/Collision/CollideShape.h>
-#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
-#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
-#include <Jolt/Physics/Collision/RayCast.h>
-#include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <Jolt/Physics/Constraints/Constraint.h>
 
+#include <EntityItem.h>
 #include <PerfStat.h>
 #include <PhysicsCollisionGroups.h>
 #include <Profile.h>
@@ -42,112 +32,21 @@
 #include "CharacterController.h"
 #include "JoltSupport.h"
 #include "JoltUtil.h"
-#include "ObjectMotionState.h"
 #include "PhysicsHelpers.h"
 #include "PhysicsDebugDraw.h"
 #include "PhysicsLogging.h"
 
 namespace {
-    // Jolt's limits for one world. Bodies beyond this fail to add, so it is generous.
-    const JPH::uint MAX_BODIES = 65536;
-    const JPH::uint NUM_BODY_MUTEXES = 0; // 0 = Jolt's default
-    const JPH::uint MAX_BODY_PAIRS = 65536;
-    const JPH::uint MAX_CONTACT_CONSTRAINTS = 16384;
+    // the motion state of the entity a dynamic belongs to, if it has a body
+    ObjectMotionState* ownerMotionState(EntityDynamicInterface* dynamic) {
+        EntityItemPointer entity = dynamic ? dynamic->getOwnerEntity().lock() : nullptr;
+        return entity ? static_cast<ObjectMotionState*>(entity->getPhysicsInfo()) : nullptr;
+    }
+
     const JPH::uint TEMP_ALLOCATOR_BYTES = 64 * 1024 * 1024;
-
-    // a body sleeps after this long below the velocity threshold (Bullet's hard-coded value was 2 s)
-    const float TIME_BEFORE_SLEEP = 1.0f;
-}
-
-// Jolt reports contacts from its worker threads while a step runs; this gathers them under a lock so the
-// engine can fold them into its contact map afterwards, on the simulation thread.
-class PhysicsEngine::ContactRecorder : public JPH::ContactListener {
-public:
-    struct Record {
-        ObjectMotionState* a;
-        ObjectMotionState* b;
-        bool aIsStatic, bIsStatic, aIsKinematic, bIsKinematic;
-        glm::vec3 positionOnB;
-        glm::vec3 normalOnB; // points from B toward A
-        float distance;      // negative when penetrating
-    };
-
-    void OnContactAdded(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold, JPH::ContactSettings& settings) override {
-        record(body1, body2, manifold);
-    }
-
-    void OnContactPersisted(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold, JPH::ContactSettings& settings) override {
-        record(body1, body2, manifold);
-    }
-
-    void take(std::vector<Record>& out) {
-        std::lock_guard<std::mutex> lock(_mutex);
-        out.swap(_records);
-        _records.clear();
-    }
-
-private:
-    void record(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold) {
-        ObjectMotionState* a = PhysicsEngine::motionStateOf(body1);
-        ObjectMotionState* b = PhysicsEngine::motionStateOf(body2);
-        if (!a && !b) {
-            return;
-        }
-        // A body without a motion state is MyAvatar's inner body; it always takes the A side of a contact.
-        bool swap = (b == nullptr);
-        const JPH::Body& bodyA = swap ? body2 : body1;
-        const JPH::Body& bodyB = swap ? body1 : body2;
-        Record record;
-        record.a = swap ? b : a;
-        record.b = swap ? a : b;
-        record.aIsStatic = bodyA.IsStatic();
-        record.bIsStatic = bodyB.IsStatic();
-        record.aIsKinematic = bodyA.IsKinematic();
-        record.bIsKinematic = bodyB.IsKinematic();
-        // Jolt's normal points from body 1 to body 2; the engine's contact normal points from B toward A.
-        glm::vec3 normalFrom1To2 = joltToGLM(manifold.mWorldSpaceNormal);
-        record.normalOnB = swap ? normalFrom1To2 : -normalFrom1To2;
-        record.distance = -manifold.mPenetrationDepth;
-        if (swap) {
-            record.positionOnB = manifold.mRelativeContactPointsOn1.empty() ? joltToGLM(manifold.mBaseOffset)
-                                                                            : joltToGLM(manifold.GetWorldSpaceContactPointOn1(0));
-        } else {
-            record.positionOnB = manifold.mRelativeContactPointsOn2.empty() ? joltToGLM(manifold.mBaseOffset)
-                                                                            : joltToGLM(manifold.GetWorldSpaceContactPointOn2(0));
-        }
-        std::lock_guard<std::mutex> lock(_mutex);
-        _records.push_back(record);
-    }
-
-    std::mutex _mutex;
-    std::vector<Record> _records;
-};
-
-// Jolt tells us when bodies fall asleep or wake up, also from its worker threads.
-class PhysicsEngine::ActivationRecorder : public JPH::BodyActivationListener {
-public:
-    void OnBodyActivated(const JPH::BodyID& bodyID, JPH::uint64 userData) override {
-    }
-
-    void OnBodyDeactivated(const JPH::BodyID& bodyID, JPH::uint64 userData) override {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _deactivated.push_back((ObjectMotionState*)(uintptr_t)userData);
-    }
-
-    void takeDeactivated(std::vector<ObjectMotionState*>& out) {
-        std::lock_guard<std::mutex> lock(_mutex);
-        out.swap(_deactivated);
-        _deactivated.clear();
-    }
-
-private:
-    std::mutex _mutex;
-    std::vector<ObjectMotionState*> _deactivated;
-};
-
-// static
-ObjectMotionState* PhysicsEngine::motionStateOf(const JPH::Body& body) {
-    return (ObjectMotionState*)(uintptr_t)body.GetUserData();
+    // the hysteresis of a frame's membership volume: stepping in needs this much inside, stepping out this much beyond
+    const float ENTER_MARGIN = 0.05f;
+    const float LEAVE_MARGIN = 0.3f;
 }
 
 PhysicsEngine::PhysicsEngine(const glm::vec3& offset) :
@@ -159,51 +58,27 @@ PhysicsEngine::PhysicsEngine(const glm::vec3& offset) :
 
 PhysicsEngine::~PhysicsEngine() {
     _myAvatarController = nullptr;
-    // the system goes before the listeners and the job system it uses
-    _system.reset();
-    _contactRecorder.reset();
-    _activationRecorder.reset();
+    // the worlds go before the job system and the allocator they use
+    _frameWorlds.clear();
+    _rootWorld.reset();
     _jobSystem.reset();
     _tempAllocator.reset();
-    _layers.reset();
 }
 
 void PhysicsEngine::init() {
     JoltSupport::initialize();
-    if (!_system) {
+    if (!_rootWorld) {
         _tempAllocator.reset(new JPH::TempAllocatorImpl(TEMP_ALLOCATOR_BYTES));
         int numThreads = glm::max(1, (int)std::thread::hardware_concurrency() - 1);
         _jobSystem.reset(new JPH::JobSystemThreadPool(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, numThreads));
-
-        _layers.reset(new JoltLayers::Tables());
-        _system.reset(new JPH::PhysicsSystem());
-        _system->Init(MAX_BODIES, NUM_BODY_MUTEXES, MAX_BODY_PAIRS, MAX_CONTACT_CONSTRAINTS,
-                      _layers->broadPhaseLayers, _layers->objectVsBroadPhase, _layers->objectLayerPairs);
-
-        // default gravity of the world is zero, so each object must specify its own gravity
-        // TODO: set up gravity zones
-        _system->SetGravity(JPH::Vec3::sZero());
-
-        JPH::PhysicsSettings settings = _system->GetPhysicsSettings();
-        settings.mTimeBeforeSleep = TIME_BEFORE_SLEEP;
-        settings.mDeterministicSimulation = true;
-        _system->SetPhysicsSettings(settings);
-
-        _contactRecorder.reset(new ContactRecorder());
-        _system->SetContactListener(_contactRecorder.get());
-        _activationRecorder.reset(new ActivationRecorder());
-        _system->SetBodyActivationListener(_activationRecorder.get());
+        _rootWorld.reset(new PhysicsWorld(QUuid(), _tempAllocator.get(), _jobSystem.get()));
 
         _physicsDebugDraw.reset(new PhysicsDebugDraw());
         _physicsDebugDraw->setWorldOffset(_originOffset);
 
         _lastStepTime = usecTimestampNow();
-        qCDebug(physics) << "PhysicsEngine: Jolt world with" << numThreads << "worker threads";
+        qCDebug(physics) << "PhysicsEngine: Jolt root world with" << numThreads << "worker threads";
     }
-}
-
-JPH::BodyInterface& PhysicsEngine::getBodyInterface() const {
-    return _system->GetBodyInterfaceNoLock();
 }
 
 JPH::TempAllocator* PhysicsEngine::getTempAllocator() const {
@@ -211,182 +86,204 @@ JPH::TempAllocator* PhysicsEngine::getTempAllocator() const {
 }
 
 int32_t PhysicsEngine::getNumCollisionObjects() const {
-    return _system ? (int32_t)_system->GetNumBodies() : 0;
+    int32_t count = _rootWorld ? _rootWorld->getNumBodies() : 0;
+    for (const auto& entry : _frameWorlds) {
+        count += entry.second->getNumBodies();
+    }
+    return count;
+}
+
+PhysicsWorld* PhysicsEngine::findWorld(const QUuid& frameID) const {
+    if (frameID.isNull()) {
+        return _rootWorld.get();
+    }
+    auto itr = _frameWorlds.find(frameID);
+    return itr == _frameWorlds.end() ? nullptr : itr->second.get();
+}
+
+PhysicsWorld* PhysicsEngine::getWorld(const QUuid& frameID) {
+    if (frameID.isNull()) {
+        return _rootWorld.get();
+    }
+    auto itr = _frameWorlds.find(frameID);
+    if (itr != _frameWorlds.end()) {
+        return itr->second.get();
+    }
+    PhysicsWorld* world = new PhysicsWorld(frameID, _tempAllocator.get(), _jobSystem.get());
+    _frameWorlds[frameID].reset(world);
+    glm::vec3 position, linearVelocity, angularVelocity;
+    glm::quat rotation;
+    if (getFrameTransform(frameID, position, rotation, linearVelocity, angularVelocity)) {
+        world->setFrameTransform(position, rotation, linearVelocity, angularVelocity);
+    }
+    qCDebug(physics) << "PhysicsEngine: new world for frame" << frameID;
+    return world;
+}
+
+PhysicsWorld* PhysicsEngine::worldFor(ObjectMotionState* motionState) {
+    return getWorld(motionState->getFrameID());
+}
+
+bool PhysicsEngine::getFrameTransform(const QUuid& frameID, glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const {
+    auto itr = _frameStates.find(frameID);
+    if (itr == _frameStates.end()) {
+        return false;
+    }
+    return itr->second->getFrameTransformInDomain(position, rotation, linearVelocity, angularVelocity);
+}
+
+QUuid PhysicsEngine::frameContaining(const glm::vec3& position, const QUuid& currentFrame) const {
+    // a point in domain coordinates, each frame's volume in its own: the frame's transform converts
+    auto inside = [&](ObjectMotionState* frameState, float margin) -> bool {
+        glm::vec3 framePosition, linearVelocity, angularVelocity, minCorner, maxCorner;
+        glm::quat frameRotation;
+        if (!frameState->getFrameTransformInDomain(framePosition, frameRotation, linearVelocity, angularVelocity) ||
+            !frameState->getFrameVolume(minCorner, maxCorner)) {
+            return false;
+        }
+        glm::vec3 local = glm::inverse(frameRotation) * (position - framePosition);
+        return local.x > minCorner.x - margin && local.x < maxCorner.x + margin &&
+               local.y > minCorner.y - margin && local.y < maxCorner.y + margin &&
+               local.z > minCorner.z - margin && local.z < maxCorner.z + margin;
+    };
+    // staying is easier than entering: a rider in a doorway does not flap between worlds
+    if (!currentFrame.isNull()) {
+        auto itr = _frameStates.find(currentFrame);
+        if (itr != _frameStates.end() && inside(itr->second, LEAVE_MARGIN)) {
+            return currentFrame;
+        }
+    }
+    for (const auto& entry : _frameStates) {
+        if (entry.first != currentFrame && inside(entry.second, -ENTER_MARGIN)) {
+            return entry.first;
+        }
+    }
+    return QUuid();
 }
 
 // private
-void PhysicsEngine::addObjectToDynamicsWorld(ObjectMotionState* motionState) {
-    assert(motionState);
-    if (motionState->getBody()) {
-        // a reinsertion: the body is rebuilt from scratch so that its type, shape and layer are all fresh
-        destroyBody(motionState);
-    }
-    const JPH::Shape* shape = motionState->getShape();
-    assert(shape);
-    if (!shape) {
-        return;
-    }
-
-    PhysicsMotionType motionType = motionState->computePhysicsMotionType();
-    motionState->setMotionType(motionType);
-
-    int32_t group, mask;
-    motionState->computeCollisionGroupAndMask(group, mask);
-
-    JPH::BodyCreationSettings settings(shape, glmToJoltR(motionState->getObjectPosition()), glmToJolt(motionState->getObjectRotation()),
-                                       JPH::EMotionType::Static, JoltLayers::layerFor(group, mask));
-    settings.mUserData = (JPH::uint64)(uintptr_t)motionState;
-    settings.mFriction = motionState->getObjectFriction();
-    settings.mRestitution = motionState->getObjectRestitution();
-    settings.mAllowedDOFs = motionState->getAllowedDOFs();
-    settings.mAllowSleeping = true;
-
-    bool activate = false;
-    switch(motionType) {
-        case MOTION_TYPE_KINEMATIC: {
-            settings.mMotionType = JPH::EMotionType::Kinematic;
-            activate = true;
-            break;
-        }
-        case MOTION_TYPE_DYNAMIC: {
-            settings.mMotionType = JPH::EMotionType::Dynamic;
-            float mass = motionState->getMass();
-            const float MIN_DYNAMIC_MASS = 0.01f;
-            if (mass != mass || mass < MIN_DYNAMIC_MASS) {
-                mass = MIN_DYNAMIC_MASS;
-            }
-            settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
-            settings.mMassPropertiesOverride.mMass = mass;
-            // an object that is not moving starts asleep, so a world full of resting things costs nothing
-            activate = motionState->isMoving();
-            break;
-        }
-        case MOTION_TYPE_STATIC:
-        default: {
-            settings.mMotionType = JPH::EMotionType::Static;
-            break;
-        }
-    }
-
-    JPH::BodyInterface& bodies = getBodyInterface();
-    JPH::Body* body = bodies.CreateBody(settings);
-    if (!body) {
-        qCWarning(physics) << "PhysicsEngine: out of bodies, could not add" << motionState->getName();
-        return;
-    }
-    bodies.AddBody(body->GetID(), activate ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
-    motionState->setBody(body, &bodies);
-    _motionStates.insert(motionState);
-
-    if (motionType == MOTION_TYPE_KINEMATIC) {
-        motionState->updateBodyVelocities();
-        motionState->updateLastKinematicStep();
-        motionState->clearInternalKinematicChanges();
-        _kinematicMotionStates.insert(motionState);
-    } else if (motionType == MOTION_TYPE_DYNAMIC) {
-        motionState->updateBodyVelocities();
-        if (!activate) {
-            bodies.DeactivateBody(body->GetID());
-        }
-    } else {
-        // a new static body does not wake the sleeping things it may now be under or inside; we do
-        wakeBodiesAround(body);
-        if (motionState->isLocallyOwned()) {
-            _activeStaticObjects.insert(motionState);
-        }
-    }
-    motionState->updateBodyMaterialProperties();
+PhysicsWorld* PhysicsEngine::characterWorld() const {
+    return _myAvatarController ? _myAvatarController->getWorld() : nullptr;
 }
 
 // private
-void PhysicsEngine::destroyBody(ObjectMotionState* motionState) {
+void PhysicsEngine::removeDynamicsForObject(ObjectMotionState* motionState) {
     JPH::Body* body = motionState->getBody();
-    if (!body) {
+    PhysicsWorld* world = motionState->getWorld();
+    if (!body || !world) {
         return;
     }
-    JPH::BodyID bodyID = body->GetID();
-    removeDynamicsForBody(bodyID);
-    JPH::BodyInterface& bodies = getBodyInterface();
-    bodies.RemoveBody(bodyID);
-    motionState->setBody(nullptr, nullptr);
-    bodies.DestroyBody(bodyID);
-    _motionStates.erase(motionState);
-    _kinematicMotionStates.erase(motionState);
-    _activeStaticObjects.erase(motionState);
+    auto key = std::make_pair(world, body->GetID().GetIndexAndSequenceNumber());
+    auto itr = _objectDynamicsByBody.find(key);
+    if (itr == _objectDynamicsByBody.end()) {
+        return;
+    }
+    QSet<QUuid> ids = itr->second;
+    for (const QUuid& dynamicID : ids) {
+        if (!dynamicID.isNull() && _objectDynamics.contains(dynamicID)) {
+            removeDynamic(dynamicID);
+        }
+    }
 }
 
-QList<EntityDynamicPointer> PhysicsEngine::removeDynamicsForBody(const JPH::BodyID& bodyID) {
-    // remove dynamics that are attached to this body
-    QList<EntityDynamicPointer> removedDynamics;
-    uint32_t key = bodyID.GetIndexAndSequenceNumber();
-    if (!_objectDynamicsByBody.contains(key)) {
-        return removedDynamics;
+// private: a frame is known to the engine (membership, transforms) and has its hull twin in its own world
+void PhysicsEngine::registerFrame(ObjectMotionState* frameState) {
+    const QUuid& frameID = frameState->getObjectID();
+    if (_frameStates.find(frameID) == _frameStates.end()) {
+        qCDebug(physics) << "PhysicsEngine: frame" << frameID << "registered, at" << frameState->getObjectPosition();
     }
-    QMutableSetIterator<QUuid> i(_objectDynamicsByBody[key]);
+    _frameStates[frameID] = frameState;
+    _framesChanged = true;
+    getWorld(frameID)->setFrameHull(frameState);
+}
 
-    while (i.hasNext()) {
-        QUuid dynamicID = i.next();
-        if (dynamicID.isNull()) {
-            continue;
+// private
+void PhysicsEngine::unregisterFrame(const QUuid& frameID) {
+    if (_frameStates.erase(frameID)) {
+        _framesChanged = true;
+        PhysicsWorld* world = findWorld(frameID);
+        if (world) {
+            world->setFrameHull(nullptr);
         }
-        EntityDynamicPointer dynamic = _objectDynamics[dynamicID];
-        if (!dynamic) {
-            continue;
-        }
-        removeDynamic(dynamicID);
-        removedDynamics += dynamic;
     }
-    return removedDynamics;
 }
 
 void PhysicsEngine::removeObjects(const VectorOfMotionStates& objects) {
-    // wake whatever touched them and forget the contacts
     for (auto object : objects) {
-        wakeBodiesTouching(object);
-        removeContacts(object);
+        PhysicsWorld* world = object->getWorld();
+        if (world) {
+            removeDynamicsForObject(object);
+            world->removeObject(object);
+        }
+        unregisterFrame(object->getObjectID());
     }
-    // remove bodies
-    for (auto object : objects) {
-        destroyBody(object);
-    }
+    dropEmptyWorlds();
 }
 
 // Same as above, but takes a Set instead of a Vector.  Should only be called during teardown.
 void PhysicsEngine::removeSetOfObjects(const SetOfMotionStates& objects) {
-    _contactMap.clear();
     for (auto object : objects) {
-        destroyBody(object);
+        PhysicsWorld* world = object->getWorld();
+        if (world) {
+            removeDynamicsForObject(object);
+            world->removeObject(object);
+        }
         object->clearIncomingDirtyFlags();
     }
-    _activeStaticObjects.clear();
+    std::vector<QUuid> frameIDs;
+    for (const auto& entry : _frameStates) {
+        frameIDs.push_back(entry.first);
+    }
+    for (const QUuid& frameID : frameIDs) {
+        unregisterFrame(frameID);
+    }
+    dropEmptyWorlds();
 }
 
 void PhysicsEngine::addObjects(const VectorOfMotionStates& objects) {
     for (auto object : objects) {
-        addObjectToDynamicsWorld(object);
+        PhysicsWorld* world = worldFor(object);
+        world->addObject(object);
+        if (object->isFrame()) {
+            registerFrame(object);
+        }
     }
 }
 
 void PhysicsEngine::reinsertObject(ObjectMotionState* object) {
-    wakeBodiesTouching(object);
-    removeContacts(object);
-    if (object->getBody()) {
-        addObjectToDynamicsWorld(object);
+    if (!object->getBody()) {
+        return;
+    }
+    PhysicsWorld* oldWorld = object->getWorld();
+    PhysicsWorld* newWorld = worldFor(object);
+    if (oldWorld && oldWorld != newWorld) {
+        // the object changed frame: out of one world, into another, in the new frame's coordinates
+        removeDynamicsForObject(object);
+        oldWorld->removeObject(object);
+    }
+    newWorld->addObject(object);
+    if (object->isFrame()) {
+        // (also refreshes the hull twin when the shape changed)
+        registerFrame(object);
+    } else {
+        // in case it was a frame until now
+        unregisterFrame(object->getObjectID());
     }
 }
 
 void PhysicsEngine::processTransaction(PhysicsEngine::Transaction& transaction) {
     // removes
     for (auto object : transaction.objectsToRemove) {
-        wakeBodiesTouching(object);
-        removeContacts(object);
-        destroyBody(object);
+        PhysicsWorld* world = object->getWorld();
+        if (world) {
+            removeDynamicsForObject(object);
+            world->removeObject(object);
+        }
+        unregisterFrame(object->getObjectID());
     }
 
     // adds
-    for (auto object : transaction.objectsToAdd) {
-        addObjectToDynamicsWorld(object);
-    }
+    addObjects(VectorOfMotionStates::fromStdVector(transaction.objectsToAdd));
 
     // reinserts
     for (auto object : transaction.objectsToReinsert) {
@@ -395,78 +292,74 @@ void PhysicsEngine::processTransaction(PhysicsEngine::Transaction& transaction) 
 
     // static bodies that were moved: wake whatever is now touching them, and report them as changed
     for (auto object : transaction.activeStaticObjects) {
-        if (object->getBody()) {
-            wakeBodiesAround(object->getBody());
-            _activeStaticObjects.insert(object);
+        if (object->getWorld()) {
+            object->getWorld()->markStaticObjectActive(object);
+        }
+    }
+
+    if (_framesChanged) {
+        rehomeObjects();
+    }
+    dropEmptyWorlds();
+}
+
+// A frame came or went: things that were added before their frame was known (a child that arrived before
+// its parent, the contents of an entity that just became a frame) move to the world they belong in.
+void PhysicsEngine::rehomeObjects() {
+    _framesChanged = false;
+    std::vector<ObjectMotionState*> misplaced;
+    auto check = [&](PhysicsWorld* world) {
+        for (ObjectMotionState* motionState : world->getMotionStates()) {
+            if (motionState->getFrameID() != world->getFrameID()) {
+                misplaced.push_back(motionState);
+            }
+        }
+    };
+    check(_rootWorld.get());
+    for (auto& entry : _frameWorlds) {
+        check(entry.second.get());
+    }
+    for (ObjectMotionState* motionState : misplaced) {
+        reinsertObject(motionState);
+    }
+    if (!misplaced.empty()) {
+        qCDebug(physics) << "PhysicsEngine: moved" << misplaced.size() << "objects to their frames' worlds";
+    }
+}
+
+// private
+void PhysicsEngine::dropEmptyWorlds() {
+    PhysicsWorld* keep = characterWorld();
+    for (auto itr = _frameWorlds.begin(); itr != _frameWorlds.end();) {
+        PhysicsWorld* world = itr->second.get();
+        if (world != keep && world->getNumObjects() == 0 && _frameStates.find(itr->first) == _frameStates.end()) {
+            qCDebug(physics) << "PhysicsEngine: dropping the empty world of frame" << itr->first;
+            itr = _frameWorlds.erase(itr);
+        } else {
+            ++itr;
         }
     }
 }
 
 void PhysicsEngine::removeContacts(ObjectMotionState* motionState) {
-    // trigger events for new/existing/old contacts
-    ContactMap::iterator contactItr = _contactMap.begin();
-    while (contactItr != _contactMap.end()) {
-        if (contactItr->first._a == motionState || contactItr->first._b == motionState) {
-            contactItr = _contactMap.erase(contactItr);
-        } else {
-            ++contactItr;
+    if (motionState && motionState->getWorld()) {
+        motionState->getWorld()->removeContacts(motionState);
+    } else {
+        // the character has no motion state; its contacts are in its world
+        PhysicsWorld* world = characterWorld();
+        if (world) {
+            world->removeContacts(motionState);
         }
     }
 }
 
 // private
-void PhysicsEngine::wakeBodiesTouching(ObjectMotionState* motionState) {
-    // Find all objects that touch the object corresponding to motionState and flag the other objects
-    // for simulation ownership by the local simulation.
-    assert(motionState);
-    for (auto& contact : _contactMap) {
-        ObjectMotionState* other = nullptr;
-        if (contact.first._a == motionState) {
-            other = static_cast<ObjectMotionState*>(contact.first._b);
-        } else if (contact.first._b == motionState) {
-            other = static_cast<ObjectMotionState*>(contact.first._a);
-        }
-        if (other && other->getBody() && other->getBody()->IsDynamic()) {
-            other->bump(VOLUNTEER_SIMULATION_PRIORITY);
-            other->activateBody();
-        }
-    }
-}
-
-// private
-void PhysicsEngine::wakeBodiesAround(const JPH::Body* body) {
-    if (!body) {
-        return;
-    }
-    const float MARGIN = 0.1f; // meters: a resting body may sit just outside the bounds
-    JPH::AABox bounds = body->GetWorldSpaceBounds();
-    bounds.ExpandBy(JPH::Vec3::sReplicate(MARGIN));
-    getBodyInterface().ActivateBodiesInAABox(bounds, JPH::BroadPhaseLayerFilter(), JPH::ObjectLayerFilter());
-}
-
-// private
-void PhysicsEngine::applyGravityForces() {
-    // The world has no gravity; every object carries its own, applied as a force to the active dynamic bodies.
-    JPH::BodyIDVector activeBodies;
-    _system->GetActiveBodies(JPH::EBodyType::RigidBody, activeBodies);
-    const JPH::BodyLockInterfaceNoLock& lockInterface = _system->GetBodyLockInterfaceNoLock();
-    for (const JPH::BodyID& bodyID : activeBodies) {
-        JPH::BodyLockWrite lock(lockInterface, bodyID);
-        if (!lock.Succeeded()) {
-            continue;
-        }
-        JPH::Body& body = lock.GetBody();
-        if (!body.IsDynamic()) {
-            continue;
-        }
-        ObjectMotionState* motionState = motionStateOf(body);
-        if (!motionState) {
-            continue;
-        }
-        const glm::vec3& gravity = motionState->getBodyGravity();
-        if (glm::length2(gravity) > 0.0f) {
-            float mass = 1.0f / glm::max(body.GetMotionProperties()->GetInverseMass(), 1.0e-6f);
-            body.AddForce(glmToJolt(gravity * mass));
+void PhysicsEngine::feedFrameTransforms() {
+    for (auto& entry : _frameWorlds) {
+        glm::vec3 position, linearVelocity, angularVelocity;
+        glm::quat rotation;
+        if (getFrameTransform(entry.first, position, rotation, linearVelocity, angularVelocity)) {
+            entry.second->setFrameTransform(position, rotation, linearVelocity, angularVelocity);
         }
     }
 }
@@ -476,36 +369,22 @@ void PhysicsEngine::stepOnce(float dt) {
     ++_numSubsteps;
     ObjectMotionState::setWorldSimulationStep(_numSubsteps);
 
-    // keyframed objects move toward where their owners say they are, parents before their children
-    std::vector<ObjectMotionState*> kinematics(_kinematicMotionStates.begin(), _kinematicMotionStates.end());
-    std::stable_sort(kinematics.begin(), kinematics.end(), [](ObjectMotionState* a, ObjectMotionState* b) {
-        return a->getNestingDepth() < b->getNestingDepth();
-    });
-    for (ObjectMotionState* motionState : kinematics) {
-        motionState->pushTransformToBody(dt);
-    }
-
-    // actions (grabs, tractors, offsets) push on their bodies
+    // actions (grabs, tractors, offsets) push on their bodies, wherever those are
     for (auto& dynamic : _objectDynamics) {
         if (dynamic && dynamic->isAction()) {
             static_cast<ObjectAction*>(dynamic.get())->updateAction(dt);
         }
     }
 
-    // MyAvatar's character moves itself through the world, before the world moves
-    if (_myAvatarController) {
-        _myAvatarController->substep(dt);
+    PhysicsWorld* avatarWorld = characterWorld();
+    _rootWorld->stepOnce(dt, avatarWorld == _rootWorld.get() ? _myAvatarController : nullptr);
+
+    // each frame's world steps in the frame's coordinates, knowing only where the frame is for gravity's sake
+    feedFrameTransforms();
+    for (auto& entry : _frameWorlds) {
+        entry.second->stepOnce(dt, avatarWorld == entry.second.get() ? _myAvatarController : nullptr);
     }
 
-    applyGravityForces();
-
-    JPH::EPhysicsUpdateError error = _system->Update(dt, 1, _tempAllocator.get(), _jobSystem.get());
-    if (error != JPH::EPhysicsUpdateError::None) {
-        qCWarning(physics) << "PhysicsEngine: Jolt update error" << (int)error;
-    }
-
-    harvestContacts();
-    updateContactMap();
     doOwnershipInfectionForConstraints();
 }
 
@@ -542,24 +421,9 @@ void PhysicsEngine::stepSimulation() {
         _hasOutgoingChanges = true;
         if (_debugDrawMode != PhysicsDebugDraw::DRAW_NOTHING) {
             PROFILE_RANGE(simulation_physics, "debugDrawWorld");
-            JPH::BodyManager::DrawSettings drawSettings;
-            drawSettings.mDrawShape = (_debugDrawMode & PhysicsDebugDraw::DRAW_WIREFRAME) != 0;
-            drawSettings.mDrawShapeWireframe = true;
-            drawSettings.mDrawBoundingBox = (_debugDrawMode & PhysicsDebugDraw::DRAW_AABBS) != 0;
-            if (drawSettings.mDrawShape || drawSettings.mDrawBoundingBox) {
-                _system->DrawBodies(drawSettings, _physicsDebugDraw.get());
-            }
-            if (_debugDrawMode & PhysicsDebugDraw::DRAW_CONSTRAINTS) {
-                _system->DrawConstraints(_physicsDebugDraw.get());
-            }
-            if (_debugDrawMode & PhysicsDebugDraw::DRAW_CONSTRAINT_LIMITS) {
-                _system->DrawConstraintLimits(_physicsDebugDraw.get());
-            }
-            if (_debugDrawMode & PhysicsDebugDraw::DRAW_CONTACT_POINTS) {
-                const glm::vec3 RED(1.0f, 0.0f, 0.0f);
-                for (auto& contact : _contactMap) {
-                    _physicsDebugDraw->drawContactPoint(contact.second.positionWorldOnB, contact.second.normalWorldOnB, contact.second.distance, RED);
-                }
+            _rootWorld->debugDraw(_debugDrawMode, _physicsDebugDraw.get());
+            for (auto& entry : _frameWorlds) {
+                entry.second->debugDraw(_debugDrawMode, _physicsDebugDraw.get());
             }
         }
     }
@@ -577,169 +441,41 @@ void PhysicsEngine::printPerformanceStatsToFile(const QString& filename) {
     }
     QTextStream s(&file);
     s << "stepSimulation = " << _lastStepDuration << "\n";
+    s << "worlds = " << (1 + (int)_frameWorlds.size()) << "\n";
     s << "bodies = " << getNumCollisionObjects() << "\n";
-    s << "activeBodies = " << (_system ? _system->GetNumActiveBodies(JPH::EBodyType::RigidBody) : 0) << "\n";
-    s << "contacts = " << (int)_contactMap.size() << "\n";
+    s << "activeBodies = " << (_rootWorld ? _rootWorld->getNumActiveBodies() : 0) << "\n";
+    s << "contacts = " << (int)(_rootWorld ? _rootWorld->getNumContacts() : 0) << "\n";
     file.close();
 }
 
-// private
-void PhysicsEngine::doOwnershipInfection(ObjectMotionState* motionStateA, bool aIsCharacter, bool aIsStatic,
-                                         ObjectMotionState* motionStateB, bool bIsStatic, bool bIsKinematic) {
-    // "A owns itself" means: A is MyAvatar's character, or A is simulated by us and is not static.
-    bool aIsOurs = aIsCharacter || (motionStateA && motionStateA->getSimulatorID() == Physics::getSessionUUID() && !aIsStatic);
-    if (!aIsOurs || !motionStateB) {
-        return;
-    }
-    // NOTE: we might own the simulation of a kinematic object (A)
-    // but we don't claim ownership of kinematic objects (B) based on collisions here.
-    if (!bIsStatic && !bIsKinematic && motionStateB->getSimulatorID() != Physics::getSessionUUID()) {
-        uint8_t priorityA = motionStateA ? motionStateA->getSimulationPriority() : PERSONAL_SIMULATION_PRIORITY;
-        motionStateB->bump(priorityA);
-    }
-}
-
-// private
-void PhysicsEngine::harvestContacts() {
-    std::vector<ContactRecorder::Record> records;
-    _contactRecorder->take(records);
-    ++_numContactFrames;
-    for (const auto& record : records) {
-        // the manifold has up to 4 distinct points, but only extract info from the first
-        _contactMap[ContactKey(record.a, record.b)].update(_numContactFrames, record.positionOnB, record.normalOnB, record.distance);
-
-        if (!Physics::getSessionUUID().isNull()) {
-            doOwnershipInfection(record.a, record.a == nullptr, record.aIsStatic, record.b, record.bIsStatic, record.bIsKinematic);
-            if (record.a) {
-                doOwnershipInfection(record.b, false, record.bIsStatic, record.a, record.aIsStatic, record.aIsKinematic);
-            }
-        }
-    }
-}
-
-void PhysicsEngine::recordCharacterContact(ObjectMotionState* other, const glm::vec3& positionOnOther, const glm::vec3& normalTowardCharacter, float distance) {
-    if (!other) {
-        return;
-    }
-    _contactMap[ContactKey(nullptr, other)].update(_numContactFrames, positionOnOther, normalTowardCharacter, distance);
-    if (!Physics::getSessionUUID().isNull()) {
-        const JPH::Body* body = other->getBody();
-        bool isStatic = body ? body->IsStatic() : true;
-        bool isKinematic = body ? body->IsKinematic() : false;
-        doOwnershipInfection(nullptr, true, false, other, isStatic, isKinematic);
-    }
-}
-
 void PhysicsEngine::updateContactMap() {
-    // contacts arrive through harvestContacts(); nothing more to do per step
+    // contacts arrive through each world's step; nothing more to do
 }
 
 void PhysicsEngine::doOwnershipInfectionForConstraints() {
     JPH::BodyID characterBodyID = _myAvatarController ? _myAvatarController->getInnerBodyID() : JPH::BodyID();
+    PhysicsWorld* avatarWorld = characterWorld();
+    // the constraints' bodies, grouped by the world they live in
+    std::map<PhysicsWorld*, std::vector<std::vector<JPH::BodyID>>> byWorld;
     foreach(const auto& dynamic, _objectDynamics) {
-        if (!dynamic) {
+        if (!dynamic || !dynamic->isConstraint()) {
             continue;
         }
-        std::vector<JPH::BodyID> bodies = std::static_pointer_cast<ObjectDynamic>(dynamic)->getBodyIDs();
-        if (bodies.size() > 1) {
-            int32_t numOwned = 0;
-            int32_t numStatic = 0;
-            uint8_t priority = VOLUNTEER_SIMULATION_PRIORITY;
-            std::vector<ObjectMotionState*> motionStates;
-            for (const JPH::BodyID& bodyID : bodies) {
-                JPH::BodyLockRead lock(_system->GetBodyLockInterfaceNoLock(), bodyID);
-                if (!lock.Succeeded()) {
-                    continue;
-                }
-                const JPH::Body& body = lock.GetBody();
-                ObjectMotionState* motionState = motionStateOf(body);
-                if (body.IsStatic()) {
-                    ++numStatic;
-                } else if (motionState && motionState->getType() == MOTIONSTATE_TYPE_AVATAR) {
-                    // we can never take ownership of this constraint
-                    numOwned = 0;
-                    break;
-                } else {
-                    if (motionState && motionState->getSimulatorID() == Physics::getSessionUUID()) {
-                        priority = glm::max(priority, motionState->getSimulationPriority());
-                    } else if (bodyID == characterBodyID) {
-                        priority = glm::max(priority, PERSONAL_SIMULATION_PRIORITY);
-                    }
-                    numOwned++;
-                }
-                if (motionState) {
-                    motionStates.push_back(motionState);
-                }
-            }
-
-            if (numOwned > 0) {
-                if (numOwned + numStatic != (int32_t)bodies.size()) {
-                    // we have partial ownership but it isn't complete so we walk each object
-                    // and bump the simulation priority to the highest priority we encountered earlier
-                    for (ObjectMotionState* motionState : motionStates) {
-                        // NOTE: we submit priority+1 because the default behavior of bump() is to actually use priority - 1
-                        // and we want all priorities of the objects to be at the SAME level
-                        motionState->bump(priority + 1);
-                    }
-                }
-            }
+        PhysicsWorld* world = _dynamicWorlds.value(dynamic->getID(), nullptr);
+        if (world) {
+            byWorld[world].push_back(std::static_pointer_cast<ObjectDynamic>(dynamic)->getBodyIDs());
         }
+    }
+    for (auto& entry : byWorld) {
+        entry.first->doOwnershipInfectionForConstraints(entry.second, entry.first == avatarWorld ? characterBodyID : JPH::BodyID());
     }
 }
 
 const CollisionEvents& PhysicsEngine::getCollisionEvents() {
     _collisionEvents.clear();
-
-    // scan known contacts and trigger events
-    ContactMap::iterator contactItr = _contactMap.begin();
-
-    while (contactItr != _contactMap.end()) {
-        ContactInfo& contact = contactItr->second;
-        ContactEventType type = contact.computeType(_numContactFrames);
-        const float SIGNIFICANT_DEPTH = -0.002f; // penetrations have negative distance
-        if (type != CONTACT_EVENT_TYPE_CONTINUE ||
-                (contact.distance < SIGNIFICANT_DEPTH &&
-                 contact.readyForContinue(_numContactFrames))) {
-            ObjectMotionState* motionStateA = static_cast<ObjectMotionState*>(contactItr->first._a);
-            ObjectMotionState* motionStateB = static_cast<ObjectMotionState*>(contactItr->first._b);
-
-            // NOTE: the MyAvatar character is the only object in the simulation that does NOT have a MotionState
-            // which means should we ever want to report ALL collision events against the avatar we can
-            // modify the logic below.
-            //
-            // We only create events when at least one of the objects is (or should be) owned in the local simulation.
-            if (motionStateA && (motionStateA->isLocallyOwnedOrShouldBe())) {
-                QUuid idA = motionStateA->getObjectID();
-                QUuid idB;
-                if (motionStateB) {
-                    idB = motionStateB->getObjectID();
-                }
-                glm::vec3 position = contact.getPositionWorldOnB() + _originOffset;
-                glm::vec3 velocityChange = motionStateA->getObjectLinearVelocityChange() +
-                    (motionStateB ? motionStateB->getObjectLinearVelocityChange() : glm::vec3(0.0f));
-                glm::vec3 penetration = contact.distance * contact.normalWorldOnB;
-                _collisionEvents.push_back(Collision(type, idA, idB, position, penetration, velocityChange));
-            } else if (motionStateB && (motionStateB->isLocallyOwnedOrShouldBe())) {
-                QUuid idB = motionStateB->getObjectID();
-                QUuid idA;
-                if (motionStateA) {
-                    idA = motionStateA->getObjectID();
-                }
-                glm::vec3 position = contact.getPositionWorldOnA() + _originOffset;
-                glm::vec3 velocityChange = motionStateB->getObjectLinearVelocityChange() +
-                    (motionStateA ? motionStateA->getObjectLinearVelocityChange() : glm::vec3(0.0f));
-                // NOTE: we're flipping the order of A and B (so that the first objectID is never NULL)
-                // hence we negate the penetration (because penetration always points from B to A).
-                glm::vec3 penetration = - (contact.distance * contact.normalWorldOnB);
-                _collisionEvents.push_back(Collision(type, idB, idA, position, penetration, velocityChange));
-            }
-        }
-
-        if (type == CONTACT_EVENT_TYPE_END) {
-            contactItr = _contactMap.erase(contactItr);
-        } else {
-            ++contactItr;
-        }
+    _rootWorld->collectCollisionEvents(_originOffset, _collisionEvents);
+    for (auto& entry : _frameWorlds) {
+        entry.second->collectCollisionEvents(_originOffset, _collisionEvents);
     }
     return _collisionEvents;
 }
@@ -748,39 +484,10 @@ const VectorOfMotionStates& PhysicsEngine::getChangedMotionStates() {
     PROFILE_RANGE(simulation_physics, "copyOutgoingChanges");
     _changedMotionStates.clear();
     _deactivatedMotionStates.clear();
-
-    // every body that is awake has (possibly) moved: copy it out
-    JPH::BodyIDVector activeBodies;
-    _system->GetActiveBodies(JPH::EBodyType::RigidBody, activeBodies);
-    const JPH::BodyLockInterfaceNoLock& lockInterface = _system->GetBodyLockInterfaceNoLock();
-    for (const JPH::BodyID& bodyID : activeBodies) {
-        JPH::BodyLockRead lock(lockInterface, bodyID);
-        if (!lock.Succeeded()) {
-            continue;
-        }
-        ObjectMotionState* motionState = motionStateOf(lock.GetBody());
-        if (motionState) {
-            motionState->pullTransformFromBody();
-            _changedMotionStates.push_back(motionState);
-        }
+    _rootWorld->harvestChanges(_changedMotionStates, _deactivatedMotionStates);
+    for (auto& entry : _frameWorlds) {
+        entry.second->harvestChanges(_changedMotionStates, _deactivatedMotionStates);
     }
-
-    // bodies that fell asleep since the last harvest
-    std::vector<ObjectMotionState*> deactivated;
-    _activationRecorder->takeDeactivated(deactivated);
-    for (ObjectMotionState* motionState : deactivated) {
-        if (_motionStates.find(motionState) != _motionStates.end()) {
-            motionState->pullTransformFromBody();
-            _deactivatedMotionStates.push_back(motionState);
-        }
-    }
-
-    // moved static bodies are reported once, then forgotten
-    for (ObjectMotionState* motionState : _activeStaticObjects) {
-        _changedMotionStates.push_back(motionState);
-    }
-    _activeStaticObjects.clear();
-
     _hasOutgoingChanges = false;
     return _changedMotionStates;
 }
@@ -792,9 +499,8 @@ void PhysicsEngine::dumpStatsIfNecessary() {
             _saveNextStats = false;
             printPerformanceStatsToFile(_statsFilename);
         }
-        qCDebug(physics) << "PhysicsEngine: last step" << _lastStepDuration << "ms," << getNumCollisionObjects() << "bodies,"
-                         << (_system ? _system->GetNumActiveBodies(JPH::EBodyType::RigidBody) : 0) << "active,"
-                         << (int)_contactMap.size() << "contacts";
+        qCDebug(physics) << "PhysicsEngine: last step" << _lastStepDuration << "ms," << getNumCollisionObjects() << "bodies in"
+                         << (1 + (int)_frameWorlds.size()) << "worlds," << (_rootWorld ? _rootWorld->getNumActiveBodies() : 0) << "active in the root";
     }
 }
 
@@ -831,21 +537,34 @@ bool PhysicsEngine::addDynamic(EntityDynamicPointer dynamic) {
     }
 
     bool success { false };
+    PhysicsWorld* world = nullptr;
     if (dynamic->isAction()) {
         success = true;
     } else if (dynamic->isConstraint()) {
         ObjectConstraint* objectConstraint = static_cast<ObjectConstraint*>(dynamic.get());
         JPH::Constraint* constraint = objectConstraint->getConstraint();
         if (constraint) {
-            _system->AddConstraint(constraint);
-            success = true;
+            // a constraint lives in the world of its owner's body; both bodies must be there
+            ObjectMotionState* owner = ownerMotionState(objectConstraint);
+            world = owner ? owner->getWorld() : nullptr;
+            if (world) {
+                world->getPhysicsSystem()->AddConstraint(constraint);
+                success = true;
+            }
         } // else perhaps not all the rigid bodies are available, yet
     }
 
     if (success) {
         _objectDynamics[dynamicID] = dynamic;
-        for (const JPH::BodyID& bodyID : std::static_pointer_cast<ObjectDynamic>(dynamic)->getBodyIDs()) {
-            _objectDynamicsByBody[bodyID.GetIndexAndSequenceNumber()] += dynamic->getID();
+        if (world) {
+            _dynamicWorlds[dynamicID] = world;
+        }
+        ObjectMotionState* owner = ownerMotionState(dynamic.get());
+        PhysicsWorld* ownerWorld = owner ? owner->getWorld() : nullptr;
+        if (ownerWorld) {
+            for (const JPH::BodyID& bodyID : std::static_pointer_cast<ObjectDynamic>(dynamic)->getBodyIDs()) {
+                _objectDynamicsByBody[std::make_pair(ownerWorld, bodyID.GetIndexAndSequenceNumber())] += dynamic->getID();
+            }
         }
     }
     return success;
@@ -861,15 +580,18 @@ void PhysicsEngine::removeDynamic(const QUuid dynamicID) {
         if (dynamic->isConstraint()) {
             ObjectConstraint* objectConstraint = static_cast<ObjectConstraint*>(dynamic.get());
             JPH::Constraint* constraint = objectConstraint->getConstraint();
-            if (constraint) {
-                _system->RemoveConstraint(constraint);
+            PhysicsWorld* world = _dynamicWorlds.value(dynamicID, nullptr);
+            if (constraint && world) {
+                world->getPhysicsSystem()->RemoveConstraint(constraint);
             } else {
                 qCDebug(physics) << "PhysicsEngine::removeDynamic of constraint failed";
             }
         }
         _objectDynamics.remove(dynamicID);
-        for (const JPH::BodyID& bodyID : bodies) {
-            _objectDynamicsByBody[bodyID.GetIndexAndSequenceNumber()].remove(dynamic->getID());
+        _dynamicWorlds.remove(dynamicID);
+        for (auto itr = _objectDynamicsByBody.begin(); itr != _objectDynamicsByBody.end();) {
+            itr->second.remove(dynamicID);
+            itr = itr->second.isEmpty() ? _objectDynamicsByBody.erase(itr) : std::next(itr);
         }
         dynamic->invalidate();
     }
@@ -913,121 +635,24 @@ void PhysicsEngine::setShowBulletConstraintLimits(bool value) {
     setDebugBit(_debugDrawMode, PhysicsDebugDraw::DRAW_CONSTRAINT_LIMITS, value);
 }
 
-// Everything within the given shape, as the zones use it to find what is inside them.
 std::vector<ContactTestResult> PhysicsEngine::contactTest(uint16_t mask, const ShapeInfo& regionShapeInfo, const Transform& regionTransform, uint16_t group, float threshold) const {
-    std::vector<ContactTestResult> contacts;
-    if (!_system) {
-        return contacts;
+    if (!_rootWorld) {
+        return std::vector<ContactTestResult>();
     }
-    const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShape(regionShapeInfo);
-    if (!shape) {
-        return contacts;
-    }
-
-    JPH::BodyID characterBodyID = ((mask & USER_COLLISION_GROUP_MY_AVATAR) && _myAvatarController) ?
+    JPH::BodyID characterBodyID = ((mask & USER_COLLISION_GROUP_MY_AVATAR) && _myAvatarController && characterWorld() == _rootWorld.get()) ?
         _myAvatarController->getInnerBodyID() : JPH::BodyID();
-
-    JPH::ObjectLayer layer = JoltLayers::layerFor((int32_t)group, (int32_t)mask);
-    JPH::DefaultBroadPhaseLayerFilter broadPhaseFilter(_layers->objectVsBroadPhase, layer);
-    JPH::DefaultObjectLayerFilter objectLayerFilter(_layers->objectLayerPairs, layer);
-
-    JPH::RMat44 transform = JPH::RMat44::sRotationTranslation(glmToJolt(regionTransform.getRotation()), glmToJoltR(regionTransform.getTranslation()));
-    JPH::RMat44 centerOfMassTransform = transform.PreTranslated(shape->GetCenterOfMass());
-    JPH::CollideShapeSettings settings;
-    settings.mMaxSeparationDistance = 0.0f;
-    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
-    _system->GetNarrowPhaseQueryNoLock().CollideShape(shape, JPH::Vec3::sReplicate(1.0f), centerOfMassTransform, settings,
-                                                       JPH::RVec3::sZero(), collector, broadPhaseFilter, objectLayerFilter);
-
-    for (const JPH::CollideShapeResult& hit : collector.mHits) {
-        if (hit.mPenetrationDepth < threshold) {
-            continue;
-        }
-        // the penetration axis points from the test shape (1) toward the found shape (2)
-        glm::vec3 axis = joltToGLM(hit.mPenetrationAxis);
-        float axisLength = glm::length(axis);
-        glm::vec3 normal = axisLength > 0.0f ? -axis / axisLength : glm::vec3(0.0f, 1.0f, 0.0f);
-        glm::vec3 pointOnTest = joltToGLM(hit.mContactPointOn1);
-        glm::vec3 pointOnFound = joltToGLM(hit.mContactPointOn2);
-
-        if (!characterBodyID.IsInvalid() && hit.mBodyID2 == characterBodyID) {
-            contacts.emplace_back(Physics::getSessionUUID(), pointOnTest, pointOnFound, normal);
-            continue;
-        }
-        JPH::BodyLockRead lock(_system->GetBodyLockInterfaceNoLock(), hit.mBodyID2);
-        if (!lock.Succeeded()) {
-            continue;
-        }
-        ObjectMotionState* candidate = motionStateOf(lock.GetBody());
-        if (!candidate) {
-            continue;
-        }
-        contacts.emplace_back(candidate->getObjectID(), pointOnTest, pointOnFound, normal);
-    }
-
-    ObjectMotionState::getShapeManager()->releaseShape(shape);
-    return contacts;
+    return _rootWorld->contactTest(mask, regionShapeInfo, regionTransform, group, threshold, characterBodyID);
 }
 
 bool PhysicsEngine::castRayClosest(const glm::vec3& start, const glm::vec3& end, int32_t group, int32_t mask,
                                    const JPH::BodyFilter* bodyFilter, RayHit& result) const {
-    result = RayHit();
-    if (!_system) {
-        return false;
-    }
-    JPH::ObjectLayer layer = JoltLayers::layerFor(group, mask);
-    JPH::DefaultBroadPhaseLayerFilter broadPhaseFilter(_layers->objectVsBroadPhase, layer);
-    JPH::DefaultObjectLayerFilter objectLayerFilter(_layers->objectLayerPairs, layer);
-    JPH::BodyFilter noBodyFilter;
-
-    JPH::RRayCast ray(glmToJoltR(start), glmToJolt(end - start));
-    JPH::RayCastResult hit;
-    bool found = _system->GetNarrowPhaseQueryNoLock().CastRay(ray, hit, broadPhaseFilter, objectLayerFilter,
-                                                              bodyFilter ? *bodyFilter : noBodyFilter);
-    if (!found) {
-        return false;
-    }
-    result.hit = true;
-    result.fraction = hit.mFraction;
-    result.bodyID = hit.mBodyID;
-    result.point = start + hit.mFraction * (end - start);
-    JPH::BodyLockRead lock(_system->GetBodyLockInterfaceNoLock(), hit.mBodyID);
-    if (lock.Succeeded()) {
-        const JPH::Body& body = lock.GetBody();
-        result.motionState = motionStateOf(body);
-        result.normal = joltToGLM(body.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, glmToJoltR(result.point)));
-    }
-    return true;
+    return _rootWorld ? _rootWorld->castRayClosest(start, end, group, mask, bodyFilter, result) : false;
 }
 
 void PhysicsEngine::castRayAll(const glm::vec3& start, const glm::vec3& end, int32_t group, int32_t mask,
                                std::vector<RayHit>& results) const {
     results.clear();
-    if (!_system) {
-        return;
-    }
-    JPH::ObjectLayer layer = JoltLayers::layerFor(group, mask);
-    JPH::DefaultBroadPhaseLayerFilter broadPhaseFilter(_layers->objectVsBroadPhase, layer);
-    JPH::DefaultObjectLayerFilter objectLayerFilter(_layers->objectLayerPairs, layer);
-
-    JPH::RRayCast ray(glmToJoltR(start), glmToJolt(end - start));
-    JPH::RayCastSettings settings;
-    JPH::AllHitCollisionCollector<JPH::CastRayCollector> collector;
-    _system->GetNarrowPhaseQueryNoLock().CastRay(ray, settings, collector, broadPhaseFilter, objectLayerFilter);
-    collector.Sort();
-    results.reserve(collector.mHits.size());
-    for (const JPH::RayCastResult& hit : collector.mHits) {
-        RayHit result;
-        result.hit = true;
-        result.fraction = hit.mFraction;
-        result.bodyID = hit.mBodyID;
-        result.point = start + hit.mFraction * (end - start);
-        JPH::BodyLockRead lock(_system->GetBodyLockInterfaceNoLock(), hit.mBodyID);
-        if (lock.Succeeded()) {
-            const JPH::Body& body = lock.GetBody();
-            result.motionState = motionStateOf(body);
-            result.normal = joltToGLM(body.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, glmToJoltR(result.point)));
-        }
-        results.push_back(result);
+    if (_rootWorld) {
+        _rootWorld->castRayAll(start, end, group, mask, results);
     }
 }

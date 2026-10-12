@@ -40,6 +40,10 @@ public:
     void handleDeactivation();
     virtual void handleEasyChanges(uint32_t& flags) override;
 
+    // The chain of transforms between the entity's parent and its frame, composed: the transform of the parent
+    // in the frame's coordinates. Returns false when the entity has no frame.
+    bool getParentTransformInFrame(Transform& transform, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const;
+
     /// \return PhysicsMotionType based on params set in EntityItem
     virtual PhysicsMotionType computePhysicsMotionType() const override;
 
@@ -64,11 +68,16 @@ public:
     virtual float getObjectLinearDamping() const override { return _entity->getDamping(); }
     virtual float getObjectAngularDamping() const override { return _entity->getAngularDamping(); }
 
-    virtual glm::vec3 getObjectPosition() const override { return _entity->getWorldPosition() - ObjectMotionState::getWorldOffset(); }
-    virtual glm::quat getObjectRotation() const override { return _entity->getWorldOrientation(); }
-    virtual glm::vec3 getObjectLinearVelocity() const override { return _entity->getWorldVelocity(); }
-    virtual glm::vec3 getObjectAngularVelocity() const override { return _entity->getWorldAngularVelocity(); }
+    // In the coordinates of the entity's frame when it has one (PHYSICS.md 4.1), else the domain's.
+    virtual glm::vec3 getObjectPosition() const override;
+    virtual glm::quat getObjectRotation() const override;
+    virtual glm::vec3 getObjectLinearVelocity() const override;
+    virtual glm::vec3 getObjectAngularVelocity() const override;
     virtual glm::vec3 getObjectGravity() const override { return _entity->getGravity(); }
+
+    QUuid getFrameID() const override;
+    bool isFrame() const override;
+    bool getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorner) const override;
     virtual glm::vec3 getObjectLinearVelocityChange() const override;
 
     virtual const QUuid getObjectID() const override { return _entity->getID(); }
@@ -101,7 +110,7 @@ public:
     void setRegion(uint8_t region);
 
 protected:
-    void setBody(JPH::Body* body, JPH::BodyInterface* bodyInterface) override;
+    void setBody(JPH::Body* body, PhysicsWorld* world) override;
 
     uint8_t computeFinalBidPriority() const;
     void updateSendVelocities();

@@ -15,9 +15,8 @@
 #include <stdint.h>
 
 #include <functional>
+#include <map>
 #include <memory>
-#include <mutex>
-#include <set>
 #include <vector>
 
 #include <QUuid>
@@ -25,15 +24,11 @@
 #include <QSet>
 
 #include <Jolt/Jolt.h>
-#include <Jolt/Physics/PhysicsSystem.h>
-#include <Jolt/Physics/Body/BodyActivationListener.h>
-#include <Jolt/Physics/Collision/ContactListener.h>
 
-#include "JoltLayers.h"
-#include "ContactInfo.h"
 #include "ObjectMotionState.h"
 #include "ObjectAction.h"
 #include "ObjectConstraint.h"
+#include "PhysicsWorld.h"
 
 namespace JPH {
     class TempAllocatorImpl;
@@ -46,60 +41,11 @@ const float HALF_SIMULATION_EXTENT = 512.0f; // meters
 class CharacterController;
 class PhysicsDebugDraw;
 
-// A contact between two simulated objects. Only MyAvatar's body has no ObjectMotionState, so a null _a
-// means the avatar's character. Both null never happens.
-class ContactKey {
-public:
-    ContactKey() = delete;
-    ContactKey(void* a, void* b) : _a(a), _b(b) {}
-    bool operator<(const ContactKey& other) const { return _a < other._a || (_a == other._a && _b < other._b); }
-    bool operator==(const ContactKey& other) const { return _a == other._a && _b == other._b; }
-    void* _a; // ObjectMotionState pointer
-    void* _b; // ObjectMotionState pointer
-};
-
-struct ContactTestResult {
-    ContactTestResult() = delete;
-
-    ContactTestResult(const ContactTestResult& contactTestResult) :
-        foundID(contactTestResult.foundID),
-        testCollisionPoint(contactTestResult.testCollisionPoint),
-        foundCollisionPoint(contactTestResult.foundCollisionPoint),
-        collisionNormal(contactTestResult.collisionNormal) {
-    }
-
-    ContactTestResult(const QUuid& foundID, const glm::vec3& testCollisionPoint, const glm::vec3& otherCollisionPoint, const glm::vec3& collisionNormal) :
-        foundID(foundID),
-        testCollisionPoint(testCollisionPoint),
-        foundCollisionPoint(otherCollisionPoint),
-        collisionNormal(collisionNormal) {
-    }
-
-    QUuid foundID;
-    // The deepest point of foundID's shape within the test shape, in world space.
-    glm::vec3 testCollisionPoint;
-    // The deepest point of the test shape within foundID's shape, in world space.
-    glm::vec3 foundCollisionPoint;
-    // The normal vector in world space of the test shape at foundCollisionPoint.
-    glm::vec3 collisionNormal;
-};
-
-// What a ray cast hit, in the simulation frame.
-struct RayHit {
-    bool hit { false };
-    float fraction { 1.0f };
-    JPH::BodyID bodyID;
-    ObjectMotionState* motionState { nullptr }; // null for MyAvatar's own body
-    glm::vec3 point { 0.0f };
-    glm::vec3 normal { 0.0f, 1.0f, 0.0f };
-};
-
-using ContactMap = std::map<ContactKey, ContactInfo>;
-using CollisionEvents = std::vector<Collision>;
-
-// One Jolt physics world and everything the client puts in it: bodies for entities and avatars, actions and
-// constraints, MyAvatar's character, the contact bookkeeping that becomes script collision events and
-// simulation ownership bids, and the debug drawing.
+// The client's physics: a root world for the domain and one world per moving reference frame (PHYSICS.md
+// 4.1), stepped together at 90 Hz. Every simulated object says which frame it belongs to (getFrameID) and
+// lives in that frame's world, in that frame's coordinates; the frame itself is a body in its parent's
+// world. The engine routes objects to worlds, feeds each frame's transform to its world before a substep,
+// merges what the worlds report, and keeps the actions and constraints.
 class PhysicsEngine {
 public:
     class Transaction {
@@ -174,61 +120,56 @@ public:
 
     // Copies of these methods exist in PhysicsEntitySimulation.
     // There is a possible performance improvement in avoiding the duplication of the ShapeInfo calculation.
+    // Tests the root world (the domain); a frame's interior is not searched.
     std::vector<ContactTestResult> contactTest(uint16_t mask, const ShapeInfo& regionShapeInfo, const Transform& regionTransform, uint16_t group = USER_COLLISION_GROUP_DYNAMIC, float threshold = 0.0f) const;
 
     void removeContacts(ObjectMotionState* motionState);
 
-    // Ray casts in the simulation frame, filtered as a body of the given group and mask would be.
-    // A null body filter means "everything".
+    // Ray casts in the root world's coordinates (the simulation frame), filtered as a body of the given group
+    // and mask would be. A null body filter means "everything".
     bool castRayClosest(const glm::vec3& start, const glm::vec3& end, int32_t group, int32_t mask,
                         const JPH::BodyFilter* bodyFilter, RayHit& result) const;
     void castRayAll(const glm::vec3& start, const glm::vec3& end, int32_t group, int32_t mask,
                     std::vector<RayHit>& results) const;
 
-    // A contact made by MyAvatar's character (which has no ObjectMotionState) against another body, recorded
-    // by the CharacterController after its own update so it feeds collision events and ownership like any other.
-    void recordCharacterContact(ObjectMotionState* other, const glm::vec3& positionOnOther, const glm::vec3& normalTowardCharacter, float distance);
+    // Worlds. The root is the domain; a frame's world is made the first time something asks for it and
+    // dropped when it is empty.
+    PhysicsWorld* getRootWorld() const { return _rootWorld.get(); }
+    size_t getNumFrames() const { return _frameStates.size(); }
+    PhysicsWorld* getWorld(const QUuid& frameID);
+    PhysicsWorld* findWorld(const QUuid& frameID) const;
+    PhysicsWorld* worldFor(ObjectMotionState* motionState);
+    // The frame whose membership volume contains the point (in domain coordinates), with hysteresis against
+    // the frame the point is in now; null for the domain itself.
+    QUuid frameContaining(const glm::vec3& position, const QUuid& currentFrame) const;
+    // the transform of a frame in the domain (its body's, or its entity's when it has no body yet)
+    bool getFrameTransform(const QUuid& frameID, glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const;
 
-    // Jolt, for the character controller and the constraints.
-    JPH::PhysicsSystem* getPhysicsSystem() const { return _system.get(); }
-    JPH::BodyInterface& getBodyInterface() const;
     JPH::TempAllocator* getTempAllocator() const;
-    const JoltLayers::Tables& getLayers() const { return *_layers; }
-    // the motion state behind a body, or null for MyAvatar's character and unknown bodies
-    static ObjectMotionState* motionStateOf(const JPH::Body& body);
+    static ObjectMotionState* motionStateOf(const JPH::Body& body) { return PhysicsWorld::motionStateOf(body); }
 
 private:
-    class ContactRecorder;
-    class ActivationRecorder;
-
-    QList<EntityDynamicPointer> removeDynamicsForBody(const JPH::BodyID& bodyID);
-    void addObjectToDynamicsWorld(ObjectMotionState* motionState);
-    void destroyBody(ObjectMotionState* motionState);
-    void wakeBodiesTouching(ObjectMotionState* motionState);
-    void wakeBodiesAround(const JPH::Body* body);
-
+    void removeDynamicsForObject(ObjectMotionState* motionState);
     void stepOnce(float dt);
-    void applyGravityForces();
-    void harvestContacts();
-    void doOwnershipInfection(ObjectMotionState* motionStateA, bool aIsCharacter, bool aIsStatic,
-                              ObjectMotionState* motionStateB, bool bIsStatic, bool bIsKinematic);
+    void feedFrameTransforms();
+    void dropEmptyWorlds();
+    void rehomeObjects();
+    void registerFrame(ObjectMotionState* frameState);
+    void unregisterFrame(const QUuid& frameID);
+    PhysicsWorld* characterWorld() const;
 
-    // created in init(), after Jolt's allocator exists: a Jolt container before that is a crash
-    std::unique_ptr<JoltLayers::Tables> _layers;
     std::unique_ptr<JPH::TempAllocatorImpl> _tempAllocator;
     std::unique_ptr<JPH::JobSystemThreadPool> _jobSystem;
-    std::unique_ptr<JPH::PhysicsSystem> _system;
-    std::unique_ptr<ContactRecorder> _contactRecorder;
-    std::unique_ptr<ActivationRecorder> _activationRecorder;
+    std::unique_ptr<PhysicsWorld> _rootWorld;
+    std::map<QUuid, std::unique_ptr<PhysicsWorld>> _frameWorlds;
+    std::map<QUuid, ObjectMotionState*> _frameStates; // the frame entities' own motion states, by entity ID
+    bool _framesChanged { false }; // a frame appeared or went: every object's world is rechecked
     std::unique_ptr<PhysicsDebugDraw> _physicsDebugDraw;
 
-    ContactMap _contactMap;
     CollisionEvents _collisionEvents;
     QHash<QUuid, EntityDynamicPointer> _objectDynamics;
-    QHash<uint32_t, QSet<QUuid>> _objectDynamicsByBody; // keyed by BodyID::GetIndexAndSequenceNumber()
-    std::set<ObjectMotionState*> _motionStates; // every motion state with a body in this world
-    std::set<ObjectMotionState*> _kinematicMotionStates;
-    std::set<ObjectMotionState*> _activeStaticObjects;
+    QHash<QUuid, PhysicsWorld*> _dynamicWorlds; // the world a constraint was added to
+    std::map<std::pair<PhysicsWorld*, uint32_t>, QSet<QUuid>> _objectDynamicsByBody;
     VectorOfMotionStates _changedMotionStates;
     VectorOfMotionStates _deactivatedMotionStates;
     QString _statsFilename;
@@ -238,7 +179,6 @@ private:
     float _accumulatedTime { 0.0f };
     float _lastStepDuration { 0.0f };
     uint32_t _numSubsteps { 0 };
-    uint32_t _numContactFrames { 0 };
     uint32_t _debugDrawMode { 0 };
     bool _dumpNextStats { false };
     bool _saveNextStats { false };

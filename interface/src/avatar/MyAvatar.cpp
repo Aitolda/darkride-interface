@@ -55,6 +55,7 @@
 #include "MySkeletonModel.h"
 #include "AnimUtil.h"
 #include "Application.h"
+#include <PhysicsWorld.h>
 #include "AvatarManager.h"
 #include "AvatarActionHold.h"
 #include "Menu.h"
@@ -464,11 +465,15 @@ QByteArray MyAvatar::toByteArrayStateful(AvatarDataDetail dataDetail, bool dropF
     _globalBoundingBoxOffset = _characterController.getCapsuleLocalOffset();
     if (mode == CAMERA_MODE_THIRD_PERSON || mode == CAMERA_MODE_INDEPENDENT || mode == CAMERA_MODE_LOOK_AT || mode == CAMERA_MODE_SELFIE) {
         // fake the avatar position that is sent up to the AvatarMixer
-        glm::vec3 oldPosition = getWorldPosition();
+        // The position is put back as the LOCAL position it was: restoring the old world position would
+        // recompute the local one with the parent's transform as it is now, and when the parent (a vehicle,
+        // a frame) moved in between, the avatar slipped by one frame of the parent's motion, each time this
+        // raced with the parent's update.
+        glm::vec3 oldLocalPosition = getLocalPosition();
         setWorldPosition(getSkeletonPosition());
         QByteArray array = AvatarData::toByteArrayStateful(dataDetail);
         // copy the correct position back
-        setWorldPosition(oldPosition);
+        setLocalPosition(oldLocalPosition);
         return array;
     }
     return AvatarData::toByteArrayStateful(dataDetail);
@@ -2778,21 +2783,43 @@ void MyAvatar::updateMotors() {
     _thrust = Vectors::ZERO;
 }
 
+QUuid MyAvatar::getFrameID() const {
+    bool success = false;
+    SpatiallyNestablePointer parent = getParentPointer(success);
+    if (success && parent && parent->getNestableType() == NestableType::Entity &&
+            std::static_pointer_cast<EntityItem>(parent)->isFrame()) {
+        return parent->getID();
+    }
+    return QUuid();
+}
+
 void MyAvatar::prepareForPhysicsSimulation() {
     relayDriveKeysToCharacterController();
     updateMotors();
 
-    bool success;
-    glm::vec3 parentVelocity = getParentVelocity(success);
-    if (!success) {
-        qDebug() << "Warning: getParentVelocity failed" << getID();
-        parentVelocity = glm::vec3();
+    // in a frame the character moves through the frame's own world, where the frame stands still
+    QUuid frameID = getFrameID();
+    _characterController.setFrame(frameID);
+    bool inFrame = !frameID.isNull();
+
+    glm::vec3 parentVelocity(0.0f);
+    if (!inFrame) {
+        bool success;
+        parentVelocity = getParentVelocity(success);
+        if (!success) {
+            qDebug() << "Warning: getParentVelocity failed" << getID();
+            parentVelocity = glm::vec3();
+        }
     }
     _characterController.handleChangedCollisionMask();
     _characterController.setParentVelocity(parentVelocity);
     _characterController.setScaleFactor(getSensorToWorldScale());
 
-    _characterController.setPositionAndOrientation(getWorldPosition(), getWorldOrientation());
+    if (inFrame) {
+        _characterController.setPositionAndOrientation(getLocalPosition(), getLocalOrientation());
+    } else {
+        _characterController.setPositionAndOrientation(getWorldPosition(), getWorldOrientation());
+    }
     auto headPose = getControllerPoseInAvatarFrame(controller::Action::HEAD);
     if (headPose.isValid()) {
         _follow.prePhysicsUpdate(*this, deriveBodyFromHMDSensor(), _bodySensorMatrix, hasDriveInput());
@@ -2821,27 +2848,106 @@ void MyAvatar::nextAttitude(glm::vec3 position, glm::quat orientation) {
 }
 
 void MyAvatar::harvestResultsFromPhysicsSimulation(float deltaTime) {
+    // In a frame, everything the character says is in the frame's coordinates, and goes into the avatar's
+    // local pose; the renderer composes it with the frame's transform.
+    PhysicsWorld* world = _characterController.getWorld();
+    bool inFrame = world && !world->isRoot() && !getFrameID().isNull();
+
     // Start from the current transform: getPositionAndOrientation() leaves its arguments untouched while the
     // character controller has no rigid body yet (e.g. the skeleton model has not loaded), and feeding the
     // default-constructed zero vector back in would pin the avatar to the world origin.
-    glm::vec3 position = getWorldPosition();
-    glm::quat orientation = getWorldOrientation();
+    glm::vec3 position = inFrame ? getLocalPosition() : getWorldPosition();
+    glm::quat orientation = inFrame ? getLocalOrientation() : getWorldOrientation();
+    glm::vec3 velocity;
     if (_characterController.isEnabledAndReady() && !(_characterController.needsSafeLandingSupport() || _goToPending)) {
         _characterController.getPositionAndOrientation(position, orientation);
-        setWorldVelocity(_characterController.getLinearVelocity() + _characterController.getFollowVelocity());
+        velocity = _characterController.getLinearVelocity() + _characterController.getFollowVelocity();
     } else {
-        position = getWorldPosition();
-        orientation = getWorldOrientation();
         if (_characterController.needsSafeLandingSupport() && !_goToPending) {
             _characterController.resetStuckCounter();
             _physicsSafetyPending = true;
             _goToSafe = true;
-            _goToPosition = position;
+            _goToPosition = getWorldPosition();
         }
-        setWorldVelocity(getWorldVelocity() + _characterController.getFollowVelocity());
+        velocity = (inFrame ? getLocalVelocity() : getWorldVelocity()) + _characterController.getFollowVelocity();
     }
-    nextAttitude(position, orientation);
+    if (inFrame) {
+        nextLocalAttitude(position, orientation, velocity);
+    } else {
+        setWorldVelocity(velocity);
+        nextAttitude(position, orientation);
+    }
     _bodySensorMatrix = _follow.postPhysicsUpdate(*this, _bodySensorMatrix);
+
+    updateFrameMembership();
+}
+
+void MyAvatar::nextLocalAttitude(const glm::vec3& position, const glm::quat& orientation, const glm::vec3& velocity) {
+    if (isNaN(position) || isNaN(orientation)) {
+        qCWarning(interfaceapp) << "Warning -- MyAvatar::nextLocalAttitude got NaN";
+        return;
+    }
+    Transform local = getLocalTransform();
+    local.setTranslation(position);
+    local.setRotation(orientation);
+    setLocalTransformAndVelocities(local, velocity, getLocalAngularVelocity());
+    updateAttitude(getWorldOrientation());
+}
+
+// The avatar belongs to the frame whose volume it stands in. Stepping in or out hands over the exact pose
+// and velocity, so nothing pops; the character follows into the new world at the next prepare.
+void MyAvatar::updateFrameMembership() {
+    PhysicsEnginePointer engine = _characterController.getPhysicsEngine();
+    if (!engine || !_characterController.isEnabledAndReady() || _goToPending) {
+        return;
+    }
+    QUuid currentFrame = getFrameID();
+    if (currentFrame.isNull() && !getParentID().isNull()) {
+        // parented to something that is not a frame (a seat, a hand): that is a script's business
+        return;
+    }
+    glm::vec3 worldPosition = getWorldPosition();
+    QUuid targetFrame = engine->frameContaining(worldPosition, currentFrame);
+    if (targetFrame == currentFrame) {
+        return;
+    }
+
+    // the avatar's motion in the domain, from the frame it is leaving
+    glm::quat worldOrientation = getWorldOrientation();
+    glm::vec3 worldVelocity = getWorldVelocity();
+    glm::vec3 framePosition, frameLinearVelocity, frameAngularVelocity;
+    glm::quat frameRotation;
+    if (!currentFrame.isNull() &&
+            engine->getFrameTransform(currentFrame, framePosition, frameRotation, frameLinearVelocity, frameAngularVelocity)) {
+        worldVelocity = frameLinearVelocity + glm::cross(frameAngularVelocity, worldPosition - framePosition) +
+            frameRotation * getLocalVelocity();
+    }
+
+    if (targetFrame.isNull()) {
+        qCDebug(interfaceapp) << "MyAvatar: leaving frame" << currentFrame;
+        setParentID(QUuid());
+        setWorldTransform(worldPosition, worldOrientation);
+        setWorldVelocity(worldVelocity);
+        _characterController.setFrame(QUuid());
+        _characterController.setLinearVelocity(worldVelocity);
+        return;
+    }
+
+    if (!engine->getFrameTransform(targetFrame, framePosition, frameRotation, frameLinearVelocity, frameAngularVelocity)) {
+        return;
+    }
+    qCDebug(interfaceapp) << "MyAvatar: entering frame" << targetFrame;
+    glm::quat toFrame = glm::inverse(frameRotation);
+    glm::vec3 localPosition = toFrame * (worldPosition - framePosition);
+    glm::quat localOrientation = toFrame * worldOrientation;
+    glm::vec3 localVelocity = toFrame * (worldVelocity - frameLinearVelocity - glm::cross(frameAngularVelocity, worldPosition - framePosition));
+    setParentID(targetFrame);
+    Transform local = getLocalTransform();
+    local.setTranslation(localPosition);
+    local.setRotation(localOrientation);
+    setLocalTransformAndVelocities(local, localVelocity, getLocalAngularVelocity());
+    _characterController.setFrame(targetFrame);
+    _characterController.setLinearVelocity(localVelocity);
 }
 
 QString MyAvatar::getScriptedMotorFrame() const {

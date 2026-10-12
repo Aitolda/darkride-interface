@@ -63,7 +63,7 @@ void MyCharacterController::updateShapeIfNecessary() {
 bool MyCharacterController::testRayShotgun(const glm::vec3& position, const glm::vec3& step, RayShotgunResult& result) {
     glm::vec3 rayDirection = step;
     float stepLength = glm::length(rayDirection);
-    if (stepLength < FLT_EPSILON || !_character || !_physicsEngine) {
+    if (stepLength < FLT_EPSILON || !_character || !_world) {
         return false;
     }
     rayDirection /= stepLength;
@@ -121,7 +121,7 @@ bool MyCharacterController::testRayShotgun(const glm::vec3& position, const glm:
     for (const glm::vec3& point : _topPoints) {
         glm::vec3 rayStart = newPosition + rotation * point - backSlop * rayDirection;
         glm::vec3 rayEnd = rayStart + (backSlop + stepLength + forwardSlop) * rayDirection;
-        if (_physicsEngine->castRayClosest(rayStart, rayEnd, group, mask, &ignoreMe, hit)) {
+        if (_world->castRayClosest(rayStart, rayEnd, group, mask, &ignoreMe, hit)) {
             if (hit.fraction < closestHitFraction) {
                 closestHitFraction = hit.fraction;
             }
@@ -141,7 +141,7 @@ bool MyCharacterController::testRayShotgun(const glm::vec3& position, const glm:
         for (const glm::vec3& point : _bottomPoints) {
             glm::vec3 rayStart = newPosition + rotation * point - backSlop * rayDirection;
             glm::vec3 rayEnd = rayStart + (backSlop + stepLength + forwardSlop) * rayDirection;
-            if (_physicsEngine->castRayClosest(rayStart, rayEnd, group, mask, &ignoreMe, hit)) {
+            if (_world->castRayClosest(rayStart, rayEnd, group, mask, &ignoreMe, hit)) {
                 if (hit.fraction < closestHitFraction) {
                     closestHitFraction = hit.fraction;
                 }
@@ -163,7 +163,7 @@ bool MyCharacterController::testRayShotgun(const glm::vec3& position, const glm:
         for (const glm::vec3& point : _bottomPoints) {
             glm::vec3 rayStart = newPosition + rotation * point - backSlop * rayDirection;
             glm::vec3 rayEnd = rayStart + (backSlop + stepLength) * rayDirection;
-            if (_physicsEngine->castRayClosest(rayStart, rayEnd, group, mask, &ignoreMe, hit)) {
+            if (_world->castRayClosest(rayStart, rayEnd, group, mask, &ignoreMe, hit)) {
                 if (hit.fraction < closestHitFraction) {
                     closestHitFraction = hit.fraction;
                 }

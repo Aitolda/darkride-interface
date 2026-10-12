@@ -31,6 +31,7 @@
 #include "ObjectMotionState.h"
 #include "PhysicsHelpers.h"
 #include "PhysicsLogging.h"
+#include "PhysicsWorld.h"
 
 const glm::vec3 LOCAL_UP_AXIS(0.0f, 1.0f, 0.0f);
 
@@ -73,11 +74,11 @@ CharacterController::~CharacterController() {
 }
 
 bool CharacterController::needsRemoval() const {
-    return (_physicsEngine && (_pendingFlags & PENDING_FLAG_REMOVE_FROM_SIMULATION) == PENDING_FLAG_REMOVE_FROM_SIMULATION);
+    return (_world && (_pendingFlags & PENDING_FLAG_REMOVE_FROM_SIMULATION) == PENDING_FLAG_REMOVE_FROM_SIMULATION);
 }
 
 bool CharacterController::needsAddition() const {
-    return (_physicsEngine && (_pendingFlags & PENDING_FLAG_ADD_TO_SIMULATION) == PENDING_FLAG_ADD_TO_SIMULATION);
+    return (_world && (_pendingFlags & PENDING_FLAG_ADD_TO_SIMULATION) == PENDING_FLAG_ADD_TO_SIMULATION);
 }
 
 JPH::BodyID CharacterController::getInnerBodyID() const {
@@ -91,8 +92,8 @@ JPH::ObjectLayer CharacterController::characterLayer() const {
 void CharacterController::removeFromWorld() {
     if (_inWorld) {
         // the character takes its inner body with it
-        if (_physicsEngine) {
-            _physicsEngine->removeContacts(nullptr);
+        if (_world) {
+            _world->removeContacts(nullptr);
         }
         _character = nullptr;
         _inWorld = false;
@@ -101,7 +102,7 @@ void CharacterController::removeFromWorld() {
 }
 
 void CharacterController::addToWorld() {
-    if (!_shape || !_physicsEngine || !_physicsEngine->getPhysicsSystem()) {
+    if (!_shape || !_world || !_world->getPhysicsSystem()) {
         return;
     }
     if (_inWorld) {
@@ -129,8 +130,13 @@ void CharacterController::addToWorld() {
     settings.mInnerBodyShape = _shape;
     settings.mInnerBodyLayer = characterLayer();
 
-    _character = new JPH::CharacterVirtual(&settings, glmToJoltR(_position), glmToJolt(_rotation), 0, _physicsEngine->getPhysicsSystem());
+    _character = new JPH::CharacterVirtual(&settings, glmToJoltR(_position), glmToJolt(_rotation), 0, _world->getPhysicsSystem());
     _inWorld = true;
+    if (_hasPendingVelocity) {
+        // arriving from another world, still moving
+        _character->SetLinearVelocity(glmToJolt(_pendingVelocity));
+        _hasPendingVelocity = false;
+    }
 
     if (_pendingFlags & PENDING_FLAG_UPDATE_SHAPE) {
         // shouldn't fall in here, but if we do make sure both ADD and REMOVE bits are still set
@@ -160,10 +166,10 @@ bool CharacterController::checkForSupport() {
 // The contacts the character made during its last update go to the engine's contact map, so that scripts
 // get collision events for the avatar and so that what the avatar bumps gets simulated here.
 void CharacterController::recordContacts() {
-    if (!_character || !_physicsEngine) {
+    if (!_character || !_world) {
         return;
     }
-    const JPH::BodyLockInterfaceNoLock& lockInterface = _physicsEngine->getPhysicsSystem()->GetBodyLockInterfaceNoLock();
+    const JPH::BodyLockInterfaceNoLock& lockInterface = _world->getPhysicsSystem()->GetBodyLockInterfaceNoLock();
     for (const JPH::CharacterContact& contact : _character->GetActiveContacts()) {
         if (!contact.mHadCollision || contact.mBodyB.IsInvalid()) {
             continue;
@@ -174,7 +180,7 @@ void CharacterController::recordContacts() {
         }
         ObjectMotionState* other = PhysicsEngine::motionStateOf(lock.GetBody());
         if (other) {
-            _physicsEngine->recordCharacterContact(other, joltToGLM(contact.mPosition), joltToGLM(contact.mContactNormal), contact.mDistance);
+            _world->recordCharacterContact(other, joltToGLM(contact.mPosition), joltToGLM(contact.mContactNormal), contact.mDistance);
         }
     }
 }
@@ -182,14 +188,14 @@ void CharacterController::recordContacts() {
 // a ray straight down from the centre of the bottom sphere, to know how far the floor is
 void CharacterController::measureFloorDistance(float rayLength, bool& rayHasHit) {
     rayHasHit = false;
-    if (!_character || !_physicsEngine) {
+    if (!_character || !_world) {
         return;
     }
     glm::vec3 rayStart = joltToGLM(_character->GetPosition()) - _halfHeight * _currentUp;
     glm::vec3 rayEnd = rayStart - rayLength * _currentUp;
     JPH::IgnoreSingleBodyFilter ignoreMe(getInnerBodyID());
     RayHit hit;
-    if (_physicsEngine->castRayClosest(rayStart, rayEnd, BULLET_COLLISION_GROUP_MY_AVATAR, computeCollisionMask(), &ignoreMe, hit)) {
+    if (_world->castRayClosest(rayStart, rayEnd, BULLET_COLLISION_GROUP_MY_AVATAR, computeCollisionMask(), &ignoreMe, hit)) {
         rayHasHit = true;
         _floorDistance = rayLength * hit.fraction - _radius;
     }
@@ -199,7 +205,7 @@ const float MIN_TARGET_SPEED = 0.001f;
 const float MIN_TARGET_SPEED_SQUARED = MIN_TARGET_SPEED * MIN_TARGET_SPEED;
 
 void CharacterController::substep(float dt) {
-    if (!_character || !_inWorld || !_physicsEngine) {
+    if (!_character || !_inWorld || !_world) {
         return;
     }
 
@@ -299,13 +305,13 @@ void CharacterController::substep(float dt) {
     updateSettings.mStickToFloorStepDown = glmToJolt(-_currentUp * _maxStepHeight);
     updateSettings.mWalkStairsStepUp = _stepUpEnabled ? glmToJolt(_currentUp * _maxStepHeight) : JPH::Vec3::sZero();
     JPH::ObjectLayer layer = characterLayer();
-    const JoltLayers::Tables& layers = _physicsEngine->getLayers();
+    const JoltLayers::Tables& layers = _world->getLayers();
     JPH::DefaultBroadPhaseLayerFilter broadPhaseFilter(layers.objectVsBroadPhase, layer);
     JPH::DefaultObjectLayerFilter objectLayerFilter(layers.objectLayerPairs, layer);
     JPH::IgnoreSingleBodyFilter bodyFilter(getInnerBodyID());
     JPH::ShapeFilter shapeFilter;
     _character->ExtendedUpdate(dt, glmToJolt(_currentGravity * _currentUp), updateSettings,
-                               broadPhaseFilter, objectLayerFilter, bodyFilter, shapeFilter, *_physicsEngine->getTempAllocator());
+                               broadPhaseFilter, objectLayerFilter, bodyFilter, shapeFilter, *_world->getTempAllocator());
     _character->UpdateGroundVelocity();
 
     recordContacts();
@@ -409,6 +415,37 @@ void CharacterController::setPhysicsEngine(const PhysicsEnginePointer& engine) {
         // of that assumption here.  If we ever introduce more and allow for this backpointer
         // to change then we'll have to overhaul this method.
         _physicsEngine = engine;
+        _world = engine->getWorld(_frameID);
+    }
+}
+
+void CharacterController::setFrame(const QUuid& frameID) {
+    if (frameID == _frameID && (_world || !_physicsEngine)) {
+        return;
+    }
+    _frameID = frameID;
+    if (!_physicsEngine) {
+        return;
+    }
+    PhysicsWorld* world = _physicsEngine->getWorld(frameID);
+    if (world == _world) {
+        return;
+    }
+    // out of the old world now; into the new one at the next preSimulation(), where the position is fresh
+    if (_inWorld) {
+        removeFromWorld();
+        _pendingFlags |= PENDING_FLAG_ADD_TO_SIMULATION;
+    }
+    _world = world;
+    qCDebug(physics) << "CharacterController: avatar now in the world of frame" << frameID;
+}
+
+void CharacterController::setLinearVelocity(const glm::vec3& velocity) {
+    if (_character && _inWorld) {
+        _character->SetLinearVelocity(glmToJolt(velocity));
+    } else {
+        _pendingVelocity = velocity;
+        _hasPendingVelocity = true;
     }
 }
 
@@ -453,8 +490,15 @@ void CharacterController::setParentVelocity(const glm::vec3& velocity) {
 
 void CharacterController::setFollowParameters(const glm::mat4& desiredWorldBodyMatrix, float timeRemaining) {
     _followTimeRemaining = timeRemaining;
-    _followDesiredRotation = glm::normalize(glm::quat_cast(desiredWorldBodyMatrix));
-    _followDesiredPosition = glm::vec3(desiredWorldBodyMatrix[3]) + _followDesiredRotation * _shapeLocalOffset;
+    // the desired pose comes from the HMD, in the domain; the character wants it in its own world
+    glm::quat rotation = glm::normalize(glm::quat_cast(desiredWorldBodyMatrix));
+    glm::vec3 position = glm::vec3(desiredWorldBodyMatrix[3]);
+    if (_world && !_world->isRoot()) {
+        rotation = _world->toLocal(rotation);
+        position = _world->toLocal(position);
+    }
+    _followDesiredRotation = rotation;
+    _followDesiredPosition = position + rotation * _shapeLocalOffset;
 }
 
 glm::vec3 CharacterController::getFollowLinearDisplacement() const {
@@ -647,7 +691,7 @@ void CharacterController::updateState() {
         glm::vec3 rayEnd = rayStart - rayLength * _currentUp;
         JPH::IgnoreSingleBodyFilter ignoreMe(getInnerBodyID());
         RayHit hit;
-        if (_physicsEngine->castRayClosest(rayStart, rayEnd, BULLET_COLLISION_GROUP_MY_AVATAR, collisionMask, &ignoreMe, hit)) {
+        if (_world->castRayClosest(rayStart, rayEnd, BULLET_COLLISION_GROUP_MY_AVATAR, collisionMask, &ignoreMe, hit)) {
             rayHasHit = true;
             _floorDistance = rayLength * hit.fraction - (_radius + _halfHeight);
         }
@@ -801,8 +845,14 @@ bool CharacterController::getRigidBodyLocation(glm::vec3& avatarRigidBodyPositio
     if (!_character) {
         return false;
     }
-    avatarRigidBodyPosition = joltToGLM(_character->GetPosition()) + ObjectMotionState::getWorldOffset();
+    // in the domain, whichever world the character is in
+    avatarRigidBodyPosition = joltToGLM(_character->GetPosition());
     avatarRigidBodyRotation = joltToGLM(_character->GetRotation());
+    if (_world && !_world->isRoot()) {
+        avatarRigidBodyPosition = _world->toParent(avatarRigidBodyPosition);
+        avatarRigidBodyRotation = _world->toParent(avatarRigidBodyRotation);
+    }
+    avatarRigidBodyPosition += ObjectMotionState::getWorldOffset();
     return true;
 }
 

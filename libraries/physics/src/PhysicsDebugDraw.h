@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <Jolt/Jolt.h>
 #include <Jolt/Renderer/DebugRendererSimple.h>
@@ -43,9 +44,15 @@ public:
 
     // the simulation origin's position in the world, added to everything drawn
     void setWorldOffset(const glm::vec3& offset) { _worldOffset = offset; }
+    // the transform of the world being drawn (a frame's transform in the domain; identity for the root)
+    void setFrameTransform(const glm::vec3& position, const glm::quat& rotation) { _framePosition = position; _frameRotation = rotation; }
 
 private:
+    glm::vec3 toWorld(const glm::vec3& point) const { return _framePosition + _frameRotation * point + _worldOffset; }
+
     glm::vec3 _worldOffset { 0.0f };
+    glm::vec3 _framePosition { 0.0f };
+    glm::quat _frameRotation;
 };
 
 #endif // hifi_PhysicsDebugDraw_h

@@ -476,7 +476,9 @@ void PhysicalEntitySimulation::buildPhysicsTransaction(PhysicsEngine::Transactio
         if (unhandledFlags & EASY_DIRTY_PHYSICS_FLAGS) {
             object->handleEasyChanges(unhandledFlags);
         }
-        if (unhandledFlags & (Simulation::DIRTY_MOTION_TYPE | Simulation::DIRTY_COLLISION_GROUP | (handledFlags & Simulation::DIRTY_SHAPE))) {
+        bool changedFrame = object->getWorld() && object->getWorld()->getFrameID() != object->getFrameID();
+        if (changedFrame || (unhandledFlags & (Simulation::DIRTY_MOTION_TYPE | Simulation::DIRTY_COLLISION_GROUP | (handledFlags & Simulation::DIRTY_SHAPE)))) {
+            // a new body: different type, shape, collision filter, or (reparented) a different frame's world
             transaction.objectsToReinsert.push_back(object);
             handledFlags |= HARD_DIRTY_PHYSICS_FLAGS;
         } else if (unhandledFlags & Simulation::DIRTY_PHYSICS_ACTIVATION && object->getBody() && object->getBody()->IsStatic()) {

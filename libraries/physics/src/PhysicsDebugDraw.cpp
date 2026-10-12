@@ -26,7 +26,7 @@ static glm::vec4 toColor(JPH::ColorArg color) {
 }
 
 void PhysicsDebugDraw::DrawLine(JPH::RVec3Arg from, JPH::RVec3Arg to, JPH::ColorArg color) {
-    DebugDraw::getInstance().drawRay(joltToGLM(from) + _worldOffset, joltToGLM(to) + _worldOffset, toColor(color));
+    DebugDraw::getInstance().drawRay(toWorld(joltToGLM(from)), toWorld(joltToGLM(to)), toColor(color));
 }
 
 void PhysicsDebugDraw::DrawTriangle(JPH::RVec3Arg v1, JPH::RVec3Arg v2, JPH::RVec3Arg v3, JPH::ColorArg color, ECastShadow castShadow) {
@@ -40,7 +40,7 @@ void PhysicsDebugDraw::DrawText3D(JPH::RVec3Arg position, const std::string_view
 }
 
 void PhysicsDebugDraw::drawLine(const glm::vec3& from, const glm::vec3& to, const glm::vec3& color) {
-    DebugDraw::getInstance().drawRay(from + _worldOffset, to + _worldOffset, glm::vec4(color, 1.0f));
+    DebugDraw::getInstance().drawRay(toWorld(from), toWorld(to), glm::vec4(color, 1.0f));
 }
 
 void PhysicsDebugDraw::drawContactPoint(const glm::vec3& pointOnB, const glm::vec3& normalOnB, float distance, const glm::vec3& color) {
