@@ -111,8 +111,10 @@ public:
     void setShadowsImportant(bool important);
     bool getShadowsImportant() const;
 
-    // a picture the light shines through, as a slide in a projector (a spot light's cookie): white lets the light
-    // through, black blocks it, colours tint it; drawn by RenderLocalShadowTask. Set and read on different threads.
+    // a picture the light shines through (Unity's cookie): a spot light projects it down its cone, as a slide in a
+    // projector; a point light hangs it around itself as a panorama (the equirectangular picture a skybox takes),
+    // turned with the light. White lets the light through, black blocks it, colours tint it; drawn by
+    // RenderLocalShadowTask. Set and read on different threads.
     void setCookie(const gpu::TextureSourcePointer& cookie);
     gpu::TextureSourcePointer getCookie() const;
 

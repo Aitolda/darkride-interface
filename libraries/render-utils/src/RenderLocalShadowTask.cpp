@@ -41,7 +41,8 @@ const int LocalShadows::FACE_COUNT = 6;
 const int LocalShadows::POINT_LIGHT_COUNT = 4;
 const int LocalShadows::TILE_COUNT = LocalShadows::SPOT_TILE_COUNT + LocalShadows::POINT_LIGHT_COUNT * LocalShadows::FACE_COUNT;
 const int LocalShadows::LIGHT_COUNT = 256;
-const int LocalShadows::COOKIE_SIZE = 512;
+const int LocalShadows::COOKIE_WIDTH = 1024;
+const int LocalShadows::COOKIE_HEIGHT = 512;
 const int LocalShadows::COOKIE_LAYERS = 8;
 const int LocalShadows::COOKIE_LIGHT_COUNT = 16;
 
@@ -59,7 +60,7 @@ namespace {
     const int TILE_TEXELS = 6;                                 // per tile: a matrix, the tile's bounds, its parameters
     const int COOKIE_MAP_TEXEL = LIGHT_TEXELS + LocalShadows::TILE_COUNT * TILE_TEXELS;
     const int COOKIE_TEXEL = COOKIE_MAP_TEXEL + LIGHT_TEXELS;
-    const int COOKIE_TEXELS = 5;                               // per cookie: a matrix, its layer
+    const int COOKIE_TEXELS = 5;                               // per cookie: a matrix, then its layer and kind
     const int TABLE_TEXELS = COOKIE_TEXEL + LocalShadows::COOKIE_LIGHT_COUNT * COOKIE_TEXELS;
 
     // the lookup moves off the surface by about this many shadow map texels, along its normal and toward the light,
@@ -307,7 +308,15 @@ bool LocalShadows::tileIsStale(int tile, const render::ShapeBounds& casters, con
     return true;
 }
 
-bool LocalShadows::setCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const ViewFrustum& frustum) {
+bool LocalShadows::setSpotCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const ViewFrustum& frustum) {
+    return addCookie(lightIndex, picture, COOKIE_BIAS_MATRIX * frustum.getProjection() * glm::inverse(frustum.getView()), false);
+}
+
+bool LocalShadows::setPointCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const glm::mat4& worldToLight) {
+    return addCookie(lightIndex, picture, worldToLight, true);
+}
+
+bool LocalShadows::addCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const glm::mat4& matrix, bool panorama) {
     if (!picture || _cookieCount >= COOKIE_LIGHT_COUNT || lightIndex < 0 || lightIndex >= LIGHT_COUNT) {
         return false;
     }
@@ -318,12 +327,11 @@ bool LocalShadows::setCookie(LightStage::Index lightIndex, const gpu::TexturePoi
     int cookie = _cookieCount++;
     _tableData[COOKIE_MAP_TEXEL + lightIndex / 4][lightIndex % 4] = (float)(cookie + 1);
 
-    glm::mat4 worldToCookie = COOKIE_BIAS_MATRIX * frustum.getProjection() * glm::inverse(frustum.getView());
     int texel = COOKIE_TEXEL + cookie * COOKIE_TEXELS;
     for (int column = 0; column < 4; ++column) {
-        _tableData[texel + column] = worldToCookie[column];
+        _tableData[texel + column] = matrix[column];
     }
-    _tableData[texel + 4] = glm::vec4((float)layer, 0.0f, 0.0f, 0.0f);
+    _tableData[texel + 4] = glm::vec4((float)layer, panorama ? 1.0f : 0.0f, 0.0f, 0.0f);
     return true;
 }
 
@@ -356,16 +364,18 @@ int LocalShadows::cookieLayer(const gpu::TexturePointer& picture) {
     }
 
     if (!_cookies) {
-        // made when the first light has a cookie: sRGB like the pictures, with mips for seeing cookies from afar
+        // made when the first light has a cookie: sRGB like the pictures, with mips for seeing cookies from afar. It
+        // repeats across, for the seam behind a point light where its panorama's two ends meet; a spot light's cone
+        // fits inside its picture, so the repeat never shows in one
         gpu::Sampler::Desc samplerDesc;
         samplerDesc._filter = gpu::Sampler::FILTER_ANISOTROPIC;
-        samplerDesc._wrapModeU = gpu::Sampler::WRAP_CLAMP;
+        samplerDesc._wrapModeU = gpu::Sampler::WRAP_REPEAT;
         samplerDesc._wrapModeV = gpu::Sampler::WRAP_CLAMP;
         samplerDesc._maxAnisotropy = 8;
-        _cookies = gpu::Texture::createRenderBufferArray(gpu::Element::COLOR_SRGBA_32, COOKIE_SIZE, COOKIE_SIZE,
+        _cookies = gpu::Texture::createRenderBufferArray(gpu::Element::COLOR_SRGBA_32, COOKIE_WIDTH, COOKIE_HEIGHT,
             COOKIE_LAYERS, gpu::Texture::MAX_NUM_MIPS, gpu::Sampler(samplerDesc));
         for (int i = 0; i < COOKIE_LAYERS; ++i) {
-            auto framebuffer = gpu::FramebufferPointer(gpu::Framebuffer::create("Spot light cookie"));
+            auto framebuffer = gpu::FramebufferPointer(gpu::Framebuffer::create("Light cookie"));
             framebuffer->setRenderBuffer(0, _cookies, i);
             _cookieFramebuffers.push_back(framebuffer);
         }
@@ -401,7 +411,7 @@ void LocalShadows::drawCookies(gpu::Batch& batch) {
         }
         // the whole picture, scaled to the layer
         batch.setFramebuffer(_cookieFramebuffers[i]);
-        batch.setViewportTransform(glm::ivec4(0, 0, COOKIE_SIZE, COOKIE_SIZE));
+        batch.setViewportTransform(glm::ivec4(0, 0, COOKIE_WIDTH, COOKIE_HEIGHT));
         batch.setResourceTexture(0, picture);
         batch.draw(gpu::TRIANGLE_STRIP, 4);
     }
@@ -519,14 +529,15 @@ void RenderLocalShadowSetup::run(const render::RenderContextPointer& renderConte
         shadowFrame->_localShadows = nullptr;
     }
 
-    // the lights that reach into view: those that cast shadows are candidates for tiles, spot lights whose cookie has
-    // loaded get it; the ones that matter most first, and those marked important before all the others
+    // the lights that reach into view: those that cast shadows are candidates for tiles, those whose cookie has loaded
+    // get it; the ones that matter most first, and those marked important before all the others
     struct Candidate {
         LightStage::Index index;
         graphics::LightPointer light;
         bool important;
         float rank;
         gpu::TexturePointer cookie;
+        bool point;
     };
     std::vector<Candidate> spots;
     std::vector<Candidate> points;
@@ -547,26 +558,33 @@ void RenderLocalShadowSetup::run(const render::RenderContextPointer& renderConte
                 auto cookieSource = light->getCookie();
                 gpu::TexturePointer cookie = cookieSource ? cookieSource->getGPUTexture() : gpu::TexturePointer();
                 if (cookie && light->getSpotAngle() <= MAX_COOKIE_SPOT_ANGLE) {
-                    cookieLights.push_back({ index, light, false, rank, cookie });
+                    cookieLights.push_back({ index, light, false, rank, cookie, false });
                 }
                 if (shadows && light->getCastShadows() && light->getSpotAngle() <= MAX_SPOT_ANGLE) {
                     bool hadTile = previousTile(index) >= 0;
-                    spots.push_back({ index, light, light->getShadowsImportant(), hadTile ? rank * KEEP_TILE_BONUS : rank, nullptr });
+                    spots.push_back({ index, light, light->getShadowsImportant(), hadTile ? rank * KEEP_TILE_BONUS : rank, nullptr, false });
                 }
             }
         }
-        if (shadows && lightingModel->isPointLightEnabled()) {
+        if (lightingModel->isPointLightEnabled()) {
             for (auto index : lightFrame->_pointLights) {
                 if (index < 0 || index >= LocalShadows::LIGHT_COUNT) {
                     continue;
                 }
                 auto light = lightStage->getLight(index);
-                if (!light || !light->getCastShadows() || !view.sphereIntersectsKeyhole(light->getPosition(), light->getMaximumRadius())) {
+                if (!light || !view.sphereIntersectsKeyhole(light->getPosition(), light->getMaximumRadius())) {
                     continue;
                 }
                 float rank = importance(*light, view.getPosition());
-                bool hadTiles = previousTile(index) >= 0;
-                points.push_back({ index, light, light->getShadowsImportant(), hadTiles ? rank * KEEP_TILE_BONUS : rank, nullptr });
+                auto cookieSource = light->getCookie();
+                gpu::TexturePointer cookie = cookieSource ? cookieSource->getGPUTexture() : gpu::TexturePointer();
+                if (cookie) {
+                    cookieLights.push_back({ index, light, false, rank, cookie, true });
+                }
+                if (shadows && light->getCastShadows()) {
+                    bool hadTiles = previousTile(index) >= 0;
+                    points.push_back({ index, light, light->getShadowsImportant(), hadTiles ? rank * KEEP_TILE_BONUS : rank, nullptr, true });
+                }
             }
         }
     }
@@ -583,17 +601,23 @@ void RenderLocalShadowSetup::run(const render::RenderContextPointer& renderConte
         points.resize(LocalShadows::POINT_LIGHT_COUNT);
     }
 
-    // each cookie projected from its light down the light's -Z axis, exactly as wide as the cone, so that the picture
-    // fills the square the cone fits in; a light whose picture finds no layer this frame shines without it
+    // a spot light's cookie is projected from the light down its -Z axis, exactly as wide as the cone, so that the
+    // picture fills the square the cone fits in; a point light's hangs around the light in the light's own frame. A
+    // light whose picture finds no layer this frame shines without it
     ViewFrustum frustum;
     for (const auto& cookieLight : cookieLights) {
         const auto& light = cookieLight.light;
+        if (cookieLight.point) {
+            glm::mat4 worldToLight = glm::mat4_cast(glm::inverse(light->getOrientation())) * glm::translate(glm::mat4(1.0f), -light->getPosition());
+            _localShadows->setPointCookie(cookieLight.index, cookieLight.cookie, worldToLight);
+            continue;
+        }
         float farClip = std::max(light->getMaximumRadius(), 2.0f * MIN_NEAR_CLIP);
         frustum.setPosition(light->getPosition());
         frustum.setOrientation(light->getOrientation());
         frustum.setProjection(glm::perspective(2.0f * light->getSpotAngle(), 1.0f, MIN_NEAR_CLIP, farClip));
         frustum.calculate();
-        _localShadows->setCookie(cookieLight.index, cookieLight.cookie, frustum);
+        _localShadows->setSpotCookie(cookieLight.index, cookieLight.cookie, frustum);
     }
     if (_localShadows->cookiesDue()) {
         gpu::doInBatch("RenderLocalShadowSetup::drawCookies", args->_context, [&](gpu::Batch& batch) {

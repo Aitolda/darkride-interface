@@ -19,7 +19,7 @@
 <$declareLightingPoint(supportScattering)$>
 <$declareLightingSpot(supportScattering)$>
 
-// fragWorldPosDx and fragWorldPosDy: dFdx and dFdy of fragWorldPos, taken where control flow is uniform, for spot
+// fragWorldPosDx and fragWorldPosDy: dFdx and dFdy of fragWorldPos, taken where control flow is uniform, for the
 // lights' cookies
 vec4 evalLocalLighting(ivec3 cluster, int numLights, vec3 fragWorldPos, vec3 fragWorldPosDx, vec3 fragWorldPosDy,
                        SurfaceData surface, float fragMetallic, vec3 fragFresnel, vec3 fragAlbedo, float fragScattering,
@@ -53,9 +53,13 @@ vec4 evalLocalLighting(ivec3 cluster, int numLights, vec3 fragWorldPos, vec3 fra
             continue;
         }
 
-        // the point light's shadow, from the face of its cube the fragment lies in
+        // the point light's shadow, from the face of its cube the fragment lies in, and its cookie, a panorama around it
         float shadow = evalLocalShadow(theLightIndex, fragWorldPos, surface.normal, fragLightDirLen.xyz, fragLightDirLen.w);
         if (shadow <= 0.0) {
+            continue;
+        }
+        vec3 cookie = evalLocalCookie(theLightIndex, fragWorldPos, fragWorldPosDx, fragWorldPosDy);
+        if (dot(cookie, vec3(1.0)) <= 0.0) {
             continue;
         }
 
@@ -72,7 +76,7 @@ vec4 evalLocalLighting(ivec3 cluster, int numLights, vec3 fragWorldPos, vec3 fra
 
         // Eval attenuation
         float radialAttenuation = lightIrradiance_evalLightAttenuation(light.irradiance, fragLightDistance);
-        vec3 lightEnergy = radialAttenuation * shadow * getLightIrradiance(light);
+        vec3 lightEnergy = radialAttenuation * shadow * cookie * getLightIrradiance(light);
 
         // Eval shading
         if (withScattering) {

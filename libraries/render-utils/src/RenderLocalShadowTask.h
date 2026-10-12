@@ -5,9 +5,11 @@
 //  Shadows and cookies from spot and point lights. Each frame the lights that matter most to the view, of those that
 //  cast shadows, get shadow maps drawn into tiles of one depth atlas: a spot light one tile, a point light six smaller
 //  ones, a 90-degree face each along the world's +X, -X, +Y, -Y, +Z and -Z axes (a cube map laid flat, as Unity's URP
-//  draws point-light shadows). Spot lights with a cookie (a picture the light shines through) get it projected from the
-//  light, the picture copied into a layer of a texture array. The light loop the deferred and transparent shading share
-//  (LightLocal.slh) finds a light's tiles and cookie through a small table (LocalShadow.slh). A tile's map is cached:
+//  draws point-light shadows). Lights with a cookie (a picture the light shines through) get it: a spot light's is
+//  projected from the light down its cone, a point light's hangs around the light as a panorama (the equirectangular
+//  picture a skybox takes), turned with the light; the picture is copied into a layer of a texture array. The light
+//  loop the deferred and transparent shading share (LightLocal.slh) finds a light's tiles and cookie through a small
+//  table (LocalShadow.slh). A tile's map is cached:
 //  it is drawn again only when the light's view changes or a caster in that view appears, leaves, changes or fades
 //  (render::Item::getChangeFrame).
 //
@@ -43,9 +45,10 @@ public:
     static const int POINT_LIGHT_COUNT;     // point lights with shadow maps at once
     static const int TILE_COUNT;            // tiles in the atlas: the spot tiles, then each point light's faces
     static const int LIGHT_COUNT;           // lights the table covers: the size of the shaders' light array
-    static const int COOKIE_SIZE;           // texels a side of a cookie in the array
+    static const int COOKIE_WIDTH;          // texels across a layer of the cookie array: a panorama's 2:1 shape, a
+    static const int COOKIE_HEIGHT;         // spot light's picture stretched over it
     static const int COOKIE_LAYERS;         // pictures the array holds
-    static const int COOKIE_LIGHT_COUNT;    // spot lights with a cookie in a frame
+    static const int COOKIE_LIGHT_COUNT;    // lights with a cookie in a frame
 
     // a tile's light this frame, the view from it (a spot light's cone, or one face of a point light), and what the
     // map drawn in the tile shows and when, so that it is drawn again only when that would differ
@@ -96,9 +99,12 @@ public:
     bool tileIsStale(int tile, const render::ShapeBounds& casters, const render::Scene& scene);
     // off, every tile is drawn every frame
     void setCaching(bool caching) { _caching = caching; }
-    // gives the light its cookie, the picture projected through the frustum, in the layer that holds the picture
+    // gives the spot light its cookie, the picture projected through the frustum, in the layer that holds the picture
     // (kept from earlier frames); false when every layer holds another light's picture this frame
-    bool setCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const ViewFrustum& frustum);
+    bool setSpotCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const ViewFrustum& frustum);
+    // gives the point light its cookie, the picture hung around the light as a panorama in the light's frame (the
+    // matrix takes world space into it); false as above
+    bool setPointCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const glm::mat4& worldToLight);
     // some picture in use this frame is new to its layer, or due a refresh
     bool cookiesDue() const;
     // copies those pictures into their layers, then makes the array's mips
@@ -114,6 +120,9 @@ private:
         bool due { false };        // to be copied in
     };
     int cookieLayer(const gpu::TexturePointer& picture);
+    // the light's cookie entry in the table: the number of a cookie whose entry holds the matrix, the picture's layer
+    // and whether it is a panorama
+    bool addCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const glm::mat4& matrix, bool panorama);
     // the tile's light and view, and the tile's entry in the table (not the light's)
     void fillTile(int tile, const graphics::LightPointer& light, LightStage::Index lightIndex, const ViewFrustum& frustum);
 

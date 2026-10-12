@@ -83,8 +83,8 @@ void LightEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPoint
         light->setSpotAngle(cutoff);
         light->setSpotExponent(exponent);
     }
-    // the entity's Cast Shadows; spot and point lights' shadows are drawn by RenderLocalShadowTask, as are spot
-    // lights' cookies
+    // the entity's Cast Shadows; spot and point lights' shadows are drawn by RenderLocalShadowTask, as are their
+    // cookies
     light->setCastShadows(entity->getCanCastShadow());
     bool shadowsImportant = false;
     gpu::TextureSourcePointer cookie;

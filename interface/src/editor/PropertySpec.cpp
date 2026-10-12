@@ -796,8 +796,10 @@ namespace {
         en(SHADOWS_KEY, "Shadows", "light", { "off:Off", "normal:Normal", "important:Important" });
         with(range(add(spec("exponent", "Spot Exponent", K::Float, "light")), 0, DBL_MAX, 0.01, 2), "isSpotlight=true");
         with(range(add(spec("cutoff", "Spot Cutoff", K::Float, "light")), 0, 90, 0.5, 1, "°"), "isSpotlight=true");
-        // a picture the light shines through, as a slide in a projector (Unity's cookie); kept in userData
-        with(add(spec("userData:cookie", "Cookie", K::Image, "light")), "isSpotlight=true");
+        // a picture the light shines through (Unity's cookie): a spot light projects it down its cone, as a slide in a
+        // projector; a point light hangs it around itself as a panorama, the equirectangular picture a skybox takes
+        // (its middle straight ahead of the light, down its -Z), turned with the light; kept in userData
+        add(spec("userData:cookie", "Cookie", K::Image, "light"));
 
         // material: where it comes from and how it lies on what it's applied to
         add(spec("materialURL", "Material URL", K::Url, "material"));

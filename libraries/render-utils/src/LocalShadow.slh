@@ -37,8 +37,10 @@ vec4 getLocalShadowTableTexel(int i) {
 // tiles, one for each face of a cube around it, the first face's tile plus 1, negated), then six texels for each tile:
 // the matrix from world space into the atlas (four columns), the tile's bounds in the atlas, and { texel size per
 // metre from the light, normal offset in texels, offset toward the light in texels, atlas texel size }; then a cookie
-// number for each light in the same way, then five texels for each cookie: the matrix from world space to the
-// picture's texture coordinates (four columns), and { its layer in the array, 0, 0, 0 }
+// number for each light in the same way, then five texels for each cookie: a matrix (four columns) and { its layer in
+// the array, 1 for a point light's panorama else 0, 0, 0 }. A spot light's matrix takes world space to the picture's
+// texture coordinates; a point light's takes it into the light's own frame, and the direction from the light picks
+// the texel of its panorama
 const int LOCAL_SHADOW_LIGHT_TEXELS = 64;
 const int LOCAL_SHADOW_TILE_TEXELS = 6;
 const int LOCAL_SHADOW_TILE_COUNT = 32;   // 8 spot tiles, then 4 point lights' faces
@@ -111,8 +113,18 @@ int getLocalCookie(int lightIndex) {
     return int(cookies[lightIndex & 3]) - 1;
 }
 
-// How much of a spot light its cookie lets through at a point: white all of it, black none, a colour tints it.
-// worldPositionDx and worldPositionDy: how far the point moves in the world from one pixel to the next on screen,
+// Where a direction out from a point light lands in its panorama: the equirectangular picture a skybox takes, hung
+// around the light in the light's own frame. Straight ahead of the light (down its -Z, where a spot light points) is
+// the middle of the picture, the light's right (+X) the right half, up (+Y) the top row: the picture as a photo
+// taken from where the light is, looking ahead.
+vec2 localCookiePanoramaUV(vec3 direction) {
+    const float HALF_TURN = 0.15915494;   // 1 / (2 pi): a full turn around the light is the picture's width
+    const float QUARTER_TURN = 0.31830989;   // 1 / pi: straight up to straight down is its height
+    return vec2(0.5 + atan(direction.x, -direction.z) * HALF_TURN, acos(clamp(direction.y, -1.0, 1.0)) * QUARTER_TURN);
+}
+
+// How much of a spot or point light its cookie lets through at a point: white all of it, black none, a colour tints
+// it. worldPositionDx and worldPositionDy: how far the point moves in the world from one pixel to the next on screen,
 // across and up (taken where the shading begins, as derivatives are undefined inside the light loop), for the mip.
 vec3 evalLocalCookie(int lightIndex, vec3 worldPosition, vec3 worldPositionDx, vec3 worldPositionDy) {
     int cookie = getLocalCookie(lightIndex);
@@ -122,10 +134,9 @@ vec3 evalLocalCookie(int lightIndex, vec3 worldPosition, vec3 worldPositionDx, v
     int texel = LOCAL_COOKIE_TEXEL + cookie * LOCAL_COOKIE_TEXELS;
     mat4 projection = mat4(getLocalShadowTableTexel(texel), getLocalShadowTableTexel(texel + 1),
         getLocalShadowTableTexel(texel + 2), getLocalShadowTableTexel(texel + 3));
-    float layer = getLocalShadowTableTexel(texel + 4).x;
+    vec4 info = getLocalShadowTableTexel(texel + 4);
+    float layer = info.x;
 
-    vec4 coord = projection * vec4(worldPosition, 1.0);
-    vec2 uv = coord.xy / coord.w;
     // at an object's edge one screen step lands on whatever is behind it, which would blur the cookie there to its
     // average: the other step stands in for it
     float lengthX = dot(worldPositionDx, worldPositionDx);
@@ -135,6 +146,21 @@ vec3 evalLocalCookie(int lightIndex, vec3 worldPosition, vec3 worldPositionDx, v
     } else if (lengthY > LOCAL_COOKIE_EDGE_RATIO * lengthX) {
         worldPositionDy = worldPositionDx;
     }
+
+    if (info.y > 0.5) {
+        // a point light's panorama, by the direction from the light to the point in the light's frame
+        vec2 uv = localCookiePanoramaUV(normalize((projection * vec4(worldPosition, 1.0)).xyz));
+        vec2 stepX = localCookiePanoramaUV(normalize((projection * vec4(worldPosition + worldPositionDx, 1.0)).xyz)) - uv;
+        vec2 stepY = localCookiePanoramaUV(normalize((projection * vec4(worldPosition + worldPositionDy, 1.0)).xyz)) - uv;
+        // behind the light the picture's two ends meet (the array repeats across them): a step over the seam is the
+        // short way round, not the whole width back
+        stepX.x -= round(stepX.x);
+        stepY.x -= round(stepY.x);
+        return textureGrad(localCookies, vec3(uv, layer), stepX, stepY).rgb;
+    }
+
+    vec4 coord = projection * vec4(worldPosition, 1.0);
+    vec2 uv = coord.xy / coord.w;
     vec4 coordX = projection * vec4(worldPosition + worldPositionDx, 1.0);
     vec4 coordY = projection * vec4(worldPosition + worldPositionDy, 1.0);
     return textureGrad(localCookies, vec3(uv, layer), coordX.xy / coordX.w - uv, coordY.xy / coordY.w - uv).rgb;
