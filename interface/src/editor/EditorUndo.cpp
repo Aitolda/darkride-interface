@@ -125,9 +125,49 @@ namespace {
         QVector<EntityItemProperties> _properties;
         bool _skipFirstRedo { true };
     };
+
+    // The selection as it was and as it became; the change has happened by the time this is pushed.
+    class SelectionCommand : public QUndoCommand {
+    public:
+        SelectionCommand(EditorUndo* undo, const QList<QUuid>& before, const QList<QUuid>& after) :
+            QUndoCommand(after.isEmpty() ? "Deselect" : "Select"), _undo(undo), _before(before), _after(after) {
+        }
+        void redo() override {
+            if (_skipFirstRedo) {
+                _skipFirstRedo = false;
+                return;
+            }
+            _undo->applySelection(_after);
+        }
+        void undo() override {
+            _undo->applySelection(_before);
+        }
+    private:
+        EditorUndo* _undo;
+        QList<QUuid> _before;
+        QList<QUuid> _after;
+        bool _skipFirstRedo { true };
+    };
 }
 
 EditorUndo::EditorUndo(QObject* parent) : QObject(parent) {
+}
+
+void EditorUndo::pushSelection(const QList<QUuid>& before, const QList<QUuid>& after) {
+    if (before != after) {
+        _stack.push(new SelectionCommand(this, before, after));
+    }
+}
+
+void EditorUndo::applySelection(const QList<QUuid>& ids) {
+    if (!_applySelection) {
+        return;
+    }
+    QList<QUuid> resolved;   // an entity made again by undo has a new id
+    for (const auto& id : ids) {
+        resolved << resolve(id);
+    }
+    _applySelection(resolved);
 }
 
 QUuid EditorUndo::resolve(const QUuid& id) const {

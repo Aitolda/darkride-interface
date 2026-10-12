@@ -177,6 +177,11 @@ namespace {
 
 Editor::Editor() : _selection(this), _undo(this) {
     connect(&_selection, &EditorSelection::changed, this, &Editor::onSelectionChanged);
+    _undo.setSelectionApplier([this](const QList<QUuid>& ids) {
+        ++_historyDepth;
+        _selection.set(ids);
+        --_historyDepth;
+    });
     _inspectorRefresh.setInterval(INSPECTOR_REFRESH_MS);
     connect(&_inspectorRefresh, &QTimer::timeout, this, [this] { refreshInspector(false); });
     _liveEditTimer.setSingleShot(true);
@@ -912,7 +917,20 @@ void Editor::viewFromAxis(int axis, int sign) {
 
 // --- selection ----------------------------------------------------------------------------------
 
+void Editor::recordSelection() {
+    // a change made by undo or redo is not a new step, nor is one while build mode is off (leaving it clears the
+    // selection)
+    QList<QUuid> ids = _selection.ids();
+    if (_active && _historyDepth == 0 && ids != _selectionWas) {
+        _undo.pushSelection(_selectionWas, ids);
+    }
+    _selectionWas = ids;
+}
+
 void Editor::onSelectionChanged() {
+    if (_selectionBatch == 0) {
+        recordSelection();
+    }
     if (_hierarchy && !_syncingSelection) {
         _syncingSelection = true;
         _hierarchy->selectIds(_selection.ids());
@@ -1275,6 +1293,7 @@ void Editor::finishMarquee(Qt::KeyboardModifiers modifiers) {
     QList<QUuid> inside = entitiesInRect(_marqueeRect);
     bool shift = modifiers.testFlag(Qt::ShiftModifier);
     bool command = modifiers.testFlag(Qt::ControlModifier);
+    ++_selectionBatch;   // one step in the history, however many toggles
     if (command) {
         for (const auto& id : inside) {
             _selection.toggle(id);
@@ -1286,6 +1305,8 @@ void Editor::finishMarquee(Qt::KeyboardModifiers modifiers) {
     } else {
         _selection.set(inside);
     }
+    --_selectionBatch;
+    recordSelection();
 }
 
 void Editor::selectAll() {
@@ -1498,7 +1519,9 @@ void Editor::undo() {
     qCDebug(interfaceapp) << "editor undo:" << stack->undoText() << "index" << stack->index() << "of" << stack->count()
         << "active" << _active << "dragging" << _gizmo.isDragging();
     if (_active && !_gizmo.isDragging() && editable()) {
+        ++_historyDepth;
         stack->undo();
+        --_historyDepth;
     }
 }
 
@@ -1506,7 +1529,9 @@ void Editor::redo() {
     auto stack = _undo.stack();
     qCDebug(interfaceapp) << "editor redo:" << stack->redoText() << "index" << stack->index() << "of" << stack->count();
     if (_active && !_gizmo.isDragging() && editable()) {
+        ++_historyDepth;
         stack->redo();
+        --_historyDepth;
     }
 }
 
@@ -1560,6 +1585,9 @@ void Editor::reparent(const QList<QUuid>& ids, const QUuid& parentId) {
         return;
     }
     _undo.pushPropertyEdit(parentId.isNull() ? "Unparent" : "Parent", moved, before, after, false);
+    if (!parentId.isNull() && _hierarchy) {
+        _hierarchy->expand(parentId);   // what went under it shows
+    }
     refreshInspector(false);
 }
 
@@ -1567,21 +1595,30 @@ void Editor::deleteSelection() {
     if (!_active || _selection.isEmpty() || _gizmo.isDragging() || !editable()) {
         return;
     }
-    _undo.pushDelete("Delete", _selection.topLevel());
+    // one step with its selection change, as Unity has it; the selection goes first, so that undoing brings
+    // the entities back before selecting them again
+    auto stack = _undo.stack();
+    stack->beginMacro("Delete");
+    QList<QUuid> ids = _selection.topLevel();
     _selection.clear();
+    _undo.pushDelete("Delete", ids);
+    stack->endMacro();
 }
 
 void Editor::duplicateSelection() {
     if (!_active || _selection.isEmpty() || _gizmo.isDragging() || !editable()) {
         return;
     }
-    // in place, as Unity does; the copy is selected and the gizmo is on it
+    // in place, as Unity does; the copy is selected and the gizmo is on it, the two one step
     EditorClipboard copies;
     copies.copy(_selection.topLevel(), selectionAnchor());
+    auto stack = _undo.stack();
+    stack->beginMacro("Duplicate");
     QList<QUuid> created = copies.paste(_undo, "Duplicate");
     if (!created.isEmpty()) {
         _selection.set(created);
     }
+    stack->endMacro();
 }
 
 void Editor::copySelection() {
@@ -1611,10 +1648,13 @@ void Editor::pasteAt(const glm::vec3& target) {
     if (!_active || _clipboard.isEmpty() || _gizmo.isDragging() || !editable()) {
         return;
     }
+    auto stack = _undo.stack();
+    stack->beginMacro("Paste");   // the copies and their selection are one step
     QList<QUuid> created = _clipboard.paste(_undo, "Paste", target - _clipboard.anchor());
     if (!created.isEmpty()) {
         _selection.set(created);
     }
+    stack->endMacro();
 }
 
 // --- go to, bring here --------------------------------------------------------------------------
@@ -1821,6 +1861,8 @@ QList<QUuid> Editor::place(EntityItemProperties properties, const QString& text,
         }
         properties.setPosition(position);
     }
+    auto stack = _undo.stack();
+    stack->beginMacro(text);   // the new entity and its selection are one step
     QList<QUuid> ids = _undo.pushAdd(text, QVector<EntityItemProperties> { properties }, QList<QUuid>());
     QList<QUuid> created;
     for (const auto& id : ids) {
@@ -1830,6 +1872,9 @@ QList<QUuid> Editor::place(EntityItemProperties properties, const QString& text,
     }
     if (!created.isEmpty()) {
         _selection.set(created);
+    }
+    stack->endMacro();
+    if (!created.isEmpty()) {
         setTool(EditorToolBar::Tool::Move);
         // the entity server can still refuse the add (a filter, or rights the domain did not
         // report): the entity then vanishes a moment later, and that deserves a word. An undo in

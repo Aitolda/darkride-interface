@@ -155,6 +155,8 @@ namespace {
         P_STR("name", Name);
         P_STR("description", Description);
         P_UUID("parentID", ParentID);
+        // the entity's own id, shown to be copied (for Parent, for scripts); never set
+        add("id", [](const EP& p) { return QVariant(p.getID().toString(QUuid::WithoutBraces)); }, [](EP&, const QVariant&) {});
         P_INT("parentJointIndex", ParentJointIndex, quint16);
         P_BOOL("locked", Locked);
         P_BOOL("visible", Visible);
@@ -636,6 +638,7 @@ namespace {
 
         // base
         add(spec("name", "Name", K::String, "base"));
+        add(spec("id", "ID", K::String, "base")).readOnly = true;   // to copy: for Parent, for scripts
         add(spec("description", "Description", K::String, "base"));
         add(spec("parentID", "Parent", K::String, "base"));
         add(spec("parentJointIndex", "Parent Joint", K::Int, "base"));

@@ -162,6 +162,8 @@ private:
     void updateGizmo();
     void updateRenderMethod();
     void onSelectionChanged();
+    // the selection has changed by the user's hand: a step in the history, as in Unity
+    void recordSelection();
     void rename(const QUuid& id, const QString& name);
     // makes the entities children of the parent (none: top-level), where they are in the world staying so
     void reparent(const QList<QUuid>& ids, const QUuid& parentId);
@@ -253,6 +255,9 @@ private:
     EditorGrid _grid;
     EditorSelection _selection;
     EditorUndo _undo;
+    QList<QUuid> _selectionWas;     // the selection before its latest change, for the history
+    int _historyDepth { 0 };        // undo or redo is running: what the selection does then is not a new step
+    int _selectionBatch { 0 };      // a gesture changing the selection in several steps (a marquee): one step at its end
     EditorClipboard _clipboard;
     EditorGizmo _gizmo;
     EditorToolBar::Tool _tool { EditorToolBar::Tool::Move };

@@ -452,6 +452,7 @@ public:
                                        EntityItemID& entityID, EntityItemProperties& properties);
 
     void clearID() { _id = UNKNOWN_ENTITY_ID; _idSet = false; }
+    const QUuid& getID() const { return _id; }   // the entity's, when these came from one
     void markAllChanged();
 
     const glm::vec3& getNaturalDimensions() const { return _naturalDimensions; }

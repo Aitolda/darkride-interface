@@ -33,6 +33,8 @@ public:
     void selectIds(const QList<QUuid>& ids);
     // opens the rows above this one and scrolls it to the middle of the panel
     void reveal(const QUuid& id);
+    // opens the entity's row, so that what has just been put under it shows
+    void expand(const QUuid& id);
 
     QTreeView* treeView() const { return _tree; }
     QLineEdit* searchField() const { return _search; }

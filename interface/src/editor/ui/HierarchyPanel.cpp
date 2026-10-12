@@ -102,6 +102,7 @@ void HierarchyPanel::setModel(EntityTreeModel* model) {
     _model = model;
     _proxy->setSourceModel(model);
     _tree->setModel(_proxy);
+    _proxy->setSortRole(EntityTreeModel::CreatedRole);   // siblings in the order they were made, as in Unity
     _proxy->sort(0, Qt::AscendingOrder);
     connect(_tree->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this] {
         if (!_settingSelection) {
@@ -169,6 +170,16 @@ void HierarchyPanel::selectIds(const QList<QUuid>& ids) {
         _tree->scrollTo(first);
     }
     _settingSelection = false;
+}
+
+void HierarchyPanel::expand(const QUuid& id) {
+    if (!_model) {
+        return;
+    }
+    QModelIndex proxyIndex = _proxy->mapFromSource(_model->indexForId(id));
+    if (proxyIndex.isValid()) {
+        _tree->expand(proxyIndex);
+    }
 }
 
 void HierarchyPanel::reveal(const QUuid& id) {

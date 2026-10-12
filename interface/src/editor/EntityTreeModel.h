@@ -33,7 +33,8 @@ public:
         TypeRole,
         TypeNameRole,
         LockedRole,
-        VisibleRole
+        VisibleRole,
+        CreatedRole     // when the entity was made (usecs): the Hierarchy lists siblings in that order, as Unity does
     };
 
     explicit EntityTreeModel(QObject* parent = nullptr);
@@ -85,6 +86,7 @@ private:
         EntityTypes::EntityType type { EntityTypes::Unknown };
         bool locked { false };
         bool visible { true };
+        quint64 created { 0 };
         QUuid parentID;
         Node* parent { nullptr };
         QVector<Node*> children;

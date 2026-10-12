@@ -98,6 +98,7 @@ bool EntityTreeModel::readEntity(const QUuid& id, Node& node) const {
         node.type = entity->getType();
         node.locked = entity->getLocked();
         node.visible = entity->getVisible();
+        node.created = entity->getCreated();
         node.parentID = entity->getParentID();
     });
     return found;
@@ -439,6 +440,8 @@ QVariant EntityTreeModel::data(const QModelIndex& index, int role) const {
             return node->locked;
         case VisibleRole:
             return node->visible;
+        case CreatedRole:
+            return (qulonglong)node->created;
         default:
             return QVariant();
     }

@@ -13,6 +13,8 @@
 #ifndef hifi_EditorUndo_h
 #define hifi_EditorUndo_h
 
+#include <functional>
+
 #include <QtCore/QHash>
 #include <QtCore/QList>
 #include <QtCore/QObject>
@@ -65,9 +67,16 @@ public:
     // size, once it has loaded): the dimensions and position in `changes` replace the recorded ones
     void amendCreated(const QUuid& id, const EntityItemProperties& changes);
 
+    // the selection is part of the history, as in Unity: a change of it is a step (pushed once it has happened),
+    // undone and redone through the editor, the ids following entities made again
+    void setSelectionApplier(std::function<void(const QList<QUuid>&)> applier) { _applySelection = applier; }
+    void pushSelection(const QList<QUuid>& before, const QList<QUuid>& after);
+    void applySelection(const QList<QUuid>& ids);
+
 private:
     QUndoStack _stack;
     QHash<QUuid, QUuid> _remap;
+    std::function<void(const QList<QUuid>&)> _applySelection;
 };
 
 #endif // hifi_EditorUndo_h
