@@ -36,6 +36,7 @@ namespace {
     const glm::u8vec3 GRID_COLOR { 110, 110, 110 };
     const glm::vec3 UNIT_DIMENSIONS { 1.0f };
     const glm::vec3 PANEL_DIMENSIONS { 1.0f, 1.0f, 0.01f };
+    const float EMPTY_SIZE = 0.2f;           // an Empty's box: enough to frame and to take the gizmo
     // a quad or circle lies in X and Z, facing up: the engine keeps it flat in Y
     const glm::vec3 FLAT_DIMENSIONS { 1.0f, 0.0001f, 1.0f };
     const float FLAT_LIFT = 0.01f;           // just above the surface: lying on it, it would flicker with it
@@ -73,7 +74,8 @@ namespace {
 
 const QVector<EditorCreate::Item>& EditorCreate::items() {
     static const QVector<Item> ITEMS {
-        { "model", "Model…", "", EntityTypes::Model },
+        { "empty", "Empty", "", EntityTypes::Shape },
+        { "model", "Model…", "", EntityTypes::Model, true },
         { "cube", "Cube", "Shape", EntityTypes::Shape, true },
         { "sphere", "Sphere", "Shape", EntityTypes::Shape },
         { "cylinder", "Cylinder", "Shape", EntityTypes::Shape },
@@ -106,6 +108,17 @@ const EditorCreate::Item* EditorCreate::item(const QString& key) {
 }
 
 EntityItemProperties EditorCreate::properties(const QString& key, const glm::vec3& position, float cameraYaw) {
+    if (key == "empty") {
+        // a parent with nothing of its own to show, as Unity's empty GameObject: the engine has no such type, so a
+        // small cube that is not drawn, not collided with and so not picked, found in the Hierarchy; children follow
+        // it, and it becomes a cube by being made visible
+        auto p = shape("Cube", position);
+        p.setName("Empty");
+        p.setDimensions(glm::vec3(EMPTY_SIZE));
+        p.setVisible(false);
+        p.setCollisionless(true);
+        return p;
+    }
     if (key == "cube") { return shape("Cube", position); }
     if (key == "sphere") { return shape("Sphere", position); }
     if (key == "cylinder") { return shape("Cylinder", position); }

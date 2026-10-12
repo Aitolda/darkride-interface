@@ -522,17 +522,25 @@ QTreeWidgetItem* UserDataEditor::itemAt(const Path& path) const {
 
 void UserDataEditor::reveal(const Path& path) {
     QTreeWidgetItem* item = itemAt(path);
-    if (!item) {
+    QScrollArea* area = outerScrollArea();
+    if (!item || !area || !area->widget()) {
         return;
+    }
+    // The Inspector lays itself out over several passes of the event loop as the list grows, each layout handing
+    // the change up a level per pass; it is brought up to date now, level by level up to the scroll area, so that
+    // the row's place is known (scrolling to it a pass too early left it below the edge)
+    _tree->doItemsLayout();
+    for (QWidget* widget = _tree->parentWidget(); widget; widget = widget->parentWidget()) {
+        QCoreApplication::sendPostedEvents(widget, QEvent::LayoutRequest);
+        if (widget == area->viewport()) {
+            break;   // the scroll area has sized its contents by now
+        }
     }
     _tree->scrollToItem(item);
     // the Inspector scrolls as well: the list sits at its bottom, where a new row is below its edge
-    QScrollArea* area = outerScrollArea();
-    if (area && area->widget()) {
-        QRect rect = _tree->visualItemRect(item);
-        QPoint at = _tree->viewport()->mapTo(area->widget(), rect.center());
-        area->ensureVisible(at.x(), at.y(), 0, rect.height() + 8);
-    }
+    QRect rect = _tree->visualItemRect(item);
+    QPoint at = _tree->viewport()->mapTo(area->widget(), rect.center());
+    area->ensureVisible(at.x(), at.y(), 0, rect.height() + 8);
 }
 
 void UserDataEditor::renameEntry(QTreeWidgetItem* item) {
