@@ -589,6 +589,8 @@ void Stats::setRenderDetails(const render::RenderDetails& details) {
         STAT_UPDATE(shadowOutOfView, details._shadow._outOfView);
         STAT_UPDATE(shadowTooSmall, details._shadow._tooSmall);
         STAT_UPDATE(shadowRendered, details._shadow._rendered);
+        STAT_UPDATE(spotShadowMaps, details._spotShadowMaps);
+        STAT_UPDATE(spotShadowMapsDrawn, details._spotShadowMapsDrawn);
     }
 }
 

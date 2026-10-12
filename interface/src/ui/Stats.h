@@ -239,6 +239,11 @@ private: \
  *     <em>Read-only.</em>
  * @property {number} shadowRendered - The number of shadows rendered.
  *     <em>Read-only.</em>
+ * @property {number} spotShadowMaps - The number of spot lights with a shadow map this frame.
+ *     <em>Read-only.</em>
+ * @property {number} spotShadowMapsDrawn - The number of those shadow maps drawn again this frame; the rest were
+ *     kept from earlier frames, nothing in their view having changed.
+ *     <em>Read-only.</em>
  * @property {string} sendingMode - Description of the octree sending mode.
  *     <em>Read-only.</em>
  * @property {string} packetStats - Description of the octree packet processing state.
@@ -544,6 +549,8 @@ class Stats : public QQuickItem {
     STATS_PROPERTY(int, shadowOutOfView, 0)
     STATS_PROPERTY(int, shadowTooSmall, 0)
     STATS_PROPERTY(int, shadowRendered, 0)
+    STATS_PROPERTY(int, spotShadowMaps, 0)
+    STATS_PROPERTY(int, spotShadowMapsDrawn, 0)
     STATS_PROPERTY(QString, sendingMode, QString())
     STATS_PROPERTY(QString, packetStats, QString())
     STATS_PROPERTY(int, lodAngle, 0)
@@ -1190,6 +1197,20 @@ signals:
      * @returns {Signal}
      */
     void shadowRenderedChanged();
+
+    /**jsdoc
+     * Triggered when the value of the <code>spotShadowMaps</code> property changes.
+     * @function Stats.spotShadowMapsChanged
+     * @returns {Signal}
+     */
+    void spotShadowMapsChanged();
+
+    /**jsdoc
+     * Triggered when the value of the <code>spotShadowMapsDrawn</code> property changes.
+     * @function Stats.spotShadowMapsDrawnChanged
+     * @returns {Signal}
+     */
+    void spotShadowMapsDrawnChanged();
 
     /**jsdoc
      * Triggered when the value of the <code>sendingMode</code> property changes.

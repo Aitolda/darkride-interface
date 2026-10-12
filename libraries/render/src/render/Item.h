@@ -496,12 +496,17 @@ public:
     void setTransitionId(Index id) { _transitionId = id; }
     Index getTransitionId() const { return _transitionId; }
 
+    // The scene frame (Scene::getFrame) in which the item last changed: was added, updated, removed, or given or
+    // relieved of a transition. Lets a cache of what was drawn from the item tell whether it is still current.
+    uint64_t getChangeFrame() const { return _changeFrame; }
+
 protected:
     PayloadPointer _payload;
     PayloadWeakPointer _wpPayload;
     ItemKey _key;
     ItemCell _cell { INVALID_CELL };
     Index _transitionId { INVALID_INDEX };
+    uint64_t _changeFrame { 0 };
 
     friend class Scene;
 };

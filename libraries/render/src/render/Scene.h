@@ -175,6 +175,10 @@ public:
     // Same as getItem, checking if the id is valid
     const Item getItemSafe(const ItemID& id) const { if (isAllocatedID(id)) { return _items[id]; } else { return Item(); } }
 
+    // The number of the latest pass over the queued transactions (processTransactionQueue), which happens once per
+    // rendered frame before rendering; the items that pass changed are stamped with it (Item::getChangeFrame)
+    uint64_t getFrame() const { return _frame; }
+
     // Access the spatialized items
     const ItemSpatialTree& getSpatialTree() const { return _masterSpatialTree; }
 
@@ -210,8 +214,9 @@ protected:
     TransactionFrames _transactionFrames;
     uint32_t _transactionFrameNumber{ 0 };
 
-    // Process one transaction frame 
+    // Process one transaction frame
     void processTransactionFrame(const Transaction& transaction);
+    uint64_t _frame { 0 };
 
     // The actual database
     // database of items is protected for editing by a mutex

@@ -232,6 +232,7 @@ uint32_t Scene::enqueueFrame() {
  
 void Scene::processTransactionQueue() {
     PROFILE_RANGE(render, __FUNCTION__);
+    ++_frame;
 
     static TransactionFrames queuedFrames;
     {
@@ -300,6 +301,7 @@ void Scene::resetItems(const Transaction::Resets& transactions) {
 
         // Reset the item with a new payload
         item.resetPayload(std::get<1>(reset));
+        item._changeFrame = _frame;
         auto newKey = item.getKey();
 
         // Update the item's container
@@ -332,6 +334,7 @@ void Scene::removeItems(const Transaction::Removes& transactions) {
 
         // Kill it
         item.kill();
+        item._changeFrame = _frame;
     }
 }
 
@@ -356,6 +359,7 @@ void Scene::updateItems(const Transaction::Updates& transactions) {
 
         // Update the item
         item.update(std::get<1>(update));
+        item._changeFrame = _frame;
         auto newKey = item.getKey();
 
         // Update the item's container
@@ -535,6 +539,7 @@ void Scene::setItemTransition(ItemID itemId, Index transitionId) {
     auto& item = _items[itemId];
 
     item.setTransitionId(transitionId);
+    item._changeFrame = _frame;
     if (item.exist()) {
         ItemIDs subItems;
 

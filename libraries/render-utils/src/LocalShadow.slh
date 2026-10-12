@@ -2,9 +2,9 @@
 //  LocalShadow.slh
 //  libraries/render-utils/src
 //
-//  Shadows and cookies from spot lights: the depth atlas RenderLocalShadowTask draws each frame, the array of the
-//  cookies' pictures, and the table that says which light has which tile and cookie, and how to project a point into
-//  them.
+//  Shadows and cookies from spot lights: the depth atlas RenderLocalShadowTask keeps up to date (a tile drawn again
+//  when its light or a caster in its view changes), the array of the cookies' pictures, and the table that says which
+//  light has which tile and cookie, and how to project a point into them.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html

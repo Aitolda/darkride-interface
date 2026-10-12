@@ -6,7 +6,8 @@
 //  shadows, get a shadow map each, drawn into a tile of one depth atlas; and those with a cookie (a picture the light
 //  shines through) get it projected from the light, the picture copied into a layer of a texture array. The light
 //  loop the deferred and transparent shading share (LightLocal.slh) finds a light's tile and cookie through a small
-//  table (LocalShadow.slh).
+//  table (LocalShadow.slh). A tile's map is cached: it is drawn again only when the light's view changes or a caster
+//  in that view appears, leaves, changes or fades (render::Item::getChangeFrame).
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -40,11 +41,18 @@ public:
     static const int COOKIE_LAYERS;         // pictures the array holds
     static const int COOKIE_LIGHT_COUNT;    // spot lights with a cookie in a frame
 
-    // a tile's light this frame, and the view from it
+    // a tile's light this frame, the view from it, and what the map drawn in the tile shows and when, so that it is
+    // drawn again only when that would differ
     struct Tile {
         graphics::LightPointer light;
         LightStage::Index lightIndex { LightStage::INVALID_INDEX };
         std::shared_ptr<ViewFrustum> frustum;
+
+        bool drawn { false };
+        glm::mat4 drawnView;                        // the light's transform the map was drawn from
+        glm::mat4 drawnProjection;
+        std::vector<render::ItemID> drawnCasters;   // sorted
+        uint64_t drawnFrame { 0 };                  // the scene frame it was drawn in (render::Scene::getFrame)
     };
 
     LocalShadows();
@@ -64,10 +72,16 @@ public:
     bool hasLights() const;
     bool hasCookies() const { return _cookieCount > 0; }
 
-    // a new frame: no light has a tile or a cookie
+    // a new frame: no light has a tile or a cookie (the maps drawn in the tiles stay, and their records)
     void clear();
     // gives the tile to the light, seen through the frustum, and enters it in the table
     void setTile(int tile, const graphics::LightPointer& light, LightStage::Index lightIndex, const ViewFrustum& frustum);
+    // whether the map in the tile no longer shows what its light sees: the casters in the light's view this frame
+    // differ from those drawn, or one of them has changed or is fading since, or the view itself has moved; when it
+    // is stale, or caching is off, the record is brought up to date for the map about to be drawn
+    bool tileIsStale(int tile, const render::ShapeBounds& casters, const render::Scene& scene);
+    // off, every tile is drawn every frame
+    void setCaching(bool caching) { _caching = caching; }
     // gives the light its cookie, the picture projected through the frustum, in the layer that holds the picture
     // (kept from earlier frames); false when every layer holds another light's picture this frame
     bool setCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const ViewFrustum& frustum);
@@ -92,6 +106,8 @@ private:
     gpu::BufferPointer _table;
     std::vector<glm::vec4> _tableData;
     std::vector<Tile> _tiles;
+    std::vector<render::ItemID> _casterIds;   // scratch for tileIsStale
+    bool _caching { true };
 
     gpu::TexturePointer _cookies;
     std::vector<gpu::FramebufferPointer> _cookieFramebuffers;   // one per layer
@@ -112,20 +128,38 @@ public:
     void build(JobModel& task, const render::Varying& input, render::Varying& output, uint8_t tagBits = 0x00, uint8_t tagMask = 0x00);
 };
 
+class RenderLocalShadowSetupConfig : public render::Job::Config {
+    Q_OBJECT
+    // whether a tile's map is kept until its light or a caster in its view changes (the default), or drawn every frame
+    Q_PROPERTY(bool caching READ isCaching WRITE setCaching NOTIFY dirty)
+public:
+    bool isCaching() const { return _caching; }
+    void setCaching(bool caching) { if (_caching != caching) { _caching = caching; emit dirty(); } }
+
+signals:
+    void dirty();
+
+private:
+    bool _caching { true };
+};
+
 // Picks the lights and gives each a tile, and takes in a view wide enough for all of them, for fetching what they
 // might shine on; gives the lights with a cookie theirs; stops the task when no light needs a shadow
 class RenderLocalShadowSetup {
 public:
     using Input = RenderLocalShadowTask::Input;
     using Output = render::VaryingSet3<RenderArgs::RenderMode, glm::ivec2, LocalShadowsPointer>;
-    using JobModel = render::Job::ModelIO<RenderLocalShadowSetup, Input, Output>;
+    using Config = RenderLocalShadowSetupConfig;
+    using JobModel = render::Job::ModelIO<RenderLocalShadowSetup, Input, Output, Config>;
 
     RenderLocalShadowSetup();
+    void configure(const Config& config) { _caching = config.isCaching(); }
     void run(const render::RenderContextPointer& renderContext, const Input& input, Output& output);
 
 private:
     std::shared_ptr<ViewFrustum> _coarseFrustum;
     LocalShadowsPointer _localShadows;
+    bool _caching { true };
 };
 
 // One tile's turn: takes the view from its light, or selects nothing when the tile has no light this frame

@@ -22,6 +22,8 @@
 #include <render/CullTask.h>
 #include <render/SortTask.h>
 #include <render/DrawTask.h>
+#include <render/Scene.h>
+#include <render/TransitionStage.h>
 
 #include "FadeEffect.h"
 
@@ -149,7 +151,8 @@ bool LocalShadows::hasLights() const {
 
 void LocalShadows::clear() {
     for (auto& tile : _tiles) {
-        tile = Tile();
+        tile.light.reset();
+        tile.lightIndex = LightStage::INVALID_INDEX;
     }
     _cookieCount = 0;
     if (++_frame % COOKIE_REFRESH_FRAMES == 0) {
@@ -186,6 +189,40 @@ void LocalShadows::setTile(int tile, const graphics::LightPointer& light, LightS
     }
     _tableData[texel + 4] = glm::vec4(low, high);
     _tableData[texel + 5] = glm::vec4(texelSizePerMeter, NORMAL_OFFSET_TEXELS, LIGHT_OFFSET_TEXELS, 1.0f / ATLAS_SIZE);
+}
+
+bool LocalShadows::tileIsStale(int tile, const render::ShapeBounds& casters, const render::Scene& scene) {
+    if (tile < 0 || tile >= getTileCount() || !_tiles[tile].light || !_tiles[tile].frustum) {
+        return false;
+    }
+    auto& entry = _tiles[tile];
+
+    // the casters in the light's view this frame; whether one of them has changed since the map was drawn, or is in
+    // a transition (fading in), which changes it every frame without a word to the scene
+    _casterIds.clear();
+    bool changed = false;
+    for (const auto& shapes : casters) {
+        for (const auto& bound : shapes.second) {
+            _casterIds.push_back(bound.id);
+            const auto& item = scene.getItem(bound.id);
+            changed = changed || item.getChangeFrame() > entry.drawnFrame
+                || !render::TransitionStage::isIndexInvalid(item.getTransitionId());
+        }
+    }
+    std::sort(_casterIds.begin(), _casterIds.end());
+
+    const glm::mat4& view = entry.frustum->getView();
+    const glm::mat4& projection = entry.frustum->getProjection();
+    if (_caching && entry.drawn && !changed && view == entry.drawnView && projection == entry.drawnProjection
+            && _casterIds == entry.drawnCasters) {
+        return false;
+    }
+    entry.drawn = true;
+    entry.drawnView = view;
+    entry.drawnProjection = projection;
+    entry.drawnCasters.swap(_casterIds);
+    entry.drawnFrame = scene.getFrame();
+    return true;
 }
 
 bool LocalShadows::setCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const ViewFrustum& frustum) {
@@ -359,6 +396,7 @@ void RenderLocalShadowSetup::run(const render::RenderContextPointer& renderConte
     if (!_localShadows) {
         _localShadows = std::make_shared<LocalShadows>();
     }
+    _localShadows->setCaching(_caching);
     // which light had which tile last frame
     std::vector<LightStage::Index> previousTiles;
     for (int tile = 0; tile < _localShadows->getTileCount(); ++tile) {
@@ -506,8 +544,13 @@ void RenderLocalShadowMap::run(const render::RenderContextPointer& renderContext
     if (!localShadows || _slot >= localShadows->getTileCount() || !localShadows->getTile(_slot).light) {
         return;
     }
-
     RenderArgs* args = renderContext->args;
+    args->_details._spotShadowMaps++;
+    if (!localShadows->tileIsStale(_slot, casters, *renderContext->_scene)) {
+        return;   // the map in the tile still shows what the light sees
+    }
+    args->_details._spotShadowMapsDrawn++;
+
     gpu::doInBatch("RenderLocalShadowMap::run", args->_context, [&](gpu::Batch& batch) {
         args->_batch = &batch;
         batch.enableStereo(false);

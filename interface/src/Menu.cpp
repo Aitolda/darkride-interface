@@ -52,6 +52,7 @@
 #include "LocationBookmarks.h"
 #include "DeferredLightingEffect.h"
 #include "PickManager.h"
+#include "RenderLocalShadowTask.h"
 
 #include "scripting/SettingsScriptingInterface.h"
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
@@ -533,6 +534,18 @@ Menu::Menu() {
 
     addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::AmbientOcclusion, 0, RenderScriptingInterface::getInstance()->getAmbientOcclusionEnabled(),
         RenderScriptingInterface::getInstance(), SLOT(setAmbientOcclusionEnabled(bool)));
+
+    // Developer > Render > Cache Spot Shadows: off, a spot light's shadow map is drawn every frame, for comparing
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::SpotShadowCaching, 0, true);
+    connect(action, &QAction::triggered, [action] {
+        auto renderConfig = qApp->getRenderEngine()->getConfiguration();
+        for (const auto& view : { "RenderMainView.LocalShadowSetup", "RenderSecondView.LocalShadowSetup" }) {
+            auto config = renderConfig->getConfig<RenderLocalShadowSetup>(view);
+            if (config) {
+                config->setCaching(action->isChecked());
+            }
+        }
+    });
 
     addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::WorldAxes);
     // addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::DefaultSkybox, Qt::Key_Asterisk, true);

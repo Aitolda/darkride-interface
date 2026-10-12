@@ -42,6 +42,9 @@ namespace render {
 
         int _materialSwitches = 0;
         int _trianglesRendered = 0;
+        // spot lights given a shadow map this frame, and how many of those maps were drawn again rather than kept
+        int _spotShadowMaps = 0;
+        int _spotShadowMapsDrawn = 0;
 
         Item _item;
         Item _shadow;

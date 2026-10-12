@@ -436,6 +436,11 @@ Item {
                             " too small: " + root.shadowTooSmall;
                     }
                     StatText {
+                        visible: root.expanded;
+                        text: "Spot shadow maps drawn / lit: " +
+                            root.spotShadowMapsDrawn + " / " + root.spotShadowMaps;
+                    }
+                    StatText {
                         visible: root.expanded
                         text: "LOD: " + root.lodStatus;
                     }
