@@ -24,7 +24,7 @@ class AssignmentClient : public QObject {
 public:
     AssignmentClient(Assignment::Type requestAssignmentType, QString assignmentPool,
                      quint16 listenPort,
-                     QUuid walletUUID, QString assignmentServerHostname, quint16 assignmentServerPort,
+                     QUuid walletUUID, QString assignmentServerHostname, quint16 assignmentServerPort, bool assignmentServerPortGiven,
                      quint16 assignmentMonitorPort);
     ~AssignmentClient();
 
@@ -51,6 +51,7 @@ private:
     QPointer<ThreadedAssignment> _currentAssignment;
     bool _isAssigned { false };
     QString _assignmentServerHostname;
+    bool _assignmentServerPortGiven { false };   // --server-port was given: the shared-memory slot is not consulted
     HifiSockAddr _assignmentServerSocket;
     QTimer _requestTimer; // timer for requesting and assignment
     QTimer _statsTimerACM; // timer for sending stats to assignment client monitor

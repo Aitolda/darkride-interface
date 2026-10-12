@@ -38,8 +38,8 @@ public:
     AssignmentClientMonitor(const unsigned int numAssignmentClientForks, const unsigned int minAssignmentClientForks,
                             const unsigned int maxAssignmentClientForks, Assignment::Type requestAssignmentType,
                             QString assignmentPool, quint16 listenPort, quint16 childMinListenPort, QUuid walletUUID,
-                            QString assignmentServerHostname, quint16 assignmentServerPort, quint16 httpStatusServerPort,
-                            QString logDirectory);
+                            QString assignmentServerHostname, quint16 assignmentServerPort, bool assignmentServerPortGiven,
+                            quint16 httpStatusServerPort, QString logDirectory);
     ~AssignmentClientMonitor();
 
     void stopChildProcesses();
@@ -73,6 +73,7 @@ private:
     QUuid _walletUUID;
     QString _assignmentServerHostname;
     quint16 _assignmentServerPort;
+    bool _assignmentServerPortGiven;
 
     QMap<qint64, ACProcess> _childProcesses;
 

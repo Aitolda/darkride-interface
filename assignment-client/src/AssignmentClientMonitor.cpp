@@ -41,7 +41,8 @@ AssignmentClientMonitor::AssignmentClientMonitor(const unsigned int numAssignmen
                                                  const unsigned int maxAssignmentClientForks,
                                                  Assignment::Type requestAssignmentType, QString assignmentPool,
                                                  quint16 listenPort, quint16 childMinListenPort, QUuid walletUUID, QString assignmentServerHostname,
-                                                 quint16 assignmentServerPort, quint16 httpStatusServerPort, QString logDirectory) :
+                                                 quint16 assignmentServerPort, bool assignmentServerPortGiven, quint16 httpStatusServerPort,
+                                                 QString logDirectory) :
     _httpManager(QHostAddress::LocalHost, httpStatusServerPort, "", this),
     _numAssignmentClientForks(numAssignmentClientForks),
     _minAssignmentClientForks(minAssignmentClientForks),
@@ -51,6 +52,7 @@ AssignmentClientMonitor::AssignmentClientMonitor(const unsigned int numAssignmen
     _walletUUID(walletUUID),
     _assignmentServerHostname(assignmentServerHostname),
     _assignmentServerPort(assignmentServerPort),
+    _assignmentServerPortGiven(assignmentServerPortGiven),
     _childMinListenPort(childMinListenPort)
 {
     qDebug() << "_requestAssignmentType =" << _requestAssignmentType;
@@ -189,7 +191,8 @@ void AssignmentClientMonitor::spawnChildClient() {
         _childArguments.append("--" + CUSTOM_ASSIGNMENT_SERVER_HOSTNAME_OPTION);
         _childArguments.append(_assignmentServerHostname);
     }
-    if (_assignmentServerPort != DEFAULT_DOMAIN_SERVER_PORT) {
+    // a port given to the monitor is given to its children too, the default included, so they keep it as well
+    if (_assignmentServerPortGiven || _assignmentServerPort != DEFAULT_DOMAIN_SERVER_PORT) {
         _childArguments.append("--" + CUSTOM_ASSIGNMENT_SERVER_PORT_OPTION);
         _childArguments.append(QString::number(_assignmentServerPort));
     }

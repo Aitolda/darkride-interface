@@ -43,8 +43,9 @@ const long long ASSIGNMENT_REQUEST_INTERVAL_MSECS = 1 * 1000;
 
 AssignmentClient::AssignmentClient(Assignment::Type requestAssignmentType, QString assignmentPool,
                                    quint16 listenPort, QUuid walletUUID, QString assignmentServerHostname,
-                                   quint16 assignmentServerPort, quint16 assignmentMonitorPort) :
-    _assignmentServerHostname(DEFAULT_ASSIGNMENT_SERVER_HOSTNAME)
+                                   quint16 assignmentServerPort, bool assignmentServerPortGiven, quint16 assignmentMonitorPort) :
+    _assignmentServerHostname(DEFAULT_ASSIGNMENT_SERVER_HOSTNAME),
+    _assignmentServerPortGiven(assignmentServerPortGiven)
 {
     LogUtils::init();
 
@@ -93,7 +94,7 @@ AssignmentClient::AssignmentClient(Assignment::Type requestAssignmentType, QStri
     // call a timer function every ASSIGNMENT_REQUEST_INTERVAL_MSECS to ask for assignment, if required
     qCDebug(assignment_client) << "Waiting for assignment -" << _requestAssignment;
 
-    if (_assignmentServerHostname != "localhost") {
+    if (_assignmentServerHostname != "localhost" || _assignmentServerPortGiven) {
         qCDebug(assignment_client) << "- will attempt to connect to domain-server on" << _assignmentServerSocket.getPort();
     }
 
@@ -186,7 +187,10 @@ void AssignmentClient::sendAssignmentRequest() {
 
         auto nodeList = DependencyManager::get<NodeList>();
 
-        if (_assignmentServerHostname == "localhost") {
+        // A domain-server on this machine leaves its port in shared memory, for a client that was told only
+        // "localhost": with several local domains the slot holds whichever started last, so a port given on the
+        // command line is kept and the slot is read only when none was.
+        if (_assignmentServerHostname == "localhost" && !_assignmentServerPortGiven) {
             // we want to check again for the local domain-server port in case the DS has restarted
             quint16 localAssignmentServerPort;
             if (nodeList->getLocalServerPortFromSharedMemory(DOMAIN_SERVER_LOCAL_PORT_SMEM_KEY, localAssignmentServerPort)) {
