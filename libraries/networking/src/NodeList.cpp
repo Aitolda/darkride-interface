@@ -343,10 +343,11 @@ void NodeList::sendDomainServerCheckIn() {
             qCDebug(networking_ice) << "Sending connect request ( REASON:" << QString(metaEnum.valueToKey(_connectReason)) << ") to domain-server at" << hostname;
 
             // is this our localhost domain-server?
-            // if so we need to make sure we have an up-to-date local port in case it restarted
+            // if so we need to make sure we have an up-to-date local port in case it restarted.
+            // Only the name "localhost" asks: an explicit address (127.0.0.1) keeps its port, so a node pointed at one
+            // local domain is not sent to whichever domain-server on this machine started last (interagent.md, 10-12)
 
-            if (domainSockAddr.getAddress() == QHostAddress::LocalHost
-                || hostname == "localhost") {
+            if (hostname == "localhost") {
 
                 quint16 domainPort = DEFAULT_DOMAIN_SERVER_PORT;
                 getLocalServerPortFromSharedMemory(DOMAIN_SERVER_LOCAL_PORT_SMEM_KEY, domainPort);
