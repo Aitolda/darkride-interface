@@ -68,8 +68,11 @@ struct Options {
     float voxelsPerHeight { 220.0f };
     bool profiles { false };    // also report the measurements along each arm
     bool skin { true };         // compute skin weights as well as the joints
-    float falloff { 0.2f };     // geodesic voxel binding: how fast a bone's influence fades with distance
-    int smoothing { 4 };        // passes of smoothing over the mesh surface
+    int weighting { 1 };        // 1: joint planes (crisp, like hand-painted rigs); 0: plain geodesic falloff
+    float sharpness { 8.0f };   // joint planes: how sharply the nearest bone (in its own thicknesses) wins
+    float blend { 0.6f };       // joint planes: half the width of the change across a joint, in that bone's thickness
+    float falloff { 0.2f };     // geodesic falloff: how fast a bone's influence fades with distance
+    int smoothing { 4 };        // geodesic falloff: passes of smoothing over the mesh surface
 };
 
 struct Result {

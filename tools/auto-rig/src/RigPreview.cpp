@@ -45,13 +45,14 @@ std::map<QString, glm::quat> animationRotations(const HFMModel& animation, int f
 }
 
 // The body posed: each joint takes the animation's absolute rotation where the animation has the joint, keeps its
-// rest rotation relative to its parent where it does not; the hips stay where they are. Linear blend skinning.
+// rest rotation relative to its parent where it does not; the hips stay where they are. Dual quaternion skinning, as
+// the client uses for avatars.
 std::vector<glm::vec3> posedBody(const autorig::Body& body, const autorig::Result& rig,
                                  const std::map<QString, glm::quat>& rotations, std::vector<glm::vec3>& jointPositions) {
     const int count = (int)rig.joints.size();
     std::vector<glm::quat> turned(count);
     jointPositions.assign(count, glm::vec3(0.0f));
-    std::vector<glm::mat4> skinning(count);
+    std::vector<glm::quat> real(count), dual(count);
     for (int j = 0; j < count; j++) {
         const autorig::RiggedJoint& joint = rig.joints[j];
         const int parent = joint.parent;
@@ -68,20 +69,34 @@ std::vector<glm::vec3> posedBody(const autorig::Body& body, const autorig::Resul
             const glm::vec3 offset = glm::inverse(rig.joints[parent].rotation) * (joint.position - rig.joints[parent].position);
             jointPositions[j] = jointPositions[parent] + turned[parent] * offset;
         }
-        const glm::mat4 rest = glm::translate(glm::mat4(), joint.position) * glm::mat4_cast(joint.rotation);
-        const glm::mat4 posed = glm::translate(glm::mat4(), jointPositions[j]) * glm::mat4_cast(turned[j]);
-        skinning[j] = posed * glm::inverse(rest);
+        // the joint's move from rest to pose: turn r about the origin, then shift t
+        const glm::quat r = glm::normalize(turned[j] * glm::inverse(joint.rotation));
+        const glm::vec3 t = jointPositions[j] - r * joint.position;
+        real[j] = r;
+        dual[j] = 0.5f * (glm::quat(0.0f, t.x, t.y, t.z) * r);
     }
     std::vector<glm::vec3> vertices(body.vertices.size());
     for (size_t v = 0; v < body.vertices.size(); v++) {
-        glm::vec4 sum(0.0f);
         const autorig::VertexWeights& weights = rig.weights[v];
+        glm::quat blendReal(0.0f, 0.0f, 0.0f, 0.0f), blendDual(0.0f, 0.0f, 0.0f, 0.0f);
+        const glm::quat& first = real[weights.joints[0]];
         for (int k = 0; k < 4; k++) {
-            if (weights.weights[k] > 0.0f) {
-                sum += weights.weights[k] * (skinning[weights.joints[k]] * glm::vec4(body.vertices[v], 1.0f));
+            if (weights.weights[k] <= 0.0f) {
+                continue;
             }
+            const float sign = glm::dot(real[weights.joints[k]], first) < 0.0f ? -1.0f : 1.0f;
+            blendReal = blendReal + (sign * weights.weights[k]) * real[weights.joints[k]];
+            blendDual = blendDual + (sign * weights.weights[k]) * dual[weights.joints[k]];
         }
-        vertices[v] = glm::vec3(sum);
+        const float length = glm::length(blendReal);
+        if (length <= 0.0f) {
+            vertices[v] = body.vertices[v];
+            continue;
+        }
+        blendReal = blendReal * (1.0f / length);
+        blendDual = blendDual * (1.0f / length);
+        const glm::quat shift = blendDual * glm::conjugate(blendReal);
+        vertices[v] = blendReal * body.vertices[v] + 2.0f * glm::vec3(shift.x, shift.y, shift.z);
     }
     return vertices;
 }
@@ -89,7 +104,7 @@ std::vector<glm::vec3> posedBody(const autorig::Body& body, const autorig::Resul
 // Draws the mesh shaded, and the skeleton over it, into one panel. side: seen from the character's left.
 void drawPanel(QImage& image, int left, const std::vector<glm::vec3>& vertices, const std::vector<glm::uvec3>& triangles,
                const autorig::Result& rig, const std::vector<glm::vec3>& joints, bool side, const glm::vec3& center,
-               float scale) {
+               float scale, const std::vector<float>* heat = nullptr) {
     auto project = [&](const glm::vec3& p, float& depth) {
         const float across = side ? -(p.z - center.z) : (p.x - center.x);
         depth = side ? p.x : p.z;
@@ -106,8 +121,15 @@ void drawPanel(QImage& image, int left, const std::vector<glm::vec3>& vertices, 
         if (glm::length(normal) <= 0.0f) {
             continue;
         }
-        const float shade = 0.3f + 0.7f * std::fabs(glm::dot(glm::normalize(normal), light));
-        const int gray = (int)(255.0f * std::min(1.0f, shade));
+        const float shade = std::min(1.0f, 0.3f + 0.7f * std::fabs(glm::dot(glm::normalize(normal), light)));
+        QRgb color = qRgb((int)(255.0f * shade), (int)(255.0f * shade), (int)(255.0f * shade));
+        if (heat) {
+            // blue (no weight) through green to red (all of it)
+            const float h = glm::clamp(((*heat)[t.x] + (*heat)[t.y] + (*heat)[t.z]) / 3.0f, 0.0f, 1.0f);
+            const glm::vec3 tint = h < 0.5f ? glm::mix(glm::vec3(0.15f, 0.25f, 1.0f), glm::vec3(0.1f, 0.9f, 0.2f), h * 2.0f)
+                                            : glm::mix(glm::vec3(0.1f, 0.9f, 0.2f), glm::vec3(1.0f, 0.15f, 0.1f), h * 2.0f - 1.0f);
+            color = qRgb((int)(255.0f * shade * tint.r), (int)(255.0f * shade * tint.g), (int)(255.0f * shade * tint.b));
+        }
         const int x0 = std::max(left, (int)std::floor(std::min(a.x, std::min(b.x, c.x))));
         const int x1 = std::min(left + PANEL - 1, (int)std::ceil(std::max(a.x, std::max(b.x, c.x))));
         const int y0 = std::max(0, (int)std::floor(std::min(a.y, std::min(b.y, c.y))));
@@ -129,12 +151,13 @@ void drawPanel(QImage& image, int left, const std::vector<glm::vec3>& vertices, 
                 float& stored = zbuffer[(size_t)y * PANEL + (x - left)];
                 if (depth > stored) {
                     stored = depth;
-                    image.setPixel(x, y, qRgb(gray, gray, gray));
+                    image.setPixel(x, y, color);
                 }
             }
         }
     }
     QPainter painter(&image);
+    painter.setClipRect(left, 0, PANEL, PANEL);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(QPen(QColor(220, 40, 40), 1.5));
     for (size_t j = 0; j < rig.joints.size(); j++) {
@@ -157,7 +180,8 @@ void drawPanel(QImage& image, int left, const std::vector<glm::vec3>& vertices, 
 }
 
 bool renderPreview(const autorig::Body& body, const autorig::Result& rig, const HFMModel* animation, int frame,
-                   const QString& pngPath) {
+                   const QString& pngPath, const QString& focusJoint, float zoom, const std::vector<float>* heat,
+                   const std::vector<float>* keyHeat, bool sideHeat) {
     if (!rig.ok || rig.weights.size() != body.vertices.size()) {
         return false;
     }
@@ -173,14 +197,25 @@ bool renderPreview(const autorig::Body& body, const autorig::Result& rig, const 
     const int panels = animation ? 4 : 2;
     QImage image(PANEL * panels, PANEL, QImage::Format_RGB32);
     image.fill(qRgb(40, 44, 52));
-    const glm::vec3 center = (body.minimum + body.maximum) * 0.5f;
+    glm::vec3 center = (body.minimum + body.maximum) * 0.5f;
+    glm::vec3 posedCenter = center;
+    for (size_t j = 0; j < rig.joints.size(); j++) {
+        if (rig.joints[j].name == focusJoint) {
+            center = restJoints[j];
+            posedCenter = animation ? posedJoints[j] : center;
+        }
+    }
     const glm::vec3 span = body.maximum - body.minimum;
-    const float scale = 0.9f * PANEL / std::max(span.x, std::max(span.y, span.z));
-    drawPanel(image, 0, body.vertices, body.triangles, rig, restJoints, false, center, scale);
-    drawPanel(image, PANEL, body.vertices, body.triangles, rig, restJoints, true, center, scale);
+    const float scale = std::max(zoom, 0.1f) * 0.9f * PANEL / std::max(span.x, std::max(span.y, span.z));
+    drawPanel(image, 0, body.vertices, body.triangles, rig, restJoints, sideHeat, center, scale, heat);
+    if (keyHeat) {
+        drawPanel(image, PANEL, body.vertices, body.triangles, rig, restJoints, sideHeat, center, scale, keyHeat);
+    } else {
+        drawPanel(image, PANEL, body.vertices, body.triangles, rig, restJoints, true, center, scale, heat);
+    }
     if (animation) {
-        drawPanel(image, 2 * PANEL, posed, body.triangles, rig, posedJoints, false, center, scale);
-        drawPanel(image, 3 * PANEL, posed, body.triangles, rig, posedJoints, true, center, scale);
+        drawPanel(image, 2 * PANEL, posed, body.triangles, rig, posedJoints, false, posedCenter, scale);
+        drawPanel(image, 3 * PANEL, posed, body.triangles, rig, posedJoints, true, posedCenter, scale);
     }
     return image.save(pngPath);
 }

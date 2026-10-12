@@ -172,6 +172,11 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     const QCommandLineOption previewOption("preview", "draw the rigged character into a PNG", "file");
     const QCommandLineOption animationOption("animation", "with --preview: also pose it by an animation", "fbx");
     const QCommandLineOption frameOption("frame", "with --animation: which frame (default 30)", "number");
+    const QCommandLineOption focusOption("focus", "with --preview: centre the views on this joint", "joint");
+    const QCommandLineOption zoomOption("zoom", "with --preview: magnify by this factor", "factor");
+    const QCommandLineOption weightsOption("weights", "with --preview: colour by one joint's weights, ours beside the key's",
+                                           "joint");
+    const QCommandLineOption sideOption("side", "with --weights: show the weights from the side");
     const QCommandLineOption heightOption("height", "scale the character to this height first (for files in the wrong units)",
                                           "metres");
     const QCommandLineOption profilesOption("profiles", "print the measurements along each arm");
@@ -184,6 +189,9 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     const QCommandLineOption childrenOption("children", "with --dump: children shown per node (default 12)", "count");
     const QCommandLineOption falloffOption("falloff", "skin weights: how fast a bone's influence fades (0 to 1)", "a");
     const QCommandLineOption smoothingOption("smoothing", "skin weights: passes of smoothing over the mesh", "passes");
+    const QCommandLineOption weightingOption("weighting", "skin weights: 1 joint planes (default), 0 geodesic falloff", "kind");
+    const QCommandLineOption sharpnessOption("sharpness", "joint planes: how sharply the nearest bone wins", "k");
+    const QCommandLineOption blendOption("blend", "joint planes: half-width of the change at a joint, in thicknesses", "b");
     parser.addOption(inputOption);
     parser.addOption(keyOption);
     parser.addOption(turnOption);
@@ -193,6 +201,10 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     parser.addOption(previewOption);
     parser.addOption(animationOption);
     parser.addOption(frameOption);
+    parser.addOption(focusOption);
+    parser.addOption(zoomOption);
+    parser.addOption(weightsOption);
+    parser.addOption(sideOption);
     parser.addOption(heightOption);
     parser.addOption(profilesOption);
     parser.addOption(scaleOption);
@@ -203,6 +215,9 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     parser.addOption(childrenOption);
     parser.addOption(falloffOption);
     parser.addOption(smoothingOption);
+    parser.addOption(weightingOption);
+    parser.addOption(sharpnessOption);
+    parser.addOption(blendOption);
     if (parser.parse(QCoreApplication::arguments()) && parser.isSet(inspectOption)) {
         HFMModel::Pointer model = readModel(parser.value(inspectOption));
         if (!model) {
@@ -266,6 +281,15 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     }
     if (parser.isSet(smoothingOption)) {
         options.smoothing = parser.value(smoothingOption).toInt();
+    }
+    if (parser.isSet(weightingOption)) {
+        options.weighting = parser.value(weightingOption).toInt();
+    }
+    if (parser.isSet(sharpnessOption)) {
+        options.sharpness = parser.value(sharpnessOption).toFloat();
+    }
+    if (parser.isSet(blendOption)) {
+        options.blend = parser.value(blendOption).toFloat();
     }
     const autorig::Result result = autorig::rig(body, options);
     for (const QString& note : result.notes) {
@@ -364,7 +388,37 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     if (parser.isSet(previewOption) && options.skin) {
         HFMModel::Pointer animation = parser.isSet(animationOption) ? readModel(parser.value(animationOption)) : nullptr;
         const int frame = parser.isSet(frameOption) ? parser.value(frameOption).toInt() : 30;
-        if (renderPreview(body, result, animation.get(), frame, parser.value(previewOption))) {
+        std::vector<float> heat, keyHeat;
+        if (parser.isSet(weightsOption)) {
+            const int joint = autorig::StandardSkeleton::get().indexOf(parser.value(weightsOption));
+            heat.assign(body.vertices.size(), 0.0f);
+            for (size_t v = 0; v < body.vertices.size(); v++) {
+                for (int k = 0; k < 4; k++) {
+                    if (result.weights[v].joints[k] == joint) {
+                        heat[v] += result.weights[v].weights[k];
+                    }
+                }
+            }
+            if (key && !turned) {
+                const KeyRig keyRig = readKeyRig(*key, scale);
+                if (keyRig.weights.size() == body.vertices.size()) {
+                    keyHeat.assign(body.vertices.size(), 0.0f);
+                    for (size_t v = 0; v < body.vertices.size(); v++) {
+                        float sum = 0.0f;
+                        for (const auto& w : keyRig.weights[v]) {
+                            sum += w.second;
+                            if (keyRig.standard[w.first] == joint) {
+                                keyHeat[v] += w.second;
+                            }
+                        }
+                        keyHeat[v] /= std::max(sum, 1.0e-6f);
+                    }
+                }
+            }
+        }
+        if (renderPreview(body, result, animation.get(), frame, parser.value(previewOption), parser.value(focusOption),
+                          parser.isSet(zoomOption) ? parser.value(zoomOption).toFloat() : 1.0f,
+                          heat.empty() ? nullptr : &heat, keyHeat.empty() ? nullptr : &keyHeat, parser.isSet(sideOption))) {
             fprintf(stdout, "preview: %s%s\n", qPrintable(parser.value(previewOption)),
                     animation ? qPrintable(QString(" (frame %1 of %2)").arg(frame).arg(animation->animationFrames.size())) : "");
         } else {
