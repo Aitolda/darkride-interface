@@ -2520,9 +2520,21 @@ bool Editor::handleWheel(QWheelEvent* event) {
     return consumed;
 }
 
+bool Editor::qmlHasTextFocus() const {
+    if (auto offscreenUi = DependencyManager::get<OffscreenUi>()) {
+        if (auto window = offscreenUi->getWindow()) {
+            if (auto item = window->activeFocusItem()) {
+                return item->inherits("QQuickTextInput") || item->inherits("QQuickTextEdit")
+                    || item->inherits("QQuickWebEngineView");
+            }
+        }
+    }
+    return false;
+}
+
 bool Editor::handleKeyPress(QKeyEvent* event) {
-    if (!_active) {
-        return false;
+    if (!_active || qmlHasTextFocus()) {
+        return false;   // a QML or web field being typed in (chat, a dialog, a URL box) keeps every key, paste included
     }
     if (_camera.keyPress(event)) {
         return true;
@@ -2609,6 +2621,9 @@ bool Editor::handleKeyRelease(QKeyEvent* event) {
     if (!_active) {
         return false;
     }
+    if (qmlHasTextFocus() && !_vertexSnap) {
+        return false;
+    }
     if (event->key() == Qt::Key_V && !event->isAutoRepeat()) {
         _vertexSnap = false;
         return true;
@@ -2653,17 +2668,7 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
     bool inPanels = _hierarchy->isAncestorOf(widget) || _inspector->isAncestorOf(widget) || _toolBar->isAncestorOf(widget);
 
     // a QML text field (chat, a dialog) being typed in keeps its keys too
-    auto qmlTyping = [] {
-        if (auto offscreenUi = DependencyManager::get<OffscreenUi>()) {
-            if (auto window = offscreenUi->getWindow()) {
-                if (auto item = window->activeFocusItem()) {
-                    return item->inherits("QQuickTextInput") || item->inherits("QQuickTextEdit")
-                        || item->inherits("QQuickWebEngineView");
-                }
-            }
-        }
-        return false;
-    };
+    auto qmlTyping = [this] { return qmlHasTextFocus(); };
 
     // undo and redo are taken here, ahead of everything, from any widget of the window: the menu
     // shortcut and the viewport's key handler were never reached on macOS. A text field keeps them only while it

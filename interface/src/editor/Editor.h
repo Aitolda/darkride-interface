@@ -234,6 +234,8 @@ private:
     void addSelectionActions(QMenu& menu, const glm::vec3* pasteTarget);
     // a note in the middle of the toolbar; one with a timeout clears itself
     void setStatus(const QString& text, int clearAfterMs = 0);
+    // The QML overlay (chat, a dialog, a web view with a field) has the keyboard: the editor leaves its keys alone.
+    bool qmlHasTextFocus() const;
 
     // read-only: the domain gives no building rights (an instance before World Edit is on)
     void updateReadOnly();
