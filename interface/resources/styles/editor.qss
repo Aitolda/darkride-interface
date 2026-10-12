@@ -129,6 +129,11 @@ QDockWidget#EditorHierarchy::title, QDockWidget#EditorInspector::title {
     border-radius: 3px;
     padding: 2px 6px;
 }
+/* + Add opens a menu: its text says so, without Qt's arrow drawn over it */
+#EditorInspector QToolButton#EditorUserDataAdd::menu-indicator {
+    image: none;
+    width: 0;
+}
 #EditorInspector QCheckBox {
     spacing: 6px;
 }

@@ -2477,8 +2477,9 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
 
     // Enter in an Inspector field is the end of it: the field commits (its own handling, after this) and the
     // keyboard goes back to the world, so the field is not left highlighted, with the avatar's keys in it. Escape
-    // drops typing not yet committed and does the same. A field in a list (a User Data entry being edited in
-    // place) and the JSON box keep both keys
+    // drops typing not yet committed and does the same. The JSON box keeps both keys. In a list (User Data), a
+    // name being typed in place is the list's own editor, which takes Enter and Escape itself, queued: the keyboard
+    // follows once it has
     bool fieldKey = keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter || keyEvent->key() == Qt::Key_Escape;
     if (fieldKey && !keyEvent->isAutoRepeat() && widget == QApplication::focusWidget() && _inspector->isAncestorOf(widget)
             && (qobject_cast<QLineEdit*>(widget) || qobject_cast<QAbstractSpinBox*>(widget))) {
@@ -2488,13 +2489,11 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
             inList = inList || qobject_cast<QAbstractItemView*>(parent);
             editor = qobject_cast<PropertyEditor*>(parent);
         }
-        if (!inList) {
-            if (keyEvent->key() == Qt::Key_Escape && editor) {
-                editor->revertTyping();
-            }
-            QTimer::singleShot(0, this, [this] { focusViewport(); });
-            return keyEvent->key() == Qt::Key_Escape;   // Enter goes on to the field, which commits on it
+        if (keyEvent->key() == Qt::Key_Escape && editor) {
+            editor->revertTyping();
         }
+        QTimer::singleShot(inList ? 1 : 0, this, [this] { focusViewport(); });
+        return keyEvent->key() == Qt::Key_Escape && !inList;   // Enter goes on to the field, which commits on it
     }
 
     // Escape twice in quick succession leaves build mode, wherever the keyboard is but a text field, where

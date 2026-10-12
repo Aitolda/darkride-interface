@@ -32,6 +32,8 @@ namespace {
     const int PATH_ROLE = Qt::UserRole + 1;
     const int MAX_TREE_HEIGHT = 300;    // then it scrolls
     const int MAX_NAME_WIDTH = 140;     // a long name is cut short (its tooltip has it all), leaving room for the value
+    const int MIN_NAME_WIDTH = 110;     // and never so narrow that a name being typed is cut off
+    const char* const SHOWN_TEXT = "shownText";   // on a value's field: the text it showed, for Escape
     const int SUMMARY_NAMES = 3;        // a folded object's row names this many of its entries
     const QString NEW_ENTRY = QStringLiteral("newEntry");
     const QColor SUMMARY_COLOR { 0x8f, 0x8f, 0x8f };
@@ -182,6 +184,7 @@ UserDataEditor::UserDataEditor(const PropertySpec& spec, QWidget* parent) : Prop
     _note = new QLabel(this);
     _note->setObjectName("EditorInspectorNote");
     _addButton = new QToolButton(this);
+    _addButton->setObjectName("EditorUserDataAdd");
     _addButton->setText("+ Add");
     _addButton->setToolTip("A new entry");
     _addButton->setPopupMode(QToolButton::InstantPopup);
@@ -212,6 +215,7 @@ UserDataEditor::UserDataEditor(const PropertySpec& spec, QWidget* parent) : Prop
     _tree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     _tree->header()->setStretchLastSection(true);
     _tree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    _tree->header()->setMinimumSectionSize(MIN_NAME_WIDTH);
     _tree->header()->setMaximumSectionSize(MAX_NAME_WIDTH);
     // as tall as its rows (those of open objects and arrays included), up to a limit
     _tree->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
@@ -270,6 +274,16 @@ bool UserDataEditor::isEditing() const {
     // a value, a name or the text box being typed in
     QWidget* focus = QApplication::focusWidget();
     return focus && isAncestorOf(focus) && (qobject_cast<QLineEdit*>(focus) || qobject_cast<QPlainTextEdit*>(focus));
+}
+
+void UserDataEditor::revertTyping() {
+    // a value being typed goes back to what it showed; a name being typed in place is the tree's own editor, which
+    // puts the old name back itself
+    auto edit = qobject_cast<QLineEdit*>(QApplication::focusWidget());
+    if (edit && isAncestorOf(edit) && edit->property(SHOWN_TEXT).isValid()) {
+        edit->setText(edit->property(SHOWN_TEXT).toString());
+        edit->setModified(false);
+    }
 }
 
 void UserDataEditor::setClaimedEntries(const QStringList& entries) {
@@ -365,6 +379,7 @@ QWidget* UserDataEditor::valueField(const Path& path, const QJsonValue& value) {
         }
         case QJsonValue::Double: {
             auto edit = new QLineEdit(numberText(value.toDouble()), _tree);
+            edit->setProperty(SHOWN_TEXT, edit->text());
             auto validator = new QDoubleValidator(edit);
             validator->setLocale(QLocale::c());
             edit->setValidator(validator);
@@ -374,16 +389,19 @@ QWidget* UserDataEditor::valueField(const Path& path, const QJsonValue& value) {
                 double number = QLocale::c().toDouble(edit->text(), &ok);
                 if (ok && valueAt(_object, path) != QJsonValue(number)) {
                     setEntry(path, QJsonValue(number), false);
+                    edit->setProperty(SHOWN_TEXT, edit->text());
                 }
             });
             return edit;
         }
         case QJsonValue::String: {
             auto edit = new QLineEdit(value.toString(), _tree);
+            edit->setProperty(SHOWN_TEXT, edit->text());
             edit->setReadOnly(!editable);
             connect(edit, &QLineEdit::editingFinished, this, [this, path, edit] {
                 if (valueAt(_object, path) != QJsonValue(edit->text())) {
                     setEntry(path, QJsonValue(edit->text()), false);
+                    edit->setProperty(SHOWN_TEXT, edit->text());
                 }
             });
             return edit;

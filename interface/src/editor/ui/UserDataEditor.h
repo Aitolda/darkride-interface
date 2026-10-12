@@ -32,6 +32,7 @@ public:
     QWidget* createLabel(QWidget* parent) override;
     void setValue(const QVariant& value, bool mixed) override;
     bool isEditing() const override;
+    void revertTyping() override;
     QVariant currentValue() const override { return QVariant(_shown); }
     bool isMixed() const override { return _mixed; }
 
