@@ -9,9 +9,11 @@
 //  projected from the light down its cone, a point light's hangs around the light as a panorama (the equirectangular
 //  picture a skybox takes), turned with the light; the picture is copied into a layer of a texture array. The light
 //  loop the deferred and transparent shading share (LightLocal.slh) finds a light's tiles and cookie through a small
-//  table (LocalShadow.slh). A tile's map is cached:
-//  it is drawn again only when the light's view changes or a caster in that view appears, leaves, changes or fades
-//  (render::Item::getChangeFrame).
+//  table (LocalShadow.slh). A tile's map is cached: it is drawn again only when the light's view changes or a caster
+//  in that view appears, leaves, changes or fades (render::Item::getChangeFrame). Casters that haven't changed for a
+//  while are static: they are kept in a map of their own, in a second atlas, which is copied into the tile before the
+//  dynamic casters are drawn over it (as HDRP's cached shadow maps with "always draw dynamic"), so that an avatar
+//  moving in a light's view costs the avatar's drawing, not the whole scene's.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -51,7 +53,8 @@ public:
     static const int COOKIE_LIGHT_COUNT;    // lights with a cookie in a frame
 
     // a tile's light this frame, the view from it (a spot light's cone, or one face of a point light), and what the
-    // map drawn in the tile shows and when, so that it is drawn again only when that would differ
+    // maps drawn in the tile show and when, so that they are drawn again only when that would differ: the working
+    // map the shaders read, and, with static caching, the static casters' map it is copied from
     struct Tile {
         graphics::LightPointer light;
         LightStage::Index lightIndex { LightStage::INVALID_INDEX };
@@ -60,8 +63,24 @@ public:
         bool drawn { false };
         glm::mat4 drawnView;                        // the light's transform the map was drawn from
         glm::mat4 drawnProjection;
-        std::vector<render::ItemID> drawnCasters;   // sorted
+        std::vector<render::ItemID> drawnCasters;   // sorted: the dynamic casters, or every caster without static caching
         uint64_t drawnFrame { 0 };                  // the scene frame it was drawn in (render::Scene::getFrame)
+        uint64_t drawnStaticFrame { 0 };            // the static map under them (its staticFrame), 0 for none
+
+        bool staticDrawn { false };
+        glm::mat4 staticView;
+        glm::mat4 staticProjection;
+        std::vector<render::ItemID> staticCasters;  // sorted
+        uint64_t staticFrame { 0 };
+    };
+
+    // what drawing a tile takes this frame
+    struct TilePlan {
+        bool redrawStatic { false };          // the static casters' map in the static atlas is drawn again first
+        bool copyStatic { false };            // the working tile takes that map (else it is cleared)
+        render::ShapeBounds staticCasters;    // those drawn into the static map, when it is drawn again
+        render::ShapeBounds dynamicCasters;   // those drawn into the working tile over it: with static caching the
+                                              // casters that changed lately, else every caster
     };
 
     LocalShadows();
@@ -93,12 +112,18 @@ public:
     // gives the point light its six faces (the tiles from firstFaceTile), the face frustums in face order, and enters
     // the light in the table
     void setPointFaces(int point, const graphics::LightPointer& light, LightStage::Index lightIndex, const ViewFrustum* faces);
-    // whether the map in the tile no longer shows what its light sees: the casters in the light's view this frame
-    // differ from those drawn, or one of them has changed or is fading since, or the view itself has moved; when it
-    // is stale, or caching is off, the record is brought up to date for the map about to be drawn
-    bool tileIsStale(int tile, const render::ShapeBounds& casters, const render::Scene& scene);
-    // off, every tile is drawn every frame
+    // the tile's plan, or null when the map in the tile still shows what its light sees: the casters in the light's
+    // view this frame are those drawn, none has changed or is fading since, and the view itself hasn't moved. With
+    // static caching a caster unchanged for a while counts as static and goes in the static map, drawn again only
+    // when those casters or the view change, so that a moving avatar costs its own drawing over a copy of that map.
+    // The records are brought up to date for the maps about to be drawn; caching off, every tile is drawn every frame
+    const TilePlan* planTile(int tile, const render::ShapeBounds& casters, const render::Scene& scene);
     void setCaching(bool caching) { _caching = caching; }
+    void setStaticCaching(bool staticCaching) { _staticCaching = staticCaching; }
+    // the static atlas's framebuffer; none until static caching has been used
+    const gpu::FramebufferPointer& getStaticFramebuffer() const { return _staticFramebuffer; }
+    // copies the static atlas's tile into the working atlas's tile, texel for texel (a depth blit)
+    void copyStaticMap(gpu::Batch& batch, const glm::ivec4& viewport);
     // gives the spot light its cookie, the picture projected through the frustum, in the layer that holds the picture
     // (kept from earlier frames); false when every layer holds another light's picture this frame
     bool setSpotCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const ViewFrustum& frustum);
@@ -125,14 +150,22 @@ private:
     bool addCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const glm::mat4& matrix, bool panorama);
     // the tile's light and view, and the tile's entry in the table (not the light's)
     void fillTile(int tile, const graphics::LightPointer& light, LightStage::Index lightIndex, const ViewFrustum& frustum);
+    // the static atlas, made when static caching is first used
+    void ensureStaticAtlas();
 
     gpu::TexturePointer _atlas;
     gpu::FramebufferPointer _framebuffer;
     gpu::BufferPointer _table;
     std::vector<glm::vec4> _tableData;
     std::vector<Tile> _tiles;
-    std::vector<render::ItemID> _casterIds;   // scratch for tileIsStale
+    std::vector<render::ItemID> _casterIds;   // scratch for planTile
+    std::vector<render::ItemID> _staticIds;
+    TilePlan _plan;
     bool _caching { true };
+    bool _staticCaching { true };
+
+    gpu::TexturePointer _staticAtlas;
+    gpu::FramebufferPointer _staticFramebuffer;
 
     gpu::TexturePointer _cookies;
     std::vector<gpu::FramebufferPointer> _cookieFramebuffers;   // one per layer
@@ -154,15 +187,21 @@ class RenderLocalShadowSetupConfig : public render::Job::Config {
     Q_OBJECT
     // whether a tile's map is kept until its light or a caster in its view changes (the default), or drawn every frame
     Q_PROPERTY(bool caching READ isCaching WRITE setCaching NOTIFY dirty)
+    // whether the casters that haven't changed for a while are kept in a map of their own, copied under the others
+    // each time the tile is drawn, so that a moving avatar doesn't cost the whole map (the default)
+    Q_PROPERTY(bool staticCaching READ isStaticCaching WRITE setStaticCaching NOTIFY dirty)
 public:
     bool isCaching() const { return _caching; }
     void setCaching(bool caching) { if (_caching != caching) { _caching = caching; emit dirty(); } }
+    bool isStaticCaching() const { return _staticCaching; }
+    void setStaticCaching(bool staticCaching) { if (_staticCaching != staticCaching) { _staticCaching = staticCaching; emit dirty(); } }
 
 signals:
     void dirty();
 
 private:
     bool _caching { true };
+    bool _staticCaching { true };
 };
 
 // Picks the lights and gives each its tiles, and takes in a view wide enough for all of them, for fetching what they
@@ -175,13 +214,14 @@ public:
     using JobModel = render::Job::ModelIO<RenderLocalShadowSetup, Input, Output, Config>;
 
     RenderLocalShadowSetup();
-    void configure(const Config& config) { _caching = config.isCaching(); }
+    void configure(const Config& config) { _caching = config.isCaching(); _staticCaching = config.isStaticCaching(); }
     void run(const render::RenderContextPointer& renderContext, const Input& input, Output& output);
 
 private:
     std::shared_ptr<ViewFrustum> _coarseFrustum;
     LocalShadowsPointer _localShadows;
     bool _caching { true };
+    bool _staticCaching { true };
 };
 
 // One tile's turn: takes the view from its light, or selects nothing when the tile has no light this frame. For a

@@ -167,10 +167,19 @@ void GL41Backend::do_blit(const Batch& batch, size_t paramOffset) {
     // always bind the read fbo
     glBindFramebuffer(GL_READ_FRAMEBUFFER, getFramebufferID(srcframebuffer));
 
+    // what is copied: the colour, or, from a framebuffer that has none (one depth atlas into another), the depth,
+    // which GL copies only point for point
+    GLbitfield mask = GL_COLOR_BUFFER_BIT;
+    GLenum filter = GL_LINEAR;
+    if (!srcframebuffer->hasColor() && srcframebuffer->hasDepth() && dstframebuffer->hasDepth()) {
+        mask = GL_DEPTH_BUFFER_BIT;
+        filter = GL_NEAREST;
+    }
+
     // Blit!
-    glBlitFramebuffer(srcvp.x, srcvp.y, srcvp.z, srcvp.w, 
+    glBlitFramebuffer(srcvp.x, srcvp.y, srcvp.z, srcvp.w,
         dstvp.x, dstvp.y, dstvp.z, dstvp.w,
-        GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        mask, filter);
 
     // Always clean the read fbo to 0
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);

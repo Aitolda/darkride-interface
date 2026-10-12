@@ -547,6 +547,18 @@ Menu::Menu() {
             }
         }
     });
+    // Developer > Render > Cache Static Shadow Casters: off, a light's map is drawn whole each time (no map of the
+    // casters that haven't changed for a while, copied under the moving ones), for comparing
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::LocalShadowStaticCaching, 0, true);
+    connect(action, &QAction::triggered, [action] {
+        auto renderConfig = qApp->getRenderEngine()->getConfiguration();
+        for (const auto& view : { "RenderMainView.LocalShadowSetup", "RenderSecondView.LocalShadowSetup" }) {
+            auto config = renderConfig->getConfig<RenderLocalShadowSetup>(view);
+            if (config) {
+                config->setStaticCaching(action->isChecked());
+            }
+        }
+    });
 
     addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::WorldAxes);
     // addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::DefaultSkybox, Qt::Key_Asterisk, true);

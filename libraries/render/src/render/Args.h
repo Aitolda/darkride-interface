@@ -42,10 +42,12 @@ namespace render {
 
         int _materialSwitches = 0;
         int _trianglesRendered = 0;
-        // shadow maps given to spot and point lights this frame (one for a spot light, six for a point light), and
-        // how many of those maps were drawn again rather than kept
+        // shadow maps given to spot and point lights this frame (one for a spot light, six for a point light), how
+        // many of those maps were drawn again rather than kept, and how many of those had their static casters'
+        // map drawn again too (the rest copied it and drew only the dynamic casters)
         int _localShadowMaps = 0;
         int _localShadowMapsDrawn = 0;
+        int _localShadowStaticMapsDrawn = 0;
 
         Item _item;
         Item _shadow;

@@ -438,7 +438,8 @@ Item {
                     StatText {
                         visible: root.expanded;
                         text: "Light shadow maps drawn / lit: " +
-                            root.localShadowMapsDrawn + " / " + root.localShadowMaps;
+                            root.localShadowMapsDrawn + " / " + root.localShadowMaps +
+                            ", static redrawn: " + root.localShadowStaticMapsDrawn;
                     }
                     StatText {
                         visible: root.expanded

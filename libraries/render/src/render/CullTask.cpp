@@ -182,6 +182,9 @@ void FetchSpatialTree::run(const RenderContextPointer& renderContext, const Inpu
             const auto pixelResolution = frustumResolution.x > 0 ? frustumResolution : glm::ivec2(2048, 2048);
             threshold = glm::max(threshold, glm::min(frustumSize.x / pixelResolution.x, frustumSize.y / pixelResolution.y));
         }
+        if (!_cullBySize) {
+            threshold = 0.0f;
+        }
         scene->getSpatialTree().selectCellItems(outSelection, filter, queryFrustum, threshold);
     }
 }

@@ -52,9 +52,8 @@ bool ShapeEntityRenderer::needsRenderUpdate() const {
 }
 
 bool ShapeEntityRenderer::needsRenderUpdateFromTypedEntity(const TypedEntityPointer& entity) const {
-    if (_visible != wasPreviouslyVisible())
-        return true;
-
+    // the zone-culling visibility is compared by needsRenderUpdate, not here: this says only whether the entity
+    // itself has changed (EntityRenderer::entityHasChanged)
     if (_dimensions != entity->getScaledDimensions()) {
         return true;
     }

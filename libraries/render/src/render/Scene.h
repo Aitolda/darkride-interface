@@ -50,10 +50,11 @@ public:
     void resetItem(ItemID id, const PayloadPointer& payload);
     void removeItem(ItemID id);
     bool hasRemovedItems() const { return !_removedItems.empty(); }
-    template <class T> void updateItem(ItemID id, std::function<void(T&)> func) {
-        updateItem(id, std::make_shared<UpdateFunctor<T>>(func));
+    // `changed` false: the update changes nothing the item shows (see Update), so it is not stamped as a change
+    template <class T> void updateItem(ItemID id, std::function<void(T&)> func, bool changed = true) {
+        updateItem(id, std::make_shared<UpdateFunctor<T>>(func), changed);
     }
-    void updateItem(ItemID id, const UpdateFunctorPointer& functor);
+    void updateItem(ItemID id, const UpdateFunctorPointer& functor, bool changed = true);
     void updateItem(ItemID id) { updateItem(id, nullptr); }
 
     // Transition (applied to an item) transactions
@@ -80,7 +81,9 @@ protected:
 
     using Reset = std::tuple<ItemID, PayloadPointer>;
     using Remove = ItemID;
-    using Update = std::tuple<ItemID, UpdateFunctorPointer>;
+    // the item, the update, and whether it changes anything: an update that doesn't (the entity server re-sends
+    // every entity in an octree cell when one of them moves) leaves the item's change stamp alone
+    using Update = std::tuple<ItemID, UpdateFunctorPointer, bool>;
 
     using TransitionReset = std::tuple<ItemID, Transition::Type, ItemID>;
     using TransitionRemove = ItemID;

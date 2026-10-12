@@ -47,8 +47,8 @@ void Transaction::setTransitionFinishedOperator(ItemID id, TransitionFinishedFun
     _transitionFinishedOperators.emplace_back(id, func);
 }
 
-void Transaction::updateItem(ItemID id, const UpdateFunctorPointer& functor) {
-    _updatedItems.emplace_back(id, functor);
+void Transaction::updateItem(ItemID id, const UpdateFunctorPointer& functor, bool changed) {
+    _updatedItems.emplace_back(id, functor, changed);
 }
 
 void Transaction::resetSelection(const Selection& selection) {
@@ -357,9 +357,12 @@ void Scene::updateItems(const Transaction::Updates& transactions) {
         auto oldCell = item.getCell();
         auto oldKey = item.getKey();
 
-        // Update the item
+        // Update the item; an update that changes nothing (see Transaction::Update) is not a change for the shadow
+        // cache (RenderLocalShadowTask), which reads the stamps
         item.update(std::get<1>(update));
-        item._changeFrame = _frame;
+        if (std::get<2>(update)) {
+            item._changeFrame = _frame;
+        }
         auto newKey = item.getKey();
 
         // Update the item's container

@@ -149,13 +149,22 @@ void GL45Backend::do_blit(const Batch& batch, size_t paramOffset) {
         dstvp[i] = batch._params[paramOffset + 6 + i]._int;
     }
 
+    // what is copied: the colour, or, from a framebuffer that has none (one depth atlas into another), the depth,
+    // which GL copies only point for point
+    GLbitfield mask = GL_COLOR_BUFFER_BIT;
+    GLenum filter = GL_LINEAR;
+    if (!srcframebuffer->hasColor() && srcframebuffer->hasDepth() && dstframebuffer->hasDepth()) {
+        mask = GL_DEPTH_BUFFER_BIT;
+        filter = GL_NEAREST;
+    }
+
     // Assign dest framebuffer if not bound already
     auto destFbo = getFramebufferID(dstframebuffer);
     auto srcFbo = getFramebufferID(srcframebuffer);
     glBlitNamedFramebuffer(srcFbo, destFbo,
         srcvp.x, srcvp.y, srcvp.z, srcvp.w,
         dstvp.x, dstvp.y, dstvp.z, dstvp.w,
-        GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        mask, filter);
     (void) CHECK_GL_ERROR();
 }
 

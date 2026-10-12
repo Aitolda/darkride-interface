@@ -245,6 +245,10 @@ private: \
  * @property {number} localShadowMapsDrawn - The number of those shadow maps drawn again this frame; the rest were
  *     kept from earlier frames, nothing in their view having changed.
  *     <em>Read-only.</em>
+ * @property {number} localShadowStaticMapsDrawn - The number of those drawn again whose static casters (the ones
+ *     that haven't changed for a while) were drawn again too; the rest copied their static map and drew only the
+ *     dynamic casters over it.
+ *     <em>Read-only.</em>
  * @property {string} sendingMode - Description of the octree sending mode.
  *     <em>Read-only.</em>
  * @property {string} packetStats - Description of the octree packet processing state.
@@ -552,6 +556,7 @@ class Stats : public QQuickItem {
     STATS_PROPERTY(int, shadowRendered, 0)
     STATS_PROPERTY(int, localShadowMaps, 0)
     STATS_PROPERTY(int, localShadowMapsDrawn, 0)
+    STATS_PROPERTY(int, localShadowStaticMapsDrawn, 0)
     STATS_PROPERTY(QString, sendingMode, QString())
     STATS_PROPERTY(QString, packetStats, QString())
     STATS_PROPERTY(int, lodAngle, 0)
@@ -1212,6 +1217,13 @@ signals:
      * @returns {Signal}
      */
     void localShadowMapsDrawnChanged();
+
+    /**jsdoc
+     * Triggered when the value of the <code>localShadowStaticMapsDrawn</code> property changes.
+     * @function Stats.localShadowStaticMapsDrawnChanged
+     * @returns {Signal}
+     */
+    void localShadowStaticMapsDrawnChanged();
 
     /**jsdoc
      * Triggered when the value of the <code>sendingMode</code> property changes.

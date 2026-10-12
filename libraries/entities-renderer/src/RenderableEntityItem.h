@@ -47,7 +47,13 @@ public:
 
     // Handlers for rendering events... executed on the main thread, only called by EntityTreeRenderer, 
     // cannot be overridden or accessed by subclasses
-    virtual void updateInScene(const ScenePointer& scene, Transaction& transaction) final;
+    // `changed` false: nothing the renderer shows has changed (an update forced by the entity server re-sending an
+    // unchanged entity), so the scene's item keeps its change stamp
+    virtual void updateInScene(const ScenePointer& scene, Transaction& transaction, bool changed = true) final;
+    // whether anything the entity shows has changed since the last update: its properties, bound, transform, or what
+    // its renderer compares; without the zone-culling bookkeeping needsRenderUpdate adds, which says yes for every
+    // visible entity while zone culling is off
+    bool entityHasChanged() const { return needsRenderUpdateFromEntity(_entity); }
     virtual bool addToScene(const ScenePointer& scene, Transaction& transaction) final;
     virtual void removeFromScene(const ScenePointer& scene, Transaction& transaction);
 

@@ -69,13 +69,17 @@ namespace render {
         bool _justFrozeFrustum{ false };
         ViewFrustum _frozenFrustum;
         float _lodAngle;
+        bool _cullBySize{ true };
 
     public:
         using Config = FetchSpatialTreeConfig;
         using Inputs = render::VaryingSet2<ItemFilter, glm::ivec2>;
         using JobModel = Job::ModelIO<FetchSpatialTree, Inputs, ItemSpatialTree::ItemSelection, Config>;
 
-        FetchSpatialTree() {}
+        // cullBySize false: every item in the view is fetched, however small on screen; the level of detail's
+        // size scale, which moves with the frame rate, is left out, so that a cached selection (the local shadow
+        // maps) doesn't change from frame to frame while nothing moves
+        FetchSpatialTree(bool cullBySize = true) : _cullBySize(cullBySize) {}
 
         void configure(const Config& config);
         void run(const RenderContextPointer& renderContext, const Inputs& inputs, ItemSpatialTree::ItemSelection& outSelection);

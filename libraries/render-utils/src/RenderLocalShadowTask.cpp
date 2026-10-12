@@ -76,6 +76,9 @@ namespace {
     const float MAX_COOKIE_SPOT_ANGLE = glm::radians(85.0f);
     // the pictures in use are copied in again this often, for the detail a picture gains as it finishes loading
     const uint64_t COOKIE_REFRESH_FRAMES = 30;
+    // a caster unchanged for this many scene frames counts as static (an avatar, or an animated model, changes every
+    // frame and never does); one that changes stays dynamic this long after, then joins the static map
+    const uint64_t STATIC_AFTER_FRAMES = 60;
     const float FIELD_OF_VIEW_MARGIN = glm::radians(2.0f);   // so the edge of the cone is filtered like its middle
     const float MIN_NEAR_CLIP = 0.05f;
     const float NEAR_CLIP_SCALE = 0.01f;
@@ -274,38 +277,98 @@ void LocalShadows::fillTile(int tile, const graphics::LightPointer& light, Light
     _tableData[texel + 5] = glm::vec4(texelSizePerMeter, NORMAL_OFFSET_TEXELS, LIGHT_OFFSET_TEXELS, 1.0f / ATLAS_SIZE);
 }
 
-bool LocalShadows::tileIsStale(int tile, const render::ShapeBounds& casters, const render::Scene& scene) {
+const LocalShadows::TilePlan* LocalShadows::planTile(int tile, const render::ShapeBounds& casters, const render::Scene& scene) {
     if (tile < 0 || tile >= getTileCount() || !_tiles[tile].light || !_tiles[tile].frustum) {
-        return false;
+        return nullptr;
     }
     auto& entry = _tiles[tile];
+    const uint64_t frame = scene.getFrame();
+    const bool split = _caching && _staticCaching;
+    if (split) {
+        ensureStaticAtlas();
+    }
 
-    // the casters in the light's view this frame; whether one of them has changed since the map was drawn, or is in
-    // a transition (fading in), which changes it every frame without a word to the scene
+    // the casters in the light's view this frame, the static ones (unchanged for a while) apart from the dynamic
+    // (changed lately, or in a transition such as fading in, which changes them every frame without a word to the
+    // scene); and whether one of either kind has changed since its map was drawn
+    _plan.staticCasters.clear();
+    _plan.dynamicCasters.clear();
+    _staticIds.clear();
     _casterIds.clear();
-    bool changed = false;
+    bool staticChanged = false;
+    bool dynamicChanged = false;
     for (const auto& shapes : casters) {
         for (const auto& bound : shapes.second) {
-            _casterIds.push_back(bound.id);
             const auto& item = scene.getItem(bound.id);
-            changed = changed || item.getChangeFrame() > entry.drawnFrame
-                || !render::TransitionStage::isIndexInvalid(item.getTransitionId());
+            bool transitioning = !render::TransitionStage::isIndexInvalid(item.getTransitionId());
+            bool dynamic = !split || transitioning || item.getChangeFrame() + STATIC_AFTER_FRAMES > frame;
+            if (dynamic) {
+                _plan.dynamicCasters[shapes.first].push_back(bound);
+                _casterIds.push_back(bound.id);
+                dynamicChanged = dynamicChanged || transitioning || item.getChangeFrame() > entry.drawnFrame;
+            } else {
+                _plan.staticCasters[shapes.first].push_back(bound);
+                _staticIds.push_back(bound.id);
+                staticChanged = staticChanged || item.getChangeFrame() > entry.staticFrame;
+            }
         }
     }
     std::sort(_casterIds.begin(), _casterIds.end());
+    std::sort(_staticIds.begin(), _staticIds.end());
 
     const glm::mat4& view = entry.frustum->getView();
     const glm::mat4& projection = entry.frustum->getProjection();
-    if (_caching && entry.drawn && !changed && view == entry.drawnView && projection == entry.drawnProjection
-            && _casterIds == entry.drawnCasters) {
-        return false;
+
+    // the static map: drawn again when the view moved or the static casters differ from those in it
+    _plan.redrawStatic = split && (!entry.staticDrawn || staticChanged || view != entry.staticView
+        || projection != entry.staticProjection || _staticIds != entry.staticCasters);
+    _plan.copyStatic = split;
+    if (_plan.redrawStatic) {
+        entry.staticDrawn = true;
+        entry.staticView = view;
+        entry.staticProjection = projection;
+        entry.staticCasters.swap(_staticIds);
+        entry.staticFrame = frame;
+    }
+
+    // the working map: kept while the view, the static map under it and the dynamic casters over it are as drawn
+    uint64_t staticFrame = split ? entry.staticFrame : 0;
+    if (_caching && entry.drawn && !dynamicChanged && view == entry.drawnView && projection == entry.drawnProjection
+            && _casterIds == entry.drawnCasters && staticFrame == entry.drawnStaticFrame) {
+        return nullptr;
     }
     entry.drawn = true;
     entry.drawnView = view;
     entry.drawnProjection = projection;
     entry.drawnCasters.swap(_casterIds);
-    entry.drawnFrame = scene.getFrame();
-    return true;
+    entry.drawnFrame = frame;
+    entry.drawnStaticFrame = staticFrame;
+    return &_plan;
+}
+
+void LocalShadows::ensureStaticAtlas() {
+    if (_staticAtlas) {
+        return;
+    }
+    // the working atlas's twin: the same tiles, in the same format, so that a tile blits across point for point;
+    // the shaders never read it
+    auto depthFormat = gpu::Element(gpu::SCALAR, gpu::FLOAT, gpu::DEPTH);
+    gpu::Sampler::Desc samplerDesc;
+    samplerDesc._filter = gpu::Sampler::FILTER_MIN_MAG_POINT;
+    samplerDesc._wrapModeU = gpu::Sampler::WRAP_CLAMP;
+    samplerDesc._wrapModeV = gpu::Sampler::WRAP_CLAMP;
+    _staticAtlas = gpu::TexturePointer(gpu::Texture::createRenderBuffer(depthFormat, ATLAS_SIZE, ATLAS_SIZE,
+        gpu::Texture::SINGLE_MIP, gpu::Sampler(samplerDesc)));
+    _staticFramebuffer = gpu::FramebufferPointer(gpu::Framebuffer::create("Local shadow static atlas"));
+    _staticFramebuffer->setDepthBuffer(_staticAtlas, depthFormat);
+}
+
+void LocalShadows::copyStaticMap(gpu::Batch& batch, const glm::ivec4& viewport) {
+    if (!_staticFramebuffer) {
+        return;
+    }
+    glm::ivec4 rect(viewport.x, viewport.y, viewport.x + viewport.z, viewport.y + viewport.w);
+    batch.blit(_staticFramebuffer, rect, _framebuffer, rect);
 }
 
 bool LocalShadows::setSpotCookie(LightStage::Index lightIndex, const gpu::TexturePointer& picture, const ViewFrustum& frustum) {
@@ -443,9 +506,11 @@ void RenderLocalShadowTask::build(JobModel& task, const render::Varying& input, 
     const auto queryResolution = setupOutput.getN<RenderLocalShadowSetup::Output>(1);
     const auto localShadows = setupOutput.getN<RenderLocalShadowSetup::Output>(2);
 
-    // what any of the lights might shine on, fetched once through a view that takes them all in
+    // what any of the lights might shine on, fetched once through a view that takes them all in; every item however
+    // small, so that the casters in a light's view don't come and go with the level of detail's size scale, which
+    // would redraw its cached map
     const auto fetchInput = FetchSpatialTree::Inputs(casterReceiverFilter, queryResolution).asVarying();
-    const auto selection = task.addJob<FetchSpatialTree>("FetchLocalShadowTree", fetchInput);
+    const auto selection = task.addJob<FetchSpatialTree>("FetchLocalShadowTree", fetchInput, false);
     const auto selectionInputs = CullSpatialSelection::Inputs(selection, casterReceiverFilter).asVarying();
     const auto items = task.addJob<CullSpatialSelection>("FilterLocalShadowSelection", selectionInputs, nullptr, true, RenderDetails::SHADOW);
     const auto sortedPipelines = task.addJob<PipelineSortShapes>("PipelineSortLocalShadow", items);
@@ -515,6 +580,7 @@ void RenderLocalShadowSetup::run(const render::RenderContextPointer& renderConte
         _localShadows = std::make_shared<LocalShadows>();
     }
     _localShadows->setCaching(_caching);
+    _localShadows->setStaticCaching(_staticCaching);
     // which light had which tile last frame (a point light all six of its faces)
     std::vector<LightStage::Index> previousTiles;
     for (int tile = 0; tile < _localShadows->getTileCount(); ++tile) {
@@ -733,30 +799,57 @@ void RenderLocalShadowMap::run(const render::RenderContextPointer& renderContext
     }
     RenderArgs* args = renderContext->args;
     args->_details._localShadowMaps++;
-    if (!localShadows->tileIsStale(_tile, casters, *renderContext->_scene)) {
+    const auto* plan = localShadows->planTile(_tile, casters, *renderContext->_scene);
+    if (!plan) {
         return;   // the map in the tile still shows what the light sees
     }
     args->_details._localShadowMapsDrawn++;
+    if (plan->redrawStatic) {
+        args->_details._localShadowStaticMapsDrawn++;
+    }
 
+    glm::ivec4 viewport = localShadows->getTileViewport(_tile);
+    glm::mat4 projection;
+    Transform view;
+    args->getViewFrustum().evalProjectionMatrix(projection);
+    args->getViewFrustum().evalViewTransform(view);
+
+    // the static casters' map first, when they or the view have changed: in a batch of its own, because shapes are
+    // drawn instanced through the batch's named calls, which a batch runs at its end, with whatever framebuffer is
+    // bound then
+    if (plan->redrawStatic) {
+        gpu::doInBatch("RenderLocalShadowMap::static", args->_context, [&](gpu::Batch& batch) {
+            args->_batch = &batch;
+            batch.enableStereo(false);
+            batch.setFramebuffer(localShadows->getStaticFramebuffer());
+            batch.setViewportTransform(viewport);
+            batch.setStateScissorRect(viewport);
+            batch.clearDepthFramebuffer(1.0f, true);
+            batch.setProjectionTransform(projection);
+            batch.setViewTransform(view, false);
+            renderShadowCasters(renderContext, _shapePlumber, plan->staticCasters);
+            args->_batch = nullptr;
+        });
+    }
+
+    // the working map: a copy of the static map, or cleared, with the dynamic casters (every caster, without static
+    // caching) drawn over it
     gpu::doInBatch("RenderLocalShadowMap::run", args->_context, [&](gpu::Batch& batch) {
         args->_batch = &batch;
         batch.enableStereo(false);
-
-        glm::ivec4 viewport = localShadows->getTileViewport(_tile);
         batch.setFramebuffer(localShadows->getFramebuffer());
         batch.setViewportTransform(viewport);
         batch.setStateScissorRect(viewport);
-        batch.clearDepthFramebuffer(1.0f, true);
-
-        glm::mat4 projection;
-        Transform view;
-        args->getViewFrustum().evalProjectionMatrix(projection);
-        args->getViewFrustum().evalViewTransform(view);
-        batch.setProjectionTransform(projection);
-        batch.setViewTransform(view, false);
-
-        renderShadowCasters(renderContext, _shapePlumber, casters);
-
+        if (plan->copyStatic) {
+            localShadows->copyStaticMap(batch, viewport);
+        } else {
+            batch.clearDepthFramebuffer(1.0f, true);
+        }
+        if (!plan->dynamicCasters.empty()) {
+            batch.setProjectionTransform(projection);
+            batch.setViewTransform(view, false);
+            renderShadowCasters(renderContext, _shapePlumber, plan->dynamicCasters);
+        }
         args->_batch = nullptr;
     });
 }

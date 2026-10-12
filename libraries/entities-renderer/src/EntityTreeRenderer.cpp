@@ -499,8 +499,12 @@ void EntityTreeRenderer::updateChangedEntities(const render::ScenePointer& scene
             for (const EntityRendererPointer& renderable : _renderablesToUpdate) {
                 assert(renderable);  // only valid renderables are added to _renderablesToUpdate
                 if (renderable != nullptr) {
+                    // whether anything the renderer shows has changed, before the update is forced: the entity
+                    // server re-sends every entity in an octree cell when one of them moves, and the shadow cache
+                    // must not take the others for moving (the scene's change stamps)
+                    bool changed = renderable->entityHasChanged();
                     renderable->getEntity()->setNeedsRenderUpdate(true);
-                    renderable->updateInScene(scene, transaction);
+                    renderable->updateInScene(scene, transaction, changed);
                 }
             }
 

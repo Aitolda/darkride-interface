@@ -312,9 +312,9 @@ void EntityRenderer::removeFromScene(const ScenePointer& scene, Transaction& tra
     _entity->bumpAncestorChainRenderableVersion();
 }
 
-void EntityRenderer::updateInScene(const ScenePointer& scene, Transaction& transaction) {
+void EntityRenderer::updateInScene(const ScenePointer& scene, Transaction& transaction, bool changed) {
     DETAILED_PROFILE_RANGE(simulation_physics, __FUNCTION__);
-    if (this == nullptr || !isValidRenderItem()) {       
+    if (this == nullptr || !isValidRenderItem()) {
         return;
     }
     _updateTime = usecTimestampNow();
@@ -326,7 +326,7 @@ void EntityRenderer::updateInScene(const ScenePointer& scene, Transaction& trans
         }
         // Happens on the render thread.  Classes should use
         doRenderUpdateAsynchronous(_entity);
-    });
+    }, changed);
 }
 
 //
