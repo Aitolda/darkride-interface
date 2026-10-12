@@ -22,6 +22,7 @@
 #include "../JsonOrder.h"
 #include "PropertyEditors.h"
 
+class QScrollArea;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -56,6 +57,8 @@ private:
     void addEntry(const Path& parentPath, QJsonValue::Type type);
     QTreeWidgetItem* itemAt(const Path& path) const;
     void reveal(const Path& path);        // scrolls the list and the Inspector to the entry
+    void focusValue(const Path& path);    // the keyboard goes to the entry's value, if it has a field
+    QScrollArea* outerScrollArea() const; // the Inspector's, which the list sits in
     void renameEntry(QTreeWidgetItem* item);
     void showMenu(const QPoint& pos);
     void editAsJson();
@@ -76,6 +79,8 @@ private:
     bool _settingItems { false };         // the tree's items being made or put back: not the user renaming
     QStringList _claimed;
     QSet<QString> _expanded;              // the objects and arrays open in the tree, kept across rebuilds
+    Path _renamedTo;                      // the entry just renamed, under its new name, until the list is remade
+    Path _focusAfterRebuild;              // the entry whose value takes the keyboard once the list is remade
 };
 
 #endif // hifi_UserDataEditor_h

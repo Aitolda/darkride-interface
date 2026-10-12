@@ -9,15 +9,18 @@
 #include "UserDataEditor.h"
 
 #include <cmath>
+#include <functional>
 #include <memory>
 
 #include <QtCore/QEvent>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QLocale>
+#include <QtCore/QPointer>
 #include <QtCore/QTimer>
 #include <QtGui/QDoubleValidator>
 #include <QtGui/QFontDatabase>
+#include <QtGui/QKeyEvent>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDialog>
 #include <QtWidgets/QDialogButtonBox>
@@ -25,6 +28,8 @@
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QScrollArea>
+#include <QtWidgets/QScrollBar>
+#include <QtWidgets/QStyledItemDelegate>
 #include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QTreeWidgetItemIterator>
 #include <QtWidgets/QVBoxLayout>
@@ -169,6 +174,36 @@ namespace {
         { "Object { }", QJsonValue::Object },
         { "Array [ ]", QJsonValue::Array },
     };
+
+    // the tree's own editor for a name, with Tab committing the name and going on to the entry's value, as in a
+    // table, rather than to the next entry's name as Qt has it
+    class NameDelegate : public QStyledItemDelegate {
+    public:
+        explicit NameDelegate(QObject* parent) : QStyledItemDelegate(parent) {}
+        std::function<void(const Path& path)> tabbed;   // the name is committed and its editor closed
+        QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
+            _path = index.data(PATH_ROLE).toList();
+            return QStyledItemDelegate::createEditor(parent, option, index);
+        }
+    protected:
+        bool eventFilter(QObject* object, QEvent* event) override {
+            if (event->type() == QEvent::KeyPress) {
+                int key = static_cast<QKeyEvent*>(event)->key();
+                if (key == Qt::Key_Tab || key == Qt::Key_Backtab) {
+                    auto editor = qobject_cast<QWidget*>(object);
+                    emit commitData(editor);
+                    emit closeEditor(editor, QAbstractItemDelegate::NoHint);
+                    if (tabbed) {
+                        tabbed(_path);
+                    }
+                    return true;
+                }
+            }
+            return QStyledItemDelegate::eventFilter(object, event);
+        }
+    private:
+        mutable Path _path;
+    };
 }
 
 UserDataEditor::UserDataEditor(const PropertySpec& spec, QWidget* parent) : PropertyEditor(spec, parent) {
@@ -225,6 +260,17 @@ UserDataEditor::UserDataEditor(const PropertySpec& spec, QWidget* parent) : Prop
             renameEntry(item);
         }
     });
+    auto delegate = new NameDelegate(_tree);
+    _tree->setItemDelegate(delegate);
+    delegate->tabbed = [this](const Path& path) {
+        // on to the value: of the entry under its new name once the list has been made again, or of this one
+        if (!_renamedTo.isEmpty()) {
+            _focusAfterRebuild = _renamedTo;
+            _renamedTo.clear();
+        } else {
+            focusValue(path);
+        }
+    };
     connect(_tree, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
         _expanded.insert(pathKey(item->data(0, PATH_ROLE).toList()));
     });
@@ -313,6 +359,14 @@ void UserDataEditor::showValue() {
 }
 
 void UserDataEditor::rebuildTree() {
+    // the Inspector's scroll position is kept: the list, cleared and filled again, would move it
+    QPointer<QScrollBar> bar = outerScrollArea() ? outerScrollArea()->verticalScrollBar() : nullptr;
+    int scroll = bar ? bar->value() : 0;
+    QTimer::singleShot(0, this, [bar, scroll] {
+        if (bar) {
+            bar->setValue(scroll);
+        }
+    });
     _settingItems = true;
     _tree->clear();
     for (const auto& key : JsonOrder::keysInOrder(_object, _order, Path())) {
@@ -473,10 +527,7 @@ void UserDataEditor::reveal(const Path& path) {
     }
     _tree->scrollToItem(item);
     // the Inspector scrolls as well: the list sits at its bottom, where a new row is below its edge
-    QScrollArea* area = nullptr;
-    for (QWidget* parent = parentWidget(); parent && !area; parent = parent->parentWidget()) {
-        area = qobject_cast<QScrollArea*>(parent);
-    }
+    QScrollArea* area = outerScrollArea();
     if (area && area->widget()) {
         QRect rect = _tree->visualItemRect(item);
         QPoint at = _tree->viewport()->mapTo(area->widget(), rect.center());
@@ -513,8 +564,42 @@ void UserDataEditor::renameEntry(QTreeWidgetItem* item) {
         _expanded.insert(pathKey(child(parentPath, newName)));
     }
     _object = parentPath.isEmpty() ? parent : withValue(_object, parentPath, parent).toObject();
+    _renamedTo = child(parentPath, newName);
     commit();
-    QTimer::singleShot(0, this, [this] { rebuildTree(); });
+    QTimer::singleShot(0, this, [this] {
+        rebuildTree();
+        _renamedTo.clear();
+        if (!_focusAfterRebuild.isEmpty()) {   // Tab went on from the name
+            Path path = _focusAfterRebuild;
+            _focusAfterRebuild.clear();
+            QTimer::singleShot(0, this, [this, path] { focusValue(path); });   // once the list has settled
+        }
+    });
+}
+
+void UserDataEditor::focusValue(const Path& path) {
+    QTreeWidgetItem* item = itemAt(path);
+    if (!item) {
+        return;
+    }
+    QWidget* field = _tree->itemWidget(item, 1);
+    if (!field) {
+        return;   // an object or array: nothing to type into
+    }
+    field->setFocus(Qt::TabFocusReason);
+    if (auto edit = qobject_cast<QLineEdit*>(field)) {
+        edit->selectAll();
+    }
+    reveal(path);
+}
+
+QScrollArea* UserDataEditor::outerScrollArea() const {
+    for (QWidget* parent = parentWidget(); parent; parent = parent->parentWidget()) {
+        if (auto area = qobject_cast<QScrollArea*>(parent)) {
+            return area;
+        }
+    }
+    return nullptr;
 }
 
 void UserDataEditor::showMenu(const QPoint& pos) {
