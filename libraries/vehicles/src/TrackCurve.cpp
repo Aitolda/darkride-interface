@@ -276,3 +276,17 @@ std::vector<glm::vec3> TrackCurve::polyline(float spacing) const {
     }
     return line;
 }
+
+std::vector<TrackCurve::Pose> TrackCurve::poses(float spacing) const {
+    std::vector<Pose> line;
+    if (!isValid()) {
+        return line;
+    }
+    spacing = std::max(spacing, 0.01f);
+    int count = std::max(2, (int)std::ceil(_length / spacing)) + 1;
+    line.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        line.push_back(poseAt(_length * (float)i / (float)(count - 1)));
+    }
+    return line;
+}

@@ -57,6 +57,9 @@ public:
     // the curve as a polyline with about `spacing` metres between vertices, for drawing it; a closed track's
     // polyline ends where it began
     std::vector<glm::vec3> polyline(float spacing) const;
+    // the same vertices as poses (position, rotation, tangent, banked up), for a gizmo that draws the curve and a tick
+    // per vertex in one pass
+    std::vector<Pose> poses(float spacing) const;
 
 private:
     struct Sample {

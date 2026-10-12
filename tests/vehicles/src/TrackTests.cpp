@@ -105,6 +105,13 @@ void TrackTests::closedLoop() {
     std::vector<glm::vec3> line = curve.polyline(0.5f);
     QVERIFY(line.size() > 100);
     QVERIFY(near(line.front(), line.back(), 1.0e-3f));
+    // and the same vertices as poses, level on a flat track
+    std::vector<TrackCurve::Pose> poses = curve.poses(0.5f);
+    QCOMPARE(poses.size(), line.size());
+    for (size_t i = 0; i < poses.size(); ++i) {
+        QVERIFY(near(poses[i].position, line[i], 1.0e-5f));
+        QVERIFY(near(poses[i].up, glm::vec3(0.0f, 1.0f, 0.0f), 1.0e-4f));
+    }
 }
 
 void TrackTests::banking() {
