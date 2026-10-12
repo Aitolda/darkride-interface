@@ -75,6 +75,14 @@ bool Light::getCastShadows() const {
     return _castShadows;
 }
 
+void Light::setShadowsImportant(bool important) {
+    _shadowsImportant = important;
+}
+
+bool Light::getShadowsImportant() const {
+    return _shadowsImportant;
+}
+
 void Light::setCookie(const gpu::TextureSourcePointer& cookie) {
     std::atomic_store(&_cookie, cookie);
 }

@@ -9,6 +9,8 @@
 #include "RenderLocalShadowTask.h"
 
 #include <algorithm>
+#include <array>
+#include <functional>
 #include <limits>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -31,22 +33,29 @@ using namespace render;
 
 extern void initZPassPipelines(ShapePlumber& plumber, gpu::StatePointer state, const render::ShapePipeline::BatchSetter& batchSetter, const render::ShapePipeline::ItemSetter& itemSetter);
 
-const int LocalShadows::ATLAS_SIZE = 2048;
-const int LocalShadows::TILE_SIZE = 1024;
-const int LocalShadows::TILE_COUNT = 4;
+const int LocalShadows::ATLAS_SIZE = 4096;
+const int LocalShadows::SPOT_TILE_SIZE = 1024;
+const int LocalShadows::SPOT_TILE_COUNT = 8;
+const int LocalShadows::FACE_TILE_SIZE = 512;
+const int LocalShadows::FACE_COUNT = 6;
+const int LocalShadows::POINT_LIGHT_COUNT = 4;
+const int LocalShadows::TILE_COUNT = LocalShadows::SPOT_TILE_COUNT + LocalShadows::POINT_LIGHT_COUNT * LocalShadows::FACE_COUNT;
 const int LocalShadows::LIGHT_COUNT = 256;
 const int LocalShadows::COOKIE_SIZE = 512;
 const int LocalShadows::COOKIE_LAYERS = 8;
 const int LocalShadows::COOKIE_LIGHT_COUNT = 16;
 
-static_assert(LocalShadows::TILE_COUNT == RenderLocalShadowTask::SLOT_COUNT, "a shadow map is drawn for each tile");
-static_assert(LocalShadows::TILE_COUNT <= (LocalShadows::ATLAS_SIZE / LocalShadows::TILE_SIZE) * (LocalShadows::ATLAS_SIZE / LocalShadows::TILE_SIZE),
-              "the tiles fit in the atlas");
-
 namespace {
-    // the table's layout, as LocalShadow.slh reads it: a tile number for each light, then each tile's entry, then a
-    // cookie number for each light, then each cookie's entry
-    const int LIGHT_TEXELS = LocalShadows::LIGHT_COUNT / 4;   // a number for each light, four to a texel
+    // the atlas: rows of spot tiles from the top, then rows of the point lights' faces
+    const int SPOT_TILES_PER_ROW = LocalShadows::ATLAS_SIZE / LocalShadows::SPOT_TILE_SIZE;
+    const int FACE_TILES_PER_ROW = LocalShadows::ATLAS_SIZE / LocalShadows::FACE_TILE_SIZE;
+    const int FACE_ROWS_TOP = ((LocalShadows::SPOT_TILE_COUNT + SPOT_TILES_PER_ROW - 1) / SPOT_TILES_PER_ROW) * LocalShadows::SPOT_TILE_SIZE;
+    const int FACE_ROWS = (LocalShadows::POINT_LIGHT_COUNT * LocalShadows::FACE_COUNT + FACE_TILES_PER_ROW - 1) / FACE_TILES_PER_ROW;
+    static_assert(FACE_ROWS_TOP + FACE_ROWS * LocalShadows::FACE_TILE_SIZE <= LocalShadows::ATLAS_SIZE, "the tiles fit in the atlas");
+
+    // the table's layout, as LocalShadow.slh reads it: an entry for each light, then each tile's entry, then a cookie
+    // number for each light, then each cookie's entry
+    const int LIGHT_TEXELS = LocalShadows::LIGHT_COUNT / 4;   // an entry for each light, four to a texel
     const int TILE_TEXELS = 6;                                 // per tile: a matrix, the tile's bounds, its parameters
     const int COOKIE_MAP_TEXEL = LIGHT_TEXELS + LocalShadows::TILE_COUNT * TILE_TEXELS;
     const int COOKIE_TEXEL = COOKIE_MAP_TEXEL + LIGHT_TEXELS;
@@ -70,7 +79,35 @@ namespace {
     const float MIN_NEAR_CLIP = 0.05f;
     const float NEAR_CLIP_SCALE = 0.01f;
 
-    // a light that had a tile last frame keeps it unless another outranks it by this much, so that two lights that
+    // A point light's face takes in its 90 degrees and a guard angle of this many texels beyond them, so that a lookup
+    // near the edge of the face, with its taps spread and its offsets off the surface, still lands in this face's
+    // map rather than on its border (as Unity's URP widens its point-light shadow slices by a fov bias)
+    const float FACE_GUARD_TEXELS = 4.0f;
+    const float FACE_FIELD_OF_VIEW = 2.0f * atanf(1.0f + 2.0f * FACE_GUARD_TEXELS / LocalShadows::FACE_TILE_SIZE);
+
+    // the faces' axes, in the order the shaders pick them by (LocalShadow.slh: localShadowFace), and an up for each
+    const glm::vec3 FACE_DIRECTIONS[] = {
+        glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(-1.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f),
+        glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, 0.0f, -1.0f) };
+    const glm::vec3 FACE_UPS[] = {
+        glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f),
+        glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, 0.0f, 1.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f) };
+
+    // the orientation that looks along the face's axis (a view looks down its -Z)
+    const glm::quat& faceOrientation(int face) {
+        static const std::array<glm::quat, 6> ORIENTATIONS = [] {
+            std::array<glm::quat, 6> orientations;
+            for (int i = 0; i < 6; ++i) {
+                orientations[i] = glm::quat_cast(glm::inverse(glm::lookAt(glm::vec3(0.0f), FACE_DIRECTIONS[i], FACE_UPS[i])));
+            }
+            return orientations;
+        }();
+        return ORIENTATIONS[face];
+    }
+
+    // a light that had tiles last frame keeps them unless another outranks it by this much, so that two lights that
     // matter about as much don't take turns at casting
     const float KEEP_TILE_BONUS = 1.25f;
     // what the lights may shine on is fetched once, through a view taking in all of them, at this resolution
@@ -110,6 +147,21 @@ namespace {
         float size = range / gap;
         return size * size * light.getIntensity() * std::max(glm::compMax(light.getColor()), 0.01f);
     }
+
+    // a view down onto everything in the box, for culling what is in it
+    void lookDownOn(const AABox& box, ViewFrustum& frustum) {
+        glm::vec3 halfSize = 0.5f * box.getScale();
+        frustum.setPosition(box.calcCenter() + glm::vec3(0.0f, 0.0f, halfSize.z + 1.0f));
+        frustum.setOrientation(glm::quat(1.0f, 0.0f, 0.0f, 0.0f));   // looking down -Z
+        frustum.setProjection(glm::ortho(-halfSize.x, halfSize.x, -halfSize.y, halfSize.y, 0.5f, 2.0f * halfSize.z + 1.5f));
+        frustum.calculate();
+    }
+
+    // the box around everything the light reaches
+    AABox reachOf(const graphics::Light& light) {
+        float reach = light.getMaximumRadius();
+        return AABox(light.getPosition() - glm::vec3(reach), 2.0f * reach);
+    }
 }
 
 LocalShadows::LocalShadows() {
@@ -141,8 +193,22 @@ const gpu::BufferPointer& LocalShadows::getEmptyTable() {
 }
 
 glm::ivec4 LocalShadows::getTileViewport(int tile) const {
-    int tilesPerSide = ATLAS_SIZE / TILE_SIZE;
-    return glm::ivec4((tile % tilesPerSide) * TILE_SIZE, (tile / tilesPerSide) * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    if (tile < SPOT_TILE_COUNT) {
+        return glm::ivec4((tile % SPOT_TILES_PER_ROW) * SPOT_TILE_SIZE, (tile / SPOT_TILES_PER_ROW) * SPOT_TILE_SIZE,
+            SPOT_TILE_SIZE, SPOT_TILE_SIZE);
+    }
+    int face = tile - SPOT_TILE_COUNT;
+    return glm::ivec4((face % FACE_TILES_PER_ROW) * FACE_TILE_SIZE, FACE_ROWS_TOP + (face / FACE_TILES_PER_ROW) * FACE_TILE_SIZE,
+        FACE_TILE_SIZE, FACE_TILE_SIZE);
+}
+
+void LocalShadows::faceFrustum(const graphics::Light& light, int face, ViewFrustum& frustum) {
+    float nearClip = std::max(MIN_NEAR_CLIP, light.getMaximumRadius() * NEAR_CLIP_SCALE);
+    float farClip = std::max(light.getMaximumRadius(), 2.0f * nearClip);
+    frustum.setPosition(light.getPosition());
+    frustum.setOrientation(faceOrientation(face));
+    frustum.setProjection(glm::perspective(FACE_FIELD_OF_VIEW, 1.0f, nearClip, farClip));
+    frustum.calculate();
 }
 
 bool LocalShadows::hasLights() const {
@@ -163,10 +229,28 @@ void LocalShadows::clear() {
     std::fill(_tableData.begin(), _tableData.end(), glm::vec4(0.0f));
 }
 
-void LocalShadows::setTile(int tile, const graphics::LightPointer& light, LightStage::Index lightIndex, const ViewFrustum& frustum) {
-    if (tile < 0 || tile >= getTileCount() || lightIndex < 0 || lightIndex >= LIGHT_COUNT) {
+void LocalShadows::setSpotTile(int tile, const graphics::LightPointer& light, LightStage::Index lightIndex, const ViewFrustum& frustum) {
+    if (tile < 0 || tile >= SPOT_TILE_COUNT || lightIndex < 0 || lightIndex >= LIGHT_COUNT) {
         return;
     }
+    fillTile(tile, light, lightIndex, frustum);
+    // a spot light's entry: its tile plus one
+    _tableData[lightIndex / 4][lightIndex % 4] = (float)(tile + 1);
+}
+
+void LocalShadows::setPointFaces(int point, const graphics::LightPointer& light, LightStage::Index lightIndex, const ViewFrustum* faces) {
+    if (point < 0 || point >= POINT_LIGHT_COUNT || lightIndex < 0 || lightIndex >= LIGHT_COUNT) {
+        return;
+    }
+    int first = firstFaceTile(point);
+    for (int face = 0; face < FACE_COUNT; ++face) {
+        fillTile(first + face, light, lightIndex, faces[face]);
+    }
+    // a point light's entry: its first face's tile plus one, negated, to tell it from a spot light's
+    _tableData[lightIndex / 4][lightIndex % 4] = -(float)(first + 1);
+}
+
+void LocalShadows::fillTile(int tile, const graphics::LightPointer& light, LightStage::Index lightIndex, const ViewFrustum& frustum) {
     auto& entry = _tiles[tile];
     entry.light = light;
     entry.lightIndex = lightIndex;
@@ -174,8 +258,6 @@ void LocalShadows::setTile(int tile, const graphics::LightPointer& light, LightS
         entry.frustum = std::make_shared<ViewFrustum>();
     }
     *entry.frustum = frustum;
-
-    _tableData[lightIndex / 4][lightIndex % 4] = (float)(tile + 1);
 
     glm::ivec4 viewport = getTileViewport(tile);
     glm::vec2 low = (glm::vec2(viewport.x, viewport.y) + TILE_MARGIN_TEXELS) / (float)ATLAS_SIZE;
@@ -358,26 +440,51 @@ void RenderLocalShadowTask::build(JobModel& task, const render::Varying& input, 
     const auto sortedPipelines = task.addJob<PipelineSortShapes>("PipelineSortLocalShadow", items);
     const auto sortedShapes = task.addJob<DepthSortShapes>("DepthSortLocalShadow", sortedPipelines, true);
 
-    // then each tile in turn: the casters its light sees, drawn into the tile
-    for (int slot = 0; slot < SLOT_COUNT; ++slot) {
-        char jobName[64];
-        snprintf(jobName, sizeof(jobName), "LocalShadowSlotSetup%d", slot);
-        const auto slotOutput = task.addJob<RenderLocalShadowSlotSetup>(jobName, localShadows, slot, casterReceiverFilter);
+    // a view's turn: of the shapes, the casters its light sees from it, drawn into its tile; the view is taken from
+    // the whole light's casters when it is one face of a point light
+    char jobName[64];
+    auto addTileJobs = [&](int tile, const render::Varying& shapes) {
+        snprintf(jobName, sizeof(jobName), "LocalShadowSlotSetup%d", tile);
+        const auto slotOutput = task.addJob<RenderLocalShadowSlotSetup>(jobName, localShadows, tile, casterReceiverFilter);
         const auto slotFilter = slotOutput.getN<RenderLocalShadowSlotSetup::Output>(0);
         const auto slotLight = slotOutput.getN<RenderLocalShadowSlotSetup::Output>(1);
         const auto slotCullFunctor = slotOutput.getN<RenderLocalShadowSlotSetup::Output>(2);
 
-        snprintf(jobName, sizeof(jobName), "CullLocalShadowCasters%d", slot);
-        const auto cullInputs = CullShadowBounds::Inputs(sortedShapes, slotFilter, render::Varying(ViewFrustumPointer()),
+        snprintf(jobName, sizeof(jobName), "CullLocalShadowCasters%d", tile);
+        const auto cullInputs = CullShadowBounds::Inputs(shapes, slotFilter, render::Varying(ViewFrustumPointer()),
             slotLight, slotCullFunctor).asVarying();
         const auto casters = task.addJob<CullShadowBounds>(jobName, cullInputs);
 
-        snprintf(jobName, sizeof(jobName), "RenderLocalShadowMap%d", slot);
+        snprintf(jobName, sizeof(jobName), "RenderLocalShadowMap%d", tile);
         const auto renderInputs = RenderLocalShadowMap::Inputs(casters.getN<CullShadowBounds::Outputs>(0), localShadows).asVarying();
-        task.addJob<RenderLocalShadowMap>(jobName, renderInputs, shapePlumber, slot);
+        task.addJob<RenderLocalShadowMap>(jobName, renderInputs, shapePlumber, tile);
 
-        snprintf(jobName, sizeof(jobName), "LocalShadowSlotTeardown%d", slot);
+        snprintf(jobName, sizeof(jobName), "LocalShadowSlotTeardown%d", tile);
         task.addJob<RenderShadowCascadeTeardown>(jobName, slotFilter);
+    };
+
+    for (int tile = 0; tile < LocalShadows::SPOT_TILE_COUNT; ++tile) {
+        addTileJobs(tile, sortedShapes);
+    }
+    for (int point = 0; point < LocalShadows::POINT_LIGHT_COUNT; ++point) {
+        // the point light's casters, those within its reach, culled once for its six faces
+        int first = LocalShadows::firstFaceTile(point);
+        snprintf(jobName, sizeof(jobName), "LocalShadowPointSetup%d", point);
+        const auto pointOutput = task.addJob<RenderLocalShadowSlotSetup>(jobName, localShadows, first, casterReceiverFilter, true);
+        const auto pointFilter = pointOutput.getN<RenderLocalShadowSlotSetup::Output>(0);
+        const auto pointLight = pointOutput.getN<RenderLocalShadowSlotSetup::Output>(1);
+        const auto pointCullFunctor = pointOutput.getN<RenderLocalShadowSlotSetup::Output>(2);
+
+        snprintf(jobName, sizeof(jobName), "CullLocalShadowPointCasters%d", point);
+        const auto cullInputs = CullShadowBounds::Inputs(sortedShapes, pointFilter, render::Varying(ViewFrustumPointer()),
+            pointLight, pointCullFunctor).asVarying();
+        const auto pointCasters = task.addJob<CullShadowBounds>(jobName, cullInputs).getN<CullShadowBounds::Outputs>(0);
+
+        for (int face = 0; face < LocalShadows::FACE_COUNT; ++face) {
+            addTileJobs(first + face, pointCasters);
+        }
+        snprintf(jobName, sizeof(jobName), "LocalShadowPointTeardown%d", point);
+        task.addJob<RenderShadowCascadeTeardown>(jobName, pointFilter);
     }
     task.addJob<RenderLocalShadowTeardown>("LocalShadowTeardown", setupOutput);
 }
@@ -397,55 +504,82 @@ void RenderLocalShadowSetup::run(const render::RenderContextPointer& renderConte
         _localShadows = std::make_shared<LocalShadows>();
     }
     _localShadows->setCaching(_caching);
-    // which light had which tile last frame
+    // which light had which tile last frame (a point light all six of its faces)
     std::vector<LightStage::Index> previousTiles;
     for (int tile = 0; tile < _localShadows->getTileCount(); ++tile) {
         previousTiles.push_back(_localShadows->getTile(tile).light ? _localShadows->getTile(tile).lightIndex : LightStage::INVALID_INDEX);
     }
+    auto previousTile = [&](LightStage::Index index) {
+        auto found = std::find(previousTiles.begin(), previousTiles.end(), index);
+        return found == previousTiles.end() ? -1 : (int)(found - previousTiles.begin());
+    };
     _localShadows->clear();
     if (shadowFrame) {
         shadowFrame->_localShadows = nullptr;
     }
 
-    // the spot lights that reach into view: those that cast shadows are candidates for a tile, those whose cookie has
-    // loaded get it; the ones that matter most first
+    // the lights that reach into view: those that cast shadows are candidates for tiles, spot lights whose cookie has
+    // loaded get it; the ones that matter most first, and those marked important before all the others
     struct Candidate {
         LightStage::Index index;
         graphics::LightPointer light;
-        float importance;
+        bool important;
+        float rank;
         gpu::TexturePointer cookie;
     };
-    std::vector<Candidate> candidates;
+    std::vector<Candidate> spots;
+    std::vector<Candidate> points;
     std::vector<Candidate> cookieLights;
-    if (shadowFrame && lightFrame && lightStage && lightingModel && lightingModel->isSpotLightEnabled()) {
+    if (shadowFrame && lightFrame && lightStage && lightingModel) {
         const ViewFrustum& view = args->getViewFrustum();
-        for (auto index : lightFrame->_spotLights) {
-            if (index < 0 || index >= LocalShadows::LIGHT_COUNT) {
-                continue;   // beyond the light array the shaders hold
+        bool shadows = lightingModel->isShadowEnabled();
+        if (lightingModel->isSpotLightEnabled()) {
+            for (auto index : lightFrame->_spotLights) {
+                if (index < 0 || index >= LocalShadows::LIGHT_COUNT) {
+                    continue;   // beyond the light array the shaders hold
+                }
+                auto light = lightStage->getLight(index);
+                if (!light || !view.sphereIntersectsKeyhole(light->getPosition(), light->getMaximumRadius())) {
+                    continue;
+                }
+                float rank = importance(*light, view.getPosition());
+                auto cookieSource = light->getCookie();
+                gpu::TexturePointer cookie = cookieSource ? cookieSource->getGPUTexture() : gpu::TexturePointer();
+                if (cookie && light->getSpotAngle() <= MAX_COOKIE_SPOT_ANGLE) {
+                    cookieLights.push_back({ index, light, false, rank, cookie });
+                }
+                if (shadows && light->getCastShadows() && light->getSpotAngle() <= MAX_SPOT_ANGLE) {
+                    bool hadTile = previousTile(index) >= 0;
+                    spots.push_back({ index, light, light->getShadowsImportant(), hadTile ? rank * KEEP_TILE_BONUS : rank, nullptr });
+                }
             }
-            auto light = lightStage->getLight(index);
-            if (!light || !view.sphereIntersectsKeyhole(light->getPosition(), light->getMaximumRadius())) {
-                continue;
-            }
-            float rank = importance(*light, view.getPosition());
-            auto cookieSource = light->getCookie();
-            gpu::TexturePointer cookie = cookieSource ? cookieSource->getGPUTexture() : gpu::TexturePointer();
-            if (cookie && light->getSpotAngle() <= MAX_COOKIE_SPOT_ANGLE) {
-                cookieLights.push_back({ index, light, rank, cookie });
-            }
-            if (lightingModel->isShadowEnabled() && light->getCastShadows() && light->getSpotAngle() <= MAX_SPOT_ANGLE) {
-                bool hadTile = std::find(previousTiles.begin(), previousTiles.end(), index) != previousTiles.end();
-                candidates.push_back({ index, light, hadTile ? rank * KEEP_TILE_BONUS : rank, nullptr });
+        }
+        if (shadows && lightingModel->isPointLightEnabled()) {
+            for (auto index : lightFrame->_pointLights) {
+                if (index < 0 || index >= LocalShadows::LIGHT_COUNT) {
+                    continue;
+                }
+                auto light = lightStage->getLight(index);
+                if (!light || !light->getCastShadows() || !view.sphereIntersectsKeyhole(light->getPosition(), light->getMaximumRadius())) {
+                    continue;
+                }
+                float rank = importance(*light, view.getPosition());
+                bool hadTiles = previousTile(index) >= 0;
+                points.push_back({ index, light, light->getShadowsImportant(), hadTiles ? rank * KEEP_TILE_BONUS : rank, nullptr });
             }
         }
     }
-    auto byImportance = [](const Candidate& a, const Candidate& b) {
-        return a.importance > b.importance;
+    auto outranks = [](const Candidate& a, const Candidate& b) {
+        return a.important != b.important ? a.important : a.rank > b.rank;
     };
-    std::sort(candidates.begin(), candidates.end(), byImportance);
-    std::sort(cookieLights.begin(), cookieLights.end(), byImportance);
-    if (candidates.size() > (size_t)_localShadows->getTileCount()) {
-        candidates.resize(_localShadows->getTileCount());
+    std::sort(spots.begin(), spots.end(), outranks);
+    std::sort(points.begin(), points.end(), outranks);
+    std::sort(cookieLights.begin(), cookieLights.end(), outranks);
+    if (spots.size() > (size_t)LocalShadows::SPOT_TILE_COUNT) {
+        spots.resize(LocalShadows::SPOT_TILE_COUNT);
+    }
+    if (points.size() > (size_t)LocalShadows::POINT_LIGHT_COUNT) {
+        points.resize(LocalShadows::POINT_LIGHT_COUNT);
     }
 
     // each cookie projected from its light down the light's -Z axis, exactly as wide as the cone, so that the picture
@@ -466,7 +600,7 @@ void RenderLocalShadowSetup::run(const render::RenderContextPointer& renderConte
         });
     }
 
-    if (candidates.empty()) {
+    if (spots.empty() && points.empty()) {
         _localShadows->uploadTable();
         if (_localShadows->hasCookies()) {
             shadowFrame->_localShadows = _localShadows;
@@ -475,45 +609,60 @@ void RenderLocalShadowSetup::run(const render::RenderContextPointer& renderConte
         return;
     }
 
-    // lights keep the tile they had; the others take the free ones
-    std::vector<int> tiles(candidates.size(), -1);
-    std::vector<bool> taken(_localShadows->getTileCount(), false);
-    for (size_t i = 0; i < candidates.size(); ++i) {
-        auto kept = std::find(previousTiles.begin(), previousTiles.end(), candidates[i].index);
-        if (kept != previousTiles.end()) {
-            tiles[i] = (int)(kept - previousTiles.begin());
-            taken[tiles[i]] = true;
+    // lights keep the place they had (a spot light its tile, a point light its six faces); the others take the free
+    // ones. `placeOfTile` says which place of this kind a tile from last frame belongs to, -1 for one of the other kind
+    auto assignPlaces = [&](const std::vector<Candidate>& lights, int placeCount, const std::function<int(int)>& placeOfTile) {
+        std::vector<int> places(lights.size(), -1);
+        std::vector<bool> taken(placeCount, false);
+        for (size_t i = 0; i < lights.size(); ++i) {
+            int tile = previousTile(lights[i].index);
+            int place = tile >= 0 ? placeOfTile(tile) : -1;
+            if (place >= 0 && !taken[place]) {
+                places[i] = place;
+                taken[place] = true;
+            }
         }
-    }
-    for (size_t i = 0; i < candidates.size(); ++i) {
-        if (tiles[i] < 0) {
-            tiles[i] = (int)(std::find(taken.begin(), taken.end(), false) - taken.begin());
-            taken[tiles[i]] = true;
+        for (size_t i = 0; i < lights.size(); ++i) {
+            if (places[i] < 0) {
+                places[i] = (int)(std::find(taken.begin(), taken.end(), false) - taken.begin());
+                taken[places[i]] = true;
+            }
         }
-    }
+        return places;
+    };
+    auto spotTiles = assignPlaces(spots, LocalShadows::SPOT_TILE_COUNT,
+        [](int tile) { return tile < LocalShadows::SPOT_TILE_COUNT ? tile : -1; });
+    auto pointPlaces = assignPlaces(points, LocalShadows::POINT_LIGHT_COUNT,
+        [](int tile) { return tile >= LocalShadows::SPOT_TILE_COUNT ? (tile - LocalShadows::SPOT_TILE_COUNT) / LocalShadows::FACE_COUNT : -1; });
 
-    // each light's view: from the light down its -Z axis, wide enough for its cone, as far as it reaches
+    // each spot light's view: from the light down its -Z axis, wide enough for its cone, as far as it reaches
     AABox reach;
-    for (size_t i = 0; i < candidates.size(); ++i) {
-        const auto& light = candidates[i].light;
+    for (size_t i = 0; i < spots.size(); ++i) {
+        const auto& light = spots[i].light;
         float nearClip = std::max(MIN_NEAR_CLIP, light->getMaximumRadius() * NEAR_CLIP_SCALE);
         float farClip = std::max(light->getMaximumRadius(), 2.0f * nearClip);
         frustum.setPosition(light->getPosition());
         frustum.setOrientation(light->getOrientation());
         frustum.setProjection(glm::perspective(2.0f * light->getSpotAngle() + FIELD_OF_VIEW_MARGIN, 1.0f, nearClip, farClip));
         frustum.calculate();
-        _localShadows->setTile(tiles[i], light, candidates[i].index, frustum);
-        reach += AABox(light->getPosition() - glm::vec3(farClip), 2.0f * farClip);
+        _localShadows->setSpotTile(spotTiles[i], light, spots[i].index, frustum);
+        reach += reachOf(*light);
+    }
+    // each point light's six views: out from the light along the world's axes
+    std::vector<ViewFrustum> faces(LocalShadows::FACE_COUNT);
+    for (size_t i = 0; i < points.size(); ++i) {
+        const auto& light = points[i].light;
+        for (int face = 0; face < LocalShadows::FACE_COUNT; ++face) {
+            LocalShadows::faceFrustum(*light, face, faces[face]);
+        }
+        _localShadows->setPointFaces(pointPlaces[i], light, points[i].index, faces.data());
+        reach += reachOf(*light);
     }
     _localShadows->uploadTable();
     shadowFrame->_localShadows = _localShadows;
 
     // a view down onto everything the lights reach, for fetching what they might shine on once for all of them
-    glm::vec3 halfSize = 0.5f * reach.getScale();
-    _coarseFrustum->setPosition(reach.calcCenter() + glm::vec3(0.0f, 0.0f, halfSize.z + 1.0f));
-    _coarseFrustum->setOrientation(glm::quat(1.0f, 0.0f, 0.0f, 0.0f));   // looking down -Z
-    _coarseFrustum->setProjection(glm::ortho(-halfSize.x, halfSize.x, -halfSize.y, halfSize.y, 0.5f, 2.0f * halfSize.z + 1.5f));
-    _coarseFrustum->calculate();
+    lookDownOn(reach, *_coarseFrustum);
 
     output.edit0() = args->_renderMode;
     output.edit1() = glm::ivec2(COARSE_QUERY_RESOLUTION);
@@ -523,16 +672,29 @@ void RenderLocalShadowSetup::run(const render::RenderContextPointer& renderConte
     args->_renderMode = RenderArgs::SHADOW_RENDER_MODE;
 }
 
+RenderLocalShadowSlotSetup::RenderLocalShadowSlotSetup(int tile, render::ItemFilter filter, bool wholeLight) :
+    _tile{ tile }, _filter{ filter }, _wholeLight{ wholeLight } {
+    if (wholeLight) {
+        _reach = std::make_shared<ViewFrustum>();
+    }
+}
+
 void RenderLocalShadowSlotSetup::run(const render::RenderContextPointer& renderContext, const Input& input, Output& output) {
     const auto& localShadows = input;
-    if (!localShadows || _slot >= localShadows->getTileCount() || !localShadows->getTile(_slot).light) {
+    if (!localShadows || _tile >= localShadows->getTileCount() || !localShadows->getTile(_tile).light) {
         output.edit0() = ItemFilter::Builder::nothing();
         output.edit1() = graphics::LightPointer();
         output.edit2() = RenderShadowTask::CullFunctor();
         return;
     }
-    const auto& tile = localShadows->getTile(_slot);
-    renderContext->args->pushViewFrustum(*tile.frustum);
+    const auto& tile = localShadows->getTile(_tile);
+    if (_wholeLight) {
+        // everything within the light's reach, for its faces to cull from
+        lookDownOn(reachOf(*tile.light), *_reach);
+        renderContext->args->pushViewFrustum(*_reach);
+    } else {
+        renderContext->args->pushViewFrustum(*tile.frustum);
+    }
     output.edit0() = _filter;
     output.edit1() = tile.light;
     output.edit2() = RenderShadowTask::CullFunctor();   // every caster, however small
@@ -541,21 +703,21 @@ void RenderLocalShadowSlotSetup::run(const render::RenderContextPointer& renderC
 void RenderLocalShadowMap::run(const render::RenderContextPointer& renderContext, const Inputs& inputs) {
     const auto& casters = inputs.get0();
     const auto& localShadows = inputs.get1();
-    if (!localShadows || _slot >= localShadows->getTileCount() || !localShadows->getTile(_slot).light) {
+    if (!localShadows || _tile >= localShadows->getTileCount() || !localShadows->getTile(_tile).light) {
         return;
     }
     RenderArgs* args = renderContext->args;
-    args->_details._spotShadowMaps++;
-    if (!localShadows->tileIsStale(_slot, casters, *renderContext->_scene)) {
+    args->_details._localShadowMaps++;
+    if (!localShadows->tileIsStale(_tile, casters, *renderContext->_scene)) {
         return;   // the map in the tile still shows what the light sees
     }
-    args->_details._spotShadowMapsDrawn++;
+    args->_details._localShadowMapsDrawn++;
 
     gpu::doInBatch("RenderLocalShadowMap::run", args->_context, [&](gpu::Batch& batch) {
         args->_batch = &batch;
         batch.enableStereo(false);
 
-        glm::ivec4 viewport = localShadows->getTileViewport(_slot);
+        glm::ivec4 viewport = localShadows->getTileViewport(_tile);
         batch.setFramebuffer(localShadows->getFramebuffer());
         batch.setViewportTransform(viewport);
         batch.setStateScissorRect(viewport);

@@ -535,8 +535,9 @@ Menu::Menu() {
     addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::AmbientOcclusion, 0, RenderScriptingInterface::getInstance()->getAmbientOcclusionEnabled(),
         RenderScriptingInterface::getInstance(), SLOT(setAmbientOcclusionEnabled(bool)));
 
-    // Developer > Render > Cache Spot Shadows: off, a spot light's shadow map is drawn every frame, for comparing
-    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::SpotShadowCaching, 0, true);
+    // Developer > Render > Cache Light Shadows: off, a spot or point light's shadow maps are drawn every frame, for
+    // comparing
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::LocalShadowCaching, 0, true);
     connect(action, &QAction::triggered, [action] {
         auto renderConfig = qApp->getRenderEngine()->getConfiguration();
         for (const auto& view : { "RenderMainView.LocalShadowSetup", "RenderSecondView.LocalShadowSetup" }) {

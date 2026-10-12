@@ -21,7 +21,7 @@ using namespace render;
 using namespace render::entities;
 
 bool LightEntityRenderer::needsRenderUpdateFromTypedEntity(const TypedEntityPointer& entity) const {
-    // userData changes raise no flag of their own: the cookie may have changed with it
+    // userData changes raise no flag of their own: the cookie or the shadows' importance may have changed with it
     QString userData = entity->getUserData();
     return resultWithReadLock<bool>([&] { return userData != _userData; });
 }
@@ -33,11 +33,15 @@ void LightEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
             return;
         }
         _userData = userData;
-        QString cookieURL = QJsonDocument::fromJson(userData.toUtf8()).object().value("cookie").toString();
+        QJsonObject entries = QJsonDocument::fromJson(userData.toUtf8()).object();
+        QString cookieURL = entries.value("cookie").toString();
         if (cookieURL != _cookieURL) {
             _cookieURL = cookieURL;
             _cookie = cookieURL.isEmpty() ? NetworkTexturePointer() : DependencyManager::get<TextureCache>()->getTexture(QUrl(cookieURL));
         }
+        // the Inspector's Shadows field: Important puts the light before the others when more cast shadows than
+        // there are maps (Off is Cast Shadows off)
+        _shadowsImportant = entries.value("shadows").toString() == "important";
     });
 }
 
@@ -79,11 +83,17 @@ void LightEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPoint
         light->setSpotAngle(cutoff);
         light->setSpotExponent(exponent);
     }
-    // the entity's Cast Shadows; spot lights' shadows are drawn by RenderLocalShadowTask, as are their cookies
+    // the entity's Cast Shadows; spot and point lights' shadows are drawn by RenderLocalShadowTask, as are spot
+    // lights' cookies
     light->setCastShadows(entity->getCanCastShadow());
-    light->setCookie(resultWithReadLock<gpu::TextureSourcePointer>([&] {
-        return _cookie ? _cookie->_textureSource : gpu::TextureSourcePointer();
-    }));
+    bool shadowsImportant = false;
+    gpu::TextureSourcePointer cookie;
+    withReadLock([&] {
+        shadowsImportant = _shadowsImportant;
+        cookie = _cookie ? _cookie->_textureSource : gpu::TextureSourcePointer();
+    });
+    light->setShadowsImportant(shadowsImportant);
+    light->setCookie(cookie);
 }
 
 ItemKey LightEntityRenderer::getKey() {

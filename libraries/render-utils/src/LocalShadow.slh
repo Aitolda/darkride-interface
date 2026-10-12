@@ -2,9 +2,9 @@
 //  LocalShadow.slh
 //  libraries/render-utils/src
 //
-//  Shadows and cookies from spot lights: the depth atlas RenderLocalShadowTask keeps up to date (a tile drawn again
-//  when its light or a caster in its view changes), the array of the cookies' pictures, and the table that says which
-//  light has which tile and cookie, and how to project a point into them.
+//  Shadows and cookies from spot and point lights: the depth atlas RenderLocalShadowTask keeps up to date (a tile
+//  drawn again when its light or a caster in its view changes), the array of the cookies' pictures, and the table that
+//  says which light has which tiles and cookie, and how to project a point into them.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -32,29 +32,51 @@ vec4 getLocalShadowTableTexel(int i) {
 }
 #endif
 
-// The table (see LocalShadows in RenderLocalShadowTask.h): first a tile number for each of the 256 lights the light
-// array holds, four to a texel (0 for a light without a shadow, else its tile plus 1), then six texels for each of the
-// four tiles: the matrix from world space into the atlas (four columns), the tile's bounds in the atlas, and
-// { texel size per metre from the light, normal offset in texels, offset toward the light in texels, atlas texel size };
-// then a cookie number for each light in the same way, then five texels for each cookie: the matrix from world space
-// to the picture's texture coordinates (four columns), and { its layer in the array, 0, 0, 0 }
+// The table (see LocalShadows in RenderLocalShadowTask.h): first an entry for each of the 256 lights the light array
+// holds, four to a texel (0 for a light without a shadow; a spot light's tile plus 1; for a point light, which has six
+// tiles, one for each face of a cube around it, the first face's tile plus 1, negated), then six texels for each tile:
+// the matrix from world space into the atlas (four columns), the tile's bounds in the atlas, and { texel size per
+// metre from the light, normal offset in texels, offset toward the light in texels, atlas texel size }; then a cookie
+// number for each light in the same way, then five texels for each cookie: the matrix from world space to the
+// picture's texture coordinates (four columns), and { its layer in the array, 0, 0, 0 }
 const int LOCAL_SHADOW_LIGHT_TEXELS = 64;
 const int LOCAL_SHADOW_TILE_TEXELS = 6;
-const int LOCAL_SHADOW_TILE_COUNT = 4;
+const int LOCAL_SHADOW_TILE_COUNT = 32;   // 8 spot tiles, then 4 point lights' faces
 const int LOCAL_COOKIE_MAP_TEXEL = LOCAL_SHADOW_LIGHT_TEXELS + LOCAL_SHADOW_TILE_COUNT * LOCAL_SHADOW_TILE_TEXELS;
 const int LOCAL_COOKIE_TEXEL = LOCAL_COOKIE_MAP_TEXEL + LOCAL_SHADOW_LIGHT_TEXELS;
 const int LOCAL_COOKIE_TEXELS = 5;
 // a screen step this many times as long (squared) as the other reaches across an object's edge to what's behind it
 const float LOCAL_COOKIE_EDGE_RATIO = 256.0;
 
-int getLocalShadowTile(int lightIndex) {
-    vec4 tiles = getLocalShadowTableTexel(lightIndex >> 2);
-    return int(tiles[lightIndex & 3]) - 1;
+// The face of a point light's cube that a direction out from the light passes through: the one whose axis the
+// direction follows most, in the order +X, -X, +Y, -Y, +Z, -Z (RenderLocalShadowTask draws them in that order)
+int localShadowFace(vec3 direction) {
+    vec3 size = abs(direction);
+    if (size.z >= size.x && size.z >= size.y) {
+        return direction.z < 0.0 ? 5 : 4;
+    }
+    if (size.y >= size.x) {
+        return direction.y < 0.0 ? 3 : 2;
+    }
+    return direction.x < 0.0 ? 1 : 0;
 }
 
-// How much of a spot light reaches a point: 1 lit, 0 in shadow, in between at a shadow's edge
+// The tile holding the light's shadow map for a point, given the direction from the light to the point; -1 without
+int getLocalShadowTile(int lightIndex, vec3 lightToPoint) {
+    vec4 entries = getLocalShadowTableTexel(lightIndex >> 2);
+    int entry = int(entries[lightIndex & 3]);
+    if (entry > 0) {
+        return entry - 1;
+    }
+    if (entry < 0) {
+        return -entry - 1 + localShadowFace(lightToPoint);
+    }
+    return -1;
+}
+
+// How much of a spot or point light reaches a point: 1 lit, 0 in shadow, in between at a shadow's edge
 float evalLocalShadow(int lightIndex, vec3 worldPosition, vec3 worldNormal, vec3 fragLightDir, float fragLightDistance) {
-    int tile = getLocalShadowTile(lightIndex);
+    int tile = getLocalShadowTile(lightIndex, -fragLightDir);
     if (tile < 0) {
         return 1.0;
     }

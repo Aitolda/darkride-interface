@@ -2,12 +2,14 @@
 //  RenderLocalShadowTask.h
 //  render-utils/src/
 //
-//  Shadows and cookies from spot lights. Each frame the spot lights that matter most to the view, of those that cast
-//  shadows, get a shadow map each, drawn into a tile of one depth atlas; and those with a cookie (a picture the light
-//  shines through) get it projected from the light, the picture copied into a layer of a texture array. The light
-//  loop the deferred and transparent shading share (LightLocal.slh) finds a light's tile and cookie through a small
-//  table (LocalShadow.slh). A tile's map is cached: it is drawn again only when the light's view changes or a caster
-//  in that view appears, leaves, changes or fades (render::Item::getChangeFrame).
+//  Shadows and cookies from spot and point lights. Each frame the lights that matter most to the view, of those that
+//  cast shadows, get shadow maps drawn into tiles of one depth atlas: a spot light one tile, a point light six smaller
+//  ones, a 90-degree face each along the world's +X, -X, +Y, -Y, +Z and -Z axes (a cube map laid flat, as Unity's URP
+//  draws point-light shadows). Spot lights with a cookie (a picture the light shines through) get it projected from the
+//  light, the picture copied into a layer of a texture array. The light loop the deferred and transparent shading share
+//  (LightLocal.slh) finds a light's tiles and cookie through a small table (LocalShadow.slh). A tile's map is cached:
+//  it is drawn again only when the light's view changes or a caster in that view appears, leaves, changes or fades
+//  (render::Item::getChangeFrame).
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -30,19 +32,23 @@
 class ViewFrustum;
 
 // The atlas the shadow maps are drawn into, the array the cookies are copied into, the table the shaders read both
-// by, and which light has which tile and cookie
+// by, and which light has which tiles and cookie
 class LocalShadows {
 public:
-    static const int ATLAS_SIZE;    // texels a side
-    static const int TILE_SIZE;
-    static const int TILE_COUNT;    // tiles in the atlas, each a shadow map
-    static const int LIGHT_COUNT;   // lights the table covers: the size of the shaders' light array
+    static const int ATLAS_SIZE;            // texels a side
+    static const int SPOT_TILE_SIZE;        // a spot light's shadow map
+    static const int SPOT_TILE_COUNT;       // spot lights with a shadow map at once
+    static const int FACE_TILE_SIZE;        // one face of a point light's six
+    static const int FACE_COUNT;            // the faces of a point light: +X, -X, +Y, -Y, +Z, -Z
+    static const int POINT_LIGHT_COUNT;     // point lights with shadow maps at once
+    static const int TILE_COUNT;            // tiles in the atlas: the spot tiles, then each point light's faces
+    static const int LIGHT_COUNT;           // lights the table covers: the size of the shaders' light array
     static const int COOKIE_SIZE;           // texels a side of a cookie in the array
     static const int COOKIE_LAYERS;         // pictures the array holds
     static const int COOKIE_LIGHT_COUNT;    // spot lights with a cookie in a frame
 
-    // a tile's light this frame, the view from it, and what the map drawn in the tile shows and when, so that it is
-    // drawn again only when that would differ
+    // a tile's light this frame, the view from it (a spot light's cone, or one face of a point light), and what the
+    // map drawn in the tile shows and when, so that it is drawn again only when that would differ
     struct Tile {
         graphics::LightPointer light;
         LightStage::Index lightIndex { LightStage::INVALID_INDEX };
@@ -69,13 +75,21 @@ public:
     int getTileCount() const { return (int)_tiles.size(); }
     glm::ivec4 getTileViewport(int tile) const;
     const Tile& getTile(int tile) const { return _tiles[tile]; }
+    // the tile of a point light's first face; the other five follow it
+    static int firstFaceTile(int point) { return SPOT_TILE_COUNT + point * FACE_COUNT; }
+    // the frustum of a point light's face, looking out from the light along the face's axis: 90 degrees plus a guard
+    // angle, so that the filtering at a face's edge reads this face's map rather than stopping at its border
+    static void faceFrustum(const graphics::Light& light, int face, ViewFrustum& frustum);
     bool hasLights() const;
     bool hasCookies() const { return _cookieCount > 0; }
 
     // a new frame: no light has a tile or a cookie (the maps drawn in the tiles stay, and their records)
     void clear();
-    // gives the tile to the light, seen through the frustum, and enters it in the table
-    void setTile(int tile, const graphics::LightPointer& light, LightStage::Index lightIndex, const ViewFrustum& frustum);
+    // gives the tile to the spot light, seen through the frustum, and enters it in the table
+    void setSpotTile(int tile, const graphics::LightPointer& light, LightStage::Index lightIndex, const ViewFrustum& frustum);
+    // gives the point light its six faces (the tiles from firstFaceTile), the face frustums in face order, and enters
+    // the light in the table
+    void setPointFaces(int point, const graphics::LightPointer& light, LightStage::Index lightIndex, const ViewFrustum* faces);
     // whether the map in the tile no longer shows what its light sees: the casters in the light's view this frame
     // differ from those drawn, or one of them has changed or is fading since, or the view itself has moved; when it
     // is stale, or caching is off, the record is brought up to date for the map about to be drawn
@@ -100,6 +114,8 @@ private:
         bool due { false };        // to be copied in
     };
     int cookieLayer(const gpu::TexturePointer& picture);
+    // the tile's light and view, and the tile's entry in the table (not the light's)
+    void fillTile(int tile, const graphics::LightPointer& light, LightStage::Index lightIndex, const ViewFrustum& frustum);
 
     gpu::TexturePointer _atlas;
     gpu::FramebufferPointer _framebuffer;
@@ -122,9 +138,6 @@ public:
     using Input = render::VaryingSet3<LightStage::FramePointer, LightingModelPointer, LightStage::ShadowFramePointer>;
     using JobModel = render::Task::ModelI<RenderLocalShadowTask, Input>;
 
-    // the shadow maps drawn in a frame: one per tile
-    static const int SLOT_COUNT { 4 };
-
     void build(JobModel& task, const render::Varying& input, render::Varying& output, uint8_t tagBits = 0x00, uint8_t tagMask = 0x00);
 };
 
@@ -143,7 +156,7 @@ private:
     bool _caching { true };
 };
 
-// Picks the lights and gives each a tile, and takes in a view wide enough for all of them, for fetching what they
+// Picks the lights and gives each its tiles, and takes in a view wide enough for all of them, for fetching what they
 // might shine on; gives the lights with a cookie theirs; stops the task when no light needs a shadow
 class RenderLocalShadowSetup {
 public:
@@ -162,19 +175,23 @@ private:
     bool _caching { true };
 };
 
-// One tile's turn: takes the view from its light, or selects nothing when the tile has no light this frame
+// One tile's turn: takes the view from its light, or selects nothing when the tile has no light this frame. For a
+// point light, a turn for the whole light comes before its faces: a view taking in everything the light reaches, so
+// that the six faces are culled from the light's casters rather than from every light's.
 class RenderLocalShadowSlotSetup {
 public:
     using Input = LocalShadowsPointer;
     using Output = render::VaryingSet3<render::ItemFilter, graphics::LightPointer, RenderShadowTask::CullFunctor>;
     using JobModel = render::Job::ModelIO<RenderLocalShadowSlotSetup, Input, Output>;
 
-    RenderLocalShadowSlotSetup(int slot, render::ItemFilter filter) : _slot{ slot }, _filter{ filter } {}
+    RenderLocalShadowSlotSetup(int tile, render::ItemFilter filter, bool wholeLight = false);
     void run(const render::RenderContextPointer& renderContext, const Input& input, Output& output);
 
 private:
-    int _slot;
+    int _tile;
     render::ItemFilter _filter;
+    bool _wholeLight;
+    std::shared_ptr<ViewFrustum> _reach;   // the whole light's view
 };
 
 class RenderLocalShadowMap {
@@ -182,12 +199,12 @@ public:
     using Inputs = render::VaryingSet2<render::ShapeBounds, LocalShadowsPointer>;
     using JobModel = render::Job::ModelI<RenderLocalShadowMap, Inputs>;
 
-    RenderLocalShadowMap(render::ShapePlumberPointer shapePlumber, int slot) : _shapePlumber{ shapePlumber }, _slot{ slot } {}
+    RenderLocalShadowMap(render::ShapePlumberPointer shapePlumber, int tile) : _shapePlumber{ shapePlumber }, _tile{ tile } {}
     void run(const render::RenderContextPointer& renderContext, const Inputs& inputs);
 
 private:
     render::ShapePlumberPointer _shapePlumber;
-    int _slot;
+    int _tile;
 };
 
 class RenderLocalShadowTeardown {

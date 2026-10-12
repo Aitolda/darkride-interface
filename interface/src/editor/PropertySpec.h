@@ -98,8 +98,9 @@ namespace PropertySpecs {
     // the entity's property can hold the key's entry: userData that is empty or a JSON object (not a script's own
     // text), materialData that is empty or a set of materials
     bool takesEntry(const QString& key, const EntityItemProperties& properties);
-    // the property an edit of the key changes, for undo: dimensions for Scale, the JSON property for an entry of it
-    QString storedKey(const QString& key);
+    // the properties an edit of the key changes, for undo: dimensions for Scale, the JSON property for an entry of
+    // it, and for a light's Shadows (userData:shadows) also canCastShadow, which Off turns off
+    QStringList storedKeys(const QString& key);
 
     // an entity's own size, what Scale 1 means: a model's natural dimensions (zero until the model
     // has loaded), 1 m for everything else, as for Unity's primitives

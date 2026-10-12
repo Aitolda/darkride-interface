@@ -1005,9 +1005,11 @@ EntityItemProperties Editor::inspectorEdit(const QString& key, const QVariant& v
     // times the entity's own size
     EntityItemProperties properties;
     if (PropertySpecs::isEntry(key)) {
-        // the entry goes into the JSON the entity holds, among its others
-        QString stored = PropertySpecs::storedKey(key);
-        PropertySpecs::set(stored, properties, PropertySpecs::get(stored, before));
+        // the entry goes into the JSON the entity holds, among its others (and a light's Shadows also sets whether
+        // it casts any)
+        for (const QString& stored : PropertySpecs::storedKeys(key)) {
+            PropertySpecs::set(stored, properties, PropertySpecs::get(stored, before));
+        }
         PropertySpecs::set(key, properties, value);
     } else if (key == SCALE_KEY) {
         QVector3D scale = value.value<QVector3D>();
@@ -1033,7 +1035,7 @@ void Editor::onInspectorEditBegan(const QString& key) {
     _inspectorEditIds.clear();
     _inspectorBefore.clear();
     _inspectorNatural.clear();
-    QString stored = PropertySpecs::storedKey(key);
+    QStringList storedKeys = PropertySpecs::storedKeys(key);
     for (const auto& id : _selection.ids()) {
         EntityItemProperties snapshot;
         if (!EditorUndo::snapshot(id, snapshot) || (EditorUndo::isLocked(id) && key != LOCKED_KEY)) {
@@ -1044,7 +1046,9 @@ void Editor::onInspectorEditBegan(const QString& key) {
             continue;   // a model that has not loaded: its scale is not known yet
         }
         EntityItemProperties before;
-        PropertySpecs::set(stored, before, PropertySpecs::get(stored, snapshot));
+        for (const QString& stored : storedKeys) {
+            PropertySpecs::set(stored, before, PropertySpecs::get(stored, snapshot));
+        }
         if (key == RANGE_KEY) {
             naturalSize = glm::vec3(PropertySpecs::get(RANGE_KEY, snapshot).toFloat(), snapshot.getFalloffRadius(), 0.0f);
             before.setFalloffRadius(snapshot.getFalloffRadius());
@@ -1132,7 +1136,7 @@ void Editor::commitInspectorEdit(const QString& key, const QVariant& value, cons
         _liveEditTimer.stop();
         applyLiveEdit(key, value);
     } else {
-        QString stored = PropertySpecs::storedKey(key);
+        QStringList storedKeys = PropertySpecs::storedKeys(key);
         for (const auto& id : targets) {
             EntityItemProperties snapshot;
             // a locked entity takes no edits, but Locked itself: that is how it gets unlocked
@@ -1148,7 +1152,9 @@ void Editor::commitInspectorEdit(const QString& key, const QVariant& value, cons
                 continue;
             }
             EntityItemProperties properties;
-            PropertySpecs::set(stored, properties, PropertySpecs::get(stored, snapshot));
+            for (const QString& stored : storedKeys) {
+                PropertySpecs::set(stored, properties, PropertySpecs::get(stored, snapshot));
+            }
             if (key == RANGE_KEY) {
                 naturalSize = glm::vec3(PropertySpecs::get(RANGE_KEY, snapshot).toFloat(), snapshot.getFalloffRadius(), 0.0f);
                 properties.setFalloffRadius(snapshot.getFalloffRadius());

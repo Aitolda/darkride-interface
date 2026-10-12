@@ -239,9 +239,10 @@ private: \
  *     <em>Read-only.</em>
  * @property {number} shadowRendered - The number of shadows rendered.
  *     <em>Read-only.</em>
- * @property {number} spotShadowMaps - The number of spot lights with a shadow map this frame.
+ * @property {number} localShadowMaps - The number of shadow maps spot and point lights have this frame: one for a
+ *     spot light, six for a point light.
  *     <em>Read-only.</em>
- * @property {number} spotShadowMapsDrawn - The number of those shadow maps drawn again this frame; the rest were
+ * @property {number} localShadowMapsDrawn - The number of those shadow maps drawn again this frame; the rest were
  *     kept from earlier frames, nothing in their view having changed.
  *     <em>Read-only.</em>
  * @property {string} sendingMode - Description of the octree sending mode.
@@ -549,8 +550,8 @@ class Stats : public QQuickItem {
     STATS_PROPERTY(int, shadowOutOfView, 0)
     STATS_PROPERTY(int, shadowTooSmall, 0)
     STATS_PROPERTY(int, shadowRendered, 0)
-    STATS_PROPERTY(int, spotShadowMaps, 0)
-    STATS_PROPERTY(int, spotShadowMapsDrawn, 0)
+    STATS_PROPERTY(int, localShadowMaps, 0)
+    STATS_PROPERTY(int, localShadowMapsDrawn, 0)
     STATS_PROPERTY(QString, sendingMode, QString())
     STATS_PROPERTY(QString, packetStats, QString())
     STATS_PROPERTY(int, lodAngle, 0)
@@ -1199,18 +1200,18 @@ signals:
     void shadowRenderedChanged();
 
     /**jsdoc
-     * Triggered when the value of the <code>spotShadowMaps</code> property changes.
-     * @function Stats.spotShadowMapsChanged
+     * Triggered when the value of the <code>localShadowMaps</code> property changes.
+     * @function Stats.localShadowMapsChanged
      * @returns {Signal}
      */
-    void spotShadowMapsChanged();
+    void localShadowMapsChanged();
 
     /**jsdoc
-     * Triggered when the value of the <code>spotShadowMapsDrawn</code> property changes.
-     * @function Stats.spotShadowMapsDrawnChanged
+     * Triggered when the value of the <code>localShadowMapsDrawn</code> property changes.
+     * @function Stats.localShadowMapsDrawnChanged
      * @returns {Signal}
      */
-    void spotShadowMapsDrawnChanged();
+    void localShadowMapsDrawnChanged();
 
     /**jsdoc
      * Triggered when the value of the <code>sendingMode</code> property changes.

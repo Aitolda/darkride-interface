@@ -30,6 +30,9 @@
 namespace {
     using EP = EntityItemProperties;
 
+    // a light's Shadows field: an entry of userData, and canCastShadow with it (see PropertySpecs::storedKeys)
+    const char* const SHADOWS_KEY = "userData:shadows";
+
     struct Accessor {
         std::function<QVariant(const EP&)> get;
         std::function<void(EP&, const QVariant&)> set;
@@ -395,30 +398,48 @@ namespace {
 #undef G_COLOR
 
         // entries of userData shown as fields of their own (see PropertySpecs::isUserDataEntry)
+        auto userDataEntry = [](const EP& p, const QString& name) {
+            return QJsonDocument::fromJson(p.getUserData().toUtf8()).object().value(name).toString();
+        };
+        // sets the entry, or removes it for an empty value; userData that isn't a set of entries (a script's own
+        // text) is left alone
+        auto setUserDataEntry = [](EP& p, const QString& name, const QString& value) {
+            QString text = p.getUserData();
+            QJsonDocument document = QJsonDocument::fromJson(text.toUtf8());
+            if (!text.trimmed().isEmpty() && !document.isObject()) {
+                return;
+            }
+            QJsonObject object = document.object();
+            if (value.isEmpty()) {
+                object.remove(name);
+            } else {
+                object.insert(name, value);
+            }
+            // in the order the entries had, a new one last (the User Data list keeps that order)
+            p.setUserData(object.isEmpty() ? QString() : JsonOrder::write(object, JsonOrder::scan(text)));
+        };
         for (const char* entry : { "cookie" }) {
             QString name = entry;
             a.insert(QStringLiteral("userData:") + name, Accessor {
-                [name](const EP& p) {
-                    return QVariant(QJsonDocument::fromJson(p.getUserData().toUtf8()).object().value(name).toString());
-                },
-                [name](EP& p, const QVariant& v) {
-                    QString text = p.getUserData();
-                    QJsonDocument document = QJsonDocument::fromJson(text.toUtf8());
-                    if (!text.trimmed().isEmpty() && !document.isObject()) {
-                        return;   // userData that isn't a set of entries (a script's own text) is left alone
-                    }
-                    QJsonObject object = document.object();
-                    QString value = v.toString();
-                    if (value.isEmpty()) {
-                        object.remove(name);
-                    } else {
-                        object.insert(name, value);
-                    }
-                    // in the order the entries had, a new one last (the User Data list keeps that order)
-                    p.setUserData(object.isEmpty() ? QString() : JsonOrder::write(object, JsonOrder::scan(text)));
-                }
+                [=](const EP& p) { return QVariant(userDataEntry(p, name)); },
+                [=](EP& p, const QVariant& v) { setUserDataEntry(p, name, v.toString()); }
             });
         }
+        // a light's Shadows: Off is Cast Shadows off; Normal and Important cast, and Important, the entry "shadows"
+        // set to "important", goes before the other lights when more cast shadows than there are maps
+        a.insert(SHADOWS_KEY, Accessor {
+            [=](const EP& p) {
+                if (!p.getCanCastShadow()) {
+                    return QVariant("off");
+                }
+                return QVariant(userDataEntry(p, "shadows") == "important" ? "important" : "normal");
+            },
+            [=](EP& p, const QVariant& v) {
+                QString mode = v.toString();
+                p.setCanCastShadow(mode != "off");
+                setUserDataEntry(p, "shadows", mode == "important" ? mode : QString());
+            }
+        });
 
         // entries of materialData shown as fields of their own, as Unity's material Inspector shows a shader's
         // properties. A material entity whose URL is "materialData" uses the first of its materials ("materials" is one
@@ -769,6 +790,10 @@ namespace {
         range(add(spec("range", "Range", K::Float, "light")), 0.01, 5000, 0.1, 2, "m");
         range(add(spec("intensity", "Intensity", K::Float, "light")), 0, 10000, 0.1, 2);
         range(add(spec("falloffRadius", "Falloff Radius", K::Float, "light")), 0, 10000, 0.1, 2, "m");
+        // whether the light casts shadows (its Cast Shadows, which the Behavior section leaves out for a light), and
+        // whether it comes before the other lights for one of the shadow maps there are at once (eight for spot
+        // lights, four for point lights); Important is kept in userData
+        en(SHADOWS_KEY, "Shadows", "light", { "off:Off", "normal:Normal", "important:Important" });
         with(range(add(spec("exponent", "Spot Exponent", K::Float, "light")), 0, DBL_MAX, 0.01, 2), "isSpotlight=true");
         with(range(add(spec("cutoff", "Spot Cutoff", K::Float, "light")), 0, 90, 0.5, 1, "°"), "isSpotlight=true");
         // a picture the light shines through, as a slide in a projector (Unity's cookie); kept in userData
@@ -887,10 +912,9 @@ namespace {
         with(add(spec("cloneDynamic", "Clone Dynamic", K::Bool, "behavior")), "cloneable=true");
         with(add(spec("cloneAvatarEntity", "Clone Avatar Entity", K::Bool, "behavior")), "cloneable=true");
         with(add(spec("cloneGrabbable", "Clone Grabbable", K::Bool, "behavior")), "cloneable=true");
-        // whether the object casts a shadow from the sun; lights in this engine cast none, so on a
-        // light (or a zone, or a material) the box would only mislead
-        // spot lights cast shadows; point lights don't yet, so they don't offer it
-        with(add(spec("canCastShadow", "Cast Shadows", K::Bool, "behavior")), "type not in Light,Zone,Material or lightType=spot");
+        // whether the object casts a shadow from the sun and from spot and point lights; a light's own shadows are
+        // its Shadows field, and a zone or a material casts none, so on those the box would only mislead
+        with(add(spec("canCastShadow", "Cast Shadows", K::Bool, "behavior")), "type not in Light,Zone,Material");
         add(spec("href", "Link", K::Url, "behavior"));
         add(spec("ignorePickIntersection", "Ignore Picking", K::Bool, "behavior"));
         add(spec("script", "Script", K::Url, "behavior"));
@@ -1057,11 +1081,14 @@ bool takesEntry(const QString& key, const EntityItemProperties& properties) {
     return true;
 }
 
-QString storedKey(const QString& key) {
+QStringList storedKeys(const QString& key) {
     if (key == QStringLiteral("scale")) {
-        return QStringLiteral("dimensions");
+        return { QStringLiteral("dimensions") };
     }
-    return isEntry(key) ? key.left(key.indexOf(':')) : key;
+    if (key == QLatin1String(SHADOWS_KEY)) {
+        return { QStringLiteral("userData"), QStringLiteral("canCastShadow") };
+    }
+    return { isEntry(key) ? key.left(key.indexOf(':')) : key };
 }
 
 
