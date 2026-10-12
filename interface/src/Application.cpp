@@ -7324,10 +7324,14 @@ void Application::updateWindowTitle() const {
     const auto addressManager = DependencyManager::get<AddressManager>();
     const auto isInErrorState = nodeList->getDomainHandler().isInErrorState();
 
+    // with several branches built on one machine, the title says which one this client is (interagent.md)
+    const QString branchLabel = BuildInfo::BUILD_BRANCH.isEmpty() ? QString()
+        : (" " + BuildInfo::BUILD_BRANCH + (BuildInfo::BUILD_COMMIT.isEmpty() ? QString() : " " + BuildInfo::BUILD_COMMIT));
     const QString buildVersion = (
         QString() +
         (BuildInfo::BUILD_TYPE == BuildInfo::BuildType::Stable ? "" : "Build ") +
-        applicationVersion()
+        applicationVersion() +
+        branchLabel
     );
 
     const QString loginStatus = accountManager->isLoggedIn() ? "" : "Not logged in";
