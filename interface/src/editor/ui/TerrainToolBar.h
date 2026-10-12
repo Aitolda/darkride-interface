@@ -17,10 +17,12 @@
 
 #include "../EditorTerrain.h"
 
+class QAbstractSpinBox;
 class QAction;
 class QActionGroup;
 class QDoubleSpinBox;
 class QSpinBox;
+class ScrubLabel;
 
 class TerrainToolBar : public QToolBar {
     Q_OBJECT
@@ -38,6 +40,10 @@ private:
     QAction* addMode(const QString& text, const QString& toolTip, terrain::SculptMode mode);
 
     QActionGroup* _modes { nullptr };
+    // The field's label scrubs its value when dragged sideways, as the Inspector's do: step per pixel, Shift ten
+    // times that, Alt a tenth; proportional makes the step a share of the current value, for a size.
+    void attachScrub(ScrubLabel* label, QAbstractSpinBox* box, double step, bool proportional);
+
     QDoubleSpinBox* _size { nullptr };
     QDoubleSpinBox* _strength { nullptr };
     QDoubleSpinBox* _hardness { nullptr };
