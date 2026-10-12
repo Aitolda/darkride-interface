@@ -345,8 +345,11 @@ void NodeList::sendDomainServerCheckIn() {
             // is this our localhost domain-server?
             // if so we need to make sure we have an up-to-date local port in case it restarted
 
-            if (domainSockAddr.getAddress() == QHostAddress::LocalHost
-                || hostname == "localhost") {
+            // a local domain on a port of its own is found through the shared-memory slot it wrote at start, unless
+            // the URL named a port: with several local domains running (sandboxes), the slot holds whichever
+            // started last, and a client told hifi://localhost:41102 was sent to another domain and refused
+            if ((domainSockAddr.getAddress() == QHostAddress::LocalHost || hostname == "localhost")
+                && !_domainHandler.hasExplicitPort()) {
 
                 quint16 domainPort = DEFAULT_DOMAIN_SERVER_PORT;
                 getLocalServerPortFromSharedMemory(DOMAIN_SERVER_LOCAL_PORT_SMEM_KEY, domainPort);

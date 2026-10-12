@@ -206,6 +206,7 @@ void DomainHandler::setURLAndID(QUrl domainURL, QUuid domainID) {
     }
 
     auto domainPort = domainURL.port();
+    _explicitPort = domainPort != -1;
     if (domainPort == -1) {
         domainPort = DEFAULT_DOMAIN_SERVER_PORT;
     }
