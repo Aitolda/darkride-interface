@@ -93,10 +93,9 @@ RenderableTerrainEntityItem::RenderableTerrainEntityItem(const EntityItemID& ent
 
 void RenderableTerrainEntityItem::makeDefaultGrid() {
     const glm::ivec3 voxelCount = getVoxelCount();
-    _grid.reset(voxelCount);
-    _grid.fillBelow(0.5f * voxelCount.y);
-    _chunkMeshes.clear();
-    _shapeStale = true;
+    terrain::VoxelGrid grid(voxelCount);
+    grid.fillBelow(0.5f * voxelCount.y);
+    replaceGrid(std::move(grid));
 }
 
 bool RenderableTerrainEntityItem::loadGrid(const QByteArray& file, QString& error) {
@@ -112,36 +111,52 @@ bool RenderableTerrainEntityItem::loadGrid(const QByteArray& file, QString& erro
                                     << "x" << loaded.getVoxelCount().z << "voxels but the entity's dimensions hold" << expected.x << "x"
                                     << expected.y << "x" << expected.z << "; drawing the file's";
     }
-    _grid = std::move(loaded);
-    _chunkMeshes.clear();
-    _shapeStale = true;
+    replaceGrid(std::move(loaded));
     return true;
 }
 
 void RenderableTerrainEntityItem::clearGrid() {
-    _grid.reset(glm::ivec3(0));
-    _chunkMeshes.clear();
+    replaceGrid(terrain::VoxelGrid());
+}
+
+void RenderableTerrainEntityItem::replaceGrid(terrain::VoxelGrid grid) {
+    _grid = std::move(grid);
+    _mesher.reset();   // meshes of the old grid still being built are dropped when they come
+    // a fresh grid has every chunk dirty, so the meshes within it are all replaced in time; those beyond it go now
+    const terrain::ChunkSet& dirty = _grid.getDirtyChunks();
+    bool erased = false;
+    for (auto it = _chunkMeshes.begin(); it != _chunkMeshes.end();) {
+        if (dirty.count(it->first)) {
+            ++it;
+        } else {
+            it = _chunkMeshes.erase(it);
+            erased = true;
+        }
+    }
+    if (erased) {
+        ++_meshVersion;
+    }
     _shapeStale = true;
 }
 
-bool RenderableTerrainEntityItem::remeshDirtyChunks() {
-    if (_grid.getDirtyChunks().empty()) {
-        return false;
-    }
-    const terrain::ChunkSet dirty = _grid.getDirtyChunks();
-    ++_meshVersion;
-    for (const glm::ivec3& chunk : dirty) {
-        terrain::ChunkMesh mesh = terrain::meshChunk(_grid, chunk);
-        if (mesh.isEmpty()) {
-            _chunkMeshes.erase(chunk);
-            continue;
+bool RenderableTerrainEntityItem::updateMeshes() {
+    bool changed = false;
+    std::vector<terrain::AsyncMesher::Result> results = _mesher.collect();
+    if (!results.empty()) {
+        ++_meshVersion;
+        for (terrain::AsyncMesher::Result& result : results) {
+            if (result.mesh.isEmpty()) {
+                _chunkMeshes.erase(result.chunk);
+                continue;
+            }
+            ChunkMeshEntry& entry = _chunkMeshes[result.chunk];
+            entry.mesh = std::move(result.mesh);
+            entry.version = _meshVersion;
         }
-        ChunkMeshEntry& entry = _chunkMeshes[chunk];
-        entry.mesh = std::move(mesh);
-        entry.version = _meshVersion;
+        changed = true;
     }
-    _grid.clearDirtyChunks();
-    return true;
+    _mesher.submit(_grid);
+    return changed;
 }
 
 void RenderableTerrainEntityItem::updateCollisionShape() {
@@ -406,7 +421,7 @@ bool TerrainEntityRenderer::needsRenderUpdateFromTypedEntity(const TypedEntityPo
     if (!entity->hasGridSource() || entity->getTerrainURL() != entity->getGridURL() || entity->getTerrainVersion() != entity->getGridVersion()) {
         return true;
     }
-    if (!entity->getGrid().getDirtyChunks().empty() || entity->collisionShapeIsStale()) {
+    if (!entity->meshesAreSettled() || entity->collisionShapeIsStale()) {
         return true;
     }
     if (entity->getMeshVersion() != _meshVersion) {
@@ -435,12 +450,14 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         }
     }
 
-    // The meshes and the collision shape.
-    if (entity->hasGrid()) {
-        entity->remeshDirtyChunks();
-        if (entity->collisionShapeIsStale()) {
-            entity->updateCollisionShape();
-        }
+    // The meshes, which come back from the mesher's threads over a few frames, and then the collision shape, once
+    // they have all come: a grid without ground (none, or cleared) settles at once and gets no shape.
+    entity->updateMeshes();
+    if (entity->collisionShapeIsStale() && entity->meshesAreSettled()) {
+        entity->updateCollisionShape();
+    }
+    if (!entity->meshesAreSettled()) {
+        emit requestRenderUpdate();   // the tree renderer only comes back when asked: next frame, for the rest
     }
 
     // The chunk items.

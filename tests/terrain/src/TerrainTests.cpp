@@ -11,6 +11,10 @@
 #include <cmath>
 #include <map>
 
+#include <QElapsedTimer>
+#include <QThreadPool>
+
+#include <terrain/AsyncMesher.h>
 #include <terrain/Brush.h>
 #include <terrain/SurfaceNets.h>
 #include <terrain/TerrainFile.h>
@@ -244,4 +248,83 @@ void TerrainTests::fileRoundTripKeepsEveryVoxel() {
     Bytes wrong = bytes;
     wrong[0] = 'X';
     QVERIFY(!loadTerrain(wrong, loaded, &error));
+}
+
+void TerrainTests::asyncMesherMatchesTheMesherAndRedoesChunksEditedMeanwhile() {
+    VoxelGrid grid(glm::ivec3(64, 32, 64));
+    grid.fillHeightField(hills);
+    const ChunkSet dirty = grid.getDirtyChunks();
+    QCOMPARE((int)dirty.size(), 4);
+    std::map<glm::ivec3, ChunkMesh, IVec3Less> expected;
+    for (const glm::ivec3& chunk : dirty) {
+        expected[chunk] = meshChunk(grid, chunk);
+    }
+
+    QThreadPool pool;
+    pool.setMaxThreadCount(3);
+    AsyncMesher mesher(&pool);
+    QElapsedTimer timer;
+    timer.start();
+    QCOMPARE(mesher.submit(grid), (int)dirty.size());
+    qDebug() << "sampling and sending" << dirty.size() << "chunks took" << timer.nsecsElapsed() / 1000 << "us on this thread";
+    QVERIFY(grid.getDirtyChunks().empty());
+    QCOMPARE(mesher.getInFlightCount(), dirty.size());
+    QVERIFY(!mesher.isIdle());
+    QCOMPARE(mesher.submit(grid), 0);
+    pool.waitForDone();
+    QVERIFY(mesher.hasResults());
+    std::vector<AsyncMesher::Result> results = mesher.collect();
+    QCOMPARE(results.size(), dirty.size());
+    QVERIFY(mesher.isIdle());
+    int meshed = 0;
+    for (const AsyncMesher::Result& result : results) {
+        const ChunkMesh& wanted = expected.at(result.chunk);
+        QVERIFY(result.mesh.positions == wanted.positions);
+        QVERIFY(result.mesh.normals == wanted.normals);
+        QVERIFY(result.mesh.materials == wanted.materials);
+        QVERIFY(result.mesh.indices == wanted.indices);
+        if (!result.mesh.isEmpty()) {
+            ++meshed;
+        }
+    }
+    QCOMPARE(meshed, 4);
+
+    // A chunk edited while its job is out stays dirty, is not sent again meanwhile, and goes out once its mesh is
+    // back; that mesh is the one of the samples taken, the next one of the edit.
+    const glm::ivec3 voxel(40, 10, 40);   // inside chunk (1, 0, 1), above the hills there
+    QVERIFY(grid.set(voxel, Voxel::ground()));
+    QCOMPARE(grid.getDirtyChunks(), ChunkSet({ glm::ivec3(1, 0, 1) }));
+    QCOMPARE(mesher.submit(grid), 1);
+    QVERIFY(grid.set(voxel + glm::ivec3(1, 0, 0), Voxel::ground()));
+    QCOMPARE(grid.getDirtyChunks(), ChunkSet({ glm::ivec3(1, 0, 1) }));
+    QCOMPARE(mesher.submit(grid), 0);
+    pool.waitForDone();
+    results = mesher.collect();
+    QCOMPARE(results.size(), (size_t)1);
+    QCOMPARE(results[0].chunk, glm::ivec3(1, 0, 1));
+    QVERIFY(mesher.isIdle());
+    QCOMPARE(grid.getDirtyChunks(), ChunkSet({ glm::ivec3(1, 0, 1) }));
+    QCOMPARE(mesher.submit(grid), 1);
+    pool.waitForDone();
+    results = mesher.collect();
+    QCOMPARE(results.size(), (size_t)1);
+    QVERIFY(results[0].mesh.positions == meshChunk(grid, glm::ivec3(1, 0, 1)).positions);
+    QVERIFY(grid.getDirtyChunks().empty());
+
+    // A chunk with no surface in its samples is answered at once, with an empty mesh.
+    VoxelGrid solid(glm::ivec3(32, 32, 32), Voxel::ground());
+    QCOMPARE(mesher.submit(solid), 1);
+    QVERIFY(mesher.hasResults());
+    results = mesher.collect();
+    QCOMPARE(results.size(), (size_t)1);
+    QVERIFY(results[0].mesh.isEmpty());
+
+    // reset() forgets the jobs out: a replaced grid gets none of the old one's meshes.
+    QVERIFY(grid.set(voxel + glm::ivec3(0, 1, 0), Voxel::ground()));
+    QCOMPARE(mesher.submit(grid), 1);
+    mesher.reset();
+    QVERIFY(mesher.isIdle());
+    pool.waitForDone();
+    QVERIFY(!mesher.hasResults());
+    QVERIFY(mesher.collect().empty());
 }

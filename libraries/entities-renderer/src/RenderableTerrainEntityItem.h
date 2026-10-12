@@ -5,8 +5,11 @@
 //  The Terrain entity on a client (TERRAIN.md). The entity item holds the voxel grid, fetched from the terrain file
 //  the entity points at or made flat when it has none yet, the chunk meshes built from it by surface nets, and the
 //  collision shape built from those. The renderer puts one render item per chunk in the scene, an opaque shape with
-//  the terrain's own pipeline and a shadow caster, under the entity's item, which only groups them. Everything here
-//  runs on the main thread: the renderer's update, the editor's brushes and the physics simulation all do.
+//  the terrain's own pipeline and a shadow caster, under the entity's item, which only groups them. The grid, the
+//  meshes and the shape are the main thread's: the renderer's update, the editor's brushes and the physics
+//  simulation all run there. Only the meshing itself runs elsewhere: the update samples the dirty chunks and hands
+//  the samples to the terrain library's thread pool (terrain::AsyncMesher), and installs the meshes as they come
+//  back, asking to be called again each frame until they all have.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -17,6 +20,7 @@
 
 #include <map>
 
+#include <terrain/AsyncMesher.h>
 #include <terrain/SurfaceNets.h>
 #include <terrain/VoxelGrid.h>
 #include <TerrainEntityItem.h>
@@ -58,13 +62,17 @@ public:
     bool loadGrid(const QByteArray& file, QString& error);
     void clearGrid();
 
-    // Rebuilds the meshes of the chunks the grid marks dirty; returns whether any mesh changed.
-    bool remeshDirtyChunks();
+    // Installs the meshes that have come back from the mesher's threads and sends out the chunks the grid marks
+    // dirty; returns whether any mesh changed. Called from the renderer's update, every frame while any is out.
+    bool updateMeshes();
+    // Every chunk's mesh matches the grid: nothing dirty, nothing out, nothing waiting to be installed.
+    bool meshesAreSettled() const { return _grid.getDirtyChunks().empty() && _mesher.isIdle(); }
     const ChunkMeshes& getChunkMeshes() const { return _chunkMeshes; }
     uint64_t getMeshVersion() const { return _meshVersion; }
 
     // Rebuilds the collision shape from the meshes, one static mesh. It costs a Bullet tree build, so the editor
-    // calls it when a stroke ends rather than at every step; a loaded or replaced grid asks for it too.
+    // asks for it when a stroke ends rather than at every step, a loaded or replaced grid asks for it too, and the
+    // renderer builds it once the meshes have settled.
     void updateCollisionShape();
     bool collisionShapeIsStale() const { return _shapeStale; }
 
@@ -99,10 +107,15 @@ public:
     void computeShapeInfo(ShapeInfo& info) override;
 
 private:
+    // The grid becomes this one; meshes of chunks the new grid will mesh again stay up until it has, so a reload
+    // does not blink, and the others go.
+    void replaceGrid(terrain::VoxelGrid grid);
+
     terrain::VoxelGrid _grid;
     bool _gridSourceSet { false };
     QString _gridURL;
     uint32_t _gridVersion { 0 };
+    terrain::AsyncMesher _mesher;
     ChunkMeshes _chunkMeshes;
     uint64_t _meshVersion { 0 };
     ShapeInfo _shapeInfo;

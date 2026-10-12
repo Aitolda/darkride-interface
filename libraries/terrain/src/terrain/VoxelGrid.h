@@ -6,7 +6,8 @@
 //  that integer point of voxel space; the entity scales voxel space by its voxel size and places it in the world.
 //  The grid tracks which chunks' meshes are out of date and hands the mesher the samples one chunk needs
 //  (ChunkSamples), its own voxels and one layer of its neighbours' all around, so neighbouring meshes meet without
-//  a seam. Nothing here is thread safe: edit on one thread, sample there, mesh the samples anywhere.
+//  a seam. Nothing here is thread safe: edit on one thread, sample there, mesh the samples anywhere (AsyncMesher
+//  does that on a thread pool).
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -92,6 +93,7 @@ public:
     // samples it. The mesher's caller clears the set once it has re-meshed them.
     const ChunkSet& getDirtyChunks() const { return _dirtyChunks; }
     void clearDirtyChunks() { _dirtyChunks.clear(); }
+    void clearDirtyChunk(const glm::ivec3& chunk) { _dirtyChunks.erase(chunk); }
     void markChunkDirty(const glm::ivec3& chunk);
     void markAllChunksDirty();
 
