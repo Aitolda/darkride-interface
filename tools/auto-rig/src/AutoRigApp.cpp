@@ -118,6 +118,47 @@ static void dumpNode(const FBXNode& node, int depth, int maxDepth, int maxChildr
     }
 }
 
+
+// Prints a model's meshes (vertices, UV sets, parts and their materials), materials and textures (with UV set).
+static void inspectModel(const HFMModel& model) {
+    auto textureLine = [](const char* slot, const hfm::Texture& texture) {
+        if (texture.filename.isEmpty() && texture.content.isEmpty()) {
+            return QString();
+        }
+        return QString(" %1=%2(set %3 %4)").arg(slot).arg(QString::fromUtf8(texture.filename).section('/', -1).section('\\', -1))
+            .arg(texture.texcoordSet).arg(texture.texcoordSetName);
+    };
+    for (size_t m = 0; m < model.materials.size(); m++) {
+        const hfm::Material& material = model.materials[m];
+        fprintf(stdout, "material %zu %s: opacity %.2f%s%s%s%s\n", m, qPrintable(material.name), material.opacity,
+                qPrintable(textureLine("albedo", material.albedoTexture)), qPrintable(textureLine("normal", material.normalTexture)),
+                qPrintable(textureLine("opacity", material.opacityTexture)), qPrintable(textureLine("specular", material.specularTexture)));
+    }
+    std::map<uint32_t, QStringList> partsOf;
+    for (const hfm::Shape& shape : model.shapes) {
+        if (shape.mesh < model.meshes.size() && shape.meshPart < model.meshes[shape.mesh].parts.size()) {
+            const hfm::MeshPart& part = model.meshes[shape.mesh].parts[shape.meshPart];
+            partsOf[shape.mesh] << QString("part %1: %2 triangles, material %3, joint %4")
+                                       .arg(shape.meshPart).arg((part.triangleIndices.size() + part.quadTrianglesIndices.size()) / 3)
+                                       .arg(shape.material).arg(shape.joint);
+        }
+    }
+    for (size_t m = 0; m < model.meshes.size(); m++) {
+        const hfm::Mesh& mesh = model.meshes[m];
+        Extents extents;
+        for (const glm::vec3& v : mesh.vertices) {
+            extents.addPoint(v);
+        }
+        fprintf(stdout, "mesh %zu %s: %d vertices, normals %d, uv0 %d, uv1 %d, from (%.1f %.1f %.1f) to (%.1f %.1f %.1f)\n", m,
+                qPrintable(model.getModelNameOfMesh((int)m)), mesh.vertices.size(), mesh.normals.size(), mesh.texCoords.size(),
+                mesh.texCoords1.size(), extents.minimum.x, extents.minimum.y, extents.minimum.z, extents.maximum.x,
+                extents.maximum.y, extents.maximum.z);
+        for (const QString& line : partsOf[(uint32_t)m]) {
+            fprintf(stdout, "    %s\n", qPrintable(line));
+        }
+    }
+}
+
 AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     QCommandLineParser parser;
     parser.setApplicationDescription("Darkride auto-rigger: places the standard skeleton in a character");
@@ -138,6 +179,7 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
                                          "factor");
     const QCommandLineOption jointsOnlyOption("joints-only", "place the joints and skip the skin weights");
     const QCommandLineOption dumpOption("dump", "print an FBX file's node tree and stop", "file");
+    const QCommandLineOption inspectOption("inspect", "print a model's meshes, materials and textures and stop", "file");
     const QCommandLineOption depthOption("depth", "with --dump: how deep (default 3)", "levels");
     const QCommandLineOption childrenOption("children", "with --dump: children shown per node (default 12)", "count");
     const QCommandLineOption falloffOption("falloff", "skin weights: how fast a bone's influence fades (0 to 1)", "a");
@@ -156,10 +198,21 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     parser.addOption(scaleOption);
     parser.addOption(jointsOnlyOption);
     parser.addOption(dumpOption);
+    parser.addOption(inspectOption);
     parser.addOption(depthOption);
     parser.addOption(childrenOption);
     parser.addOption(falloffOption);
     parser.addOption(smoothingOption);
+    if (parser.parse(QCoreApplication::arguments()) && parser.isSet(inspectOption)) {
+        HFMModel::Pointer model = readModel(parser.value(inspectOption));
+        if (!model) {
+            fprintf(stderr, "could not read %s\n", qPrintable(parser.value(inspectOption)));
+            _returnCode = 2;
+            return;
+        }
+        inspectModel(*model);
+        return;
+    }
     if (parser.parse(QCoreApplication::arguments()) && parser.isSet(dumpOption)) {
         QFile file(parser.value(dumpOption));
         if (!file.open(QIODevice::ReadOnly)) {

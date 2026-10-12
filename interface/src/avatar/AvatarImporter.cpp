@@ -122,8 +122,14 @@ QString avatarName(const QString& path) {
     return name.isEmpty() ? QString("avatar") : name;
 }
 
+// A new folder for each import (name, name-2, name-3...), so the client never shows a cached copy of an earlier one.
 QString avatarFolder(const QString& name) {
-    return PathUtils::getAppDataPath() + "Avatars/" + name;
+    const QString base = PathUtils::getAppDataPath() + "Avatars/" + name;
+    QString folder = base;
+    for (int n = 2; QDir(folder).exists(); n++) {
+        folder = base + "-" + QString::number(n);
+    }
+    return folder;
 }
 
 void ask(const QString& text, QMessageBox::StandardButtons buttons, QMessageBox::StandardButton defaultButton,

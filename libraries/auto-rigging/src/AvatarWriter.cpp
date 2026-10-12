@@ -29,6 +29,9 @@ using namespace autorig;
 namespace {
 
 const float CENTIMETRES_PER_METRE = 100.0f;
+// The names of the two UV layers: the reader treats "map1" as the first set and any other name as the second.
+const QByteArray FIRST_UV_SET = "map1";
+const QByteArray SECOND_UV_SET = "UVSet1";
 
 // FBX object names are "name\0\1Class".
 QByteArray objectName(const QString& name, const char* kind) {
@@ -214,9 +217,12 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
             return;
         }
         const qint64 id = newId();
+        // the reader gives a texture the mesh's UV layer of the same name (FBXSerializer::matchTextureUVSetToAttributeChannel)
+        const QByteArray uvSet = texture.texcoordSet == 1 ? SECOND_UV_SET : FIRST_UV_SET;
         add(makeNode("Texture", { id, objectName(fileName, "Texture"), QByteArray("") },
                      { makeNode("Type", { QByteArray("TextureVideoClip") }), makeNode("Version", { 202 }),
                        makeNode("TextureName", { objectName(fileName, "Texture") }),
+                       makeNode("Properties70", {}, { property("UVSet", "KString", "", "", { uvSet }) }),
                        makeNode("FileName", { fileName.toUtf8() }), makeNode("RelativeFilename", { fileName.toUtf8() }),
                        makeNode("ModelUVTranslation", { 0.0, 0.0 }), makeNode("ModelUVScaling", { 1.0, 1.0 }),
                        makeNode("Texture_Alpha_Source", { QByteArray("None") }),
@@ -321,11 +327,28 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
                 uvs << uv.x << uv.y;
             }
             geometry << makeNode("LayerElementUV", { 0 },
-                                 { makeNode("Version", { 101 }), makeNode("Name", { QByteArray("map1") }),
+                                 { makeNode("Version", { 101 }), makeNode("Name", { FIRST_UV_SET }),
                                    makeNode("MappingInformationType", { QByteArray("ByPolygonVertex") }),
                                    makeNode("ReferenceInformationType", { QByteArray("IndexToDirect") }),
                                    makeNode("UV", { doubles(uvs) }), makeNode("UVIndex", { ints(corners) }) });
             layer << layerElement("LayerElementUV");
+        }
+        // a second UV layer: game rips often keep their textures on it (Chloe's all use "UVChannel_1")
+        FBXNodeList secondLayer;
+        if (mesh.texCoords1.size() == mesh.vertices.size()) {
+            QVector<double> uvs;
+            uvs.reserve(mesh.texCoords1.size() * 2);
+            for (const glm::vec2& uv : mesh.texCoords1) {
+                uvs << uv.x << uv.y;
+            }
+            geometry << makeNode("LayerElementUV", { 1 },
+                                 { makeNode("Version", { 101 }), makeNode("Name", { SECOND_UV_SET }),
+                                   makeNode("MappingInformationType", { QByteArray("ByPolygonVertex") }),
+                                   makeNode("ReferenceInformationType", { QByteArray("IndexToDirect") }),
+                                   makeNode("UV", { doubles(uvs) }), makeNode("UVIndex", { ints(corners) }) });
+            secondLayer << makeNode("Version", { 100 })
+                        << makeNode("LayerElement", {}, { makeNode("Type", { QByteArray("LayerElementUV") }),
+                                                         makeNode("TypedIndex", { 1 }) });
         }
         geometry << makeNode("LayerElementMaterial", { 0 },
                              { makeNode("Version", { 101 }), makeNode("Name", { QByteArray("") }),
@@ -334,6 +357,9 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
                                makeNode("Materials", { ints(polygonMaterials) }) });
         layer << layerElement("LayerElementMaterial");
         geometry << makeNode("Layer", { 0 }, layer);
+        if (!secondLayer.isEmpty()) {
+            geometry << makeNode("Layer", { 1 }, secondLayer);
+        }
 
         QString meshName = model.getModelNameOfMesh((int)piece.mesh);
         if (meshName.isEmpty()) {
