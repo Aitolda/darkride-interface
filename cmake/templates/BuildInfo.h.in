@@ -30,6 +30,9 @@ namespace BuildInfo {
     const QString BUILD_NUMBER = "@BUILD_NUMBER@";
     const QString BUILD_GLOBAL_SERVICES = "@BUILD_GLOBAL_SERVICES@";
     const QString BUILD_TIME = "@BUILD_TIME@";
+    // the git branch and short commit the tree was on when CMake configured; empty outside a git checkout
+    const QString BUILD_BRANCH = "@BUILD_BRANCH@";
+    const QString BUILD_COMMIT = "@BUILD_COMMIT_SHORT@";
 
     enum BuildType {
         Dev,
