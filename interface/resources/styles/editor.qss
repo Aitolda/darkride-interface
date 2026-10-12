@@ -256,10 +256,20 @@ QToolBar#EditorToolBar QToolButton::menu-indicator, QToolBar#EditorTerrainBar QT
     image: none;
     width: 0;
 }
-QToolBar#EditorToolBar QLabel#EditorStatus {
+
+/* the status bar along the bottom: notes such as "Terrain saved" or an upload's progress, at the left */
+QStatusBar#EditorStatusBar {
+    background: #3c3c3c;
+    border-top: 1px solid #232323;
+    min-height: 20px;
+}
+QStatusBar#EditorStatusBar::item {
+    border: none;
+}
+QStatusBar#EditorStatusBar QLabel#EditorStatus {
     color: #9a9a9a;
     font-size: 12px;
-    padding: 0 8px;
+    padding: 0 6px;
 }
 
 /* a button that cannot be used now (Save World before World Edit is on) */

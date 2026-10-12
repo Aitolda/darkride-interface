@@ -33,9 +33,11 @@
 #include <QtWidgets/QAction>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QInputDialog>
+#include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QPlainTextEdit>
+#include <QtWidgets/QStatusBar>
 #include <QtWidgets/QTextEdit>
 #include <QtWidgets/QTreeView>
 #include <QtQuick/QQuickItem>
@@ -100,7 +102,7 @@ namespace {
     const int MODEL_SIZE_ATTEMPTS = 3;
     const int REFRAME_FRAMES = 180;               // how long after Shift+F a camera reset re-frames
     const int REJECTION_CHECK_MS = 3000;          // a new entity gone by then was refused by the server
-    const int STATUS_CLEAR_MS = 6000;             // how long a note on the toolbar stays
+    const int STATUS_CLEAR_MS = 6000;             // how long a note on the status bar stays
     const QString SCALE_KEY = QStringLiteral("scale");
     const QString LOCKED_KEY = QStringLiteral("locked");
     const QString RANGE_KEY = QStringLiteral("range");
@@ -548,12 +550,24 @@ void Editor::createPanels() {
     connect(_terrainBar, &TerrainToolBar::brushChanged, this, [this] { _terrain.setBrush(_terrainBar->brush()); });
     _terrain.setBrush(_terrainBar->brush());
 
+    // notes ("Terrain saved", an upload's progress, a refusal) in a status bar along the bottom, where the
+    // toolbars' buttons cannot crowd them out
+    _statusBar = new QStatusBar(window);
+    _statusBar->setObjectName("EditorStatusBar");
+    _statusBar->setSizeGripEnabled(false);
+    _statusLabel = new QLabel(_statusBar);
+    _statusLabel->setObjectName("EditorStatus");
+    _statusLabel->setTextFormat(Qt::PlainText);
+    _statusBar->addWidget(_statusLabel, 1);
+
     window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
     window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
     window->addToolBar(Qt::TopToolBarArea, _toolBar);
     window->addToolBarBreak(Qt::TopToolBarArea);
     window->addToolBar(Qt::TopToolBarArea, _terrainBar);
     _terrainBar->setVisible(false);
+    window->setStatusBar(_statusBar);
+    _statusBar->setVisible(false);
     window->resizeDocks({ _hierarchy, _inspector }, { 260, 430 }, Qt::Horizontal);
     qApp->installEventFilter(this);
 
@@ -592,6 +606,7 @@ void Editor::showPanels(bool show) {
     _hierarchy->setVisible(show);
     _inspector->setVisible(show);
     _toolBar->setVisible(show);
+    _statusBar->setVisible(show);
     updateTerrainBar();
 }
 
@@ -2311,8 +2326,9 @@ void Editor::showViewportMenu(const QPoint& viewportPos, const QPoint& globalPos
 }
 
 void Editor::setStatus(const QString& text, int clearAfterMs) {
-    if (_toolBar) {
-        _toolBar->setStatus(text);
+    if (_statusLabel) {
+        _statusLabel->setText(text);
+        _statusLabel->setToolTip(text);   // the whole message, should the bar have had to cut it
     }
     if (clearAfterMs > 0 && !text.isEmpty()) {
         _statusTimer.start(clearAfterMs);

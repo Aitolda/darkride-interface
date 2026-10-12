@@ -35,8 +35,6 @@ public:
     void setPivotMode(bool pivot);
     // the Create button's menu
     void setCreateMenu(QMenu* menu);
-    // a short note in the middle, against the world controls (an upload's progress); empty clears it
-    void setStatus(const QString& text);
     // the Create button, off while the world is read-only
     void setCreateEnabled(bool enabled);
     // the world controls: shown for a world instance, World Edit checked while editing
@@ -68,7 +66,6 @@ private:
     QAction* _gridAction { nullptr };
     QAction* _gizmosAction { nullptr };
     QToolButton* _createButton { nullptr };
-    QLabel* _status { nullptr };
 };
 
 #endif // hifi_EditorToolBar_h

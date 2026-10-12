@@ -50,8 +50,10 @@
 class QAction;
 class QDropEvent;
 class QKeyEvent;
+class QLabel;
 class QMenu;
 class QMouseEvent;
+class QStatusBar;
 class QUrl;
 class QWheelEvent;
 class EditorUpload;
@@ -355,6 +357,8 @@ private:
     InspectorPanel* _inspector { nullptr };
     EditorToolBar* _toolBar { nullptr };
     TerrainToolBar* _terrainBar { nullptr };
+    QStatusBar* _statusBar { nullptr };   // the bottom of the window, in build mode: notes go there
+    QLabel* _statusLabel { nullptr };
     EntityTreeModel* _treeModel { nullptr };
     Setting::Handle<QByteArray> _layoutSetting { "editor/layout2", QByteArray() };   // 2: the panels no longer float
     // build mode narrows the field of view; the user's own is kept here so it survives a crash
