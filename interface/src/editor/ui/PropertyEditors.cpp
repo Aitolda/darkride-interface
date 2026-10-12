@@ -732,10 +732,15 @@ void TextEditor::revertTyping() {
 
 void TextEditor::setValue(const QVariant& value, bool mixed) {
     _updating = true;
-    _mixed = mixed;
-    _shown = mixed ? QString() : value.toString();
-    _edit->setText(_shown);
-    _edit->setPlaceholderText(mixed ? MIXED : (_spec.kind == PropertyKind::Url ? "URL" : QString()));
+    QString text = mixed ? QString() : value.toString();
+    // the Inspector refreshes often: a field that shows this already is left alone, or a selection made in it
+    // (to copy the ID) would go with every tick, since setting the text, even the same, drops it
+    if (mixed != _mixed || text != _shown || _edit->text() != text) {
+        _mixed = mixed;
+        _shown = text;
+        _edit->setText(text);
+        _edit->setPlaceholderText(mixed ? MIXED : (_spec.kind == PropertyKind::Url ? "URL" : QString()));
+    }
     _updating = false;
 }
 
@@ -960,12 +965,16 @@ void JsonEditor::commitIfChanged() {
 
 void JsonEditor::setValue(const QVariant& value, bool mixed) {
     _updating = true;
-    _mixed = mixed;
-    _shown = mixed ? QString() : value.toString();
-    _edit->setPlainText(_shown);
-    _edit->document()->setModified(false);
-    _edit->setPlaceholderText(mixed ? MIXED : QString());
-    _edit->setStyleSheet(QString());
+    QString text = mixed ? QString() : value.toString();
+    // left alone while it shows this already (see TextEditor::setValue)
+    if (mixed != _mixed || text != _shown || _edit->toPlainText() != text) {
+        _mixed = mixed;
+        _shown = text;
+        _edit->setPlainText(text);
+        _edit->document()->setModified(false);
+        _edit->setPlaceholderText(mixed ? MIXED : QString());
+        _edit->setStyleSheet(QString());
+    }
     _updating = false;
 }
 
