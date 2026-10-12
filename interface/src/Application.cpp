@@ -8597,18 +8597,14 @@ void Application::loadDialog() {
 void Application::importAvatarDialog() {
     static Setting::Handle<QString> previousLocation("previousAvatarImportLocation",
                                                      QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
-    ModalDialogListener* dlg = OffscreenUi::getOpenFileNameAsync(_glWidget, tr("Import Avatar"), previousLocation.get(),
-        // every file stays selectable: the macOS panel greyed them all out with a list of extensions, and the
-        // importer reads by extension and says so when it cannot read a file
-        tr("Characters and avatars (*)"));
-    connect(dlg, &ModalDialogListener::response, this, [=] (QVariant answer) {
-        disconnect(dlg, &ModalDialogListener::response, this, nullptr);
-        const QString& response = answer.toString();
-        if (!response.isEmpty() && QFile(response).exists()) {
-            previousLocation.set(QFileInfo(response).absolutePath());
-            AvatarImporter::importFile(response);
-        }
-    });
+    // Qt's standard file dialog, as ModelSelector uses: the macOS panel that OffscreenUi's modeless dialog opens
+    // showed every file greyed out (10-12), whatever the filter
+    const QString path = QFileDialog::getOpenFileName(nullptr, tr("Import Avatar"), previousLocation.get(),
+                                                      tr("Characters and avatars (*)"));
+    if (!path.isEmpty() && QFile(path).exists()) {
+        previousLocation.set(QFileInfo(path).absolutePath());
+        AvatarImporter::importFile(path);
+    }
 }
 
 QString Application::getPreviousScriptLocation() {
