@@ -5,7 +5,8 @@
 //  The Terrain tool of build mode: Unity's terrain brushes on a Terrain entity's voxels (TERRAIN.md). The pointer
 //  over a terrain shows the brush's outline on the ground; a press begins a stroke, which applies the brush under
 //  the pointer every frame until the button goes up, and one stroke is one undo step. The voxels change on this
-//  client only, until the terrain is saved to its file.
+//  client first; a moment after the last stroke (or undo) the grid is saved as a terrain file in the user's files,
+//  and the entity's terrainURL and terrainVersion are set so every other client fetches it.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -17,7 +18,9 @@
 #include <memory>
 
 #include <QtCore/QObject>
+#include <QtCore/QSet>
 #include <QtCore/QString>
+#include <QtCore/QTimer>
 #include <QtCore/QUuid>
 #include <QtCore/QVector>
 
@@ -69,6 +72,16 @@ public:
     // the outline goes, and a stroke in progress ends as it is
     void clear();
 
+    // a terrain's voxels changed on this client (a stroke, an undo): its file is saved a moment later, once no
+    // stroke is in progress; flushSaves() saves what is waiting now (build mode ending)
+    void markChanged(const QUuid& id);
+    void flushSaves();
+    bool hasPendingSaves() const { return !_dirty.isEmpty() || !_saving.isEmpty(); }
+
+signals:
+    // a note for the toolbar: saving, saved, or why not; clearAfterMs 0 keeps it until the next note
+    void status(const QString& text, int clearAfterMs);
+
 private:
     struct Hit {
         QUuid id;
@@ -83,6 +96,10 @@ private:
     void captureBefore(const RenderableTerrainEntityItem& entity, const terrain::Brush& brush);
     void showOutline(const RenderableTerrainEntityItem& entity, const Hit& hit);
     void dropStroke();
+    // puts the chunks a cancelled stroke kept back into the grid
+    void restore(RenderableTerrainEntityItem& entity, const TerrainChunks& chunks);
+    void saveDirty();
+    void save(const QUuid& id);
 
     EditorUndo* _undo;
     EditorTerrainBrush _brush;
@@ -107,6 +124,11 @@ private:
     int _changed { 0 };             // voxels changed by the stroke so far
     glm::vec3 _lastStepPoint { 0.0f };
     TerrainChunks _before;
+
+    // the terrains whose files are out of date, and those whose upload is on its way
+    QSet<QUuid> _dirty;
+    QSet<QUuid> _saving;
+    QTimer _saveTimer;
 };
 
 #endif // hifi_EditorTerrain_h

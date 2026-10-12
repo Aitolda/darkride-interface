@@ -8,6 +8,7 @@
 
 #include "EditorCreate.h"
 
+#include <QtCore/QBuffer>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QJsonDocument>
@@ -279,18 +280,33 @@ EditorUpload::EditorUpload(QObject* parent) : QObject(parent) {
 }
 
 bool EditorUpload::start(const QString& localPath, const QString& remoteFolder, QString& error) {
-    auto accountManager = DependencyManager::get<AccountManager>();
-    if (!accountManager->isLoggedIn()) {
-        error = "you are not logged in";
-        return false;
-    }
     auto file = new QFile(localPath);
     if (!file->open(QIODevice::ReadOnly)) {
         error = "cannot read " + localPath;
         delete file;
         return false;
     }
-    _fileName = safeFileName(QFileInfo(localPath).fileName());
+    QFileInfo info(localPath);
+    return send(file, info.fileName(), remoteFolder, QMimeDatabase().mimeTypeForFile(localPath).name(), info.size(), error);
+}
+
+bool EditorUpload::startData(const QByteArray& data, const QString& fileName, const QString& remoteFolder, const QString& mimeType,
+                             QString& error) {
+    auto buffer = new QBuffer();
+    buffer->setData(data);
+    buffer->open(QIODevice::ReadOnly);
+    return send(buffer, fileName, remoteFolder, mimeType, data.size(), error);
+}
+
+bool EditorUpload::send(QIODevice* body, const QString& fileName, const QString& remoteFolder, const QString& mimeType, qint64 size,
+                        QString& error) {
+    auto accountManager = DependencyManager::get<AccountManager>();
+    if (!accountManager->isLoggedIn()) {
+        error = "you are not logged in";
+        delete body;
+        return false;
+    }
+    _fileName = safeFileName(fileName);
     QString remotePath = remoteFolder + "/" + _fileName;
 
     // the server reads the path from the form before it streams the file, so the path part goes first
@@ -301,10 +317,9 @@ bool EditorUpload::start(const QString& localPath, const QString& remoteFolder, 
     QHttpPart filePart;
     filePart.setHeader(QNetworkRequest::ContentDispositionHeader,
         QVariant("form-data; name=\"file\"; filename=\"" + _fileName + "\""));
-    filePart.setHeader(QNetworkRequest::ContentTypeHeader,
-        QVariant(QMimeDatabase().mimeTypeForFile(localPath).name()));
-    filePart.setBodyDevice(file);
-    file->setParent(multiPart);
+    filePart.setHeader(QNetworkRequest::ContentTypeHeader, QVariant(mimeType));
+    filePart.setBodyDevice(body);
+    body->setParent(multiPart);
     multiPart->append(pathPart);
     multiPart->append(filePart);
 
@@ -315,7 +330,7 @@ bool EditorUpload::start(const QString& localPath, const QString& remoteFolder, 
         return false;
     }
     _timer.start();
-    qCDebug(interfaceapp) << "editor upload started" << remotePath << QFileInfo(localPath).size() << "bytes";
+    qCDebug(interfaceapp) << "editor upload started" << remotePath << size << "bytes";
     auto reply = NetworkAccessManager::getInstance().put(request, multiPart);
     multiPart->setParent(reply);
     connect(reply, &QNetworkReply::uploadProgress, this, &EditorUpload::progress);

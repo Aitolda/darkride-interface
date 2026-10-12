@@ -13,6 +13,7 @@
 
 #include <glm/gtx/transform.hpp>
 #include <QUrl>
+#include <QUrlQuery>
 
 #include <AABox.h>
 #include <DependencyManager.h>
@@ -509,7 +510,13 @@ void TerrainEntityRenderer::fetchTerrain(const QString& url, uint32_t version) {
     dropRequest();
     _requestURL = url;
     _requestVersion = version;
-    _request = DependencyManager::get<ResourceManager>()->createResourceRequest(this, QUrl(url), true, -1, "TerrainEntityRenderer::fetchTerrain");
+    // a save writes the file at the same URL, so the version goes into the request: caches on the way (the client's
+    // own, a CDN's) see a new address, and the request itself asks the network rather than the local cache
+    QUrl fetchURL(url);
+    QUrlQuery query(fetchURL);
+    query.addQueryItem("v", QString::number(version));
+    fetchURL.setQuery(query);
+    _request = DependencyManager::get<ResourceManager>()->createResourceRequest(this, fetchURL, true, -1, "TerrainEntityRenderer::fetchTerrain");
     if (!_request) {
         qCWarning(entitiesrenderer) << "Terrain file" << url << "cannot be fetched: no request for that kind of URL";
         if (auto entity = std::dynamic_pointer_cast<RenderableTerrainEntityItem>(_entity)) {
@@ -518,6 +525,7 @@ void TerrainEntityRenderer::fetchTerrain(const QString& url, uint32_t version) {
         }
         return;
     }
+    _request->setCacheEnabled(false);
     connect(_request, &ResourceRequest::finished, this, [this, url, version] {
         ResourceRequest* request = _request;
         _request = nullptr;

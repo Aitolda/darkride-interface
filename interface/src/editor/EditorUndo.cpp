@@ -394,7 +394,7 @@ void EditorUndo::pushTerrainEdit(const QString& text, const QUuid& id, const Ter
     _stack.push(new TerrainEditCommand(this, text, id, before, after));
 }
 
-bool EditorUndo::applyTerrainChunks(const QUuid& id, const TerrainChunks& chunks) const {
+bool EditorUndo::applyTerrainChunks(const QUuid& id, const TerrainChunks& chunks) {
     auto tree = entityTree();
     if (!tree) {
         return false;
@@ -411,5 +411,6 @@ bool EditorUndo::applyTerrainChunks(const QUuid& id, const TerrainChunks& chunks
     }
     terrain->markCollisionShapeStale();
     terrain->gridEdited();
+    emit terrainEdited(id);
     return true;
 }

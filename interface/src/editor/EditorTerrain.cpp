@@ -11,7 +11,10 @@
 #include <algorithm>
 #include <cmath>
 
+#include <QtCore/QByteArray>
+
 #include <EntityItemID.h>
+#include <EntityItemProperties.h>
 #include <EntityScriptingInterface.h>
 #include <EntityTree.h>
 #include <EntityTreeRenderer.h>
@@ -19,8 +22,11 @@
 #include <NumericalConstants.h>
 #include <PickFilter.h>
 #include <RenderableTerrainEntityItem.h>
+#include <terrain/TerrainFile.h>
 
 #include "Application.h"
+#include "EditorCreate.h"
+#include "InterfaceLogging.h"
 
 namespace {
     const float RAISE_RATE = 6.0f;          // voxels of distance a second at full strength, for Raise and Lower
@@ -33,6 +39,11 @@ namespace {
     const int OUTLINE_SEGMENTS = 48;
     const float OUTLINE_WIDTH_PIXELS = 2.0f;
     const glm::vec4 OUTLINE_COLOR(0.45f, 0.75f, 1.0f, 1.0f);
+    const int SAVE_DELAY_MS = 2500;         // after the last change, before the file goes up
+    const int SAVED_NOTE_MS = 5000;
+    const int FAILED_NOTE_MS = 12000;
+    const QString TERRAIN_FOLDER = QStringLiteral("/terrain");
+    const QString TERRAIN_MIME_TYPE = QStringLiteral("application/octet-stream");
 
     // the world's visible terrains, picked against their ground
     PickFilter terrainPickFilter() {
@@ -84,6 +95,9 @@ namespace {
 }
 
 EditorTerrain::EditorTerrain(EditorUndo* undo, QObject* parent) : QObject(parent), _undo(undo) {
+    _saveTimer.setSingleShot(true);
+    _saveTimer.setInterval(SAVE_DELAY_MS);
+    connect(&_saveTimer, &QTimer::timeout, this, &EditorTerrain::saveDirty);
 }
 
 void EditorTerrain::setBrush(const EditorTerrainBrush& brush) {
@@ -296,7 +310,7 @@ void EditorTerrain::endStroke(bool cancel) {
     auto entity = terrainEntity(_strokeId);
     if (entity && entity->hasGrid()) {
         if (cancel) {
-            _undo->applyTerrainChunks(_strokeId, _before);
+            restore(*entity, _before);
         } else if (_changed > 0 && !_before.empty()) {
             TerrainChunks after;
             for (const auto& pair : _before) {
@@ -305,6 +319,7 @@ void EditorTerrain::endStroke(bool cancel) {
             _undo->pushTerrainEdit(modeName(_strokeMode) + QStringLiteral(" Terrain"), _strokeId, _before, after);
             entity->markCollisionShapeStale();
             entity->gridEdited();
+            markChanged(_strokeId);
         }
     }
     _before.clear();
@@ -323,6 +338,17 @@ void EditorTerrain::dropStroke() {
     _outline.clear();
 }
 
+void EditorTerrain::restore(RenderableTerrainEntityItem& entity, const TerrainChunks& chunks) {
+    terrain::VoxelGrid& grid = entity.getGrid();
+    for (const auto& pair : chunks) {
+        if (grid.containsChunk(pair.first)) {
+            grid.setChunk(pair.first, pair.second);
+        }
+    }
+    entity.markCollisionShapeStale();
+    entity.gridEdited();
+}
+
 void EditorTerrain::clear() {
     if (_stroking) {
         endStroke(false);
@@ -330,6 +356,81 @@ void EditorTerrain::clear() {
     _hasRay = false;
     _hasLastHit = false;
     _outline.clear();
+}
+
+// --- the file -----------------------------------------------------------------------------------
+
+void EditorTerrain::markChanged(const QUuid& id) {
+    _dirty.insert(id);
+    _saveTimer.start();   // from the start again: the file goes up once the changes pause
+}
+
+void EditorTerrain::flushSaves() {
+    _saveTimer.stop();
+    saveDirty();
+}
+
+void EditorTerrain::saveDirty() {
+    bool waiting = false;
+    for (const QUuid& id : QSet<QUuid>(_dirty)) {
+        if ((_stroking && id == _strokeId) || _saving.contains(id)) {
+            waiting = true;   // in the middle of a stroke, or of the last save: it goes up after
+            continue;
+        }
+        _dirty.remove(id);
+        save(id);
+    }
+    if (waiting && !_saveTimer.isActive()) {
+        _saveTimer.start();
+    }
+}
+
+void EditorTerrain::save(const QUuid& id) {
+    auto entity = terrainEntity(id);
+    if (!entity || !entity->hasGrid()) {
+        return;   // gone, or nothing to save
+    }
+    const terrain::Bytes bytes = terrain::saveTerrain(entity->getGrid());
+    const QByteArray data((const char*)bytes.data(), (int)bytes.size());
+    const QString fileName = QStringLiteral("terrain-") + id.toString(QUuid::WithoutBraces) + QStringLiteral(".drkt");
+    const uint32_t version = std::max(entity->getTerrainVersion(), entity->getGridVersion()) + 1;
+
+    auto upload = new EditorUpload(this);
+    QString error;
+    if (!upload->startData(data, fileName, TERRAIN_FOLDER, TERRAIN_MIME_TYPE, error)) {
+        upload->deleteLater();
+        _dirty.insert(id);   // kept for the next change to try again
+        qCWarning(interfaceapp) << "terrain" << id << "could not be saved:" << error;
+        emit status(QStringLiteral("Terrain not saved: ") + error, FAILED_NOTE_MS);
+        return;
+    }
+    _saving.insert(id);
+    emit status(QStringLiteral("Saving terrain…"), 0);
+    connect(upload, &EditorUpload::finished, this, [this, upload, id, version](const QString& url) {
+        upload->deleteLater();
+        _saving.remove(id);
+        auto entity = terrainEntity(id);
+        if (entity) {
+            // this client already holds what the file holds: told so, the renderer does not fetch its own save
+            entity->setGridSource(url, version);
+            EntityItemProperties properties;
+            properties.setTerrainURL(url);
+            properties.setTerrainVersion(version);
+            DependencyManager::get<EntityScriptingInterface>()->editEntity(id, properties);
+        }
+        qCDebug(interfaceapp) << "terrain" << id << "saved as" << url << "version" << version;
+        emit status(QStringLiteral("Terrain saved"), SAVED_NOTE_MS);
+        if (_dirty.contains(id) && !_saveTimer.isActive()) {
+            _saveTimer.start();   // changed again while this went up
+        }
+    });
+    connect(upload, &EditorUpload::failed, this, [this, upload, id](const QString& error) {
+        upload->deleteLater();
+        _saving.remove(id);
+        _dirty.insert(id);
+        qCWarning(interfaceapp) << "terrain" << id << "could not be saved:" << error;
+        emit status(QStringLiteral("Terrain not saved: ") + error, FAILED_NOTE_MS);
+    });
 }
 
 // --- the outline --------------------------------------------------------------------------------

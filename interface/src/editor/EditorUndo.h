@@ -73,7 +73,7 @@ public:
     void pushTerrainEdit(const QString& text, const QUuid& id, const TerrainChunks& before, const TerrainChunks& after);
     // puts chunks into a terrain entity's grid, and has the collision shape follow; false when the entity is
     // not a terrain on this client
-    bool applyTerrainChunks(const QUuid& id, const TerrainChunks& chunks) const;
+    bool applyTerrainChunks(const QUuid& id, const TerrainChunks& chunks);
 
     // a change made to a created entity since, which a redo of its creation should make too (a new model's own
     // size, once it has loaded): the dimensions and position in `changes` replace the recorded ones
@@ -84,6 +84,10 @@ public:
     void setSelectionApplier(std::function<void(const QList<QUuid>&)> applier) { _applySelection = applier; }
     void pushSelection(const QList<QUuid>& before, const QList<QUuid>& after);
     void applySelection(const QList<QUuid>& ids);
+
+signals:
+    // a terrain's voxels were put back by undo or redo: what keeps the terrain's file wants to know
+    void terrainEdited(const QUuid& id);
 
 private:
     QUndoStack _stack;

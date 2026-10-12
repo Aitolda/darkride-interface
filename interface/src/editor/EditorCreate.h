@@ -48,8 +48,8 @@ namespace EditorCreate {
     bool isImageFile(const QString& name);
 }
 
-// uploads a local file to the user's files on the metaverse (PUT /api/user/files, multipart) and
-// reports the file's public URL
+// uploads a local file, or bytes made here, to the user's files on the metaverse (PUT /api/user/files,
+// multipart) and reports the file's public URL; a file sent to a path again replaces the one there
 class EditorUpload : public QObject {
     Q_OBJECT
 public:
@@ -57,6 +57,9 @@ public:
 
     // starts the upload into remoteFolder ("/models"); false, with the reason, if it cannot start
     bool start(const QString& localPath, const QString& remoteFolder, QString& error);
+    // the same for bytes already in memory (a terrain's file), named fileName in remoteFolder
+    bool startData(const QByteArray& data, const QString& fileName, const QString& remoteFolder, const QString& mimeType,
+                   QString& error);
     QString fileName() const { return _fileName; }
 
 signals:
@@ -65,6 +68,10 @@ signals:
     void failed(const QString& error);
 
 private:
+    // takes the body (deleted here if the upload cannot start, owned by the request otherwise)
+    bool send(QIODevice* body, const QString& fileName, const QString& remoteFolder, const QString& mimeType, qint64 size,
+              QString& error);
+
     QString _fileName;
     QElapsedTimer _timer;
 };

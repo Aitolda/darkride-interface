@@ -178,6 +178,8 @@ namespace {
 
 Editor::Editor() : _selection(this), _undo(this), _terrain(&_undo, this) {
     connect(&_selection, &EditorSelection::changed, this, &Editor::onSelectionChanged);
+    connect(&_undo, &EditorUndo::terrainEdited, &_terrain, &EditorTerrain::markChanged);
+    connect(&_terrain, &EditorTerrain::status, this, &Editor::setStatus);
     _undo.setSelectionApplier([this](const QList<QUuid>& ids) {
         ++_historyDepth;
         _selection.set(ids);
@@ -283,6 +285,7 @@ void Editor::setActive(bool active) {
         _bounds.setShapes(_boundsShapes);
         endLightHandleDrag(false);
         _terrain.clear();
+        _terrain.flushSaves();   // sculpting that was waiting to be saved goes up now
         _lightGizmos.clear();
         _nearbyLights.clear();
         _lightSearchFrame = -1;
