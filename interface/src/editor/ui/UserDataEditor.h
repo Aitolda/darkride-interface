@@ -19,6 +19,7 @@
 #include <QtCore/QJsonValue>
 #include <QtCore/QSet>
 
+#include "../JsonOrder.h"
 #include "PropertyEditors.h"
 
 class QTreeWidget;
@@ -65,6 +66,7 @@ private:
     QPlainTextEdit* _text { nullptr };    // userData that isn't a JSON object
 
     QJsonObject _object;                  // all of userData, claimed entries included
+    JsonOrder::KeyOrder _order;           // the order of every object's entries, which QJsonObject loses
     bool _isObject { true };
     QString _shown;                       // the userData text last shown or sent
     bool _mixed { false };

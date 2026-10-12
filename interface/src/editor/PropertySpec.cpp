@@ -25,6 +25,8 @@
 #include <PhysicsCollisionGroups.h>
 #include <graphics/Material.h>
 
+#include "JsonOrder.h"
+
 namespace {
     using EP = EntityItemProperties;
 
@@ -410,8 +412,8 @@ namespace {
                     } else {
                         object.insert(name, value);
                     }
-                    p.setUserData(object.isEmpty() ? QString()
-                        : QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)));
+                    // in the order the entries had, a new one last (the User Data list keeps that order)
+                    p.setUserData(object.isEmpty() ? QString() : JsonOrder::write(object, JsonOrder::scan(text)));
                 }
             });
         }

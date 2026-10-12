@@ -104,11 +104,7 @@ namespace {
     }
 
     QString pathKey(const Path& path) {
-        QStringList parts;
-        for (const auto& step : path) {
-            parts << (isIndex(step) ? QString("#%1").arg(step.toInt()) : step.toString());
-        }
-        return parts.join(QChar(0x1f));
+        return JsonOrder::placeKey(path);
     }
 
     // whole numbers without a point, as people write them
@@ -263,6 +259,7 @@ void UserDataEditor::setValue(const QVariant& value, bool mixed) {
     QJsonDocument document = QJsonDocument::fromJson(text.toUtf8(), &error);
     _isObject = text.trimmed().isEmpty() || (error.error == QJsonParseError::NoError && document.isObject());
     _object = document.object();
+    _order = JsonOrder::scan(text);
     showValue();
     _updating = false;
 }
@@ -317,7 +314,7 @@ void UserDataEditor::showValue() {
 void UserDataEditor::rebuildTree() {
     _settingItems = true;
     _tree->clear();
-    for (const auto& key : _object.keys()) {
+    for (const auto& key : JsonOrder::keysInOrder(_object, _order, Path())) {
         if (!_claimed.contains(key)) {
             addItem(nullptr, key, Path { key }, _object.value(key), true);
         }
@@ -341,7 +338,7 @@ void UserDataEditor::addItem(QTreeWidgetItem* parent, const QString& name, const
     item->setFlags(flags);
     if (value.isObject()) {
         QJsonObject object = value.toObject();
-        QStringList names = object.keys();
+        QStringList names = JsonOrder::keysInOrder(object, _order, path);
         QString summary = names.mid(0, SUMMARY_NAMES).join(", ");
         if (names.size() > SUMMARY_NAMES) {
             summary += QStringLiteral(", …");
@@ -437,6 +434,10 @@ void UserDataEditor::addEntry(const Path& parentPath, QJsonValue::Type type) {
             name = NEW_ENTRY + QString::number(n);
         }
         path << name;
+        // the new entry comes last, as made
+        QStringList keys = JsonOrder::keysInOrder(object, _order, parentPath);
+        keys << name;
+        _order.insert(pathKey(parentPath), keys);
     }
     if (!parentPath.isEmpty()) {
         _expanded.insert(pathKey(parentPath));   // open it, to show what was added
@@ -476,6 +477,11 @@ void UserDataEditor::renameEntry(QTreeWidgetItem* item) {
         _settingItems = false;
         return;
     }
+    // the entry keeps its place in the order, and what is inside it its own
+    QStringList keys = JsonOrder::keysInOrder(parent, _order, parentPath);
+    keys.replace(keys.indexOf(oldName), newName);
+    _order.insert(pathKey(parentPath), keys);
+    JsonOrder::move(_order, path, child(parentPath, newName));
     QJsonValue value = parent.value(oldName);
     parent.remove(oldName);
     parent.insert(newName, value);
@@ -547,7 +553,8 @@ void UserDataEditor::editAsJson() {
     QJsonParseError error;
     QJsonDocument document = QJsonDocument::fromJson(_shown.toUtf8(), &error);
     bool json = !_shown.trimmed().isEmpty() && error.error == QJsonParseError::NoError;
-    text->setPlainText(json ? QString::fromUtf8(document.toJson(QJsonDocument::Indented)) : _shown);
+    text->setPlainText(json && document.isObject() ? JsonOrder::write(document.object(), JsonOrder::scan(_shown), true)
+                       : json ? QString::fromUtf8(document.toJson(QJsonDocument::Indented)) : _shown);
     layout->addWidget(text);
     auto problem = new QLabel(&dialog);
     problem->setWordWrap(true);
@@ -578,10 +585,12 @@ void UserDataEditor::editAsJson() {
     if (!accepted) {
         return;
     }
-    // a JSON object is kept compact, as the list writes it; anything else as it was typed
+    // a JSON object is kept compact, as the list writes it, its entries in the order typed; anything else as it
+    // was typed
     QString typed = text->toPlainText().trimmed();
     QJsonDocument parsed = QJsonDocument::fromJson(typed.toUtf8());
-    QString value = parsed.isObject() ? QString::fromUtf8(parsed.toJson(QJsonDocument::Compact)) : typed;
+    JsonOrder::KeyOrder order = parsed.isObject() ? JsonOrder::scan(typed) : JsonOrder::KeyOrder();
+    QString value = parsed.isObject() ? JsonOrder::write(parsed.object(), order) : typed;
     if (value == _shown && !_mixed) {
         return;
     }
@@ -589,12 +598,13 @@ void UserDataEditor::editAsJson() {
     _mixed = false;
     _isObject = value.isEmpty() || parsed.isObject();
     _object = parsed.object();
+    _order = order;
     emit committed(QVariant(_shown));
     showValue();
 }
 
 void UserDataEditor::commit() {
-    _shown = _object.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(_object).toJson(QJsonDocument::Compact));
+    _shown = _object.isEmpty() ? QString() : JsonOrder::write(_object, _order);
     emit committed(QVariant(_shown));
 }
 
@@ -610,6 +620,7 @@ bool UserDataEditor::eventFilter(QObject* watched, QEvent* event) {
             if (text.trimmed().isEmpty() || (error.error == QJsonParseError::NoError && document.isObject())) {
                 _isObject = true;
                 _object = document.object();
+                _order = JsonOrder::scan(text);
                 QTimer::singleShot(0, this, [this] { showValue(); });
             }
         }
