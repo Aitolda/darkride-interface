@@ -61,7 +61,9 @@ void RenderShadowTask::build(JobModel& task, const render::Varying& input, rende
     const auto currentKeyLight = setupOutput.getN<RenderShadowSetup::Output>(4);
     // Fetch and cull the items from the scene
 
-    static const auto shadowCasterReceiverFilter = ItemFilter::Builder::visibleWorldItems().withOpaque().withoutLayered().withTagBits(tagBits, tagMask);
+    // Translucent items cast too, as in Unity's URP: solid, or cut out by the opacity mask when the material has one
+    // (the depth-only shaders read the mask); CullShadowBounds lets only the ones with a material cast
+    static const auto shadowCasterReceiverFilter = ItemFilter::Builder::visibleWorldItems().withoutLayered().withTagBits(tagBits, tagMask);
 
     const auto fetchInput = FetchSpatialTree::Inputs(shadowCasterReceiverFilter, queryResolution).asVarying();
     const auto shadowSelection = task.addJob<FetchSpatialTree>("FetchShadowTree", fetchInput);
@@ -591,6 +593,10 @@ void CullShadowBounds::run(const render::RenderContextPointer& renderContext, co
 
         for (auto& inItems : inShapes) {
             auto key = inItems.first;
+            // A translucent item casts when it has a material (a model's mesh, a shape): solid, or cut out by the
+            // material's opacity mask, which the depth-only shaders read. Translucent text, pictures, grids,
+            // polylines and particles have none and only receive; opaque ones draw into the map as before.
+            const bool receivesOnly = key.isTranslucent() && !key.useMaterial();
             auto outItems = outShapes.find(key);
             if (outItems == outShapes.end()) {
                 outItems = outShapes.insert(std::make_pair(key, ItemBounds{})).first;
@@ -603,7 +609,7 @@ void CullShadowBounds::run(const render::RenderContextPointer& renderContext, co
                 for (auto& item : inItems.second) {
                     if (test.solidAngleTest(item.bound) && test.frustumTest(item.bound)) {
                         const auto shapeKey = scene->getItem(item.id).getKey();
-                        if (castersFilter.test(shapeKey)) {
+                        if (!receivesOnly && castersFilter.test(shapeKey)) {
                             outItems->second.emplace_back(item);
                             outBounds += item.bound;
                         } else {
@@ -618,7 +624,7 @@ void CullShadowBounds::run(const render::RenderContextPointer& renderContext, co
                 for (auto& item : inItems.second) {
                     if (test.solidAngleTest(item.bound) && test.frustumTest(item.bound) && test.antiFrustumTest(item.bound)) {
                         const auto shapeKey = scene->getItem(item.id).getKey();
-                        if (castersFilter.test(shapeKey)) {
+                        if (!receivesOnly && castersFilter.test(shapeKey)) {
                             outItems->second.emplace_back(item);
                             outBounds += item.bound;
                         } else {

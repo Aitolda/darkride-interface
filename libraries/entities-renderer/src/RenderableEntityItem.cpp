@@ -170,7 +170,9 @@ ItemKey EntityRenderer::getKey() {
     _keyIsTransparent = transparent;
     if (transparent) {
         builder.withTransparent();
-    } else if (_canCastShadow) {
+    }
+    // translucent entities cast too (the shadow pass decides which can: those with a material), as a model's parts do
+    if (_canCastShadow) {
         builder.withShadowCaster();
     }
 

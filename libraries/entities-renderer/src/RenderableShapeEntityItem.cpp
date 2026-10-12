@@ -179,8 +179,11 @@ ShapeEntityRenderer::Pipeline ShapeEntityRenderer::getPipelineType(const graphic
     }
 
     graphics::MaterialKey drawMaterialKey = materials.getMaterialKey();
+    // A translucent material takes the material pipeline too: the simple translucent pipeline writes no depth, so the
+    // shape would cast no shadow, and the material one shades it with its roughness and the local lights. So does a
+    // material whose roughness was set (Smoothness in the Inspector), which the simple pipeline ignores.
     if (drawMaterialKey.isEmissive() || drawMaterialKey.isUnlit() || drawMaterialKey.isMetallic() ||
-        drawMaterialKey.isScattering()) {
+        drawMaterialKey.isScattering() || drawMaterialKey.isTranslucent() || drawMaterialKey.isGlossy()) {
         return Pipeline::MATERIAL;
     }
 

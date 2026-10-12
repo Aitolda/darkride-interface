@@ -243,7 +243,8 @@ ItemKey entities::TextPayload::getKey() const {
 
             if (textRenderable->isTextTransparent()) {
                 builder.withTransparent();
-            } else if (textRenderable->_canCastShadow) {
+            }
+            if (textRenderable->_canCastShadow) {
                 builder.withShadowCaster();
             }
 

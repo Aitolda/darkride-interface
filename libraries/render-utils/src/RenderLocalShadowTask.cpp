@@ -426,7 +426,8 @@ void RenderLocalShadowTask::build(JobModel& task, const render::Varying& input, 
         initZPassPipelines(*shapePlumber, state, fadeEffect->getBatchSetter(), fadeEffect->getItemUniformSetter());
     }
 
-    const ItemFilter casterReceiverFilter = ItemFilter::Builder::visibleWorldItems().withOpaque().withoutLayered()
+    // translucent items cast too (solid, or cut out by the opacity mask), as for the sun: see RenderShadowTask
+    const ItemFilter casterReceiverFilter = ItemFilter::Builder::visibleWorldItems().withoutLayered()
         .withTagBits(tagBits, tagMask).build();
     const auto setupOutput = task.addJob<RenderLocalShadowSetup>("LocalShadowSetup", input);
     const auto queryResolution = setupOutput.getN<RenderLocalShadowSetup::Output>(1);
