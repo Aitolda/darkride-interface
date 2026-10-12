@@ -428,18 +428,29 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
     }
     fbx.close();
 
-    // the .fst: which file, and which joints the engine treats specially
     written.fstPath = out.filePath(name + ".fst");
-    QFile fst(written.fstPath);
-    if (!fst.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    if (!writeFst(written.fstPath, name, name + ".fbx")) {
         written.error = "cannot write " + written.fstPath;
         return written;
+    }
+
+    written.notes << QString("wrote %1: %2 joints, %3 meshes, %4 materials, %5 textures, %6 KB")
+                         .arg(QFileInfo(written.fbxPath).fileName()).arg(jointCount).arg(meshIds.size())
+                         .arg(materialIds.size()).arg(counts["Texture"]).arg(data.size() / 1024);
+    written.ok = true;
+    return written;
+}
+
+bool autorig::writeFst(const QString& fstPath, const QString& name, const QString& modelFilename) {
+    QFile fst(fstPath);
+    if (!fst.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return false;
     }
     QTextStream text(&fst);
     text << "name = " << name << "\n"
          << "type = body+head\n"
          << "scale = 1\n"
-         << "filename = " << name << ".fbx\n"
+         << "filename = " << modelFilename << "\n"
          << "joint = jointRoot = Hips\n"
          << "joint = jointLean = Spine\n"
          << "joint = jointNeck = Neck\n"
@@ -448,11 +459,5 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
          << "joint = jointEyeRight = RightEye\n"
          << "joint = jointLeftHand = LeftHand\n"
          << "joint = jointRightHand = RightHand\n";
-    fst.close();
-
-    written.notes << QString("wrote %1: %2 joints, %3 meshes, %4 materials, %5 textures, %6 KB")
-                         .arg(QFileInfo(written.fbxPath).fileName()).arg(jointCount).arg(meshIds.size())
-                         .arg(materialIds.size()).arg(counts["Texture"]).arg(data.size() / 1024);
-    written.ok = true;
-    return written;
+    return text.status() == QTextStream::Ok;
 }

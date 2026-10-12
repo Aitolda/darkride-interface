@@ -33,6 +33,10 @@ struct WrittenAvatar {
 WrittenAvatar writeAvatar(const hfm::Model& model, const Body& body, const Result& rig, const QString& sourcePath,
                           const QString& folder, const QString& name);
 
+// Writes an .fst: the avatar's name, its model file (a path beside the .fst, or a URL) at a scale of one, and the
+// joints the engine treats specially, by their standard names. False if it cannot be written.
+bool writeFst(const QString& fstPath, const QString& name, const QString& modelFilename);
+
 }
 
 #endif // hifi_AvatarWriter_h

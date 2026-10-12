@@ -167,6 +167,7 @@
 #include "audio/AudioScope.h"
 #include "avatar/AvatarManager.h"
 #include "avatar/MyHead.h"
+#include "avatar/AvatarImporter.h"
 #include "avatar/AvatarPackager.h"
 #include "avatar/MyCharacterController.h"
 #include "CrashRecoveryHandler.h"
@@ -8589,6 +8590,21 @@ void Application::loadDialog() {
         if (!response.isEmpty() && QFile(response).exists()) {
             setPreviousScriptLocation(QFileInfo(response).absolutePath());
             DependencyManager::get<ScriptEngines>()->loadScript(response, true, false, false, true);  // Don't load from cache
+        }
+    });
+}
+
+void Application::importAvatarDialog() {
+    static Setting::Handle<QString> previousLocation("previousAvatarImportLocation",
+                                                     QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
+    ModalDialogListener* dlg = OffscreenUi::getOpenFileNameAsync(_glWidget, tr("Import Avatar"), previousLocation.get(),
+        tr("Avatars and characters (*.fst *.fbx *.FBX *.dae *.DAE *.obj *.glb *.gltf *.vrm)"));
+    connect(dlg, &ModalDialogListener::response, this, [=] (QVariant answer) {
+        disconnect(dlg, &ModalDialogListener::response, this, nullptr);
+        const QString& response = answer.toString();
+        if (!response.isEmpty() && QFile(response).exists()) {
+            previousLocation.set(QFileInfo(response).absolutePath());
+            AvatarImporter::importFile(response);
         }
     });
 }
