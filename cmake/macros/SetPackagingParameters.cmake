@@ -82,6 +82,32 @@ macro(SET_PACKAGING_PARAMETERS)
 
   string(TIMESTAMP BUILD_TIME "%d/%m/%Y")
 
+  # The branch and commit this tree is on, for the window title, so that with several branches built on one
+  # machine it is plain which one a client is (interagent.md). Read when CMake configures; a configure is run again
+  # when HEAD changes (a checkout), and after a commit the hash catches up on the next cmake run.
+  set(BUILD_BRANCH "")
+  set(BUILD_COMMIT_SHORT "")
+  find_package(Git QUIET)
+  if (GIT_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --abbrev-ref HEAD
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} OUTPUT_VARIABLE BUILD_BRANCH
+      OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} OUTPUT_VARIABLE BUILD_COMMIT_SHORT
+      OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --git-dir
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} OUTPUT_VARIABLE BUILD_GIT_DIR
+      OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if (BUILD_GIT_DIR)
+      if (NOT IS_ABSOLUTE "${BUILD_GIT_DIR}")
+        set(BUILD_GIT_DIR "${CMAKE_SOURCE_DIR}/${BUILD_GIT_DIR}")
+      endif ()
+      if (EXISTS "${BUILD_GIT_DIR}/HEAD")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${BUILD_GIT_DIR}/HEAD")
+      endif ()
+    endif ()
+  endif ()
+
   # if STABLE_BUILD is 1, PRODUCTION_BUILD must be 1 and
   # DEV_BUILD and PR_BUILD must be 0
   if (STABLE_BUILD)
