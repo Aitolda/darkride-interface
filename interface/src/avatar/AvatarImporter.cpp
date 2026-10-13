@@ -34,6 +34,7 @@
 
 #include "Application.h"
 #include "AvatarManager.h"
+#include "InterfaceLogging.h"
 #include "MyAvatar.h"
 
 namespace {
@@ -153,19 +154,28 @@ int ask(const QString& text, const QString& details, const std::vector<Choice>& 
             box.setEscapeButton(button);
         }
     }
+    qCDebug(interfaceapp) << "Import Avatar: asking" << text;
     box.exec();
     auto chosen = std::find(buttons.begin(), buttons.end(), box.clickedButton());
-    return chosen == buttons.end() ? -1 : (int)(chosen - buttons.begin());
+    const int answer = chosen == buttons.end() ? -1 : (int)(chosen - buttons.begin());
+    qCDebug(interfaceapp) << "Import Avatar: answered" << (answer < 0 ? QString("nothing") : choices[answer].label);
+    return answer;
 }
 
 void warn(const QString& text) {
+    qCDebug(interfaceapp) << "Import Avatar: warning" << text;
     QMessageBox::warning(nullptr, TITLE, text);
 }
 
+// A line before and after each step, so a client that stops here shows in its log the step it stopped in (a freeze
+// right after "Wear it", 10-13, left no trace).
 void wear(const QString& fstPath, const QString& name) {
     const QString url = QUrl::fromLocalFile(fstPath).toString();
+    qCDebug(interfaceapp) << "Import Avatar: putting on" << url;
     DependencyManager::get<AvatarManager>()->getMyAvatar()->useFullAvatarURL(url, name);
+    qCDebug(interfaceapp) << "Import Avatar: avatar change started";
     emit qApp->fullAvatarURLChanged(url, name);
+    qCDebug(interfaceapp) << "Import Avatar: wear done";
 }
 
 void offerToWear(const QString& fstPath, const QString& name, const QString& what) {
@@ -187,6 +197,9 @@ void autoRig(const ImportPointer& import, float scale) {
         if (result.ok) {
             written = autorig::writeAvatar(*import->model, body, result, import->path, avatarFolder(import->name), import->name);
         }
+        qCDebug(interfaceapp) << "Import Avatar:" << import->name
+                              << (!result.ok ? "not rigged:" : !written.ok ? "rigged, not saved:" : "rigged and saved as")
+                              << (!result.ok ? result.error : !written.ok ? written.error : written.fstPath);
         QMetaObject::invokeMethod(qApp, [import, result, written]() {
             if (!result.ok) {
                 warn("Could not rig " + import->name + ": " + result.error + ".");
@@ -279,6 +292,7 @@ void AvatarImporter::importFile(const QString& path) {
             import->body = autorig::gatherBody(*import->model);
             import->rig = classify(*import->model, import->why);
         }
+        qCDebug(interfaceapp) << "Import Avatar: read" << import->path << (import->model ? "" : "(not readable)");
         QMetaObject::invokeMethod(qApp, [import]() {
             decide(import);
         }, Qt::QueuedConnection);

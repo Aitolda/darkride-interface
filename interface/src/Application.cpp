@@ -8698,6 +8698,7 @@ void Application::importAvatarDialog() {
     // showed every file greyed out (10-12), whatever the filter
     const QString path = QFileDialog::getOpenFileName(nullptr, tr("Import Avatar"), previousLocation.get(),
                                                       tr("Characters and avatars (*)"));
+    qCDebug(interfaceapp) << "Import Avatar: picked" << (path.isEmpty() ? QString("nothing") : path);
     if (!path.isEmpty() && QFile(path).exists()) {
         previousLocation.set(QFileInfo(path).absolutePath());
         AvatarImporter::importFile(path);
