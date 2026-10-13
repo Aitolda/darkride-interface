@@ -467,37 +467,23 @@ void ScriptEngine::waitTillDoneRunning() {
         // We should never be waiting (blocking) on our own thread
         assert(workerThread != QThread::currentThread());
 
-#ifdef Q_OS_MACOS
-        // On mac, don't call QCoreApplication::processEvents() here. This is to prevent
-        // [NSApplication terminate:] from prematurely destroying the static destructors
-        // while we are waiting for the scripts to shutdown. We will pump the message
-        // queue later in the Application destructor.
-        if (workerThread->isRunning()) {
-            workerThread->quit();
-
-            if (isEvaluating()) {
-                qCWarning(scriptengine) << "Script Engine has been running too long, aborting:" << getFilename();
-                abortEvaluation();
-            } else {
-                auto context = currentContext();
-                if (context) {
-                    qCWarning(scriptengine) << "Script Engine has been running too long, throwing:" << getFilename();
-                    context->throwError("Timed out during shutdown");
-                }
-            }
-
-            // Wait for the scripting thread to stop running, as
-            // flooding it with aborts/exceptions will persist it longer
-            static const auto MAX_SCRIPT_QUITTING_TIME = 0.5 * MSECS_PER_SECOND;
-            if (!workerThread->wait(MAX_SCRIPT_QUITTING_TIME)) {
-                workerThread->terminate();
-            }
-        }
-#else
+        // Wait until the thread has really finished, pumping this thread's events meanwhile so the script's shutdown
+        // code can marshal calls across to it (Settings, Menu, overlays). After a second the evaluation is aborted,
+        // or an error thrown into the script, and the thread terminated if that does not end it; a thread still
+        // running after MAX_SHUTDOWN_WAIT is abandoned, with a warning, rather than hanging the quit. macOS used
+        // to skip the wait (a 2016 worry that processEvents here would let [NSApplication terminate:] run the
+        // static destructors early), which left edit.js running its cleanup while the application was torn down
+        // and crashed every quit; the other platforms' way is used everywhere now.
         auto startedWaiting = usecTimestampNow();
+        static const auto MAX_SHUTDOWN_WAIT = 10 * USECS_PER_SECOND;
         while (workerThread->isRunning()) {
-            // If the final evaluation takes too long, then tell the script engine to stop running
             auto elapsedUsecs = usecTimestampNow() - startedWaiting;
+            if (elapsedUsecs > MAX_SHUTDOWN_WAIT) {
+                qCWarning(scriptengine) << "Script Engine did not stop within" << (MAX_SHUTDOWN_WAIT / USECS_PER_SECOND)
+                                        << "s, abandoning it:" << getFilename();
+                break;
+            }
+            // If the final evaluation takes too long, then tell the script engine to stop running
             static const auto MAX_SCRIPT_EVALUATION_TIME = USECS_PER_SECOND;
             if (elapsedUsecs > MAX_SCRIPT_EVALUATION_TIME) {
                 workerThread->quit();
@@ -525,13 +511,10 @@ void ScriptEngine::waitTillDoneRunning() {
             //       The thread will need to continue to process events, because
             //       the scripts will likely need to marshall messages across to the main thread, e.g.
             //       if they access Settings or Menu in any of their shutdown code. So:
-            // Process events for this thread, allowing invokeMethod calls to pass between threads.
-            QCoreApplication::processEvents();
-
-            // Avoid a pure busy wait
-            QThread::yieldCurrentThread();
+            // Process events for this thread, allowing invokeMethod calls to pass between threads; not the user's
+            // input, which has nothing to do during a quit.
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
         }
-#endif
 
         scriptInfoMessage("Script Engine has stopped:" + getFilename());
     }
