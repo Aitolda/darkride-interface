@@ -62,6 +62,7 @@ public:
     bool shouldSendUpdate(uint32_t simulationStep);
     // a car on a track (PHYSICS.md 4.8): driven along the curve by the client that owns it, through the TrackSimulation
     bool isTrackDriven() const { return _trackDriven; }
+    bool serverTakes() const; // the physics server owns this (a car on a track, a vehicle) at SERVER priority
     void setTrackSimulation(TrackSimulation* tracks) { _tracks = tracks; }
     // a vehicle (PHYSICS.md round 6): simulated here by the VehicleSimulation, whoever the authority is
     bool isVehicle() const { return _vehicle; }
@@ -193,7 +194,6 @@ protected:
     uint64_t _correctionTime { 0 };
     bool vehicleOutOfSync(uint32_t simulationStep, bool& handled);
     bool hasLocalVehicleControls() const;
-    bool serverTakes() const; // the physics server owns this (a car on a track, a vehicle) at SERVER priority
 
     bool isServerlessMode();
 };

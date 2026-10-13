@@ -47,6 +47,25 @@ void VehiclePropertyGroup::copyToScriptValue(const EntityPropertyFlags& desiredP
     COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_ENGINE_RPM, Vehicle, vehicle, EngineRPM, engineRPM);
     COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_GEAR, Vehicle, vehicle, Gear, gear);
     COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_STATE_TIME, Vehicle, vehicle, StateTime, stateTime);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_ENVELOPE_VOLUME, Vehicle, vehicle, EnvelopeVolume, envelopeVolume);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_CENTER_OF_BUOYANCY, Vehicle, vehicle, CenterOfBuoyancy, centerOfBuoyancy);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_GAS_DENSITY, Vehicle, vehicle, GasDensity, gasDensity);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_MAX_THRUST, Vehicle, vehicle, MaxThrust, maxThrust);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_MAX_VERTICAL_THRUST, Vehicle, vehicle, MaxVerticalThrust, maxVerticalThrust);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_THRUST_POINT, Vehicle, vehicle, ThrustPoint, thrustPoint);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_DRAG_AREA, Vehicle, vehicle, DragArea, dragArea);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_ANGULAR_DRAG_AREA, Vehicle, vehicle, AngularDragArea, angularDragArea);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_RUDDER_AREA, Vehicle, vehicle, RudderArea, rudderArea);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_ELEVATOR_AREA, Vehicle, vehicle, ElevatorArea, elevatorArea);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_FIN_POINT, Vehicle, vehicle, FinPoint, finPoint);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_MAX_FIN_ANGLE, Vehicle, vehicle, MaxFinAngle, maxFinAngle);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_BALLAST_RATE, Vehicle, vehicle, BallastRate, ballastRate);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_VENT_RATE, Vehicle, vehicle, VentRate, ventRate);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_PITCH, Vehicle, vehicle, Pitch, pitch);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_LIFT, Vehicle, vehicle, Lift, lift);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_TRIM, Vehicle, vehicle, Trim, trim);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_BALLAST, Vehicle, vehicle, Ballast, ballast);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_FILL, Vehicle, vehicle, Fill, fill);
 }
 
 void VehiclePropertyGroup::copyFromScriptValue(const QScriptValue& object, bool& _defaultSettings) {
@@ -78,6 +97,25 @@ void VehiclePropertyGroup::copyFromScriptValue(const QScriptValue& object, bool&
     COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, engineRPM, float, setEngineRPM);
     COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, gear, int, setGear);
     COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, stateTime, quint64, setStateTime);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, envelopeVolume, float, setEnvelopeVolume);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, centerOfBuoyancy, vec3, setCenterOfBuoyancy);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, gasDensity, float, setGasDensity);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, maxThrust, float, setMaxThrust);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, maxVerticalThrust, float, setMaxVerticalThrust);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, thrustPoint, vec3, setThrustPoint);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, dragArea, vec3, setDragArea);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, angularDragArea, vec3, setAngularDragArea);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, rudderArea, float, setRudderArea);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, elevatorArea, float, setElevatorArea);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, finPoint, vec3, setFinPoint);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, maxFinAngle, float, setMaxFinAngle);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, ballastRate, float, setBallastRate);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, ventRate, float, setVentRate);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, pitch, float, setPitch);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, lift, float, setLift);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, trim, float, setTrim);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, ballast, float, setBallast);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, fill, float, setFill);
 }
 
 void VehiclePropertyGroup::merge(const VehiclePropertyGroup& other) {
@@ -109,6 +147,25 @@ void VehiclePropertyGroup::merge(const VehiclePropertyGroup& other) {
     COPY_PROPERTY_IF_CHANGED(engineRPM);
     COPY_PROPERTY_IF_CHANGED(gear);
     COPY_PROPERTY_IF_CHANGED(stateTime);
+    COPY_PROPERTY_IF_CHANGED(envelopeVolume);
+    COPY_PROPERTY_IF_CHANGED(centerOfBuoyancy);
+    COPY_PROPERTY_IF_CHANGED(gasDensity);
+    COPY_PROPERTY_IF_CHANGED(maxThrust);
+    COPY_PROPERTY_IF_CHANGED(maxVerticalThrust);
+    COPY_PROPERTY_IF_CHANGED(thrustPoint);
+    COPY_PROPERTY_IF_CHANGED(dragArea);
+    COPY_PROPERTY_IF_CHANGED(angularDragArea);
+    COPY_PROPERTY_IF_CHANGED(rudderArea);
+    COPY_PROPERTY_IF_CHANGED(elevatorArea);
+    COPY_PROPERTY_IF_CHANGED(finPoint);
+    COPY_PROPERTY_IF_CHANGED(maxFinAngle);
+    COPY_PROPERTY_IF_CHANGED(ballastRate);
+    COPY_PROPERTY_IF_CHANGED(ventRate);
+    COPY_PROPERTY_IF_CHANGED(pitch);
+    COPY_PROPERTY_IF_CHANGED(lift);
+    COPY_PROPERTY_IF_CHANGED(trim);
+    COPY_PROPERTY_IF_CHANGED(ballast);
+    COPY_PROPERTY_IF_CHANGED(fill);
 }
 
 void VehiclePropertyGroup::debugDump() const {
@@ -141,6 +198,25 @@ void VehiclePropertyGroup::debugDump() const {
     qCDebug(entities) << "            _engineRPM:" << _engineRPM;
     qCDebug(entities) << "            _gear:" << _gear;
     qCDebug(entities) << "            _stateTime:" << _stateTime;
+    qCDebug(entities) << "            _envelopeVolume:" << _envelopeVolume;
+    qCDebug(entities) << "            _centerOfBuoyancy:" << _centerOfBuoyancy;
+    qCDebug(entities) << "            _gasDensity:" << _gasDensity;
+    qCDebug(entities) << "            _maxThrust:" << _maxThrust;
+    qCDebug(entities) << "            _maxVerticalThrust:" << _maxVerticalThrust;
+    qCDebug(entities) << "            _thrustPoint:" << _thrustPoint;
+    qCDebug(entities) << "            _dragArea:" << _dragArea;
+    qCDebug(entities) << "            _angularDragArea:" << _angularDragArea;
+    qCDebug(entities) << "            _rudderArea:" << _rudderArea;
+    qCDebug(entities) << "            _elevatorArea:" << _elevatorArea;
+    qCDebug(entities) << "            _finPoint:" << _finPoint;
+    qCDebug(entities) << "            _maxFinAngle:" << _maxFinAngle;
+    qCDebug(entities) << "            _ballastRate:" << _ballastRate;
+    qCDebug(entities) << "            _ventRate:" << _ventRate;
+    qCDebug(entities) << "            _pitch:" << _pitch;
+    qCDebug(entities) << "            _lift:" << _lift;
+    qCDebug(entities) << "            _trim:" << _trim;
+    qCDebug(entities) << "            _ballast:" << _ballast;
+    qCDebug(entities) << "            _fill:" << _fill;
 }
 
 void VehiclePropertyGroup::listChangedProperties(QList<QString>& out) {
@@ -228,6 +304,63 @@ void VehiclePropertyGroup::listChangedProperties(QList<QString>& out) {
     if (stateTimeChanged()) {
         out << "vehicle-stateTime";
     }
+    if (envelopeVolumeChanged()) {
+        out << "vehicle-envelopeVolume";
+    }
+    if (centerOfBuoyancyChanged()) {
+        out << "vehicle-centerOfBuoyancy";
+    }
+    if (gasDensityChanged()) {
+        out << "vehicle-gasDensity";
+    }
+    if (maxThrustChanged()) {
+        out << "vehicle-maxThrust";
+    }
+    if (maxVerticalThrustChanged()) {
+        out << "vehicle-maxVerticalThrust";
+    }
+    if (thrustPointChanged()) {
+        out << "vehicle-thrustPoint";
+    }
+    if (dragAreaChanged()) {
+        out << "vehicle-dragArea";
+    }
+    if (angularDragAreaChanged()) {
+        out << "vehicle-angularDragArea";
+    }
+    if (rudderAreaChanged()) {
+        out << "vehicle-rudderArea";
+    }
+    if (elevatorAreaChanged()) {
+        out << "vehicle-elevatorArea";
+    }
+    if (finPointChanged()) {
+        out << "vehicle-finPoint";
+    }
+    if (maxFinAngleChanged()) {
+        out << "vehicle-maxFinAngle";
+    }
+    if (ballastRateChanged()) {
+        out << "vehicle-ballastRate";
+    }
+    if (ventRateChanged()) {
+        out << "vehicle-ventRate";
+    }
+    if (pitchChanged()) {
+        out << "vehicle-pitch";
+    }
+    if (liftChanged()) {
+        out << "vehicle-lift";
+    }
+    if (trimChanged()) {
+        out << "vehicle-trim";
+    }
+    if (ballastChanged()) {
+        out << "vehicle-ballast";
+    }
+    if (fillChanged()) {
+        out << "vehicle-fill";
+    }
 }
 
 bool VehiclePropertyGroup::appendToEditPacket(OctreePacketData* packetData,
@@ -267,6 +400,25 @@ bool VehiclePropertyGroup::appendToEditPacket(OctreePacketData* packetData,
     APPEND_ENTITY_PROPERTY(PROP_VEHICLE_ENGINE_RPM, getEngineRPM());
     APPEND_ENTITY_PROPERTY(PROP_VEHICLE_GEAR, getGear());
     APPEND_ENTITY_PROPERTY(PROP_VEHICLE_STATE_TIME, getStateTime());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_ENVELOPE_VOLUME, getEnvelopeVolume());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_CENTER_OF_BUOYANCY, getCenterOfBuoyancy());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_GAS_DENSITY, getGasDensity());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_MAX_THRUST, getMaxThrust());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_MAX_VERTICAL_THRUST, getMaxVerticalThrust());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_THRUST_POINT, getThrustPoint());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_DRAG_AREA, getDragArea());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_ANGULAR_DRAG_AREA, getAngularDragArea());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_RUDDER_AREA, getRudderArea());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_ELEVATOR_AREA, getElevatorArea());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_FIN_POINT, getFinPoint());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_MAX_FIN_ANGLE, getMaxFinAngle());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_BALLAST_RATE, getBallastRate());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_VENT_RATE, getVentRate());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_PITCH, getPitch());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_LIFT, getLift());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_TRIM, getTrim());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_BALLAST, getBallast());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_FILL, getFill());
 
     return true;
 }
@@ -306,6 +458,25 @@ bool VehiclePropertyGroup::decodeFromEditPacket(EntityPropertyFlags& propertyFla
     READ_ENTITY_PROPERTY(PROP_VEHICLE_ENGINE_RPM, float, setEngineRPM);
     READ_ENTITY_PROPERTY(PROP_VEHICLE_GEAR, int, setGear);
     READ_ENTITY_PROPERTY(PROP_VEHICLE_STATE_TIME, quint64, setStateTime);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_ENVELOPE_VOLUME, float, setEnvelopeVolume);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_CENTER_OF_BUOYANCY, glm::vec3, setCenterOfBuoyancy);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_GAS_DENSITY, float, setGasDensity);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_MAX_THRUST, float, setMaxThrust);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_MAX_VERTICAL_THRUST, float, setMaxVerticalThrust);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_THRUST_POINT, glm::vec3, setThrustPoint);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_DRAG_AREA, glm::vec3, setDragArea);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_ANGULAR_DRAG_AREA, glm::vec3, setAngularDragArea);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_RUDDER_AREA, float, setRudderArea);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_ELEVATOR_AREA, float, setElevatorArea);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_FIN_POINT, glm::vec3, setFinPoint);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_MAX_FIN_ANGLE, float, setMaxFinAngle);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_BALLAST_RATE, float, setBallastRate);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_VENT_RATE, float, setVentRate);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_PITCH, float, setPitch);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_LIFT, float, setLift);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_TRIM, float, setTrim);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_BALLAST, float, setBallast);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_FILL, float, setFill);
 
     DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_TYPE, Type);
     DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_MASS, Mass);
@@ -335,6 +506,25 @@ bool VehiclePropertyGroup::decodeFromEditPacket(EntityPropertyFlags& propertyFla
     DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_ENGINE_RPM, EngineRPM);
     DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_GEAR, Gear);
     DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_STATE_TIME, StateTime);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_ENVELOPE_VOLUME, EnvelopeVolume);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_CENTER_OF_BUOYANCY, CenterOfBuoyancy);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_GAS_DENSITY, GasDensity);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_MAX_THRUST, MaxThrust);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_MAX_VERTICAL_THRUST, MaxVerticalThrust);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_THRUST_POINT, ThrustPoint);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_DRAG_AREA, DragArea);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_ANGULAR_DRAG_AREA, AngularDragArea);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_RUDDER_AREA, RudderArea);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_ELEVATOR_AREA, ElevatorArea);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_FIN_POINT, FinPoint);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_MAX_FIN_ANGLE, MaxFinAngle);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_BALLAST_RATE, BallastRate);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_VENT_RATE, VentRate);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_PITCH, Pitch);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_LIFT, Lift);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_TRIM, Trim);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_BALLAST, Ballast);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_FILL, Fill);
 
     processedBytes += bytesRead;
 
@@ -372,6 +562,25 @@ void VehiclePropertyGroup::markAllChanged() {
     _engineRPMChanged = true;
     _gearChanged = true;
     _stateTimeChanged = true;
+    _envelopeVolumeChanged = true;
+    _centerOfBuoyancyChanged = true;
+    _gasDensityChanged = true;
+    _maxThrustChanged = true;
+    _maxVerticalThrustChanged = true;
+    _thrustPointChanged = true;
+    _dragAreaChanged = true;
+    _angularDragAreaChanged = true;
+    _rudderAreaChanged = true;
+    _elevatorAreaChanged = true;
+    _finPointChanged = true;
+    _maxFinAngleChanged = true;
+    _ballastRateChanged = true;
+    _ventRateChanged = true;
+    _pitchChanged = true;
+    _liftChanged = true;
+    _trimChanged = true;
+    _ballastChanged = true;
+    _fillChanged = true;
 }
 
 EntityPropertyFlags VehiclePropertyGroup::getChangedProperties() const {
@@ -405,6 +614,25 @@ EntityPropertyFlags VehiclePropertyGroup::getChangedProperties() const {
     CHECK_PROPERTY_CHANGE(PROP_VEHICLE_ENGINE_RPM, engineRPM);
     CHECK_PROPERTY_CHANGE(PROP_VEHICLE_GEAR, gear);
     CHECK_PROPERTY_CHANGE(PROP_VEHICLE_STATE_TIME, stateTime);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_ENVELOPE_VOLUME, envelopeVolume);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_CENTER_OF_BUOYANCY, centerOfBuoyancy);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_GAS_DENSITY, gasDensity);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_MAX_THRUST, maxThrust);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_MAX_VERTICAL_THRUST, maxVerticalThrust);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_THRUST_POINT, thrustPoint);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_DRAG_AREA, dragArea);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_ANGULAR_DRAG_AREA, angularDragArea);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_RUDDER_AREA, rudderArea);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_ELEVATOR_AREA, elevatorArea);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_FIN_POINT, finPoint);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_MAX_FIN_ANGLE, maxFinAngle);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_BALLAST_RATE, ballastRate);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_VENT_RATE, ventRate);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_PITCH, pitch);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_LIFT, lift);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_TRIM, trim);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_BALLAST, ballast);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_FILL, fill);
 
     return changedProperties;
 }
@@ -438,6 +666,25 @@ void VehiclePropertyGroup::getProperties(EntityItemProperties& properties) const
     COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, EngineRPM, getEngineRPM);
     COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, Gear, getGear);
     COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, StateTime, getStateTime);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, EnvelopeVolume, getEnvelopeVolume);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, CenterOfBuoyancy, getCenterOfBuoyancy);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, GasDensity, getGasDensity);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, MaxThrust, getMaxThrust);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, MaxVerticalThrust, getMaxVerticalThrust);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, ThrustPoint, getThrustPoint);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, DragArea, getDragArea);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, AngularDragArea, getAngularDragArea);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, RudderArea, getRudderArea);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, ElevatorArea, getElevatorArea);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, FinPoint, getFinPoint);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, MaxFinAngle, getMaxFinAngle);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, BallastRate, getBallastRate);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, VentRate, getVentRate);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, Pitch, getPitch);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, Lift, getLift);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, Trim, getTrim);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, Ballast, getBallast);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, Fill, getFill);
 }
 
 bool VehiclePropertyGroup::setProperties(const EntityItemProperties& properties) {
@@ -471,6 +718,25 @@ bool VehiclePropertyGroup::setProperties(const EntityItemProperties& properties)
     SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, EngineRPM, engineRPM, setEngineRPM);
     SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, Gear, gear, setGear);
     SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, StateTime, stateTime, setStateTime);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, EnvelopeVolume, envelopeVolume, setEnvelopeVolume);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, CenterOfBuoyancy, centerOfBuoyancy, setCenterOfBuoyancy);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, GasDensity, gasDensity, setGasDensity);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, MaxThrust, maxThrust, setMaxThrust);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, MaxVerticalThrust, maxVerticalThrust, setMaxVerticalThrust);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, ThrustPoint, thrustPoint, setThrustPoint);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, DragArea, dragArea, setDragArea);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, AngularDragArea, angularDragArea, setAngularDragArea);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, RudderArea, rudderArea, setRudderArea);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, ElevatorArea, elevatorArea, setElevatorArea);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, FinPoint, finPoint, setFinPoint);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, MaxFinAngle, maxFinAngle, setMaxFinAngle);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, BallastRate, ballastRate, setBallastRate);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, VentRate, ventRate, setVentRate);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, Pitch, pitch, setPitch);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, Lift, lift, setLift);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, Trim, trim, setTrim);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, Ballast, ballast, setBallast);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, Fill, fill, setFill);
 
     return somethingChanged;
 }
@@ -506,6 +772,25 @@ EntityPropertyFlags VehiclePropertyGroup::getEntityProperties(EncodeBitstreamPar
     requestedProperties += PROP_VEHICLE_ENGINE_RPM;
     requestedProperties += PROP_VEHICLE_GEAR;
     requestedProperties += PROP_VEHICLE_STATE_TIME;
+    requestedProperties += PROP_VEHICLE_ENVELOPE_VOLUME;
+    requestedProperties += PROP_VEHICLE_CENTER_OF_BUOYANCY;
+    requestedProperties += PROP_VEHICLE_GAS_DENSITY;
+    requestedProperties += PROP_VEHICLE_MAX_THRUST;
+    requestedProperties += PROP_VEHICLE_MAX_VERTICAL_THRUST;
+    requestedProperties += PROP_VEHICLE_THRUST_POINT;
+    requestedProperties += PROP_VEHICLE_DRAG_AREA;
+    requestedProperties += PROP_VEHICLE_ANGULAR_DRAG_AREA;
+    requestedProperties += PROP_VEHICLE_RUDDER_AREA;
+    requestedProperties += PROP_VEHICLE_ELEVATOR_AREA;
+    requestedProperties += PROP_VEHICLE_FIN_POINT;
+    requestedProperties += PROP_VEHICLE_MAX_FIN_ANGLE;
+    requestedProperties += PROP_VEHICLE_BALLAST_RATE;
+    requestedProperties += PROP_VEHICLE_VENT_RATE;
+    requestedProperties += PROP_VEHICLE_PITCH;
+    requestedProperties += PROP_VEHICLE_LIFT;
+    requestedProperties += PROP_VEHICLE_TRIM;
+    requestedProperties += PROP_VEHICLE_BALLAST;
+    requestedProperties += PROP_VEHICLE_FILL;
 
     return requestedProperties;
 }
@@ -548,6 +833,25 @@ void VehiclePropertyGroup::appendSubclassData(OctreePacketData* packetData, Enco
     APPEND_ENTITY_PROPERTY(PROP_VEHICLE_ENGINE_RPM, getEngineRPM());
     APPEND_ENTITY_PROPERTY(PROP_VEHICLE_GEAR, getGear());
     APPEND_ENTITY_PROPERTY(PROP_VEHICLE_STATE_TIME, getStateTime());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_ENVELOPE_VOLUME, getEnvelopeVolume());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_CENTER_OF_BUOYANCY, getCenterOfBuoyancy());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_GAS_DENSITY, getGasDensity());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_MAX_THRUST, getMaxThrust());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_MAX_VERTICAL_THRUST, getMaxVerticalThrust());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_THRUST_POINT, getThrustPoint());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_DRAG_AREA, getDragArea());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_ANGULAR_DRAG_AREA, getAngularDragArea());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_RUDDER_AREA, getRudderArea());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_ELEVATOR_AREA, getElevatorArea());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_FIN_POINT, getFinPoint());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_MAX_FIN_ANGLE, getMaxFinAngle());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_BALLAST_RATE, getBallastRate());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_VENT_RATE, getVentRate());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_PITCH, getPitch());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_LIFT, getLift());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_TRIM, getTrim());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_BALLAST, getBallast());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_FILL, getFill());
 }
 
 int VehiclePropertyGroup::readEntitySubclassDataFromBuffer(const unsigned char* data, int bytesLeftToRead,
@@ -586,6 +890,25 @@ int VehiclePropertyGroup::readEntitySubclassDataFromBuffer(const unsigned char* 
     READ_ENTITY_PROPERTY(PROP_VEHICLE_ENGINE_RPM, float, setEngineRPM);
     READ_ENTITY_PROPERTY(PROP_VEHICLE_GEAR, int, setGear);
     READ_ENTITY_PROPERTY(PROP_VEHICLE_STATE_TIME, quint64, setStateTime);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_ENVELOPE_VOLUME, float, setEnvelopeVolume);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_CENTER_OF_BUOYANCY, glm::vec3, setCenterOfBuoyancy);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_GAS_DENSITY, float, setGasDensity);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_MAX_THRUST, float, setMaxThrust);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_MAX_VERTICAL_THRUST, float, setMaxVerticalThrust);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_THRUST_POINT, glm::vec3, setThrustPoint);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_DRAG_AREA, glm::vec3, setDragArea);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_ANGULAR_DRAG_AREA, glm::vec3, setAngularDragArea);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_RUDDER_AREA, float, setRudderArea);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_ELEVATOR_AREA, float, setElevatorArea);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_FIN_POINT, glm::vec3, setFinPoint);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_MAX_FIN_ANGLE, float, setMaxFinAngle);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_BALLAST_RATE, float, setBallastRate);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_VENT_RATE, float, setVentRate);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_PITCH, float, setPitch);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_LIFT, float, setLift);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_TRIM, float, setTrim);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_BALLAST, float, setBallast);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_FILL, float, setFill);
 
     return bytesRead;
 }
@@ -599,7 +922,12 @@ uint64_t VehiclePropertyGroup::definitionHash() const {
     stream << _type << _mass << _centerOfMass.x << _centerOfMass.y << _centerOfMass.z << _wheels << _seats
            << _maxSteerAngle << _maxTorque << _minRPM << _maxRPM << _gearRatios << _reverseGearRatio << _finalDriveRatio
            << _maxBrakeTorque << _maxHandBrakeTorque << _driveType << _suspensionFrequency << _suspensionDamping
-           << _wheel << _axle;
+           << _wheel << _axle
+           << _envelopeVolume << _centerOfBuoyancy.x << _centerOfBuoyancy.y << _centerOfBuoyancy.z << _gasDensity
+           << _maxThrust << _maxVerticalThrust << _thrustPoint.x << _thrustPoint.y << _thrustPoint.z
+           << _dragArea.x << _dragArea.y << _dragArea.z << _angularDragArea.x << _angularDragArea.y << _angularDragArea.z
+           << _rudderArea << _elevatorArea << _finPoint.x << _finPoint.y << _finPoint.z << _maxFinAngle
+           << _ballastRate << _ventRate;
     QByteArray digest = QCryptographicHash::hash(bytes, QCryptographicHash::Md5);
     uint64_t hash = 0;
     memcpy(&hash, digest.constData(), sizeof(hash));

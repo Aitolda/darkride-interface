@@ -1445,7 +1445,9 @@ public slots:
      * @function Entities.setVehicleControls
      * @param {Uuid} entityID - The vehicle.
      * @param {object} controls - <code>throttle</code> (-1 reverse to 1 forward), <code>steering</code> (-1 left to 1 right),
-     *     <code>brake</code> (0 to 1) and <code>handBrake</code> (0 to 1); a missing one is 0.
+     *     <code>brake</code> (0 to 1) and <code>handBrake</code> (0 to 1); for an airship (round 7) also <code>pitch</code>
+     *     (-1 nose down to 1 nose up), <code>lift</code> (-1 down to 1 up) and <code>trim</code> (1 drops ballast, -1 vents
+     *     gas), with <code>steering</code> the rudder; a missing one is 0.
      * @returns {boolean} <code>true</code> if the entity exists and is a vehicle.
      */
     Q_INVOKABLE bool setVehicleControls(const QUuid& entityID, const QVariantMap& controls);

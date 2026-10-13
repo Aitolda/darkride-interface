@@ -2,8 +2,9 @@
 //  VehiclePropertyGroup.h
 //  libraries/entities/src
 //
-//  The vehicle property group (PHYSICS.md 4.8 and round 6): what makes an entity a vehicle and the state of its simulation.
-//  See the jsdoc below for every property. Generated once from a table (scratchpad/gen_vehicle_group.py) and kept by hand.
+//  The vehicle property group (PHYSICS.md 4.8, rounds 6 and 7): what makes an entity a vehicle (a wheeled one, or an
+//  airship) and the state of its simulation. See the jsdoc below for every property. Generated from a table
+//  (scratchpad/gen_vehicle_group.py, round 7's copy) and kept by hand.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -32,21 +33,26 @@ namespace VehicleType {
     const QString NONE = "none";
     const QString WHEELED = "wheeled";
     const QString WHEEL = "wheel";
+    const QString AIRSHIP = "airship";
 }
 
 /**jsdoc
  * A vehicle is any entity with a <code>vehicle</code> group whose <code>type</code> is not <code>"none"</code> (PHYSICS.md
- * 4.8 and round 6). The entity is the chassis: its own collision shape (a box is best; the physics server always
- * uses a box of the entity's dimensions), its <code>mass</code> and <code>centerOfMass</code>, the wheels hung from it
- * and the seats in it. The names are Unity's where Unity has them (<code>Rigidbody</code>, <code>WheelCollider</code>)
- * so a Unity vehicle carries across, and Jolt's for the engine and transmission, which Unity leaves to scripts.
- * The vehicle is simulated by the physics server when the domain has one, else by the client that owns it; the driver's
- * client predicts its own inputs and is corrected by the server; everyone else runs the model from the last known
- * inputs and blends corrections. The state properties are read-only: the simulator writes them.
+ * 4.8, rounds 6 and 7). The entity is the chassis or the hull: its own collision shape (a box is best; the physics
+ * server always uses a box of the entity's dimensions), its <code>mass</code> and <code>centerOfMass</code>, the wheels
+ * hung from it and the seats in it. The names are Unity's where Unity has them (<code>Rigidbody</code>,
+ * <code>WheelCollider</code>) so a Unity vehicle carries across, and Jolt's for the engine and transmission, which Unity
+ * leaves to scripts. The vehicle is simulated by the physics server when the domain has one, else by the client that
+ * owns it; the driver's client predicts its own inputs and is corrected by the server; everyone else runs the model
+ * from the last known inputs and blends corrections. The state properties are read-only: the simulator writes them.
+ * An airship (<code>type</code> <code>"airship"</code>) is a hull with buoyancy, propellers, fins and ballast; make the
+ * entity a moving reference frame too (<code>frame</code> <code>true</code>) and its top is a deck the crew walks on
+ * while it flies.
  *
  * @typedef {object} Entities.Vehicle
- * @property {string} type="none" - <code>"none"</code>, <code>"wheeled"</code> (a chassis with wheels), or
- *     <code>"wheel"</code> (a child entity that shows one of its parent's wheels: see <code>wheel</code>).
+ * @property {string} type="none" - <code>"none"</code>, <code>"wheeled"</code> (a chassis with wheels),
+ *     <code>"wheel"</code> (a child entity that shows one of its parent's wheels: see <code>wheel</code>), or
+ *     <code>"airship"</code> (a lighter-than-air hull: see <code>envelopeVolume</code> and the rest).
  * @property {number} mass=0 - The chassis mass in kg (Unity's <code>Rigidbody.mass</code>); <code>0</code> uses the
  *     entity's density and volume as for any entity.
  * @property {Vec3} centerOfMass=0,0,0 - The centre of mass, in the entity's local metres (<code>Rigidbody.centerOfMass</code>).
@@ -95,6 +101,36 @@ namespace VehicleType {
  * @property {number} gear=0 - <em>State.</em> The gear: 1 and up forward, 0 neutral, -1 reverse.
  * @property {number} stateTime=0 - <em>State.</em> The domain time, in microseconds, that this state and the entity's
  *     position, rotation and velocities in the same update are for.
+ * @property {number} envelopeVolume=0 - An airship's envelope, m<sup>3</sup>. Its lift is the volume times
+ *     <code>fill</code> times the difference between the air's density at its altitude (the standard atmosphere, sea
+ *     level at y = 0) and <code>gasDensity</code>, times gravity, straight up at <code>centerOfBuoyancy</code>; a
+ *     1,500 m<sup>3</sup> helium envelope lifts about 1,570 kg at sea level. <code>mass</code> is the hull's without
+ *     ballast.
+ * @property {Vec3} centerOfBuoyancy=0,0,0 - The envelope's centre in local metres. Above <code>centerOfMass</code> it
+ *     keeps the ship upright, as a pendulum.
+ * @property {number} gasDensity=0.1786 - The lifting gas, kg/m<sup>3</sup>: helium 0.1786, hydrogen 0.0899.
+ * @property {number} maxThrust=0 - The propellers' thrust at full throttle, N, along the ship's forward.
+ * @property {number} maxVerticalThrust=0 - The vertical thruster's at full <code>lift</code>, N, along the ship's up.
+ * @property {Vec3} thrustPoint=0,0,0 - Where both act, local metres (low on the gondola, it pitches the nose a little).
+ * @property {Vec3} dragArea=0,0,0 - The drag coefficient times area per local axis, m<sup>2</sup>, for the drag at
+ *     <code>centerOfBuoyancy</code> (half the air's density times speed squared times this); 0,0,0 derives one from the
+ *     entity's dimensions.
+ * @property {Vec3} angularDragArea=0,0,0 - The same for the spin about each local axis, m<sup>5</sup>; 0,0,0 derives.
+ * @property {number} rudderArea=0 - The vertical fin's area, m<sup>2</sup>. The fins are flat plates at
+ *     <code>finPoint</code>, lifting with the angle between them and the relative wind: the ship's own sideslip and
+ *     incidence (which is what makes the nose follow the velocity) plus the pilot's deflection.
+ * @property {number} elevatorArea=0 - The horizontal fin's area, m<sup>2</sup>.
+ * @property {Vec3} finPoint=0,0,0 - Where the fins act, local metres: aft of the envelope's centre (+z).
+ * @property {number} maxFinAngle=25 - The fins' deflection at full <code>steering</code> or <code>pitch</code>, degrees.
+ * @property {number} ballastRate=0 - Ballast dropped per second at full positive <code>trim</code>, kg/s.
+ * @property {number} ventRate=0 - The fraction of the envelope vented per second at full negative <code>trim</code>.
+ * @property {number} pitch=0 - <em>State.</em> The last applied elevator input, -1 (nose down) to 1 (nose up).
+ * @property {number} lift=0 - <em>State.</em> The last applied vertical thruster input, -1 (down) to 1 (up).
+ * @property {number} trim=0 - <em>State.</em> The last applied trim, 1 dropping ballast, -1 venting gas.
+ * @property {number} ballast=0 - <em>State.</em> The ballast carried now, kg: set it when the ship is made, the
+ *     simulator lowers it as the pilot drops ballast.
+ * @property {number} fill=1 - <em>State.</em> The fraction of the envelope that is gas: the simulator lowers it as the
+ *     pilot vents.
  */
 class VehiclePropertyGroup : public PropertyGroup {
 public:
@@ -142,9 +178,10 @@ public:
                                                  EntityPropertyFlags& propertyFlags, bool overwriteLocalData,
                                                  bool& somethingChanged) override;
 
-    // true for a chassis: a vehicle the physics simulates (not a wheel, not "none")
-    bool isVehicle() const { return _type == VehicleType::WHEELED; }
+    // true for a chassis or a hull: a vehicle the physics simulates (not a wheel, not "none")
+    bool isVehicle() const { return _type == VehicleType::WHEELED || _type == VehicleType::AIRSHIP; }
     bool isWheel() const { return _type == VehicleType::WHEEL; }
+    bool isAirship() const { return _type == VehicleType::AIRSHIP; }
     // the definition (everything but the state) as a version: the simulation rebuilds its vehicle when it changes
     uint64_t definitionHash() const;
 
@@ -176,6 +213,25 @@ public:
     DEFINE_PROPERTY(PROP_VEHICLE_ENGINE_RPM, EngineRPM, engineRPM, float, 0.0f);
     DEFINE_PROPERTY(PROP_VEHICLE_GEAR, Gear, gear, int, 0);
     DEFINE_PROPERTY(PROP_VEHICLE_STATE_TIME, StateTime, stateTime, quint64, 0);
+    DEFINE_PROPERTY(PROP_VEHICLE_ENVELOPE_VOLUME, EnvelopeVolume, envelopeVolume, float, 0.0f);
+    DEFINE_PROPERTY_REF(PROP_VEHICLE_CENTER_OF_BUOYANCY, CenterOfBuoyancy, centerOfBuoyancy, glm::vec3, glm::vec3(0.0f));
+    DEFINE_PROPERTY(PROP_VEHICLE_GAS_DENSITY, GasDensity, gasDensity, float, 0.1786f);
+    DEFINE_PROPERTY(PROP_VEHICLE_MAX_THRUST, MaxThrust, maxThrust, float, 0.0f);
+    DEFINE_PROPERTY(PROP_VEHICLE_MAX_VERTICAL_THRUST, MaxVerticalThrust, maxVerticalThrust, float, 0.0f);
+    DEFINE_PROPERTY_REF(PROP_VEHICLE_THRUST_POINT, ThrustPoint, thrustPoint, glm::vec3, glm::vec3(0.0f));
+    DEFINE_PROPERTY_REF(PROP_VEHICLE_DRAG_AREA, DragArea, dragArea, glm::vec3, glm::vec3(0.0f));
+    DEFINE_PROPERTY_REF(PROP_VEHICLE_ANGULAR_DRAG_AREA, AngularDragArea, angularDragArea, glm::vec3, glm::vec3(0.0f));
+    DEFINE_PROPERTY(PROP_VEHICLE_RUDDER_AREA, RudderArea, rudderArea, float, 0.0f);
+    DEFINE_PROPERTY(PROP_VEHICLE_ELEVATOR_AREA, ElevatorArea, elevatorArea, float, 0.0f);
+    DEFINE_PROPERTY_REF(PROP_VEHICLE_FIN_POINT, FinPoint, finPoint, glm::vec3, glm::vec3(0.0f));
+    DEFINE_PROPERTY(PROP_VEHICLE_MAX_FIN_ANGLE, MaxFinAngle, maxFinAngle, float, 25.0f);
+    DEFINE_PROPERTY(PROP_VEHICLE_BALLAST_RATE, BallastRate, ballastRate, float, 0.0f);
+    DEFINE_PROPERTY(PROP_VEHICLE_VENT_RATE, VentRate, ventRate, float, 0.0f);
+    DEFINE_PROPERTY(PROP_VEHICLE_PITCH, Pitch, pitch, float, 0.0f);
+    DEFINE_PROPERTY(PROP_VEHICLE_LIFT, Lift, lift, float, 0.0f);
+    DEFINE_PROPERTY(PROP_VEHICLE_TRIM, Trim, trim, float, 0.0f);
+    DEFINE_PROPERTY(PROP_VEHICLE_BALLAST, Ballast, ballast, float, 0.0f);
+    DEFINE_PROPERTY(PROP_VEHICLE_FILL, Fill, fill, float, 1.0f);
 };
 
 #endif // hifi_VehiclePropertyGroup_h

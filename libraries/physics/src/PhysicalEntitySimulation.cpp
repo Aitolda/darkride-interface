@@ -299,6 +299,24 @@ QVariantMap PhysicalEntitySimulation::getVehicleStats() const {
         telemetry["brake"] = live.brake;
         telemetry["handBrake"] = live.handBrake;
         telemetry["speed"] = live.speed;
+        if (live.airship) {
+            telemetry["airship"] = true;
+            telemetry["altitude"] = live.altitude;
+            telemetry["airDensity"] = live.airDensity;
+            telemetry["buoyancy"] = live.buoyancy;
+            telemetry["ballastWeight"] = live.ballastWeight;
+            telemetry["thrust"] = live.thrust;
+            telemetry["verticalThrust"] = live.verticalThrust;
+            telemetry["airspeed"] = live.airspeed;
+            telemetry["sideslip"] = live.sideslip;
+            telemetry["incidence"] = live.incidence;
+            telemetry["climbRate"] = live.climbRate;
+            telemetry["ballast"] = live.ballast;
+            telemetry["fill"] = live.fill;
+            telemetry["pitch"] = live.pitch;
+            telemetry["lift"] = live.lift;
+            telemetry["trim"] = live.trim;
+        }
         QVariantList wheelRPM, wheelSlip, suspension, contact;
         for (size_t i = 0; i < live.wheelRPM.size(); ++i) {
             wheelRPM << live.wheelRPM[i];
@@ -451,6 +469,16 @@ void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
             // not in physical zone --> remove from list
             entityItr = _entitiesToAddToPhysics.erase(entityItr);
             continue;
+        }
+        if (Physics::isServerAuthority() && !entity->getParentID().isNull() && !serverDrivesAsBox(entity)) {
+            // the server's tree has no ancestors: a child whose parent is not here (the rail of a deck the server does
+            // not hold, a part of a model) would stand at its local coordinates near the origin; it gets no body
+            bool parentHere = false;
+            entity->getParentPointer(parentHere);
+            if (!parentHere) {
+                entityItr = _entitiesToAddToPhysics.erase(entityItr);
+                continue;
+            }
         }
 
         if (entity->isReadyToComputeShape() || serverDrivesAsBox(entity)) {
@@ -657,13 +685,18 @@ void PhysicalEntitySimulation::handleChangedMotionStates(const VectorOfMotionSta
 
     // A car on a track needs a driver even while it stands still (a train at a station is not an active body, so it
     // is not among the changed states above): whoever is near and finds it unowned bids for it (PHYSICS.md 4.8).
+    // Likewise a vehicle the physics server holds while it sleeps (a car parked on its pad): it goes on the owned list,
+    // whose keep-alive holds it, rather than waiting to move (round 7).
     for (ObjectMotionState* state : _physicalObjects) {
         if (state->getType() == MOTIONSTATE_TYPE_ENTITY) {
             EntityMotionState* entityState = static_cast<EntityMotionState*>(state);
-            if (entityState->isTrackDriven() && entityState->getBody()
-                    && entityState->getOwnershipState() == EntityMotionState::OwnershipState::NotLocallyOwned
-                    && !entityState->isLocallyOwned() && entityState->shouldSendBid()) {
+            if (!entityState->getBody() || entityState->getOwnershipState() != EntityMotionState::OwnershipState::NotLocallyOwned) {
+                continue;
+            }
+            if (entityState->isTrackDriven() && !entityState->isLocallyOwned() && entityState->shouldSendBid()) {
                 addOwnershipBid(entityState);
+            } else if (entityState->serverTakes() && entityState->isLocallyOwned()) {
+                addOwnership(entityState);
             }
         }
     }
@@ -732,8 +765,11 @@ void PhysicalEntitySimulation::sendOwnershipBids(uint32_t numSubsteps) {
             } else {
                 if (now > _bids[i]->getNextBidExpiry()) {
                     _bids[i]->sendBid(_entityPacketSender, numSubsteps);
-                    _nextBidExpiry = glm::min(_nextBidExpiry, _bids[i]->getNextBidExpiry());
                 }
+                // every bid kept is looked at again by its expiry, resent or not: one whose expiry was pushed back (an
+                // owner's change does that) was forgotten, and when it then won, the win was never taken up, so the
+                // physics server held a car it never updated and lost it ten seconds later (round 7)
+                _nextBidExpiry = glm::min(_nextBidExpiry, _bids[i]->getNextBidExpiry());
                 ++i;
             }
         }

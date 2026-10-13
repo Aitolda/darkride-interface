@@ -21,7 +21,12 @@
 //
 //  Wheel entities (type "wheel") that are children of the chassis are placed from the local simulation every frame;
 //  they cost no packets. A vehicle's transform is driven locally everywhere (EntityItem::setTransformDrivenLocally), so a
-//  network update of it is a correction to adopt, never a placement.
+//  network update of it is a correction to adopt, never a placement; the one exception is an explicit edit by someone
+//  who is not the authority (the editor moving the ship), which the authority adopts as a teleport (round 7).
+//
+//  An airship (type "airship", PHYSICS.md round 7) is the same three roles over another model: no constraint, but the
+//  forces of AirshipModel (buoyancy, thrust, fins, drag, ballast) added to the hull's body every substep from the same
+//  applied input, replayed the same way. Its hull is usually a frame as well, so the deck is a room the crew walks in.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -47,6 +52,7 @@
 #include <Jolt/Core/Reference.h>
 #include <Jolt/Physics/Body/BodyID.h>
 
+#include <AirshipModel.h>
 #include <EntityItem.h>
 #include <VehicleInput.h>
 #include <WheeledVehicleSpec.h>
@@ -74,6 +80,7 @@ public:
     static constexpr int MAX_REPLAY_STEPS = 45;                        // half a second of substeps
     static constexpr int SNAPSHOT_RING = 180;                          // two seconds of substeps
     static constexpr int MAX_QUEUED_INPUTS = 6;                        // the server keeps at most this many of a driver's inputs waiting
+    static constexpr int SENT_RING = 60;                               // the authority remembers this many published poses (6 s at 10 Hz)
     static constexpr int UPDATE_STEPS = 9;                             // the authority publishes every 9 substeps (10 Hz) while awake
     static constexpr quint64 DRIVER_SILENCE = 2 * USECS_PER_SECOND;    // no input for this long: the authority eases off and brakes
 
@@ -130,6 +137,23 @@ public:
         float brake { 0.0f };
         float handBrake { 0.0f };
         float speed { 0.0f };           // m/s along the vehicle's forward
+        // an airship's (round 7)
+        bool airship { false };
+        float altitude { 0.0f };        // m, of the envelope's centre
+        float airDensity { 0.0f };
+        float buoyancy { 0.0f };        // N up
+        float ballastWeight { 0.0f };   // N down
+        float thrust { 0.0f };          // N along forward
+        float verticalThrust { 0.0f };  // N along up
+        float airspeed { 0.0f };        // m/s
+        float sideslip { 0.0f };        // degrees
+        float incidence { 0.0f };       // degrees
+        float climbRate { 0.0f };       // m/s
+        float ballast { 0.0f };         // kg
+        float fill { 0.0f };
+        float pitch { 0.0f };           // the inputs as applied
+        float lift { 0.0f };
+        float trim { 0.0f };
         std::vector<float> wheelRPM;    // per wheel
         std::vector<float> wheelSlip;   // longitudinal slip per wheel
         std::vector<float> suspension;  // suspension length per wheel, m
@@ -163,6 +187,12 @@ private:
         uint32_t definitionVersion { 0 };
         uint64_t definitionHash { 0 };
         WheeledVehicleSpec spec;
+        // an airship (round 7): the kind, its spec, what changes in flight, and the last forces for telemetry
+        bool airship { false };
+        bool airshipBuilt { false };
+        AirshipSpec airshipSpec;
+        AirshipState airshipState;
+        AirshipForces airshipForces;
         // inputs
         VehicleInput applied;                 // the last input applied, with its sequence
         uint32_t nextSequence { 1 };          // the driver's next
@@ -178,6 +208,19 @@ private:
         // the authority's state as received
         uint32_t networkPoseVersion { 0 };
         quint64 lastStateTime { 0 };
+        // the authority's own: the poses it published lately, with their velocities, to tell its own updates echoed by
+        // the entity server (which moves them on by their velocities meanwhile) from someone's explicit edit of the
+        // pose (a teleport, round 7)
+        struct SentPose {
+            glm::vec3 position;
+            glm::quat rotation;
+            glm::vec3 velocity;
+            glm::vec3 angularVelocity;
+        };
+        std::deque<SentPose> sent;
+        bool teleported { false };      // the last teleport adopted, so the same edit delivered again is not taken twice
+        glm::vec3 teleportPosition { 0.0f };
+        glm::quat teleportRotation;
         // visuals
         std::vector<Visual> visuals;
         uint32_t visualsScanStep { 0 };
@@ -193,12 +236,19 @@ private:
 
     PhysicsWorld* rootWorld() const;
     bool rebuild(Vehicle& vehicle);
+    bool rebuildWheeled(Vehicle& vehicle, JPH::Body* body, PhysicsWorld* world);
+    bool rebuildAirship(Vehicle& vehicle, JPH::Body* body, PhysicsWorld* world);
+    void wearCenterOfMass(Vehicle& vehicle, JPH::Body* body, PhysicsWorld* world, const glm::vec3& centerOfMass);
+    bool isBuilt(const Vehicle& vehicle) const { return vehicle.airship ? vehicle.airshipBuilt : (bool)vehicle.constraint; }
     void tearDown(Vehicle& vehicle);
     bool isAuthority(const Vehicle& vehicle) const;
     bool localControls(const Vehicle& vehicle, VehicleInput& input) const;
     void chooseInput(Vehicle& vehicle, uint32_t step);
-    void applyInput(Vehicle& vehicle);
+    void easeOff(Vehicle& vehicle);
+    // the model takes this substep's input: the wheeled controller's driver input, or an airship's forces on its body
+    void applyModelInput(Vehicle& vehicle, const VehicleInput& input, float dt);
     void checkCorrection(Vehicle& vehicle, uint32_t step);
+    bool recentlySent(const Vehicle& vehicle, const glm::vec3& position, const glm::quat& rotation) const;
     void correctDriver(Vehicle& vehicle, const EntityItem::NetworkPose& pose, uint32_t step);
     void correctFollower(Vehicle& vehicle, const EntityItem::NetworkPose& pose, uint32_t step);
     void setBodyState(Vehicle& vehicle, const glm::vec3& position, const glm::quat& rotation, const glm::vec3& velocity,

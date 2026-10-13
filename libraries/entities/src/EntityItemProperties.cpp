@@ -2927,6 +2927,25 @@ bool EntityItemProperties::getPropertyInfo(const QString& propertyName, EntityPr
             ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_ENGINE_RPM, Vehicle, vehicle, EngineRPM, engineRPM);
             ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_GEAR, Vehicle, vehicle, Gear, gear);
             ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_STATE_TIME, Vehicle, vehicle, StateTime, stateTime);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_ENVELOPE_VOLUME, Vehicle, vehicle, EnvelopeVolume, envelopeVolume);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_CENTER_OF_BUOYANCY, Vehicle, vehicle, CenterOfBuoyancy, centerOfBuoyancy);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_GAS_DENSITY, Vehicle, vehicle, GasDensity, gasDensity);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_MAX_THRUST, Vehicle, vehicle, MaxThrust, maxThrust);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_MAX_VERTICAL_THRUST, Vehicle, vehicle, MaxVerticalThrust, maxVerticalThrust);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_THRUST_POINT, Vehicle, vehicle, ThrustPoint, thrustPoint);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_DRAG_AREA, Vehicle, vehicle, DragArea, dragArea);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_ANGULAR_DRAG_AREA, Vehicle, vehicle, AngularDragArea, angularDragArea);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_RUDDER_AREA, Vehicle, vehicle, RudderArea, rudderArea);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_ELEVATOR_AREA, Vehicle, vehicle, ElevatorArea, elevatorArea);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_FIN_POINT, Vehicle, vehicle, FinPoint, finPoint);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_MAX_FIN_ANGLE, Vehicle, vehicle, MaxFinAngle, maxFinAngle);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_BALLAST_RATE, Vehicle, vehicle, BallastRate, ballastRate);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_VENT_RATE, Vehicle, vehicle, VentRate, ventRate);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_PITCH, Vehicle, vehicle, Pitch, pitch);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_LIFT, Vehicle, vehicle, Lift, lift);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_TRIM, Vehicle, vehicle, Trim, trim);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_BALLAST, Vehicle, vehicle, Ballast, ballast);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_FILL, Vehicle, vehicle, Fill, fill);
         }
 
         // Physics

@@ -39,6 +39,9 @@ QByteArray VehicleInputPacket::pack(const QUuid& vehicleID, const std::vector<Ve
         put(bytes, input.steering);
         put(bytes, input.brake);
         put(bytes, input.handBrake);
+        put(bytes, input.pitch);
+        put(bytes, input.lift);
+        put(bytes, input.trim);
     }
     return bytes;
 }
@@ -57,7 +60,8 @@ bool VehicleInputPacket::unpack(const QByteArray& payload, QUuid& vehicleID, std
     for (int i = 0; i < count; ++i) {
         VehicleInput input;
         if (!get(payload, offset, input.sequence) || !get(payload, offset, input.throttle) || !get(payload, offset, input.steering)
-                || !get(payload, offset, input.brake) || !get(payload, offset, input.handBrake)) {
+                || !get(payload, offset, input.brake) || !get(payload, offset, input.handBrake)
+                || !get(payload, offset, input.pitch) || !get(payload, offset, input.lift) || !get(payload, offset, input.trim)) {
             inputs.clear();
             return false;
         }

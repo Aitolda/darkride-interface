@@ -812,6 +812,14 @@ int EntityItem::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
     auto lastEdited = lastEditedFromBufferAdjusted;
     // a transform the local physics drives (a car on a track) is kept as an owner keeps its own
     bool otherOverwrites = overwriteLocalData && !weOwnSimulation && !_transformDrivenLocally;
+    // A newer pose for a transform this process drives as its owner: its own update echoed by the entity server, or an
+    // explicit edit by someone else (the editor moving a ship the physics server holds, PHYSICS.md round 7). It is kept
+    // here, marked, for the simulation to tell apart (against what it sent lately) and adopt as a teleport.
+    bool candidateTeleport = false;
+    bool candidateHasPosition = false;
+    bool candidateHasRotation = false;
+    glm::vec3 candidatePosition(0.0f);
+    glm::quat candidateRotation;
     // calculate hasGrab once outside the lambda rather than calling it every time inside
     bool hasGrab = stillHasGrab();
     auto shouldUpdate = [lastEdited, otherOverwrites, filterRejection, hasGrab](quint64 updatedTimestamp, bool valueChanged) {
@@ -851,12 +859,18 @@ int EntityItem::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
 
         // Note: duplicate packets are expected and not wrong. They may be sent for any number of
         // reasons and the contract is that the client handles them in an idempotent manner.
-        auto customUpdatePositionFromNetwork = [this, shouldUpdate, lastEdited, weOwnSimulation, overwriteLocalData](glm::vec3 value) {
+        auto customUpdatePositionFromNetwork = [this, shouldUpdate, lastEdited, weOwnSimulation, overwriteLocalData,
+                                                &candidateTeleport, &candidateHasPosition, &candidatePosition](glm::vec3 value) {
             if (_transformDrivenLocally && overwriteLocalData && !weOwnSimulation && lastEdited > _networkPose.lastEdited) {
                 // a correction for the local simulation to adopt (a vehicle from the physics server), not a placement
                 _networkPose.position = value;
                 _networkPose.lastEdited = lastEdited;
+                _networkPose.teleport = false;
                 ++_networkPose.version;
+            } else if (_transformDrivenLocally && overwriteLocalData && weOwnSimulation && lastEdited > _networkPose.lastEdited) {
+                candidateTeleport = true;
+                candidateHasPosition = true;
+                candidatePosition = value;
             }
             if (shouldUpdate(_lastUpdatedPositionTimestamp, value != _lastUpdatedPositionValue)) {
                 setPosition(value);
@@ -868,9 +882,14 @@ int EntityItem::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
     }
     READ_ENTITY_PROPERTY(PROP_DIMENSIONS, glm::vec3, setScaledDimensions);
     {  // See comment above
-        auto customUpdateRotationFromNetwork = [this, shouldUpdate, lastEdited, weOwnSimulation, overwriteLocalData](glm::quat value) {
+        auto customUpdateRotationFromNetwork = [this, shouldUpdate, lastEdited, weOwnSimulation, overwriteLocalData,
+                                                &candidateTeleport, &candidateHasRotation, &candidateRotation](glm::quat value) {
             if (_transformDrivenLocally && overwriteLocalData && !weOwnSimulation && lastEdited >= _networkPose.lastEdited) {
                 _networkPose.rotation = value;
+            } else if (_transformDrivenLocally && overwriteLocalData && weOwnSimulation && lastEdited > _networkPose.lastEdited) {
+                candidateTeleport = true;
+                candidateHasRotation = true;
+                candidateRotation = value;
             }
             if (shouldUpdate(_lastUpdatedRotationTimestamp, value != _lastUpdatedRotationValue)) {
                 setRotation(value);
@@ -882,7 +901,26 @@ int EntityItem::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
     }
     READ_ENTITY_PROPERTY(PROP_REGISTRATION_POINT, glm::vec3, setRegistrationPoint);  // CPM NEAT
     READ_ENTITY_PROPERTY(PROP_CREATED, quint64, setCreated);
-    READ_ENTITY_PROPERTY(PROP_LAST_EDITED_BY, QUuid, setLastEditedBy);
+    QUuid editedBy = getLastEditedBy();
+    auto readLastEditedBy = [this, &editedBy](QUuid value) {
+        editedBy = value;
+        setLastEditedBy(value);
+    };
+    READ_ENTITY_PROPERTY(PROP_LAST_EDITED_BY, QUuid, readLastEditedBy);
+    if (candidateTeleport && editedBy != myNodeID) {
+        // the pose this process drives, as the entity server has it now, last edited by someone else (the authority's
+        // own updates carry its ID, so one of them echoed, however late, is never taken for a teleport): the
+        // simulation compares it with what it sent lately, and adopts it as a teleport when it is none of that (the
+        // pose it had is the fallback for whichever of position and rotation the packet left out)
+        _networkPose.editedBy = editedBy;
+        _networkPose.position = candidateHasPosition ? candidatePosition : getLocalPosition();
+        _networkPose.rotation = candidateHasRotation ? candidateRotation : getLocalOrientation();
+        _networkPose.velocity = glm::vec3(0.0f);
+        _networkPose.angularVelocity = glm::vec3(0.0f);
+        _networkPose.lastEdited = lastEdited;
+        _networkPose.teleport = true;
+        ++_networkPose.version;
+    }
     // READ_ENTITY_PROPERTY(PROP_ENTITY_HOST_TYPE, entity::HostType, setEntityHostType); // not sent over the wire
     // READ_ENTITY_PROPERTY(PROP_OWNING_AVATAR_ID, QUuuid, setOwningAvatarID);           // not sent over the wire
     {  // See comment above

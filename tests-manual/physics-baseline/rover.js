@@ -221,7 +221,9 @@
         };
         if (ROLE === "passenger") {
             // the driver as the mixer delivers it: parented to the chassis, at the seat
-            if (!driverAvatarID && v.driver && v.driver !== Uuid.NULL) { driverAvatarID = v.driver; }
+            // the driver as the state names it (a property comes to a script as a UUID, not a string: Uuid.isNull, not
+            // a comparison with Uuid.NULL; and AvatarList.getAvatar of the null UUID is this client's own avatar)
+            if (v.driver && !Uuid.isNull(v.driver) && !Uuid.isEqual(v.driver, MyAvatar.sessionUUID)) { driverAvatarID = v.driver; }
             if (driverAvatarID) {
                 var a = AvatarList.getAvatar(driverAvatarID);
                 if (a && a.sessionUUID) {

@@ -603,6 +603,7 @@ public:
     const VehiclePropertyGroup& getVehicleProperties() const { return _vehicleProperties; }
     bool isVehicle() const { return _vehicleProperties.isVehicle(); }
     bool isWheel() const { return _vehicleProperties.isWheel(); }
+    bool isAirship() const { return _vehicleProperties.isAirship(); }
     // a vehicle's definition changed (the version the simulation built from is stale)
     uint32_t getVehicleDefinitionVersion() const { return _vehicleDefinitionVersion; }
 
@@ -613,6 +614,9 @@ public:
         float steering { 0.0f };    // -1 left .. 1 right
         float brake { 0.0f };       // 0 .. 1
         float handBrake { 0.0f };   // 0 .. 1
+        float pitch { 0.0f };       // an airship's elevator, -1 nose down .. 1 nose up (PHYSICS.md round 7)
+        float lift { 0.0f };        // its vertical thruster, -1 down .. 1 up
+        float trim { 0.0f };        // ballast dropped (1) or gas vented (-1)
     };
     void setLocalVehicleControls(const VehicleControls& controls) { withWriteLock([&] { _localVehicleControls = controls; _hasLocalVehicleControls = true; }); }
     void clearLocalVehicleControls() { withWriteLock([&] { _hasLocalVehicleControls = false; _localVehicleControls = VehicleControls(); }); }
@@ -627,8 +631,22 @@ public:
         glm::vec3 angularVelocity { 0.0f };
         quint64 lastEdited { 0 };   // the sender's stamp on the update
         uint32_t version { 0 };     // bumps with every update that carried a position
+        bool teleport { false };    // received while this process drives the transform as its owner and last edited by
+                                    // someone else: an explicit edit, which the simulation adopts as a teleport (round 7),
+                                    // or an edit of another property carrying the pose this process sent
+        QUuid editedBy;             // the entity's lastEditedBy as the update had it
     };
     NetworkPose getNetworkPose() const { return resultWithReadLock<NetworkPose>([&] { return _networkPose; }); }
+
+    // On the entity server: a teleport it let through (an explicit edit of what the physics server holds, round 7), held
+    // against the owner's updates that were on their way before the owner heard of it, until one arrives at it.
+    struct PendingTeleport {
+        glm::vec3 position { 0.0f };   // local, as the network carries it
+        glm::quat rotation;
+        quint64 expiry { 0 };          // 0: none
+    };
+    PendingTeleport getPendingTeleport() const { return resultWithReadLock<PendingTeleport>([&] { return _pendingTeleport; }); }
+    void setPendingTeleport(const PendingTeleport& teleport) { withWriteLock([&] { _pendingTeleport = teleport; }); }
 
     void prepareForSimulationOwnershipBid(EntityItemProperties& properties, uint64_t now, uint8_t priority);
 
@@ -847,6 +865,7 @@ protected:
     VehicleControls _localVehicleControls;
     bool _hasLocalVehicleControls { false };
     NetworkPose _networkPose;
+    PendingTeleport _pendingTeleport;
 
     QHash<QUuid, EntityDynamicPointer> _grabActions;
 

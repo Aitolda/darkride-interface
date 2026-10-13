@@ -9,6 +9,7 @@
 #include "VehicleSimulation.h"
 
 #include <cmath>
+#include <limits>
 
 #include <glm/gtx/norm.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -56,6 +57,9 @@ namespace {
         input.steering = group.getSteering();
         input.brake = group.getBrake();
         input.handBrake = group.getHandBrake();
+        input.pitch = group.getPitch();
+        input.lift = group.getLift();
+        input.trim = group.getTrim();
         return input;
     }
 }
@@ -127,6 +131,65 @@ void VehicleSimulation::tearDown(Vehicle& vehicle) {
     vehicle.offsetShape = nullptr;
     vehicle.bodyID = JPH::BodyID();
     vehicle.visuals.clear();
+    vehicle.airshipBuilt = false;
+}
+
+// The body wears its shape inside an offset-centre-of-mass shape when the spec moves the centre.
+void VehicleSimulation::wearCenterOfMass(Vehicle& vehicle, JPH::Body* body, PhysicsWorld* world, const glm::vec3& centerOfMass) {
+    JPH::BodyInterface& bodies = world->getBodyInterface();
+    const JPH::Shape* plainShape = vehicle.state->getShape();
+    if (glm::length2(centerOfMass) > 1.0e-8f && plainShape) {
+        vehicle.offsetShape = new JPH::OffsetCenterOfMassShape(plainShape, glmToJolt(centerOfMass));
+        bodies.SetShape(body->GetID(), vehicle.offsetShape, false, JPH::EActivation::Activate);
+        vehicle.state->updateBodyMassProperties();
+    } else if (plainShape && body->GetShape() != plainShape) {
+        bodies.SetShape(body->GetID(), plainShape, false, JPH::EActivation::Activate);
+        vehicle.state->updateBodyMassProperties();
+    }
+}
+
+// An airship from its spec (PHYSICS.md round 7): the hull's body with the centre of mass where the spec puts it, the
+// spec's numbers parsed, the drag areas derived from the hull's dimensions when the spec gives none, and the ballast
+// and fill from the state (the author's numbers the first time, the authority's after).
+bool VehicleSimulation::rebuildAirship(Vehicle& vehicle, JPH::Body* body, PhysicsWorld* world) {
+    const VehiclePropertyGroup& group = vehicle.entity->getVehicleProperties();
+    AirshipSpec& spec = vehicle.airshipSpec;
+    spec = AirshipSpec();
+    spec.mass = group.getMass();
+    spec.centerOfMass = group.getCenterOfMass();
+    spec.envelopeVolume = glm::max(0.0f, group.getEnvelopeVolume());
+    spec.centerOfBuoyancy = group.getCenterOfBuoyancy();
+    spec.gasDensity = glm::max(0.0f, group.getGasDensity());
+    spec.maxThrust = glm::max(0.0f, group.getMaxThrust());
+    spec.maxVerticalThrust = glm::max(0.0f, group.getMaxVerticalThrust());
+    spec.thrustPoint = group.getThrustPoint();
+    glm::vec3 dimensions = vehicle.entity->getScaledDimensions();
+    spec.dragArea = glm::length2(group.getDragArea()) > 0.0f ? glm::max(group.getDragArea(), glm::vec3(0.0f)) : AirshipModel::defaultDragArea(dimensions);
+    spec.angularDragArea = glm::length2(group.getAngularDragArea()) > 0.0f ? glm::max(group.getAngularDragArea(), glm::vec3(0.0f))
+        : AirshipModel::defaultAngularDragArea(dimensions);
+    spec.rudderArea = glm::max(0.0f, group.getRudderArea());
+    spec.elevatorArea = glm::max(0.0f, group.getElevatorArea());
+    spec.finPoint = group.getFinPoint();
+    spec.maxFinAngle = glm::clamp(group.getMaxFinAngle(), 0.0f, 80.0f);
+    spec.ballastRate = glm::max(0.0f, group.getBallastRate());
+    spec.ventRate = glm::max(0.0f, group.getVentRate());
+    if (!spec.isValid()) {
+        if (!vehicle.logged) {
+            qCWarning(physics) << "airship" << vehicle.entity->getName() << vehicle.entity->getID() << "has no envelope: set vehicle.envelopeVolume";
+            vehicle.logged = true;
+        }
+        return false;
+    }
+    wearCenterOfMass(vehicle, body, world, spec.centerOfMass);
+    world->getBodyInterface().ActivateBody(body->GetID());
+    vehicle.airshipState.ballast = glm::max(0.0f, group.getBallast());
+    vehicle.airshipState.fill = glm::clamp(group.getFill(), 0.0f, 1.0f);
+    vehicle.airshipBuilt = true;
+    qCDebug(physics) << "airship" << vehicle.entity->getName() << vehicle.entity->getID() << "built: envelope" << spec.envelopeVolume
+        << "m3, mass" << vehicle.state->getMass() << "kg, ballast" << vehicle.airshipState.ballast << "kg, thrust" << spec.maxThrust
+        << "N, fins" << spec.rudderArea << spec.elevatorArea << "m2 at" << spec.finPoint.x << spec.finPoint.y << spec.finPoint.z
+        << (Physics::isServerAuthority() ? "(physics server)" : "");
+    return true;
 }
 
 // The Jolt vehicle from the entity's spec: the chassis body wears its shape inside an offset-centre-of-mass shape when
@@ -147,7 +210,23 @@ bool VehicleSimulation::rebuild(Vehicle& vehicle) {
         }
         return false;
     }
+    vehicle.airship = vehicle.entity->isAirship();
+    bool built = vehicle.airship ? rebuildAirship(vehicle, body, world) : rebuildWheeled(vehicle, body, world);
+    if (!built) {
+        return false;
+    }
+    vehicle.bodyID = body->GetID();
+    vehicle.definitionVersion = vehicle.entity->getVehicleDefinitionVersion();
+    vehicle.definitionHash = vehicle.entity->getVehicleProperties().definitionHash();
+    vehicle.history.clear();
+    vehicle.visuals.clear();
+    vehicle.childCount = -1;
+    vehicle.logged = false;
+    setInternalState(vehicle);
+    return true;
+}
 
+bool VehicleSimulation::rebuildWheeled(Vehicle& vehicle, JPH::Body* body, PhysicsWorld* world) {
     const VehiclePropertyGroup& group = vehicle.entity->getVehicleProperties();
     WheeledVehicleSpec& spec = vehicle.spec;
     spec = WheeledVehicleSpec();
@@ -176,15 +255,7 @@ bool VehicleSimulation::rebuild(Vehicle& vehicle) {
     spec.suspensionDamping = glm::max(0.0f, group.getSuspensionDamping());
 
     JPH::BodyInterface& bodies = world->getBodyInterface();
-    const JPH::Shape* plainShape = vehicle.state->getShape();
-    if (glm::length2(spec.centerOfMass) > 1.0e-8f && plainShape) {
-        vehicle.offsetShape = new JPH::OffsetCenterOfMassShape(plainShape, glmToJolt(spec.centerOfMass));
-        bodies.SetShape(body->GetID(), vehicle.offsetShape, false, JPH::EActivation::Activate);
-        vehicle.state->updateBodyMassProperties();
-    } else if (plainShape && body->GetShape() != plainShape) {
-        bodies.SetShape(body->GetID(), plainShape, false, JPH::EActivation::Activate);
-        vehicle.state->updateBodyMassProperties();
-    }
+    wearCenterOfMass(vehicle, body, world, spec.centerOfMass);
 
     float gravity = glm::length(vehicle.state->getBodyGravity());
     if (gravity <= 0.0f) {
@@ -284,15 +355,6 @@ bool VehicleSimulation::rebuild(Vehicle& vehicle) {
     system->AddStepListener(vehicle.constraint);
     bodies.ActivateBody(body->GetID());
 
-    vehicle.bodyID = body->GetID();
-    vehicle.definitionVersion = vehicle.entity->getVehicleDefinitionVersion();
-    vehicle.definitionHash = group.definitionHash();
-    vehicle.history.clear();
-    vehicle.visuals.clear();
-    vehicle.childCount = -1;
-    vehicle.logged = false;
-    setInternalState(vehicle);
-
     qCDebug(physics) << "vehicle" << vehicle.entity->getName() << vehicle.entity->getID() << "built:" << spec.wheels.size()
         << "wheels," << drivenAxles << "driven axles, mass" << vehicle.state->getMass() << "kg, centre of mass"
         << spec.centerOfMass.x << spec.centerOfMass.y << spec.centerOfMass.z << (Physics::isServerAuthority() ? "(physics server)" : "");
@@ -312,6 +374,9 @@ bool VehicleSimulation::localControls(const Vehicle& vehicle, VehicleInput& inpu
     input.steering = controls.steering;
     input.brake = controls.brake;
     input.handBrake = controls.handBrake;
+    input.pitch = controls.pitch;
+    input.lift = controls.lift;
+    input.trim = controls.trim;
     return true;
 }
 
@@ -333,7 +398,7 @@ void VehicleSimulation::preSubstep(uint32_t step, float dt) {
     for (auto& entry : _vehicles) {
         Vehicle& vehicle = entry.second;
         JPH::Body* body = vehicle.state->getBody();
-        bool stale = !body || body->GetID() != vehicle.bodyID || !vehicle.constraint
+        bool stale = !body || body->GetID() != vehicle.bodyID || !isBuilt(vehicle)
             || vehicle.entity->getVehicleDefinitionVersion() != vehicle.definitionVersion;
         if (stale && !rebuild(vehicle)) {
             continue;
@@ -349,7 +414,7 @@ void VehicleSimulation::preSubstep(uint32_t step, float dt) {
         }
         checkCorrection(vehicle, step);
         chooseInput(vehicle, step);
-        applyInput(vehicle);
+        applyModelInput(vehicle, vehicle.applied, dt);
     }
 }
 
@@ -376,6 +441,34 @@ void VehicleSimulation::recordTelemetry() {
     Telemetry t;
     for (auto& entry : _vehicles) {
         Vehicle& vehicle = entry.second;
+        if (vehicle.airship && vehicle.airshipBuilt) {
+            const AirshipForces& f = vehicle.airshipForces;
+            t.valid = true;
+            t.airship = true;
+            glm::quat rotation;
+            glm::vec3 position;
+            vehicle.state->getBodyTransform(position, rotation);
+            glm::vec3 velocity = vehicle.state->getBodyLinearVelocity();
+            t.speed = glm::dot(velocity, rotation * FORWARD);
+            t.climbRate = velocity.y;
+            t.altitude = (position + rotation * (vehicle.airshipSpec.centerOfBuoyancy - vehicle.airshipSpec.centerOfMass)).y;
+            t.airDensity = f.airDensity;
+            t.buoyancy = f.buoyancy;
+            t.ballastWeight = f.ballastWeight;
+            t.thrust = f.thrust;
+            t.verticalThrust = f.verticalThrust;
+            t.airspeed = f.airspeed;
+            t.sideslip = glm::degrees(f.sideslip);
+            t.incidence = glm::degrees(f.incidence);
+            t.ballast = vehicle.airshipState.ballast;
+            t.fill = vehicle.airshipState.fill;
+            t.forward = vehicle.applied.throttle;
+            t.right = vehicle.applied.steering;
+            t.pitch = vehicle.applied.pitch;
+            t.lift = vehicle.applied.lift;
+            t.trim = vehicle.applied.trim;
+            break;
+        }
         JPH::WheeledVehicleController* controller = controllerOf(vehicle.constraint);
         if (!controller) {
             continue;
@@ -406,7 +499,7 @@ void VehicleSimulation::recordTelemetry() {
 
 bool VehicleSimulation::needsSnapshots() const {
     for (const auto& entry : _vehicles) {
-        if (entry.second.constraint && !isAuthority(entry.second)) {
+        if (isBuilt(entry.second) && !isAuthority(entry.second)) {
             return true;
         }
     }
@@ -448,9 +541,7 @@ void VehicleSimulation::chooseInput(Vehicle& vehicle, uint32_t step) {
         }
         if (group.getDriver().isNull() || (vehicle.lastInputTime != 0 && now - vehicle.lastInputTime > DRIVER_SILENCE)) {
             // nobody at the wheel, or the driver has gone quiet: ease off and hold the brake
-            vehicle.applied.throttle = 0.0f;
-            vehicle.applied.steering = 0.0f;
-            vehicle.applied.brake = glm::max(vehicle.applied.brake, 0.5f);
+            easeOff(vehicle);
         }
         return;
     }
@@ -478,24 +569,65 @@ void VehicleSimulation::chooseInput(Vehicle& vehicle, uint32_t step) {
     vehicle.applied = inputFromState(group);
     quint64 stateLocalTime = group.getStateTime() ? TrackSimulation::localTime(group.getStateTime()) : 0;
     if (stateLocalTime == 0 || now > stateLocalTime + DRIVER_SILENCE) {
-        vehicle.applied.throttle = 0.0f;
-        vehicle.applied.steering = 0.0f;
+        easeOff(vehicle);
+    }
+}
+
+// Nobody is driving, or whoever was has gone quiet: a car eases off and holds the brake, an airship stops thrusting,
+// centres its fins and leaves ballast and gas alone (it drifts, as an airship does).
+void VehicleSimulation::easeOff(Vehicle& vehicle) {
+    vehicle.applied.throttle = 0.0f;
+    vehicle.applied.steering = 0.0f;
+    vehicle.applied.pitch = 0.0f;
+    vehicle.applied.lift = 0.0f;
+    vehicle.applied.trim = 0.0f;
+    if (!vehicle.airship) {
         vehicle.applied.brake = glm::max(vehicle.applied.brake, 0.5f);
     }
 }
 
-void VehicleSimulation::applyInput(Vehicle& vehicle) {
+// The model takes this substep's input. A wheeled vehicle's controller holds it until the next; an airship's forces
+// are added to its body for the coming update (Jolt clears them after), with the ballast and gas integrated first.
+void VehicleSimulation::applyModelInput(Vehicle& vehicle, const VehicleInput& input, float dt) {
+    PhysicsWorld* world = vehicle.state->getWorld();
+    if (!world) {
+        return;
+    }
+    JPH::BodyInterface& bodies = world->getBodyInterface();
+    if (vehicle.airship) {
+        if (!vehicle.airshipBuilt) {
+            return;
+        }
+        AirshipModel::integrateTrim(vehicle.airshipSpec, vehicle.airshipState, input, dt);
+        JPH::Body* body = vehicle.state->getBody();
+        if (!body) {
+            return;
+        }
+        glm::vec3 position = joltToGLM(body->GetCenterOfMassPosition());
+        glm::quat rotation = glm::normalize(joltToGLM(body->GetRotation()));
+        glm::vec3 velocity = joltToGLM(body->GetLinearVelocity());
+        glm::vec3 angularVelocity = joltToGLM(body->GetAngularVelocity());
+        float gravity = glm::length(vehicle.state->getBodyGravity());
+        if (gravity <= 0.0f) {
+            gravity = GRAVITY;
+        }
+        vehicle.airshipForces = AirshipModel::forces(vehicle.airshipSpec, vehicle.airshipState, input, position, rotation, velocity,
+                                                     angularVelocity, gravity);
+        for (const AirshipForce& f : vehicle.airshipForces.forces) {
+            bodies.AddForce(vehicle.bodyID, glmToJolt(f.force), glmToJoltR(f.point), JPH::EActivation::Activate);
+        }
+        if (glm::length2(vehicle.airshipForces.torque) > 0.0f) {
+            bodies.AddTorque(vehicle.bodyID, glmToJolt(vehicle.airshipForces.torque), JPH::EActivation::Activate);
+        }
+        return;
+    }
     JPH::WheeledVehicleController* controller = controllerOf(vehicle.constraint);
     if (!controller) {
         return;
     }
-    const VehicleInput& input = vehicle.applied;
     controller->SetDriverInput(input.throttle, input.steering, input.brake, input.handBrake);
     if (!input.isIdle()) {
-        PhysicsWorld* world = vehicle.state->getWorld();
-        if (world) {
-            world->getBodyInterface().ActivateBody(vehicle.bodyID);
-        }
+        bodies.ActivateBody(vehicle.bodyID);
     }
 }
 
@@ -506,6 +638,37 @@ void VehicleSimulation::checkCorrection(Vehicle& vehicle, uint32_t step) {
     }
     vehicle.networkPoseVersion = pose.version;
     if (isAuthority(vehicle)) {
+        // (before its first update the authority cannot tell its own bid echoed from an edit: nothing is adopted)
+        // (and the teleport it last took, delivered again while the entity server holds it, is the same edit)
+        const float SAME_TELEPORT_DISTANCE = 0.01f;   // m
+        const float SAME_TELEPORT_ANGLE = 0.01f;      // rad
+        bool sameTeleport = vehicle.teleported && glm::distance(pose.position, vehicle.teleportPosition) < SAME_TELEPORT_DISTANCE
+            && angleBetween(pose.rotation, vehicle.teleportRotation) < SAME_TELEPORT_ANGLE;
+        if (pose.teleport && !sameTeleport && !vehicle.sent.empty() && !recentlySent(vehicle, pose.position, pose.rotation)) {
+            // an explicit edit by someone else (the editor moving the ship) while this process drives it: adopted as a
+            // teleport, standing still where it was put (PHYSICS.md round 7); the next update carries it to everyone
+            glm::vec3 before;
+            glm::quat beforeRotation;
+            vehicle.state->getBodyTransform(before, beforeRotation);
+            setBodyState(vehicle, pose.position, pose.rotation, glm::vec3(0.0f), glm::vec3(0.0f));
+            vehicle.history.clear();
+            vehicle.teleported = true;
+            vehicle.teleportPosition = pose.position;
+            vehicle.teleportRotation = pose.rotation;
+            float nearest = std::numeric_limits<float>::max();
+            float nearestSpeed = 0.0f;
+            for (const auto& sent : vehicle.sent) {
+                float d = glm::distance(sent.position, pose.position);
+                if (d < nearest) {
+                    nearest = d;
+                    nearestSpeed = glm::length(sent.velocity);
+                }
+            }
+            qCDebug(physics) << "vehicle" << vehicle.entity->getName() << "teleported by an edit:" << glm::distance(before, pose.position)
+                << "m to" << pose.position.x << pose.position.y << pose.position.z << "; the nearest of" << (int)vehicle.sent.size()
+                << "sent poses" << nearest << "m away at" << nearestSpeed << "m/s; edited by" << pose.editedBy
+                << (int64_t)(usecTimestampNow() - pose.lastEdited) / 1000 << "ms ago" << (Physics::isServerAuthority() ? "(physics server)" : "");
+        }
         return;
     }
     const VehiclePropertyGroup& group = vehicle.entity->getVehicleProperties();
@@ -521,6 +684,24 @@ void VehicleSimulation::checkCorrection(Vehicle& vehicle, uint32_t step) {
     }
 }
 
+// Whether a pose is one this authority published lately (its own update, echoed) or a stranger's. The entity server
+// moves what it holds on by its velocities between updates, so an echo is a sent pose plus up to a few hundred
+// milliseconds of its motion: the tolerance is a few centimetres plus half a second of the sent velocity.
+bool VehicleSimulation::recentlySent(const Vehicle& vehicle, const glm::vec3& position, const glm::quat& rotation) const {
+    const float POSITION_TOLERANCE = 0.05f;   // m
+    const float ANGLE_TOLERANCE = 0.02f;      // rad
+    const float ECHO_TIME = 0.5f;             // s of the sent motion an echo may carry
+    for (const auto& pose : vehicle.sent) {
+        float positionTolerance = POSITION_TOLERANCE + ECHO_TIME * glm::length(pose.velocity);
+        float angleTolerance = ANGLE_TOLERANCE + ECHO_TIME * glm::length(pose.angularVelocity);
+        if (glm::distance2(pose.position, position) < positionTolerance * positionTolerance
+                && angleBetween(pose.rotation, rotation) < angleTolerance) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void VehicleSimulation::setBodyState(Vehicle& vehicle, const glm::vec3& position, const glm::quat& rotation,
                                      const glm::vec3& velocity, const glm::vec3& angularVelocity) {
     PhysicsWorld* world = vehicle.state->getWorld();
@@ -533,11 +714,17 @@ void VehicleSimulation::setBodyState(Vehicle& vehicle, const glm::vec3& position
 }
 
 void VehicleSimulation::setInternalState(Vehicle& vehicle) {
+    const VehiclePropertyGroup& group = vehicle.entity->getVehicleProperties();
+    if (vehicle.airship) {
+        // the author's ballast and fill the first time, the authority's after
+        vehicle.airshipState.ballast = glm::max(0.0f, group.getBallast());
+        vehicle.airshipState.fill = glm::clamp(group.getFill(), 0.0f, 1.0f);
+        return;
+    }
     JPH::WheeledVehicleController* controller = controllerOf(vehicle.constraint);
     if (!controller) {
         return;
     }
-    const VehiclePropertyGroup& group = vehicle.entity->getVehicleProperties();
     if (group.getStateTime() != 0) {
         controller->GetEngine().SetCurrentRPM(group.getEngineRPM());
         controller->GetTransmission().Set(group.getGear(), 1.0f);
@@ -647,8 +834,7 @@ void VehicleSimulation::correctFollower(Vehicle& vehicle, const EntityItem::Netw
 void VehicleSimulation::replay(Vehicle& vehicle, const EntityItem::NetworkPose& pose, uint32_t fromStep, uint32_t toStep,
                                const std::function<VehicleInput(uint32_t)>& inputAt) {
     PhysicsWorld* world = rootWorld();
-    JPH::WheeledVehicleController* controller = controllerOf(vehicle.constraint);
-    if (!world || !controller) {
+    if (!world || !isBuilt(vehicle)) {
         return;
     }
     const Snapshot* snapshot = snapshotAt(fromStep);
@@ -660,7 +846,7 @@ void VehicleSimulation::replay(Vehicle& vehicle, const EntityItem::NetworkPose& 
 
     for (uint32_t s = fromStep + 1; s <= toStep; ++s) {
         VehicleInput input = inputAt(s);
-        controller->SetDriverInput(input.throttle, input.steering, input.brake, input.handBrake);
+        applyModelInput(vehicle, input, PHYSICS_ENGINE_FIXED_SUBSTEP);
         world->replayStep(PHYSICS_ENGINE_FIXED_SUBSTEP);
         ++_stats.replaySteps;
         for (Record& record : vehicle.history) {
@@ -678,8 +864,11 @@ void VehicleSimulation::replay(Vehicle& vehicle, const EntityItem::NetworkPose& 
             }
         }
     }
-    // the input the coming substep would otherwise inherit
-    controller->SetDriverInput(vehicle.applied.throttle, vehicle.applied.steering, vehicle.applied.brake, vehicle.applied.handBrake);
+    // the input the coming substep would otherwise inherit (a wheeled controller holds its last; an airship's forces
+    // are added fresh each substep)
+    if (JPH::WheeledVehicleController* controller = controllerOf(vehicle.constraint)) {
+        controller->SetDriverInput(vehicle.applied.throttle, vehicle.applied.steering, vehicle.applied.brake, vehicle.applied.handBrake);
+    }
 }
 
 // The jump a correction makes is kept out of what is shown: the difference decays on the entity's shown pose.
@@ -866,6 +1055,15 @@ void VehicleSimulation::fillState(EntityMotionState* state, EntityItemProperties
     }
     Vehicle& vehicle = it->second;
     JPH::WheeledVehicleController* controller = controllerOf(vehicle.constraint);
+    if (vehicle.sent.empty()) {
+        qCDebug(physics) << "vehicle" << vehicle.entity->getName() << "first update published" << (Physics::isServerAuthority() ? "(physics server)" : "");
+    }
+    vehicle.sent.push_back({ properties.getPosition(), properties.getRotation(), properties.getVelocity(), properties.getAngularVelocity() });
+    while ((int)vehicle.sent.size() > SENT_RING) {
+        vehicle.sent.pop_front();
+    }
+    // signed, so its echo is known for its own however late it comes back (a teleport is an edit by someone else)
+    properties.setLastEditedBy(DependencyManager::get<NodeList>()->getSessionUUID());
     VehiclePropertyGroup& group = properties.getVehicle();
     group.setInputSequence(vehicle.applied.sequence);
     group.setThrottle(vehicle.applied.throttle);
@@ -875,6 +1073,13 @@ void VehicleSimulation::fillState(EntityMotionState* state, EntityItemProperties
     if (controller) {
         group.setEngineRPM(controller->GetEngine().GetCurrentRPM());
         group.setGear(controller->GetTransmission().GetCurrentGear());
+    }
+    if (vehicle.airship) {
+        group.setPitch(vehicle.applied.pitch);
+        group.setLift(vehicle.applied.lift);
+        group.setTrim(vehicle.applied.trim);
+        group.setBallast(vehicle.airshipState.ballast);
+        group.setFill(vehicle.airshipState.fill);
     }
     group.setStateTime(TrackSimulation::domainTime(usecTimestampNow()));
 }

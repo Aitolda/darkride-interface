@@ -9,6 +9,13 @@
 //  (steering) and Space (hand brake) go to the vehicle through Entities.setVehicleControls, and a chase camera follows.
 //  F stands up.
 //
+//  An airship (vehicle.type "airship", PHYSICS.md round 7) is a moving reference frame whose deck the crew walks on, so
+//  nobody is parented to it by hand: click the ship (or anything that is part of it) within reach to take the helm (the
+//  seat marked driver) if nobody holds it, which puts you at the helm standing. At the helm: W/S set the throttle (it
+//  stays where you leave it; X cuts it), A/D or left/right steer with the rudder, up/down raise and lower the nose with
+//  the elevator, Space and C run the vertical thruster up and down, B drops ballast, V vents gas, F leaves the helm.
+//  The camera is your own.
+//
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
 //
@@ -27,9 +34,12 @@
     var DRIVE_KEYS = [DriveKeys.TRANSLATE_X, DriveKeys.TRANSLATE_Y, DriveKeys.TRANSLATE_Z, DriveKeys.YAW, DriveKeys.STEP_YAW,
                       DriveKeys.STEP_TRANSLATE_X, DriveKeys.STEP_TRANSLATE_Y, DriveKeys.STEP_TRANSLATE_Z];
 
-    var seated = null;           // { vehicleID, seat, driver }
+    var THROTTLE_RATE = 0.5;     // per second: how fast W/S move an airship's throttle setting
+
+    var seated = null;           // { vehicleID, seat, driver, airship }
     var previousCameraMode = null;
     var cameraPosition = null;
+    var throttleSetting = 0;     // an airship's
 
     function parseList(text) {
         if (!text) {
@@ -59,25 +69,57 @@
         });
     }
 
-    // the vehicle behind a clicked entity: itself, or the chassis of a clicked wheel
+    // the vehicle behind a clicked entity: itself, the chassis of a clicked wheel, or the airship a clicked part belongs to
     function vehicleOf(entityID) {
         var properties = Entities.getEntityProperties(entityID, ["vehicle", "parentID", "position", "rotation", "dimensions"]);
-        if (!properties || !properties.vehicle) {
+        if (!properties) {
             return null;
         }
-        if (properties.vehicle.type === "wheel" && properties.parentID && properties.parentID !== Uuid.NULL) {
-            properties = Entities.getEntityProperties(properties.parentID, ["vehicle", "position", "rotation", "dimensions"]);
-            properties.id = properties.id || properties.parentID;
-            if (!properties || !properties.vehicle) {
+        var hops = 0;
+        while ((!properties.vehicle || properties.vehicle.type === "none" || properties.vehicle.type === "wheel") &&
+                properties.parentID && properties.parentID !== Uuid.NULL && hops++ < 4) {
+            entityID = properties.parentID;
+            properties = Entities.getEntityProperties(entityID, ["vehicle", "parentID", "position", "rotation", "dimensions"]);
+            if (!properties) {
                 return null;
             }
-            entityID = properties.id;
         }
-        if (properties.vehicle.type !== "wheeled") {
+        if (!properties.vehicle || (properties.vehicle.type !== "wheeled" && properties.vehicle.type !== "airship")) {
             return null;
         }
         properties.id = entityID;
         return properties;
+    }
+
+    // the helm of an airship: the crew stands on the deck in the ship's own world (the physics makes the avatar a member
+    // of the frame by where it stands), so taking the helm is walking to it and taking the keys, no parenting
+    function takeHelm(vehicle, seat) {
+        seated = { vehicleID: vehicle.id, seat: seat, driver: true, airship: true };
+        throttleSetting = 0;
+        for (var i = 0; i < DRIVE_KEYS.length; i++) {
+            MyAvatar.disableDriveKey(DRIVE_KEYS[i]);
+        }
+        var helm = Vec3.sum(vehicle.position, Vec3.multiplyQbyV(vehicle.rotation, vec3Of(seat.position)));
+        MyAvatar.position = Vec3.sum(helm, { x: 0, y: 1.0, z: 0 });
+        MyAvatar.orientation = Quat.multiply(vehicle.rotation, Quat.fromPitchYawRollDegrees(0, seat.yaw || 0, 0));
+        Entities.editEntity(vehicle.id, { vehicle: { driver: MyAvatar.sessionUUID } });
+        Script.update.connect(update);
+        print("vehicles.js: at the helm of " + vehicle.id + ": W/S throttle, X cut, A/D rudder, up/down elevator, Space/C up and down, B ballast, V vent, F leave");
+    }
+
+    function leaveHelm() {
+        var vehicleID = seated.vehicleID;
+        seated = null;
+        Script.update.disconnect(update);
+        Entities.clearVehicleControls(vehicleID);
+        var properties = Entities.getEntityProperties(vehicleID, ["vehicle"]);
+        if (properties && properties.vehicle && properties.vehicle.driver === MyAvatar.sessionUUID) {
+            Entities.editEntity(vehicleID, { vehicle: { driver: Uuid.NULL } });
+        }
+        for (var i = 0; i < DRIVE_KEYS.length; i++) {
+            MyAvatar.enableDriveKey(DRIVE_KEYS[i]);
+        }
+        print("vehicles.js: left the helm of " + vehicleID);
     }
 
     function sit(vehicle, seat) {
@@ -109,6 +151,10 @@
 
     function stand() {
         if (!seated) {
+            return;
+        }
+        if (seated.airship) {
+            leaveHelm();
             return;
         }
         var vehicleID = seated.vehicleID;
@@ -155,6 +201,20 @@
             return;
         }
         var front = Quat.getFront(properties.rotation);
+        if (seated.airship) {
+            var k = Controller.Hardware.Keyboard;
+            throttleSetting += dt * THROTTLE_RATE * (Controller.getValue(k.W) - Controller.getValue(k.S));
+            throttleSetting = Math.max(-1, Math.min(1, throttleSetting));
+            if (Controller.getValue(k.X) > 0.5) {
+                throttleSetting = 0;
+            }
+            var rudder = (Controller.getValue(k.D) || Controller.getValue(k.Right)) - (Controller.getValue(k.A) || Controller.getValue(k.Left));
+            var elevator = Controller.getValue(k.Up) - Controller.getValue(k.Down);
+            var lift = (Controller.getValue(k.Space) > 0.5 ? 1 : 0) - (Controller.getValue(k.C) > 0.5 ? 1 : 0);
+            var trim = (Controller.getValue(k.B) > 0.5 ? 1 : 0) - (Controller.getValue(k.V) > 0.5 ? 1 : 0);
+            Entities.setVehicleControls(seated.vehicleID, { throttle: throttleSetting, steering: rudder, pitch: elevator, lift: lift, trim: trim });
+            return;
+        }
         if (seated.driver) {
             // the keys themselves (the avatar's drive actions are off while seated, and the keyboard's own inputs are
             // always there): W/S or the up and down arrows, A/D or the left and right arrows, Space
@@ -222,6 +282,12 @@
             }
         }
         if (chosen) {
+            if (vehicle.vehicle.type === "airship") {
+                if (chosen.driver) {
+                    takeHelm(vehicle, chosen);
+                }
+                return;   // the crew just walks aboard
+            }
             sit(vehicle, chosen);
         }
     }
