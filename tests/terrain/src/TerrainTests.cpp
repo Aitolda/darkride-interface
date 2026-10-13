@@ -17,6 +17,7 @@
 #include <terrain/AsyncMesher.h>
 #include <terrain/Brush.h>
 #include <terrain/PaintMap.h>
+#include <terrain/Resample.h>
 #include <terrain/SurfaceNets.h>
 #include <terrain/TerrainFile.h>
 #include <terrain/VoxelGrid.h>
@@ -456,4 +457,138 @@ void TerrainTests::paintMapPaintsErasesTilesAndRoundTripsThroughTheFile() {
     QVERIFY(!loadTerrain(cut, loadedGrid, &loadedMap, &error));
     QVERIFY(loadedGrid.isEmpty());
     QVERIFY(loadedMap.isEmpty());
+}
+
+void TerrainTests::resampledGridKeepsTheSurfaceAndItsMaterials() {
+    // where a column's distance crosses zero: the height of the surface there
+    auto crossing = [](const VoxelGrid& grid, int x, int z) {
+        for (int y = 0; y + 1 < grid.getVoxelCount().y; ++y) {
+            const float below = grid.get(glm::ivec3(x, y, z)).getDistance();
+            const float above = grid.get(glm::ivec3(x, y + 1, z)).getDistance();
+            if (below < 0.0f && above >= 0.0f) {
+                return y + below / (below - above);
+            }
+        }
+        return -1.0f;
+    };
+    const int columns[][2] = { { 3, 3 }, { 16, 16 }, { 20, 45 }, { 31, 32 }, { 48, 7 }, { 60, 60 } };
+
+    // hills in the lower half of a 64-voxel cube: the chunks above them hold one value, air at the limit
+    VoxelGrid source(glm::ivec3(64, 64, 64));
+    source.fillHeightField(hills, 3);
+    QCOMPARE(source.countDenseChunks(), 4);
+    for (int z = 10; z <= 20; ++z) {
+        for (int x = 10; x <= 20; ++x) {
+            for (int y = 0; y < 4; ++y) {
+                source.set(glm::ivec3(x, y, z), Voxel(source.get(glm::ivec3(x, y, z)).distance, 5));
+            }
+        }
+    }
+
+    // twice the voxels along each side over the same box: the surface lies at twice the height in voxels
+    const VoxelGrid fine = resampleGrid(source, glm::ivec3(128, 128, 128));
+    QCOMPARE(fine.getVoxelCount(), glm::ivec3(128, 128, 128));
+    QCOMPARE(fine.getChunkCount(), glm::ivec3(4, 4, 4));
+    QCOMPARE((int)fine.getDirtyChunks().size(), 64);
+    for (const auto& column : columns) {
+        const float expected = 2.0f * crossing(source, column[0], column[1]);
+        QVERIFY(expected > 0.0f);
+        QVERIFY(std::abs(crossing(fine, 2 * column[0], 2 * column[1]) - expected) < 0.1f);
+    }
+    // the chunks around the surface are sampled, those read from the uniform source chunks stay one value
+    QVERIFY(!fine.getChunk(glm::ivec3(1, 0, 1)).isUniform());
+    QVERIFY(fine.getChunk(glm::ivec3(1, 3, 1)).isUniform());
+    QVERIFY(fine.getChunk(glm::ivec3(1, 3, 1)).getUniformValue() == Voxel(DISTANCE_MAX, 3));
+    QVERIFY(fine.countDenseChunks() <= 32);
+    // far from the surface the distances stay at the byte's limit
+    QVERIFY(fine.get(glm::ivec3(5, 127, 5)).distance == DISTANCE_MAX);
+    QVERIFY(fine.get(glm::ivec3(5, 0, 5)).distance == -DISTANCE_MAX);
+    // a voxel takes the nearest source voxel's material
+    QCOMPARE((int)fine.get(glm::ivec3(30, 4, 30)).material, 5);
+    QCOMPARE((int)fine.get(glm::ivec3(60, 4, 60)).material, 3);
+
+    // and back down, on one thread: the surface returns to where it was
+    const VoxelGrid back = resampleGrid(fine, glm::ivec3(64, 64, 64), 1);
+    QCOMPARE(back.getVoxelCount(), source.getVoxelCount());
+    for (const auto& column : columns) {
+        QVERIFY(std::abs(crossing(back, column[0], column[1]) - crossing(source, column[0], column[1])) < 0.1f);
+    }
+    QCOMPARE((int)back.get(glm::ivec3(15, 1, 15)).material, 5);
+
+    // an uneven ratio: 64 voxels into 100, the surface at 100/64 of its height
+    const VoxelGrid odd = resampleGrid(source, glm::ivec3(100, 100, 100));
+    for (int x : { 16, 32, 48 }) {
+        const float expected = (100.0f / 64.0f) * crossing(source, x, x);
+        QVERIFY(std::abs(crossing(odd, x * 100 / 64, x * 100 / 64) - expected) < 0.15f);
+    }
+
+    // ground through and through stays one value a chunk, at the limit
+    VoxelGrid solid(glm::ivec3(32, 32, 32), Voxel::ground(2));
+    const VoxelGrid solidFine = resampleGrid(solid, glm::ivec3(64, 64, 64));
+    QCOMPARE(solidFine.getChunkCount(), glm::ivec3(2, 2, 2));
+    QCOMPARE(solidFine.countDenseChunks(), 0);
+    QVERIFY(solidFine.get(glm::ivec3(40, 40, 40)) == Voxel::ground(2));
+
+    // the same count gives the same grid; no grid gives none
+    const VoxelGrid same = resampleGrid(source, source.getVoxelCount());
+    QVERIFY(same.get(glm::ivec3(16, 9, 16)) == source.get(glm::ivec3(16, 9, 16)));
+    QVERIFY(resampleGrid(VoxelGrid(), glm::ivec3(32)).isEmpty());
+}
+
+void TerrainTests::resampledPaintMapKeepsItsPaint() {
+    PaintMap map(glm::ivec2(64, 64), 2);
+    PaintBrush brush;
+    brush.center = glm::vec2(20.0f, 20.0f);
+    brush.radius = 8.0f;
+    brush.strength = 1.0f;
+    brush.hardness = 1.0f;
+    brush.layer = 2;
+    QVERIFY(paint(map, brush, false) > 0);
+    brush.center = glm::vec2(44.0f, 44.0f);
+    brush.radius = 6.0f;
+    brush.strength = 0.5f;
+    brush.layer = 5;
+    QVERIFY(paint(map, brush, false) > 0);
+    auto painted = [](const PaintMap& m, int layer) {
+        int count = 0;
+        for (int j = 0; j < m.getSize().y; ++j) {
+            for (int i = 0; i < m.getSize().x; ++i) {
+                count += m.at(glm::ivec2(i, j))[layer] > 127 ? 1 : 0;
+            }
+        }
+        return count;
+    };
+
+    // the same footprint at four texels a voxel: the same picture, four times the texels across
+    const PaintMap fine = resamplePaint(map, glm::ivec2(64, 64), 8);
+    QCOMPARE(fine.getSize(), glm::ivec2(512, 512));
+    QCOMPARE(fine.getTexelsPerVoxel(), 8);
+    QCOMPARE((int)fine.getDirtyColumns().size(), 4);
+    QVERIFY(fine.isPainted());
+    QCOMPARE((int)fine.at(glm::ivec2(160, 160))[2], 255);
+    QVERIFY(std::abs((int)fine.at(glm::ivec2(352, 352))[5] - 128) <= 1);
+    for (int k = 0; k < PAINT_LAYERS; ++k) {
+        QCOMPARE((int)fine.at(glm::ivec2(400, 100))[k], 0);
+    }
+    const float grown = (float)painted(fine, 2) / (float)painted(map, 2);
+    QVERIFY(grown > 14.5f && grown < 17.5f);   // sixteen times the texels, give or take the edge
+    for (int j = 0; j < fine.getSize().y; ++j) {
+        for (int i = 0; i < fine.getSize().x; ++i) {
+            int sum = 0;
+            for (int k = 0; k < PAINT_LAYERS; ++k) {
+                sum += fine.at(glm::ivec2(i, j))[k];
+            }
+            QVERIFY(sum <= 255);
+        }
+    }
+
+    // another footprint (the terrain resampled to more voxels) at the texel count the editor would pick
+    const PaintMap moved = resamplePaint(map, glm::ivec2(100, 100), 3);
+    QCOMPARE(moved.getSize(), glm::ivec2(300, 300));
+    QCOMPARE((int)moved.at(glm::ivec2(93, 93))[2], 255);   // voxel (20, 20) of 64 is voxel (31.25, 31.25) of 100
+
+    // an unpainted map gives an unpainted one of the size asked
+    const PaintMap blank = resamplePaint(PaintMap(glm::ivec2(64, 64), 2), glm::ivec2(32, 32), 1);
+    QCOMPARE(blank.getSize(), glm::ivec2(32, 32));
+    QVERIFY(!blank.isPainted());
 }

@@ -12,6 +12,7 @@
 #include <cmath>
 
 #include <QtCore/QByteArray>
+#include <QtCore/QElapsedTimer>
 
 #include <EntityItemID.h>
 #include <EntityItemProperties.h>
@@ -22,6 +23,7 @@
 #include <NumericalConstants.h>
 #include <PickFilter.h>
 #include <RenderableTerrainEntityItem.h>
+#include <terrain/Resample.h>
 #include <terrain/TerrainFile.h>
 
 #include "Application.h"
@@ -45,6 +47,18 @@ namespace {
     const int FAILED_NOTE_MS = 12000;
     const QString TERRAIN_FOLDER = QStringLiteral("/terrain");
     const QString TERRAIN_MIME_TYPE = QStringLiteral("application/octet-stream");
+    // the most a resample makes: every chunk is one grid for now (chunks with levels of their own come next), and a
+    // grid of this many voxels is already tens of megabytes of chunks and a long first meshing
+    const int64_t MAX_RESAMPLE_VOXELS = 96LL * 1000 * 1000;
+    const int MAX_RESAMPLE_AXIS = 2048;
+
+    QString countText(const glm::ivec3& count) {
+        return QStringLiteral("%1 × %2 × %3").arg(count.x).arg(count.y).arg(count.z);
+    }
+
+    QString metresText(float metres) {
+        return QString::number(metres, 'f', metres < 0.1f ? 3 : 2) + QStringLiteral(" m");
+    }
 
     // the world's visible terrains, picked against their ground
     PickFilter terrainPickFilter() {
@@ -443,6 +457,79 @@ void EditorTerrain::clear() {
 }
 
 // --- the file -----------------------------------------------------------------------------------
+
+void EditorTerrain::resample(const QList<QUuid>& ids) {
+    QList<QUuid> targets;
+    for (const QUuid& id : ids) {
+        if (terrainEntity(id)) {
+            targets << id;
+        }
+    }
+    if (targets.isEmpty() && _hasLastHit && terrainEntity(_lastHit.id)) {
+        targets << _lastHit.id;
+    }
+    if (targets.isEmpty()) {
+        emit status(QStringLiteral("Select a terrain, or point at one, to resample it"), FAILED_NOTE_MS);
+        return;
+    }
+    for (const QUuid& id : targets) {
+        resampleOne(id);
+    }
+}
+
+void EditorTerrain::resampleOne(const QUuid& id) {
+    auto entity = terrainEntity(id);
+    if (!entity) {
+        return;
+    }
+    if (!entity->hasGrid()) {
+        emit status(QStringLiteral("The terrain's voxels have not arrived yet"), FAILED_NOTE_MS);
+        return;
+    }
+    if (EditorUndo::isLocked(id)) {
+        emit status(QStringLiteral("The terrain is locked"), FAILED_NOTE_MS);
+        return;
+    }
+    if (_stroking && _strokeId == id) {
+        endStroke(false);
+    }
+    const glm::ivec3 current = entity->getGrid().getVoxelCount();
+    const glm::ivec3 target = entity->getVoxelCount();
+    const glm::vec3 dimensions = entity->getScaledDimensions();
+    const glm::vec3 currentScale = entity->getVoxelScale();
+    const float currentMetres = (currentScale.x + currentScale.y + currentScale.z) / 3.0f;
+    const glm::vec3 targetScale = dimensions / glm::vec3(target);
+    const float targetMetres = (targetScale.x + targetScale.y + targetScale.z) / 3.0f;
+    if (target == current) {
+        emit status(QStringLiteral("The terrain is already %1 voxels of %2").arg(countText(current), metresText(currentMetres)), SAVED_NOTE_MS);
+        return;
+    }
+    const int64_t total = (int64_t)target.x * target.y * target.z;
+    if (total > MAX_RESAMPLE_VOXELS || glm::any(glm::greaterThan(target, glm::ivec3(MAX_RESAMPLE_AXIS)))) {
+        emit status(QStringLiteral("Resampling at %1 would take %2 voxels (%3 million); the most is %4 million along at most %5 a side. "
+                                   "Raise the Voxel Size, or make the terrain smaller.")
+                        .arg(metresText(entity->getVoxelSize()), countText(target)).arg(total / 1000000).arg(MAX_RESAMPLE_VOXELS / 1000000)
+                        .arg(MAX_RESAMPLE_AXIS), FAILED_NOTE_MS);
+        return;
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+    terrain::VoxelGrid grid = terrain::resampleGrid(entity->getGrid(), target);
+    const glm::ivec2 footprint(target.x, target.z);
+    const int texelsPerVoxel = RenderableTerrainEntityItem::paintTexelsPerVoxel((targetScale.x + targetScale.z) * 0.5f, footprint);
+    terrain::PaintMap paint = terrain::resamplePaint(entity->getPaint(), footprint, texelsPerVoxel);
+    _undo->pushTerrainResample(QStringLiteral("Resample Terrain"), id, entity->getGrid(), entity->getPaint(), grid, paint);
+    entity->setGridAndPaint(std::move(grid), std::move(paint));
+    _hasLastHit = false;   // the outline was placed on the old voxels
+    markChanged(id);
+    qCDebug(interfaceapp) << "terrain" << id << "resampled from" << current.x << "x" << current.y << "x" << current.z << "to" << target.x
+                          << "x" << target.y << "x" << target.z << "voxels in" << timer.elapsed() << "ms;" << entity->getGrid().countDenseChunks()
+                          << "dense chunks";
+    emit status(QStringLiteral("Terrain resampled: %1 voxels of %2 → %3 of %4 (%5 s)")
+                    .arg(countText(current), metresText(currentMetres), countText(target), metresText(targetMetres))
+                    .arg(timer.elapsed() / 1000.0, 0, 'f', 1), SAVED_NOTE_MS * 2);
+}
 
 void EditorTerrain::markChanged(const QUuid& id) {
     _dirty.insert(id);

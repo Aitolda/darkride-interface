@@ -7,7 +7,8 @@
 //  applies the brush under the pointer every frame until the button goes up, and one stroke is one undo step. The
 //  voxels or the map change on this client first; a moment after the last stroke (or undo) both are saved as a
 //  terrain file in the user's files, and the entity's terrainURL and terrainVersion are set so every other client
-//  fetches it.
+//  fetches it. Resample remakes a terrain's voxels at its voxel size (the Inspector's Voxel Size over the box's
+//  current size), the same ground finer or coarser, for a terrain that was scaled or whose voxel size changed.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -74,6 +75,10 @@ public:
     // the outline goes, and a stroke in progress ends as it is
     void clear();
 
+    // resamples the terrains among the ids (or, with none there, the terrain under the pointer) so that their voxels
+    // are their Voxel Size again: one undo step each, then saved. The status line says what happened, or why not
+    void resample(const QList<QUuid>& ids);
+
     // a terrain's voxels changed on this client (a stroke, an undo): its file is saved a moment later, once no
     // stroke is in progress; flushSaves() saves what is waiting now (build mode ending)
     void markChanged(const QUuid& id);
@@ -106,6 +111,7 @@ private:
     void restorePaint(RenderableTerrainEntityItem& entity, const TerrainPaintBlocks& blocks);
     void saveDirty();
     void save(const QUuid& id);
+    void resampleOne(const QUuid& id);
 
     EditorUndo* _undo;
     EditorTerrainBrush _brush;

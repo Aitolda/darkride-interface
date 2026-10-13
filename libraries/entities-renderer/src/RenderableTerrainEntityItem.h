@@ -80,6 +80,9 @@ public:
     // file is bad.
     bool loadGrid(const QByteArray& file, QString& error);
     void clearGrid();
+    // Replaces the grid and the paint map with others made outside the renderer's update (the editor's Resample,
+    // and its undo): the meshes follow, the collision shape too, and the renderer is told to come back.
+    void setGridAndPaint(terrain::VoxelGrid grid, terrain::PaintMap paint);
 
     // Installs the meshes that have come back from the mesher's threads and sends out the chunks the grid marks
     // dirty; returns whether any mesh changed. Called from the renderer's update, every frame while any is out.

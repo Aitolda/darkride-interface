@@ -106,6 +106,7 @@ namespace {
     const QString SCALE_KEY = QStringLiteral("scale");
     const QString LOCKED_KEY = QStringLiteral("locked");
     const QString RANGE_KEY = QStringLiteral("range");
+    const QString VOXEL_SIZE_KEY = QStringLiteral("voxelSize");
     const QString CUTOFF_KEY = QStringLiteral("cutoff");
     const float MIN_DIMENSION = 0.001f;
     // the lights round the camera, for their icons: looked for this often, this far out
@@ -548,6 +549,11 @@ void Editor::createPanels() {
     // the Terrain tool's row, under the toolbar, shown while that tool is active
     _terrainBar = new TerrainToolBar(window);
     connect(_terrainBar, &TerrainToolBar::brushChanged, this, [this] { _terrain.setBrush(_terrainBar->brush()); });
+    connect(_terrainBar, &TerrainToolBar::resampleRequested, this, [this] {
+        if (editable()) {
+            _terrain.resample(_selection.ids());
+        }
+    });
     _terrain.setBrush(_terrainBar->brush());
 
     // notes ("Terrain saved", an upload's progress, a refusal) in a status bar along the bottom, where the
@@ -1253,6 +1259,9 @@ void Editor::commitInspectorEdit(const QString& key, const QVariant& value, cons
     }
     auto spec = PropertySpecs::find(key);
     _undo.pushPropertyEdit(spec ? spec->label : key, ids, before, after, alreadyApplied);
+    if (key == VOXEL_SIZE_KEY) {
+        _terrain.resample(ids);   // a terrain's voxels follow its new size (its own undo step, after the property's)
+    }
     refreshInspector(false);
 }
 

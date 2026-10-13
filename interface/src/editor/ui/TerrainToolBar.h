@@ -4,7 +4,8 @@
 //
 //  The second row of the build toolbar while the Terrain tool is active: the sculpt modes (Raise, Lower, Smooth,
 //  Flatten, Dig, Fill), the two paint modes (Paint, for the paint map, and Paint Voxels, for the voxels' own
-//  materials) and the brush's size, strength, hardness and material, as Unity's terrain inspector has them.
+//  materials) and the brush's size, strength, hardness and material, as Unity's terrain inspector has them, and
+//  Resample, which remakes a terrain's voxels at its voxel size after it was scaled or its voxel size changed.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -35,6 +36,8 @@ public:
 
 signals:
     void brushChanged();
+    // the selected terrain (or the one under the pointer) should be resampled at its Voxel Size
+    void resampleRequested();
 
 private:
     QAction* addMode(const QString& text, const QString& toolTip, terrain::SculptMode mode);

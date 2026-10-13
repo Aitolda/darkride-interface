@@ -162,6 +162,11 @@ void RenderableTerrainEntityItem::clearGrid() {
     replaceGrid(terrain::VoxelGrid(), terrain::PaintMap());
 }
 
+void RenderableTerrainEntityItem::setGridAndPaint(terrain::VoxelGrid grid, terrain::PaintMap paint) {
+    replaceGrid(std::move(grid), std::move(paint));
+    somethingChangedNotification();
+}
+
 void RenderableTerrainEntityItem::replaceGrid(terrain::VoxelGrid grid, terrain::PaintMap paint) {
     _grid = std::move(grid);
     // the map: the given one when it covers the grid, a fresh one at the texel size otherwise, none without a grid
@@ -624,8 +629,9 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
     const terrain::ColumnSet dirtyColumns = paint.getDirtyColumns();
     paint.clearDirtyColumns();
     _paintVersion = entity->getPaintVersion();
-    if (paint.isEmpty()) {
-        _paintTiles.clear();
+    const glm::ivec2 columnCount = paint.getColumnCount();
+    if (paint.isEmpty() || (int)dirtyColumns.size() >= columnCount.x * columnCount.y) {
+        _paintTiles.clear();   // a new map (a resample may have changed its columns): every tile is remade
     } else {
         for (const glm::ivec2& column : dirtyColumns) {
             _paintTiles.erase(column);

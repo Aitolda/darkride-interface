@@ -81,6 +81,12 @@ public:
     void pushTerrainPaint(const QString& text, const QUuid& id, const TerrainPaintBlocks& before, const TerrainPaintBlocks& after);
     // puts blocks into a terrain entity's paint map; false when the entity is not a terrain on this client
     bool applyTerrainPaint(const QUuid& id, const TerrainPaintBlocks& blocks);
+    // a terrain resampled to another voxel count, already applied: the whole grid and paint map before and after
+    // (a resample changes every chunk, so the step keeps both wholesale)
+    void pushTerrainResample(const QString& text, const QUuid& id, const terrain::VoxelGrid& gridBefore,
+        const terrain::PaintMap& paintBefore, const terrain::VoxelGrid& gridAfter, const terrain::PaintMap& paintAfter);
+    // replaces a terrain entity's grid and paint map; false when the entity is not a terrain on this client
+    bool applyTerrainGrid(const QUuid& id, const terrain::VoxelGrid& grid, const terrain::PaintMap& paint);
 
     // a change made to a created entity since, which a redo of its creation should make too (a new model's own
     // size, once it has loaded): the dimensions and position in `changes` replace the recorded ones

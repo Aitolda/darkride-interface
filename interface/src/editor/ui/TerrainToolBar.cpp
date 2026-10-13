@@ -90,6 +90,12 @@ TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
     }
     connect(_material, QOverload<int>::of(&QSpinBox::valueChanged), this, &TerrainToolBar::brushChanged);
 
+    addSeparator();
+    auto resample = addAction("Resample");
+    resample->setToolTip("Remake the selected terrain's voxels at the Inspector's Voxel Size over its current size: after the terrain "
+                         "was scaled, or its Voxel Size changed (the shape stays, the voxels get finer or coarser)");
+    connect(resample, &QAction::triggered, this, &TerrainToolBar::resampleRequested);
+
     auto hint = new QLabel("Drag on the ground to sculpt it  ·  Shift inverts  ·  Esc cancels the stroke", this);
     hint->setObjectName("EditorHint");
     addWidget(hint);

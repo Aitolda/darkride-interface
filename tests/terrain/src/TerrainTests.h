@@ -26,6 +26,8 @@ private slots:
     void fileRoundTripKeepsEveryVoxel();
     void asyncMesherMatchesTheMesherAndRedoesChunksEditedMeanwhile();
     void paintMapPaintsErasesTilesAndRoundTripsThroughTheFile();
+    void resampledGridKeepsTheSurfaceAndItsMaterials();
+    void resampledPaintMapKeepsItsPaint();
 };
 
 #endif // hifi_TerrainTests_h
