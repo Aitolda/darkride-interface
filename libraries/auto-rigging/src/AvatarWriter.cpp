@@ -141,18 +141,62 @@ static bool measureColourMap(const QString& path, ColourMap& measured) {
     return true;
 }
 
-// A copy of a colour map, as PNG, whose pure black is clear and everything else solid.
+// A copy of a colour map, as PNG, whose black (brightest channel under 8) is clear and everything else solid. The clear
+// pixels then take the colour of the strands beside them, a few pixels out: the engine blends neighbouring pixels at a
+// strand's edge, and black there showed as dark fringes around the hair (10-13).
 static bool blackCutOut(const QString& path, QByteArray& png) {
     QImage image(path);
     if (image.isNull()) {
         return false;
     }
     image = image.convertToFormat(QImage::Format_ARGB32);
-    for (int y = 0; y < image.height(); y++) {
+    const int width = image.width();
+    const int height = image.height();
+    std::vector<uint8_t> filled((size_t)width * height, 0);
+    for (int y = 0; y < height; y++) {
         QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
-        for (int x = 0; x < image.width(); x++) {
-            const int brightest = std::max({ qRed(line[x]), qGreen(line[x]), qBlue(line[x]) });
-            line[x] = qRgba(qRed(line[x]), qGreen(line[x]), qBlue(line[x]), brightest < 4 ? 0 : 255);
+        for (int x = 0; x < width; x++) {
+            const bool solid = std::max({ qRed(line[x]), qGreen(line[x]), qBlue(line[x]) }) >= 8;
+            line[x] = qRgba(qRed(line[x]), qGreen(line[x]), qBlue(line[x]), solid ? 255 : 0);
+            filled[(size_t)y * width + x] = solid ? 1 : 0;
+        }
+    }
+    // each pass gives every clear pixel next to a coloured one the average colour of its coloured neighbours
+    for (int pass = 0; pass < 8; pass++) {
+        std::vector<QRgb> colours;
+        std::vector<size_t> where;
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                if (filled[(size_t)y * width + x]) {
+                    continue;
+                }
+                int red = 0, green = 0, blue = 0, count = 0;
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        const int nx = x + dx;
+                        const int ny = y + dy;
+                        if (nx < 0 || ny < 0 || nx >= width || ny >= height || !filled[(size_t)ny * width + nx]) {
+                            continue;
+                        }
+                        const QRgb c = reinterpret_cast<const QRgb*>(image.constScanLine(ny))[nx];
+                        red += qRed(c);
+                        green += qGreen(c);
+                        blue += qBlue(c);
+                        count++;
+                    }
+                }
+                if (count > 0) {
+                    colours.push_back(qRgba(red / count, green / count, blue / count, 0));
+                    where.push_back((size_t)y * width + x);
+                }
+            }
+        }
+        if (where.empty()) {
+            break;
+        }
+        for (size_t i = 0; i < where.size(); i++) {
+            reinterpret_cast<QRgb*>(image.scanLine((int)(where[i] / width)))[where[i] % width] = colours[i];
+            filled[where[i]] = 1;
         }
     }
     QBuffer buffer(&png);
@@ -269,6 +313,30 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         placed[path] = fileName;
         return fileName;
     };
+    // Game rips keep every texture on their second UV layer (Chloe's all use "UVChannel_1"), but the engine builds the
+    // tangents a normal map needs from the first layer (CalculateMeshTangentsTask), and the two layers disagree: the
+    // normal map came out faceted, a honeycomb over Chloe's face (10-13). When every texture uses the second layer,
+    // that layer is written first and the textures name it.
+    bool texturesOnSecondLayer = false;
+    {
+        int onFirst = 0;
+        int onSecond = 0;
+        for (const hfm::Material& material : model.materials) {
+            for (const hfm::Texture* texture :
+                 { &material.albedoTexture, &material.normalTexture, &material.opacityTexture, &material.glossTexture,
+                   &material.roughnessTexture, &material.specularTexture, &material.metallicTexture,
+                   &material.emissiveTexture, &material.occlusionTexture }) {
+                if (!texture->filename.isEmpty() || !texture->content.isEmpty()) {
+                    (texture->texcoordSet == 1 ? onSecond : onFirst)++;
+                }
+            }
+        }
+        texturesOnSecondLayer = onSecond > 0 && onFirst == 0;
+        if (texturesOnSecondLayer) {
+            written.notes << QString("every texture uses the second UV layer (%1): it is written first, so the normal "
+                                     "maps' tangents follow it").arg(onSecond);
+        }
+    }
     auto addTexture = [&](const hfm::Texture& texture, qint64 material, const char* slot) {
         if (texture.filename.isEmpty() && texture.content.isEmpty()) {
             return;
@@ -279,7 +347,7 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         }
         const qint64 id = newId();
         // the reader gives a texture the mesh's UV layer of the same name (FBXSerializer::matchTextureUVSetToAttributeChannel)
-        const QByteArray uvSet = texture.texcoordSet == 1 ? SECOND_UV_SET : FIRST_UV_SET;
+        const QByteArray uvSet = texture.texcoordSet == 1 && !texturesOnSecondLayer ? SECOND_UV_SET : FIRST_UV_SET;
         add(makeNode("Texture", { id, objectName(fileName, "Texture"), QByteArray("") },
                      { makeNode("Type", { QByteArray("TextureVideoClip") }), makeNode("Version", { 202 }),
                        makeNode("TextureName", { objectName(fileName, "Texture") }),
@@ -415,10 +483,13 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
                                    makeNode("Normals", { doubles(normals) }) });
             layer << layerElement("LayerElementNormal");
         }
-        if (mesh.texCoords.size() == mesh.vertices.size()) {
+        const bool swapLayers = texturesOnSecondLayer && mesh.texCoords1.size() == mesh.vertices.size();
+        const QVector<glm::vec2>& firstUVs = swapLayers ? mesh.texCoords1 : mesh.texCoords;
+        const QVector<glm::vec2>& secondUVs = swapLayers ? mesh.texCoords : mesh.texCoords1;
+        if (firstUVs.size() == mesh.vertices.size()) {
             QVector<double> uvs;
-            uvs.reserve(mesh.texCoords.size() * 2);
-            for (const glm::vec2& uv : mesh.texCoords) {
+            uvs.reserve(firstUVs.size() * 2);
+            for (const glm::vec2& uv : firstUVs) {
                 uvs << uv.x << uv.y;
             }
             geometry << makeNode("LayerElementUV", { 0 },
@@ -428,12 +499,13 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
                                    makeNode("UV", { doubles(uvs) }), makeNode("UVIndex", { ints(corners) }) });
             layer << layerElement("LayerElementUV");
         }
-        // a second UV layer: game rips often keep their textures on it (Chloe's all use "UVChannel_1")
+        // a second UV layer: game rips often keep their textures on it (Chloe's all use "UVChannel_1"); with every
+        // texture there, the layers are swapped above
         FBXNodeList secondLayer;
-        if (mesh.texCoords1.size() == mesh.vertices.size()) {
+        if (secondUVs.size() == mesh.vertices.size()) {
             QVector<double> uvs;
-            uvs.reserve(mesh.texCoords1.size() * 2);
-            for (const glm::vec2& uv : mesh.texCoords1) {
+            uvs.reserve(secondUVs.size() * 2);
+            for (const glm::vec2& uv : secondUVs) {
                 uvs << uv.x << uv.y;
             }
             geometry << makeNode("LayerElementUV", { 1 },
