@@ -316,7 +316,8 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
     // Game rips keep every texture on their second UV layer (Chloe's all use "UVChannel_1"), but the engine builds the
     // tangents a normal map needs from the first layer (CalculateMeshTangentsTask), and the two layers disagree: the
     // normal map came out faceted, a honeycomb over Chloe's face (10-13). When every texture uses the second layer,
-    // that layer is written first and the textures name it.
+    // the first is written as a copy of it: the tangents follow the textures' coordinates, and the textures still name
+    // the second layer, the way they loaded before (renaming them to the first showed her untextured).
     bool texturesOnSecondLayer = false;
     {
         int onFirst = 0;
@@ -333,8 +334,8 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         }
         texturesOnSecondLayer = onSecond > 0 && onFirst == 0;
         if (texturesOnSecondLayer) {
-            written.notes << QString("every texture uses the second UV layer (%1): it is written first, so the normal "
-                                     "maps' tangents follow it").arg(onSecond);
+            written.notes << QString("every texture uses the second UV layer (%1): the first is written as a copy of "
+                                     "it, so the normal maps' tangents follow it").arg(onSecond);
         }
     }
     auto addTexture = [&](const hfm::Texture& texture, qint64 material, const char* slot) {
@@ -347,7 +348,7 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         }
         const qint64 id = newId();
         // the reader gives a texture the mesh's UV layer of the same name (FBXSerializer::matchTextureUVSetToAttributeChannel)
-        const QByteArray uvSet = texture.texcoordSet == 1 && !texturesOnSecondLayer ? SECOND_UV_SET : FIRST_UV_SET;
+        const QByteArray uvSet = texture.texcoordSet == 1 ? SECOND_UV_SET : FIRST_UV_SET;
         add(makeNode("Texture", { id, objectName(fileName, "Texture"), QByteArray("") },
                      { makeNode("Type", { QByteArray("TextureVideoClip") }), makeNode("Version", { 202 }),
                        makeNode("TextureName", { objectName(fileName, "Texture") }),
@@ -491,9 +492,9 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
                                    makeNode("Normals", { doubles(normals) }) });
             layer << layerElement("LayerElementNormal");
         }
-        const bool swapLayers = texturesOnSecondLayer && mesh.texCoords1.size() == mesh.vertices.size();
-        const QVector<glm::vec2>& firstUVs = swapLayers ? mesh.texCoords1 : mesh.texCoords;
-        const QVector<glm::vec2>& secondUVs = swapLayers ? mesh.texCoords : mesh.texCoords1;
+        const bool copyLayer = texturesOnSecondLayer && mesh.texCoords1.size() == mesh.vertices.size();
+        const QVector<glm::vec2>& firstUVs = copyLayer ? mesh.texCoords1 : mesh.texCoords;
+        const QVector<glm::vec2>& secondUVs = mesh.texCoords1;
         if (firstUVs.size() == mesh.vertices.size()) {
             QVector<double> uvs;
             uvs.reserve(firstUVs.size() * 2);
@@ -508,7 +509,7 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
             layer << layerElement("LayerElementUV");
         }
         // a second UV layer: game rips often keep their textures on it (Chloe's all use "UVChannel_1"); with every
-        // texture there, the layers are swapped above
+        // texture there, the first layer above is a copy of this one
         FBXNodeList secondLayer;
         if (secondUVs.size() == mesh.vertices.size()) {
             QVector<double> uvs;
