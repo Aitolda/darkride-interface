@@ -644,6 +644,17 @@ void VehicleSimulation::checkCorrection(Vehicle& vehicle, uint32_t step) {
         const float SAME_TELEPORT_ANGLE = 0.01f;      // rad
         bool sameTeleport = vehicle.teleported && glm::distance(pose.position, vehicle.teleportPosition) < SAME_TELEPORT_DISTANCE
             && angleBetween(pose.rotation, vehicle.teleportRotation) < SAME_TELEPORT_ANGLE;
+        // An edit delivered seconds late describes where the vehicle was, not where it is put: the entity server's
+        // stream to the physics server lagged 14 to 25 s on 10-13 under a crew walking the deck, and the pilot's edits of
+        // the ship's description, each streamed with the pose of its moment, threw the ship 200 m back when they landed.
+        const int64_t STALE_EDIT_AGE_MS = 3000;
+        int64_t ageMs = ((int64_t)usecTimestampNow() - (int64_t)pose.lastEdited) / 1000;
+        if (pose.teleport && !sameTeleport && !vehicle.sent.empty() && ageMs > STALE_EDIT_AGE_MS
+                && !recentlySent(vehicle, pose.position, pose.rotation)) {
+            qCDebug(physics) << "vehicle" << vehicle.entity->getName() << "edit" << ageMs << "ms old ignored, not a teleport:"
+                << pose.position.x << pose.position.y << pose.position.z << "edited by" << pose.editedBy;
+            return;
+        }
         if (pose.teleport && !sameTeleport && !vehicle.sent.empty() && !recentlySent(vehicle, pose.position, pose.rotation)) {
             // an explicit edit by someone else (the editor moving the ship) while this process drives it: adopted as a
             // teleport, standing still where it was put (PHYSICS.md round 7); the next update carries it to everyone

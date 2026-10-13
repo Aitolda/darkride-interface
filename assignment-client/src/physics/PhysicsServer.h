@@ -50,6 +50,7 @@ public slots:
 
 private slots:
     void handleOctreePacket(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode);
+    void measureStreamAge(ReceivedMessage& message, const SharedNodePointer& senderNode);
     void handleVehicleInput(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode);
     void step();
 
@@ -70,6 +71,12 @@ private:
     // stats
     quint64 _stepsTaken { 0 };
     quint64 _statesPublished { 0 };
+    // the entity server's stream as it arrives (the lag from the entity server to this server, PHYSICS.md round 7's
+    // open end): the time in flight by the packet's own stamp, and the time it waited in this process to be read
+    quint64 _streamPackets { 0 };
+    qint64 _streamFlightMax { 0 };      // usec, over the log window
+    qint64 _streamQueuedMax { 0 };
+    quint64 _streamLateLogTime { 0 };
     quint64 _lastStatsTime { 0 };
     quint64 _lastLogTime { 0 };
     quint64 _stepsAtLastLog { 0 };

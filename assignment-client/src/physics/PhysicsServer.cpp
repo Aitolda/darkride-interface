@@ -180,9 +180,14 @@ void PhysicsServer::step() {
             << _entitySimulation->getVehicleSimulation()->getNumVehicles() << "vehicles,"
             << _entitySimulation->getVehicleSimulation()->getStats().inputsReceived << "inputs received,"
             << _entitySimulation->getVehicleSimulation()->getStats().inputsStarved << "starved,"
-            << _entitySimulation->getVehicleSimulation()->getStats().inputsDropped << "dropped";
+            << _entitySimulation->getVehicleSimulation()->getStats().inputsDropped << "dropped;"
+            << "stream" << _streamPackets << "packets, flight max" << _streamFlightMax / 1000 << "ms, queued max"
+            << _streamQueuedMax / 1000 << "ms";
         _lastLogTime = now;
         _stepsAtLastLog = _stepsTaken;
+        _streamPackets = 0;
+        _streamFlightMax = 0;
+        _streamQueuedMax = 0;
     }
 
     // the bids, the cars' updates and the train states go out from here: an assignment client's edit sender is
@@ -364,9 +369,43 @@ void PhysicsServer::handleOctreePacket(QSharedPointer<ReceivedMessage> message, 
     }
 
     if (packetType == PacketType::EntityData) {
+        measureStreamAge(*message, senderNode);
         _entityViewer.processDatagram(*message, senderNode);
     } else if (packetType == PacketType::EntityErase) {
         _entityViewer.processEraseMessage(*message, senderNode);
+    }
+}
+
+// How late the entity server's stream is when this server reads it: the flight by the packet's stamp (the entity
+// server's clock, skew-corrected) and the wait in this process's queue by the socket's receive time. A packet a second
+// late is logged at once (one line a second); the ten-second line carries the window's maxima.
+void PhysicsServer::measureStreamAge(ReceivedMessage& message, const SharedNodePointer& senderNode) {
+    qint64 position = message.getPosition();
+    OCTREE_PACKET_FLAGS flags;
+    OCTREE_PACKET_SEQUENCE sequence;
+    OCTREE_PACKET_SENT_TIME sentAt;
+    message.readPrimitive(&flags);
+    message.readPrimitive(&sequence);
+    message.readPrimitive(&sentAt);
+    message.seek(position);
+    quint64 now = usecTimestampNow();
+    qint64 clockSkew = senderNode ? senderNode->getClockSkewUsec() : 0;
+    qint64 flight = (qint64)now - (qint64)sentAt + clockSkew;
+    // (a message built from a packet list has no receive time; then the wait is unknown and counts as none)
+    qint64 queued = 0;
+    if (message.getFirstPacketReceiveTime() > 0) {
+        qint64 nowReceiveClock = std::chrono::duration_cast<std::chrono::microseconds>(
+            p_high_resolution_clock::now().time_since_epoch()).count();
+        queued = nowReceiveClock - message.getFirstPacketReceiveTime();
+    }
+    _streamPackets++;
+    _streamFlightMax = std::max(_streamFlightMax, flight);
+    _streamQueuedMax = std::max(_streamQueuedMax, queued);
+    const qint64 LATE = USECS_PER_SECOND;
+    if ((flight > LATE || queued > LATE) && now - _streamLateLogTime > USECS_PER_SECOND) {
+        _streamLateLogTime = now;
+        qCDebug(physics) << "physics-server: entity data late:" << flight / 1000 << "ms in flight," << queued / 1000
+            << "ms queued here, sequence" << sequence;
     }
 }
 

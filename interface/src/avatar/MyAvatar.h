@@ -2840,6 +2840,10 @@ private:
     const float MAX_LOOK_AT_TIME_SCRIPT_CONTROL = 2.0f;
     glm::quat _lookAtPitch;
     glm::quat _lookAtYaw;
+    // the frame the look-at yaw was last turned with, and that frame's orientation then (PHYSICS.md 4.4: the camera is
+    // a member of the avatar's frame, so the look-at yaw turns with the frame's heading)
+    QUuid _lookAtFrameID;
+    glm::quat _lookAtFrameOrientation;
     float _lookAtYawSpeed { 0.0f };
     glm::vec3 _lookAtCameraTarget;
     glm::vec3 _lookAtScriptTarget;

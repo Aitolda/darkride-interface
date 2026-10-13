@@ -95,6 +95,16 @@
         if (value && typeof value.x === "number") { return value; }
         return { x: 0, y: 0, z: 0 };
     }
+    function facingRange(rows) {
+        var min = null, max = null;
+        rows.forEach(function (r) {
+            if (typeof r.myLocalYaw !== "number") { return; }
+            var yaw = r.myLocalYaw <= -179.5 ? r.myLocalYaw + 360 : r.myLocalYaw;   // -180 and 180 are one facing
+            if (min === null || yaw < min) { min = yaw; }
+            if (max === null || yaw > max) { max = yaw; }
+        });
+        return min === null ? null : { min: min, max: max };
+    }
     function fmtV(v) { return v ? "(" + v.x.toFixed(2) + ", " + v.y.toFixed(2) + ", " + v.z.toFixed(2) + ")" : "none"; }
     function pad() { return { x: LandRover.TERRAIN_CENTER.x, z: LandRover.TERRAIN_CENTER.z }; }
     function wrap(d) { while (d > 180) { d -= 360; } while (d < -180) { d += 360; } return d; }
@@ -196,6 +206,7 @@
                     fill: stats.live.fill } : null,
             parented: parented, myPos: MyAvatar.position, myLocal: parented ? MyAvatar.localPosition : null,
             myLocalVel: parented ? MyAvatar.localVelocity : null,
+            myLocalYaw: parented ? Quat.safeEulerAngles(MyAvatar.localOrientation).y : null,   // the facing on the deck, degrees
             atHelm: atHelm, walking: crewLeg.walking
         };
         if (ROLE === "crew") {
@@ -366,18 +377,18 @@
 
     // ---- the crew ----
     function walk(direction) {
-        // along the deck: face the bow (direction -1) or the stern (+1) in the ship's own axes, and walk forward (the
-        // avatar's own -z); the facing is set at every leg, so a stray turn of the avatar (a hand on the mouse) does
-        // not send the crew into a rail
+        // along the deck, facing the bow throughout, in the ship's own axes: forward to the bow (direction -1), backward
+        // to the stern (+1). The scripted motor's "avatar" frame has +z forward (MyAvatar::updateMotors turns it by 180
+        // degrees); a crew that faced the stern would be turned back by a look-at camera, the default, which turns the
+        // avatar to face where the camera looks once it is more than 135 degrees off. The facing is set at every leg, so
+        // a stray turn of the avatar (a hand on the mouse) does not send the crew into a rail.
         crewLeg.walking = true;
         crewLeg.direction = direction;
         var hp = Entities.getEntityProperties(hull, ["rotation"]);
-        if (hp && hp.rotation) {
-            MyAvatar.orientation = Quat.multiply(hp.rotation, Quat.fromPitchYawRollDegrees(0, direction < 0 ? 0 : 180, 0));
-        }
+        if (hp && hp.rotation) { MyAvatar.orientation = hp.rotation; }
         MyAvatar.motorReferenceFrame = "avatar";
         MyAvatar.motorTimescale = 0.2;
-        MyAvatar.motorVelocity = { x: 0, y: 0, z: -WALK_SPEED };
+        MyAvatar.motorVelocity = { x: 0, y: 0, z: direction < 0 ? WALK_SPEED : -WALK_SPEED };
     }
     function stopWalking() {
         crewLeg.walking = false;
@@ -532,6 +543,7 @@
             buoyancy: l1.buoyancy, ballast: l1.ballast, fill: l1.fill, airDensity: l1.airDensity,
             stateBallast: last.state.ballast, stateFill: last.state.fill,
             myLocalStanding: jitter(standing, "myLocal"), myLocalWalking: jitter(walking, "myLocal"), walkingFrames: walking.length,
+            facing: facingRange(rows),   // the crew's heading on the deck: a camera that stays in the world turns it as the ship turns
             pilotLocal: jitter(rows, "pilotLocal"), pilotAboardFrames: pilotAboard, pilotFrames: pilotN,
             ball: ballN ? { frames: ballN, onDeck: ballOn, maxX: ballX, maxZ: ballZ, yMin: ballYMin, yMax: ballYMax } : null,
             hullStep: steps(rows, "pos"),
@@ -574,6 +586,7 @@
                 "; buoyancy " + (s.buoyancy || 0).toFixed(0) + " N, ballast " + (s.ballast || 0).toFixed(1) + " kg, fill " + (s.fill || 0).toFixed(3) +
                 " (state " + (s.stateBallast || 0).toFixed(1) + " kg, " + (s.stateFill || 0).toFixed(3) + ")" +
                 "; my stored local standing " + fmtJitter(s.myLocalStanding) + (s.walkingFrames ? ", walking " + fmtJitter(s.myLocalWalking) : "") +
+                (s.facing ? "; facing on the deck " + s.facing.min.toFixed(1) + " to " + s.facing.max.toFixed(1) + " deg" : "") +
                 (ROLE === "crew" ? "; the pilot's stored local " + fmtJitter(s.pilotLocal) + ", aboard " + s.pilotAboardFrames + "/" + s.pilotFrames +
                     (s.ball ? "; the ball on the deck " + s.ball.onDeck + "/" + s.ball.frames + " (|x| to " + s.ball.maxX.toFixed(2) + ", |z| to " + s.ball.maxZ.toFixed(2) +
                         ", y " + s.ball.yMin.toFixed(2) + " to " + s.ball.yMax.toFixed(2) + ")" : "") : "") +

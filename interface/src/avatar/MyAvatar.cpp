@@ -3647,6 +3647,21 @@ void MyAvatar::updateOrientation(float deltaTime) {
         }
     }
 
+    // In a frame the camera is a member too (PHYSICS.md 4.4): the look-at yaw is a world rotation, so it turns with
+    // the frame's heading, else a ship turning under a standing avatar swings the camera round it and, past the
+    // turn-to-camera angle, turns the avatar on the deck to face the camera.
+    {
+        QUuid frameID = getFrameID();
+        glm::quat frameOrientation = getFrameOrientation();
+        if (!frameID.isNull() && frameID == _lookAtFrameID) {
+            glm::quat swing, headingChange;
+            swingTwistDecomposition(frameOrientation * glm::inverse(_lookAtFrameOrientation), Vectors::UNIT_Y, swing, headingChange);
+            _lookAtYaw = headingChange * _lookAtYaw;
+        }
+        _lookAtFrameID = frameID;
+        _lookAtFrameOrientation = frameOrientation;
+    }
+
     // update body orientation by movement inputs
     glm::quat initialOrientation = getOrientationOutbound();
     glm::vec3 eyesPosition = getDefaultEyePosition();
