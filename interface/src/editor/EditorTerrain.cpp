@@ -32,8 +32,9 @@ namespace {
     const float RAISE_RATE = 6.0f;          // voxels of distance a second at full strength, for Raise and Lower
     const float BLEND_RATE = 4.0f;          // blending a second at full strength, for Smooth and Flatten
     const float STEP_MIN = 0.2f;            // the smallest step applied: below it the byte distances lose the falloff
-    const float REAPPLY_FRACTION = 0.25f;   // Dig, Fill and Paint go again once the pointer has moved this much of the radius
+    const float REAPPLY_FRACTION = 0.25f;   // Dig, Fill and the paint modes go again once the pointer has moved this much of the radius
     const float MIN_VOXEL_RADIUS = 0.75f;   // a brush smaller than a voxel would change nothing
+    const float MIN_PAINT_RADIUS_TEXELS = 0.75f;
     const int TERRAIN_SEARCH_FRAMES = 30;   // how often the world's terrains are looked for
     const float TERRAIN_SEARCH_RADIUS = 4000.0f;
     const int OUTLINE_SEGMENTS = 48;
@@ -61,9 +62,10 @@ namespace {
         return renderer ? renderer->getTree() : nullptr;
     }
 
-    // Dig, Fill and Paint set what is under the brush rather than pushing it a little each step
+    // Dig, Fill and the paint modes set what is under the brush rather than pushing it a little each step
     bool isShaping(terrain::SculptMode mode) {
-        return mode == terrain::SculptMode::Dig || mode == terrain::SculptMode::Fill || mode == terrain::SculptMode::Paint;
+        return mode == terrain::SculptMode::Dig || mode == terrain::SculptMode::Fill || mode == terrain::SculptMode::Paint
+            || mode == terrain::SculptMode::PaintVoxels;
     }
 
     bool isBlending(terrain::SculptMode mode) {
@@ -89,6 +91,7 @@ namespace {
             case terrain::SculptMode::Dig: return QStringLiteral("Dig");
             case terrain::SculptMode::Fill: return QStringLiteral("Fill");
             case terrain::SculptMode::Paint: return QStringLiteral("Paint");
+            case terrain::SculptMode::PaintVoxels: return QStringLiteral("Paint Voxels");
         }
         return QStringLiteral("Sculpt");
     }
@@ -201,6 +204,43 @@ terrain::Brush EditorTerrain::voxelBrush(const RenderableTerrainEntityItem& enti
     return brush;
 }
 
+terrain::PaintBrush EditorTerrain::paintBrush(const RenderableTerrainEntityItem& entity, const Hit& hit) const {
+    const glm::vec3 voxelScale = entity.getVoxelScale();
+    const float metresPerVoxel = std::max((voxelScale.x + voxelScale.z) / 2.0f, 1.0e-4f);
+    const float texel = 1.0f / (float)std::max(entity.getPaint().getTexelsPerVoxel(), 1);
+    terrain::PaintBrush brush;
+    brush.center = glm::vec2(hit.voxelPoint.x, hit.voxelPoint.z);
+    brush.radius = std::max(MIN_PAINT_RADIUS_TEXELS * texel, _brush.radius / metresPerVoxel);
+    brush.strength = glm::clamp(_brush.strength, 0.0f, 1.0f);
+    brush.hardness = glm::clamp(_brush.hardness, 0.0f, 1.0f);
+    brush.layer = (uint8_t)glm::clamp(_brush.material, 0, terrain::PAINT_LAYERS - 1);
+    return brush;
+}
+
+void EditorTerrain::captureBeforePaint(const RenderableTerrainEntityItem& entity, const terrain::PaintBrush& brush) {
+    const terrain::PaintMap& paint = entity.getPaint();
+    glm::ivec2 low, high;
+    if (!terrain::brushTexelBounds(paint, brush, low, high)) {
+        return;
+    }
+    const int texelsPerVoxel = std::max(paint.getTexelsPerVoxel(), 1);
+    const glm::ivec2 columnLow = terrain::PaintMap::columnOf(low / texelsPerVoxel);
+    const glm::ivec2 columnHigh = terrain::PaintMap::columnOf(high / texelsPerVoxel);
+    for (int z = columnLow.y; z <= columnHigh.y; ++z) {
+        for (int x = columnLow.x; x <= columnHigh.x; ++x) {
+            const glm::ivec2 column(x, z);
+            if (_beforePaint.find(column) == _beforePaint.end()) {
+                glm::ivec2 blockLow, blockHigh;
+                paint.columnTexels(column, blockLow, blockHigh);
+                terrain::PaintBlock block = paint.copy(blockLow, blockHigh);
+                if (!block.isEmpty()) {
+                    _beforePaint.emplace(column, std::move(block));
+                }
+            }
+        }
+    }
+}
+
 void EditorTerrain::captureBefore(const RenderableTerrainEntityItem& entity, const terrain::Brush& brush) {
     const terrain::VoxelGrid& grid = entity.getGrid();
     // the same reach as the brush's (Brush.cpp): Dig and Fill go one voxel past the radius
@@ -244,11 +284,13 @@ bool EditorTerrain::beginStroke(const PickRay& ray, bool inverted, QString& refu
     _ray = ray;
     _hasRay = true;
     _strokeMode = inverted ? invert(_brush.mode) : _brush.mode;
+    _erasing = inverted && _brush.mode == terrain::SculptMode::Paint;
     _flattenHeight = hit.voxelPoint.y;
     _accumulated = STEP_MIN;   // the first step lands at once: a click alone does something
     _steps = 0;
     _changed = 0;
     _before.clear();
+    _beforePaint.clear();
     update(0.0f);
     return true;
 }
@@ -274,6 +316,24 @@ void EditorTerrain::update(float deltaTime) {
     Hit hit;
     if (!_hasRay || !pick(_ray, hit) || hit.id != _strokeId) {
         return;         // the pointer is off the terrain: the stroke waits for it to come back
+    }
+    if (_strokeMode == terrain::SculptMode::Paint) {
+        // the paint map: one pass of the brush, again once the pointer has moved on a little
+        const terrain::PaintBrush brush = paintBrush(*entity, hit);
+        if (_steps > 0 && glm::distance(hit.voxelPoint, _lastStepPoint) < brush.radius * REAPPLY_FRACTION) {
+            showOutline(*entity, hit);
+            return;
+        }
+        captureBeforePaint(*entity, brush);
+        const int changed = terrain::paint(entity->getPaint(), brush, _erasing);
+        if (changed > 0) {
+            _changed += changed;
+            entity->paintEdited();
+        }
+        _lastStepPoint = hit.voxelPoint;
+        ++_steps;
+        showOutline(*entity, hit);
+        return;
     }
     terrain::Brush brush = voxelBrush(*entity, hit);
     if (isShaping(_strokeMode)) {
@@ -309,7 +369,21 @@ void EditorTerrain::endStroke(bool cancel) {
     _stroking = false;
     auto entity = terrainEntity(_strokeId);
     if (entity && entity->hasGrid()) {
-        if (cancel) {
+        if (_strokeMode == terrain::SculptMode::Paint) {
+            if (cancel) {
+                restorePaint(*entity, _beforePaint);
+            } else if (_changed > 0 && !_beforePaint.empty()) {
+                TerrainPaintBlocks after;
+                const terrain::PaintMap& paint = entity->getPaint();
+                for (const auto& pair : _beforePaint) {
+                    after.emplace(pair.first, paint.copy(pair.second.low, pair.second.low + pair.second.size - 1));
+                }
+                _undo->pushTerrainPaint((_erasing ? QStringLiteral("Erase") : QStringLiteral("Paint")) + QStringLiteral(" Terrain"),
+                                        _strokeId, _beforePaint, after);
+                entity->paintEdited();
+                markChanged(_strokeId);
+            }
+        } else if (cancel) {
             restore(*entity, _before);
         } else if (_changed > 0 && !_before.empty()) {
             TerrainChunks after;
@@ -323,6 +397,7 @@ void EditorTerrain::endStroke(bool cancel) {
         }
     }
     _before.clear();
+    _beforePaint.clear();
     _steps = 0;
     _changed = 0;
     _accumulated = 0.0f;
@@ -331,6 +406,7 @@ void EditorTerrain::endStroke(bool cancel) {
 void EditorTerrain::dropStroke() {
     _stroking = false;
     _before.clear();
+    _beforePaint.clear();
     _steps = 0;
     _changed = 0;
     _accumulated = 0.0f;
@@ -347,6 +423,14 @@ void EditorTerrain::restore(RenderableTerrainEntityItem& entity, const TerrainCh
     }
     entity.markCollisionShapeStale();
     entity.gridEdited();
+}
+
+void EditorTerrain::restorePaint(RenderableTerrainEntityItem& entity, const TerrainPaintBlocks& blocks) {
+    terrain::PaintMap& paint = entity.getPaint();
+    for (const auto& pair : blocks) {
+        paint.paste(pair.second);
+    }
+    entity.paintEdited();
 }
 
 void EditorTerrain::clear() {
@@ -390,7 +474,7 @@ void EditorTerrain::save(const QUuid& id) {
     if (!entity || !entity->hasGrid()) {
         return;   // gone, or nothing to save
     }
-    const terrain::Bytes bytes = terrain::saveTerrain(entity->getGrid());
+    const terrain::Bytes bytes = terrain::saveTerrain(entity->getGrid(), &entity->getPaint());
     const QByteArray data((const char*)bytes.data(), (int)bytes.size());
     const QString fileName = QStringLiteral("terrain-") + id.toString(QUuid::WithoutBraces) + QStringLiteral(".drkt");
     const uint32_t version = std::max(entity->getTerrainVersion(), entity->getGridVersion()) + 1;

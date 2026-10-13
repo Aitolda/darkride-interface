@@ -97,6 +97,33 @@ namespace {
         bool _skipFirstRedo { true };
     };
 
+    // A paint stroke on a terrain's paint map, with the blocks as they were.
+    class TerrainPaintCommand : public QUndoCommand {
+    public:
+        TerrainPaintCommand(EditorUndo* undo, const QString& text, const QUuid& id, const TerrainPaintBlocks& before,
+            const TerrainPaintBlocks& after) :
+            QUndoCommand(text), _undo(undo), _id(id), _before(before), _after(after) {
+        }
+        void redo() override {
+            if (_skipFirstRedo) {
+                _skipFirstRedo = false;
+                return;
+            }
+            qCDebug(entities) << "editor redo" << text() << "on" << _after.size() << "paint blocks";
+            _undo->applyTerrainPaint(_id, _after);
+        }
+        void undo() override {
+            qCDebug(entities) << "editor undo" << text() << "on" << _before.size() << "paint blocks";
+            _undo->applyTerrainPaint(_id, _before);
+        }
+    private:
+        EditorUndo* _undo;
+        QUuid _id;
+        TerrainPaintBlocks _before;
+        TerrainPaintBlocks _after;
+        bool _skipFirstRedo { true };
+    };
+
     // Entities that were deleted; undo brings them back (with new ids, which the stack remaps).
     class DeleteEntitiesCommand : public QUndoCommand {
     public:
@@ -411,6 +438,31 @@ bool EditorUndo::applyTerrainChunks(const QUuid& id, const TerrainChunks& chunks
     }
     terrain->markCollisionShapeStale();
     terrain->gridEdited();
+    emit terrainEdited(id);
+    return true;
+}
+
+void EditorUndo::pushTerrainPaint(const QString& text, const QUuid& id, const TerrainPaintBlocks& before, const TerrainPaintBlocks& after) {
+    if (before.empty() && after.empty()) {
+        return;
+    }
+    _stack.push(new TerrainPaintCommand(this, text, id, before, after));
+}
+
+bool EditorUndo::applyTerrainPaint(const QUuid& id, const TerrainPaintBlocks& blocks) {
+    auto tree = entityTree();
+    if (!tree) {
+        return false;
+    }
+    auto terrain = std::dynamic_pointer_cast<RenderableTerrainEntityItem>(tree->findEntityByID(resolve(id)));
+    if (!terrain || !terrain->hasGrid()) {
+        return false;
+    }
+    terrain::PaintMap& paint = terrain->getPaint();
+    for (const auto& pair : blocks) {
+        paint.paste(pair.second);
+    }
+    terrain->paintEdited();
     emit terrainEdited(id);
     return true;
 }

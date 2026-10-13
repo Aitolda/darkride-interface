@@ -3,8 +3,8 @@
 //  interface/src/editor/ui
 //
 //  The second row of the build toolbar while the Terrain tool is active: the sculpt modes (Raise, Lower, Smooth,
-//  Flatten, Dig, Fill, Paint) and the brush's size, strength, hardness and material, as Unity's terrain
-//  inspector has them.
+//  Flatten, Dig, Fill), the two paint modes (Paint, for the paint map, and Paint Voxels, for the voxels' own
+//  materials) and the brush's size, strength, hardness and material, as Unity's terrain inspector has them.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html

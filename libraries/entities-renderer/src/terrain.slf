@@ -3,13 +3,16 @@
 //  <$_SCRIBE_FILENAME$>
 //  Generated on <$_SCRIBE_DATE$>
 //
-//  A Terrain entity's ground (TERRAIN.md section 5, the voxel-material half). Each voxel material is one of the
-//  terrain's layers: a colour texture tiled by a size in metres, sampled triplanar in the terrain's own space (its
-//  box's axes, metres) and blended by how squarely the surface faces each axis, so slopes and cliffs do not
-//  stretch. A triangle's three vertices may hold three materials; the fragment blends them by its barycentric
-//  weights, so materials fade into each other across a cell rather than cut along triangle edges. A layer without
-//  a texture is a plain colour with a faint metre checker. The paint maps that take over where the ground faces up
-//  come next. The fragment is shaded like any opaque material (deferred), or lit in place on the forward path.
+//  A Terrain entity's ground (TERRAIN.md section 5). Each of the terrain's layers is a colour texture tiled by a
+//  size in metres, sampled triplanar in the terrain's own space (its box's axes, metres) and blended by how
+//  squarely the surface faces each axis, so slopes and cliffs do not stretch; a layer without a texture is a plain
+//  colour with a faint metre checker. Two things say which layers show where. The voxels' materials: a triangle's
+//  three vertices may hold three, and the fragment blends them by its barycentric weights, so materials fade into
+//  each other across a cell rather than cut along triangle edges. And the paint map (PaintMap.h), read from the
+//  chunk's tile by the position within the chunk wherever the ground faces up: its eight layer weights blend their
+//  layers over the voxel material, which shows through by whatever the weights leave unpainted, and takes over
+//  again as the ground turns to face sideways or down, on cliffs and in anything dug. The fragment is shaded like
+//  any opaque material (deferred), or lit in place on the forward path.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -34,6 +37,7 @@
     layout(location=0) out vec4 _fragColor0;
 <@endif@>
 
+layout(location=RENDER_UTILS_ATTR_POSITION_MS) in vec4 _positionMS;
 layout(location=RENDER_UTILS_ATTR_POSITION_WS) in vec4 _positionWS;
 layout(location=RENDER_UTILS_ATTR_NORMAL_WS) in vec3 _normalWS;
 layout(location=RENDER_UTILS_ATTR_TEXCOORD01) flat in ivec3 _materials;
@@ -48,6 +52,7 @@ struct TerrainLayer {
 struct TerrainParams {
     mat4 worldToTerrain;
     TerrainLayer layers[8];
+    vec4 paint;    // x: tile texture coordinates per voxel of the chunk; y: the coordinate of the chunk's voxel 0 (the apron before it)
 };
 
 LAYOUT_STD140(binding=ENTITIES_BUFFER_TERRAIN_LAYERS) uniform terrainParamsBuffer {
@@ -62,15 +67,27 @@ LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER4) uniform sampler2D layerMap4;
 LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER5) uniform sampler2D layerMap5;
 LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER6) uniform sampler2D layerMap6;
 LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER7) uniform sampler2D layerMap7;
+LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_PAINT0) uniform sampler2D paintMap0;   // the chunk's tile: weights of layers 0 to 3
+LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_PAINT1) uniform sampler2D paintMap1;   // and of layers 4 to 7
 
 const float TERRAIN_ROUGHNESS = 0.9;
 const float TRIPLANAR_SHARPNESS = 4.0;   // how quickly one projection gives way to the next as the slope turns
+// The paint map shows where the surface faces up: fully while the terrain-space normal's y is above the second
+// value (a slope of about 53 degrees), not at all below the first (about 73 degrees), fading between.
+const float PAINT_FACING_LOW = 0.3;
+const float PAINT_FACING_HIGH = 0.6;
+const float PAINT_LEAST = 0.002;         // a weight below this is nothing: its layer is not sampled
 
-// The layer's texture at uv. The layer is the same across a triangle, so the branch is uniform in practice; the
-// derivatives are taken outside it all the same, which keeps the mip selection defined.
-vec4 sampleLayer(int layer, vec2 uv) {
-    vec2 dx = dFdx(uv);
-    vec2 dy = dFdy(uv);
+// The surface's derivatives in terrain space, taken once for the whole fragment, so every texture sample can be
+// given its gradients outright: the samples sit in branches that differ from one fragment to the next (which of
+// the eight layers the paint map holds here), where a derivative taken on the spot would be undefined.
+struct Gradients {
+    vec3 dx;
+    vec3 dy;
+};
+
+// The layer's texture at uv, with the gradients of uv.
+vec4 sampleLayer(int layer, vec2 uv, vec2 dx, vec2 dy) {
     switch (layer) {
         case 0: return textureGrad(layerMap0, uv, dx, dy);
         case 1: return textureGrad(layerMap1, uv, dx, dy);
@@ -84,7 +101,7 @@ vec4 sampleLayer(int layer, vec2 uv) {
 }
 
 // The layer's colour at a point of the terrain (metres along the box's axes), the three projections blended.
-vec3 layerColor(int layer, vec3 point, vec3 blend) {
+vec3 layerColor(int layer, vec3 point, vec3 blend, Gradients g) {
     layer = clamp(layer, 0, 7);
     TerrainLayer l = params.layers[layer];
     if (l.color.a < 0.5) {
@@ -94,27 +111,50 @@ vec3 layerColor(int layer, vec3 point, vec3 blend) {
         return l.color.rgb * (0.94 + 0.06 * mod(cell.x + cell.y, 2.0));
     }
     float repeats = l.tiling.x;
-    vec3 alongX = sampleLayer(layer, point.zy * repeats).rgb;
-    vec3 alongY = sampleLayer(layer, point.xz * repeats).rgb;
-    vec3 alongZ = sampleLayer(layer, point.xy * repeats).rgb;
+    vec3 alongX = sampleLayer(layer, point.zy * repeats, g.dx.zy * repeats, g.dy.zy * repeats).rgb;
+    vec3 alongY = sampleLayer(layer, point.xz * repeats, g.dx.xz * repeats, g.dy.xz * repeats).rgb;
+    vec3 alongZ = sampleLayer(layer, point.xy * repeats, g.dx.xy * repeats, g.dy.xy * repeats).rgb;
     return alongX * blend.x + alongY * blend.y + alongZ * blend.z;
 }
 
 void main(void) {
     vec3 normal = normalize(_normalWS);
     vec3 point = (params.worldToTerrain * vec4(_positionWS.xyz, 1.0)).xyz;
+    Gradients g;
+    g.dx = dFdx(point);
+    g.dy = dFdy(point);
     vec3 terrainNormal = normalize(mat3(params.worldToTerrain) * normal);
     vec3 blend = pow(abs(terrainNormal), vec3(TRIPLANAR_SHARPNESS));
     blend /= (blend.x + blend.y + blend.z);
 
-    // the triangle's materials, each sampled once, blended by the corner weights
+    // the voxels' materials: the triangle's three, each sampled once, blended by the corner weights
     ivec3 m = _materials;
-    vec3 color0 = layerColor(m.x, point, blend);
+    vec3 color0 = layerColor(m.x, point, blend, g);
     vec3 albedo = color0;
     if (m.y != m.x || m.z != m.x) {
-        vec3 color1 = (m.y == m.x) ? color0 : layerColor(m.y, point, blend);
-        vec3 color2 = (m.z == m.x) ? color0 : ((m.z == m.y) ? color1 : layerColor(m.z, point, blend));
+        vec3 color1 = (m.y == m.x) ? color0 : layerColor(m.y, point, blend, g);
+        vec3 color2 = (m.z == m.x) ? color0 : ((m.z == m.y) ? color1 : layerColor(m.z, point, blend, g));
         albedo = _weights.x * color0 + _weights.y * color1 + _weights.z * color2;
+    }
+
+    // the paint map, where the ground faces up: its layers by their weights, over the voxel material by whatever
+    // the weights leave unpainted
+    float facingUp = smoothstep(PAINT_FACING_LOW, PAINT_FACING_HIGH, terrainNormal.y);
+    if (facingUp > 0.0) {
+        vec2 uv = _positionMS.xz * params.paint.x + params.paint.yy;
+        vec4 low = texture(paintMap0, uv);
+        vec4 high = texture(paintMap1, uv);
+        float painted = dot(low, vec4(1.0)) + dot(high, vec4(1.0));
+        if (painted > PAINT_LEAST) {
+            float weights[8] = float[8](low.x, low.y, low.z, low.w, high.x, high.y, high.z, high.w);
+            vec3 paintColor = vec3(0.0);
+            for (int layer = 0; layer < 8; ++layer) {
+                if (weights[layer] > PAINT_LEAST) {
+                    paintColor += weights[layer] * layerColor(layer, point, blend, g);
+                }
+            }
+            albedo = mix(albedo, paintColor / painted, facingUp * min(painted, 1.0));
+        }
     }
 
 <@if not HIFI_USE_FORWARD@>

@@ -39,7 +39,11 @@ TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
     addMode("Flatten", "Pull the ground to the height where the stroke began", terrain::SculptMode::Flatten);
     addMode("Dig", "Carve the brush's sphere out of the ground; hold Shift to fill instead", terrain::SculptMode::Dig);
     addMode("Fill", "Add the brush's sphere to the ground; hold Shift to dig instead", terrain::SculptMode::Fill);
-    addMode("Paint", "Set the material of the ground under the brush", terrain::SculptMode::Paint);
+    addSeparator();
+    addMode("Paint", "Paint the material onto the ground, where it faces up; hold Shift to erase back to the voxels' own material",
+            terrain::SculptMode::Paint);
+    addMode("Paint Voxels", "Set the material of the ground voxels under the brush: what cliffs, caves and a dig show",
+            terrain::SculptMode::PaintVoxels);
     addSeparator();
 
     auto addField = [this](const QString& label, QAbstractSpinBox* box, double scrubStep, bool proportional, const QString& toolTip) {
@@ -66,7 +70,7 @@ TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
     _strength->setSingleStep(5.0);
     _strength->setSuffix(" %");
     _strength->setValue(50.0);
-    addField("Strength", _strength, 0.5, false, "How fast Raise, Lower, Smooth and Flatten work (Dig and Fill take the whole sphere)");
+    addField("Strength", _strength, 0.5, false, "How fast Raise, Lower, Smooth and Flatten work, and how much Paint lays down in one pass (Dig and Fill take the whole sphere)");
 
     _hardness = new QDoubleSpinBox(this);
     _hardness->setRange(0.0, 100.0);
@@ -79,7 +83,7 @@ TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
     _material = new QSpinBox(this);
     _material->setRange(0, 7);
     _material->setValue(0);
-    addField("Material", _material, 0.05, false, "The material new ground gets, and Paint paints");
+    addField("Material", _material, 0.05, false, "The material Paint and Paint Voxels paint, and new ground gets");
 
     for (auto box : { _size, _strength, _hardness }) {
         connect(box, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &TerrainToolBar::brushChanged);

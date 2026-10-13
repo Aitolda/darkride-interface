@@ -16,6 +16,7 @@
 
 #include <terrain/AsyncMesher.h>
 #include <terrain/Brush.h>
+#include <terrain/PaintMap.h>
 #include <terrain/SurfaceNets.h>
 #include <terrain/TerrainFile.h>
 #include <terrain/VoxelGrid.h>
@@ -206,7 +207,7 @@ void TerrainTests::brushesDigFillAndRaise() {
     QVERIFY(!grid.get(glm::ivec3(50, 43, 50)).isGround());
 
     brush.material = 5;
-    QVERIFY(sculpt(grid, brush, SculptMode::Paint) > 0);
+    QVERIFY(sculpt(grid, brush, SculptMode::PaintVoxels) > 0);
     QCOMPARE((int)grid.get(glm::ivec3(50, 40, 50)).material, 5);
     QCOMPARE((int)grid.get(glm::ivec3(50, 43, 50)).material, 1);   // air keeps its material
 }
@@ -228,7 +229,7 @@ void TerrainTests::fileRoundTripKeepsEveryVoxel() {
 
     VoxelGrid loaded;
     std::string error;
-    QVERIFY2(loadTerrain(bytes, loaded, &error), error.c_str());
+    QVERIFY2(loadTerrain(bytes, loaded, nullptr, &error), error.c_str());
     QCOMPARE(loaded.getVoxelCount(), grid.getVoxelCount());
     QCOMPARE(loaded.countDenseChunks(), grid.countDenseChunks());
     for (int z = 0; z < 50; ++z) {
@@ -241,13 +242,13 @@ void TerrainTests::fileRoundTripKeepsEveryVoxel() {
     QCOMPARE((int)loaded.getDirtyChunks().size(), 12);
 
     Bytes cut(bytes.begin(), bytes.begin() + bytes.size() / 2);
-    QVERIFY(!loadTerrain(cut, loaded, &error));
+    QVERIFY(!loadTerrain(cut, loaded, nullptr, &error));
     QVERIFY(!error.empty());
     QVERIFY(loaded.isEmpty());
 
     Bytes wrong = bytes;
     wrong[0] = 'X';
-    QVERIFY(!loadTerrain(wrong, loaded, &error));
+    QVERIFY(!loadTerrain(wrong, loaded, nullptr, &error));
 }
 
 void TerrainTests::asyncMesherMatchesTheMesherAndRedoesChunksEditedMeanwhile() {
@@ -327,4 +328,132 @@ void TerrainTests::asyncMesherMatchesTheMesherAndRedoesChunksEditedMeanwhile() {
     pool.waitForDone();
     QVERIFY(!mesher.hasResults());
     QVERIFY(mesher.collect().empty());
+}
+
+void TerrainTests::paintMapPaintsErasesTilesAndRoundTripsThroughTheFile() {
+    // two texels a voxel over a footprint of 70 by 50 voxels: three columns by two
+    PaintMap map(glm::ivec2(70, 50), 2);
+    QVERIFY(!map.isEmpty());
+    QVERIFY(!map.isPainted());
+    QCOMPARE(map.getSize(), glm::ivec2(140, 100));
+    QCOMPARE(map.getVoxelFootprint(), glm::ivec2(70, 50));
+    QCOMPARE(map.getColumnCount(), glm::ivec2(3, 2));
+    QCOMPARE((int)map.getDirtyColumns().size(), 6);
+    map.clearDirtyColumns();
+
+    // a hard full-strength brush paints its layer alone, within its radius only
+    PaintBrush brush;
+    brush.center = glm::vec2(20.0f, 20.0f);
+    brush.radius = 6.0f;
+    brush.strength = 1.0f;
+    brush.hardness = 1.0f;
+    brush.layer = 2;
+    QVERIFY(paint(map, brush, false) > 0);
+    QVERIFY(map.isPainted());
+    const uint8_t* centre = map.at(glm::ivec2(40, 40));
+    QCOMPARE((int)centre[2], 255);
+    QCOMPARE((int)centre[0] + centre[1] + centre[3] + centre[4] + centre[5] + centre[6] + centre[7], 0);
+    const uint8_t* outside = map.at(glm::ivec2(80, 40));
+    for (int k = 0; k < PAINT_LAYERS; ++k) {
+        QCOMPARE((int)outside[k], 0);
+    }
+    // it lies well inside column (0, 0): that column alone is dirty
+    QCOMPARE((int)map.getDirtyColumns().size(), 1);
+    QVERIFY(map.getDirtyColumns().count(glm::ivec2(0, 0)));
+    map.clearDirtyColumns();
+
+    // half strength of another layer takes half of what is there; the weights never sum past 255
+    brush.layer = 5;
+    brush.strength = 0.5f;
+    QVERIFY(paint(map, brush, false) > 0);
+    QVERIFY(std::abs((int)centre[2] - 128) <= 1);
+    QVERIFY(std::abs((int)centre[5] - 128) <= 1);
+    int sum = 0;
+    for (int k = 0; k < PAINT_LAYERS; ++k) {
+        sum += centre[k];
+    }
+    QVERIFY(sum <= 255);
+    QVERIFY(sum >= 253);
+
+    // erasing at full strength leaves the voxel material alone again
+    brush.strength = 1.0f;
+    QVERIFY(paint(map, brush, true) > 0);
+    for (int k = 0; k < PAINT_LAYERS; ++k) {
+        QCOMPARE((int)centre[k], 0);
+    }
+    QVERIFY(!map.isPainted());
+    map.clearDirtyColumns();
+
+    // a texel within a voxel of the next column lands in that column's apron: both columns' tiles are out of date
+    brush.center = glm::vec2(31.75f, 10.25f);   // texel (63, 20): voxel 31, the last of column 0
+    brush.radius = 0.4f;
+    brush.layer = 0;
+    QCOMPARE(paint(map, brush, false), 1);
+    QCOMPARE((int)map.at(glm::ivec2(63, 20))[0], 255);
+    QCOMPARE((int)map.getDirtyColumns().size(), 2);
+    QVERIFY(map.getDirtyColumns().count(glm::ivec2(0, 0)));
+    QVERIFY(map.getDirtyColumns().count(glm::ivec2(1, 0)));
+
+    // the tile of column (1, 0): 34 voxels a side at two texels each, its texel (0, 0) at the map's (62, -2)
+    QCOMPARE(map.getTileSize(), 68);
+    std::vector<uint8_t> low, high;
+    map.fillTile(glm::ivec2(1, 0), low, high);
+    QCOMPARE((int)low.size(), 68 * 68 * 4);
+    QCOMPARE((int)high.size(), 68 * 68 * 4);
+    QCOMPARE((int)low[((20 + 2) * 68 + (63 - 62)) * 4 + 0], 255);   // the painted texel, through the apron
+    QCOMPARE((int)low[((20 + 2) * 68 + (63 - 62)) * 4 + 1], 0);
+    // and the tile of column (0, 0) repeats the map's edge beyond it
+    map.at(glm::ivec2(0, 5))[7] = 99;
+    map.fillTile(glm::ivec2(0, 0), low, high);
+    QCOMPARE((int)high[((5 + 2) * 68 + 0) * 4 + 3], 99);   // tile texel x 0 is map texel -2, clamped to 0
+    QCOMPARE((int)high[((5 + 2) * 68 + 2) * 4 + 3], 99);   // tile texel x 2 is map texel 0 itself
+    QCOMPARE((int)high[((5 + 2) * 68 + 3) * 4 + 3], 0);
+    map.at(glm::ivec2(0, 5))[7] = 0;
+
+    // a block copied out comes back as it was
+    brush.center = glm::vec2(20.0f, 20.0f);
+    brush.radius = 6.0f;
+    brush.layer = 3;
+    paint(map, brush, false);
+    const PaintBlock block = map.copy(glm::ivec2(20, 20), glm::ivec2(60, 60));
+    QCOMPARE(block.low, glm::ivec2(20, 20));
+    QCOMPARE(block.size, glm::ivec2(41, 41));
+    const std::vector<uint8_t> painted = map.getWeights();
+    paint(map, brush, true);
+    QVERIFY(map.getWeights() != painted);
+    map.paste(block);
+    QVERIFY(map.getWeights() == painted);
+    QVERIFY(map.copy(glm::ivec2(200, 200), glm::ivec2(300, 300)).isEmpty());
+
+    // the file keeps the map with the grid, and a never-painted map keeps the file at version 1
+    VoxelGrid grid(glm::ivec3(70, 40, 50));
+    grid.fillHeightField(hills, 1);
+    const Bytes withPaint = saveTerrain(grid, &map);
+    VoxelGrid loadedGrid;
+    PaintMap loadedMap;
+    std::string error;
+    QVERIFY2(loadTerrain(withPaint, loadedGrid, &loadedMap, &error), error.c_str());
+    QCOMPARE(loadedGrid.getVoxelCount(), grid.getVoxelCount());
+    QCOMPARE(loadedMap.getSize(), map.getSize());
+    QCOMPARE(loadedMap.getTexelsPerVoxel(), 2);
+    QVERIFY(loadedMap.getWeights() == map.getWeights());
+    QCOMPARE((int)loadedMap.getDirtyColumns().size(), 6);
+
+    PaintMap blank(glm::ivec2(70, 50), 2);
+    const Bytes withoutPaint = saveTerrain(grid, &blank);
+    QVERIFY(withoutPaint.size() < withPaint.size());
+    QVERIFY(withoutPaint == saveTerrain(grid));
+    QVERIFY2(loadTerrain(withoutPaint, loadedGrid, &loadedMap, &error), error.c_str());
+    QVERIFY(loadedMap.isEmpty());
+
+    // a map over another footprint is not the grid's: left out of the file
+    PaintMap other(glm::ivec2(10, 10), 2);
+    other.at(glm::ivec2(1, 1))[0] = 255;
+    QVERIFY(saveTerrain(grid, &other) == saveTerrain(grid));
+
+    // a cut file fails cleanly
+    Bytes cut(withPaint.begin(), withPaint.begin() + withPaint.size() - 10);
+    QVERIFY(!loadTerrain(cut, loadedGrid, &loadedMap, &error));
+    QVERIFY(loadedGrid.isEmpty());
+    QVERIFY(loadedMap.isEmpty());
 }

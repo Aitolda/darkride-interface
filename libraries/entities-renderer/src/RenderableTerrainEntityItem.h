@@ -2,14 +2,16 @@
 //  RenderableTerrainEntityItem.h
 //  libraries/entities-renderer/src
 //
-//  The Terrain entity on a client (TERRAIN.md). The entity item holds the voxel grid, fetched from the terrain file
-//  the entity points at or made flat when it has none yet, the chunk meshes built from it by surface nets, and the
-//  collision shape built from those. The renderer puts one render item per chunk in the scene, an opaque shape with
-//  the terrain's own pipeline and a shadow caster, under the entity's item, which only groups them. The grid, the
-//  meshes and the shape are the main thread's: the renderer's update, the editor's brushes and the physics
-//  simulation all run there. Only the meshing itself runs elsewhere: the update samples the dirty chunks and hands
-//  the samples to the terrain library's thread pool (terrain::AsyncMesher), and installs the meshes as they come
-//  back, asking to be called again each frame until they all have.
+//  The Terrain entity on a client (TERRAIN.md). The entity item holds the voxel grid and the paint map over it,
+//  fetched from the terrain file the entity points at or made flat and unpainted when it has none yet, the chunk
+//  meshes built from the grid by surface nets, and the collision shape built from those. The renderer puts one
+//  render item per chunk in the scene, an opaque shape with the terrain's own pipeline and a shadow caster, under
+//  the entity's item, which only groups them; each chunk item draws with a tile of the paint map cut for its
+//  column, remade when the map changes there. The grid, the map, the meshes and the shape are the main thread's:
+//  the renderer's update, the editor's brushes and the physics simulation all run there. Only the meshing itself
+//  runs elsewhere: the update samples the dirty chunks and hands the samples to the terrain library's thread pool
+//  (terrain::AsyncMesher), and installs the meshes as they come back, asking to be called again each frame until
+//  they all have.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -23,6 +25,7 @@
 
 #include <TextureCache.h>
 #include <terrain/AsyncMesher.h>
+#include <terrain/PaintMap.h>
 #include <terrain/SurfaceNets.h>
 #include <terrain/VoxelGrid.h>
 #include <TerrainEntityItem.h>
@@ -51,6 +54,19 @@ public:
     const terrain::VoxelGrid& getGrid() const { return _grid; }
     bool hasGrid() const { return !_grid.isEmpty(); }
 
+    // The paint map over the grid's footprint; there is one whenever there is a grid (the file's, or a fresh one
+    // at about PAINT_TEXEL_METRES a texel when the file had none).
+    terrain::PaintMap& getPaint() { return _paint; }
+    const terrain::PaintMap& getPaint() const { return _paint; }
+    // Texels have changed outside the renderer's own update (a brush, an undo, a file that arrived): the renderer
+    // remakes the tiles of the columns the map marks dirty.
+    void paintEdited() { ++_paintVersion; somethingChangedNotification(); }
+    uint64_t getPaintVersion() const { return _paintVersion; }
+    static const float PAINT_TEXEL_METRES;
+    static const int MAX_PAINT_TEXELS_PER_AXIS;
+    // How many texels a voxel of voxelMetres gets, so a texel is about PAINT_TEXEL_METRES, within the map's size limit.
+    static int paintTexelsPerVoxel(float voxelMetres, const glm::ivec2& voxelFootprint);
+
     // Which terrain file (URL and version) the grid holds, so the renderer knows when the entity points at another;
     // until the first source is set, the entity has no grid at all, whatever its properties say.
     bool hasGridSource() const { return _gridSourceSet; }
@@ -58,9 +74,10 @@ public:
     uint32_t getGridVersion() const { return _gridVersion; }
     void setGridSource(const QString& url, uint32_t version) { _gridURL = url; _gridVersion = version; _gridSourceSet = true; }
 
-    // Flat ground halfway up the box, for an entity with no terrain file yet.
+    // Flat unpainted ground halfway up the box, for an entity with no terrain file yet.
     void makeDefaultGrid();
-    // Replaces the grid with a terrain file's contents; false, with the grid untouched, when the file is bad.
+    // Replaces the grid and the paint map with a terrain file's contents; false, with both untouched, when the
+    // file is bad.
     bool loadGrid(const QByteArray& file, QString& error);
     void clearGrid();
 
@@ -110,10 +127,13 @@ public:
 
 private:
     // The grid becomes this one; meshes of chunks the new grid will mesh again stay up until it has, so a reload
-    // does not blink, and the others go.
-    void replaceGrid(terrain::VoxelGrid grid);
+    // does not blink, and the others go. The paint map becomes the given one when it covers the grid, otherwise a
+    // fresh one.
+    void replaceGrid(terrain::VoxelGrid grid, terrain::PaintMap paint);
 
     terrain::VoxelGrid _grid;
+    terrain::PaintMap _paint;
+    uint64_t _paintVersion { 0 };
     bool _gridSourceSet { false };
     QString _gridURL;
     uint32_t _gridVersion { 0 };
@@ -158,6 +178,16 @@ private:
     bool _paramsDirty { true };
 };
 
+// One chunk column's tile of the paint map (PaintMap::fillTile) as the two textures the terrain shader reads, made
+// whole on the main thread and never changed after: a column whose texels change gets a new tile.
+struct TerrainPaintTile {
+    using Pointer = std::shared_ptr<const TerrainPaintTile>;
+    gpu::TexturePointer layers0to3;
+    gpu::TexturePointer layers4to7;
+
+    static Pointer make(const terrain::PaintMap& paint, const glm::ivec2& column);
+};
+
 // One chunk's mesh as a render item.
 class TerrainChunkPayload {
 public:
@@ -175,6 +205,8 @@ public:
     void setWireframe(bool wireframe) { _wireframe = wireframe; }
     void setLayers(const TerrainLayerSet::Pointer& layers) { _layers = layers; }
     void setWorldToTerrain(const glm::mat4& worldToTerrain);
+    // The chunk's column's tile; none draws the chunk unpainted.
+    void setPaintTile(const TerrainPaintTile::Pointer& tile) { _paintTile = tile; }
 
     const ItemKey& getKey() const { return _key; }
     const Item::Bound& getBound() const { return _bound; }
@@ -189,6 +221,7 @@ private:
     ItemKey _key;
     bool _wireframe { false };
     TerrainLayerSet::Pointer _layers;
+    TerrainPaintTile::Pointer _paintTile;
 };
 
 class TerrainEntityRenderer : public TypedEntityRenderer<RenderableTerrainEntityItem> {
@@ -209,6 +242,8 @@ protected:
 private:
     void fetchTerrain(const QString& url, uint32_t version);
     void dropRequest();
+    // The column's current tile, made from the map if there is none yet; null while the map is empty.
+    TerrainPaintTile::Pointer paintTileFor(const terrain::PaintMap& paint, const glm::ivec2& column);
     ItemKey chunkKey() const;
     static Transform chunkToWorld(const Transform& model, const glm::vec3& dimensions, const glm::vec3& voxelScale, const glm::ivec3& chunk);
 
@@ -226,6 +261,8 @@ private:
     TerrainLayerSet::Pointer _layerSet;
     QString _lastLayersJSON;
     bool _layerSetMade { false };
+    std::map<glm::ivec2, TerrainPaintTile::Pointer, terrain::IVec2Less> _paintTiles;
+    uint64_t _paintVersion { 0 };
 
     ResourceRequest* _request { nullptr };
     QString _requestURL;

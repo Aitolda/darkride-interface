@@ -50,6 +50,7 @@ struct TerrainLayerParams {
 struct TerrainParams {
     glm::mat4 worldToTerrain;
     TerrainLayerParams layers[TerrainLayerSet::LAYER_COUNT];
+    glm::vec4 paint;    // x: tile texture coordinates per voxel of the chunk; y: the coordinate of the chunk's voxel 0
 };
 
 // The plain colours of layers without a texture: grass, dirt, rock, sand, clay, snow, dark stone, moss.
@@ -61,6 +62,16 @@ const glm::vec3 LAYER_PALETTE[TerrainLayerSet::LAYER_COUNT] = {
 uint8_t CUSTOM_PIPELINE_NUMBER = 0;
 std::map<std::pair<bool, bool>, ShapePipelinePointer> _pipelines;   // (forward, wireframe)
 gpu::Stream::FormatPointer _vertexFormat;
+gpu::TexturePointer _unpaintedTile;   // one texel of no weight at all: a chunk without a tile reads it
+
+gpu::TexturePointer makeTileTexture(int size, const std::vector<uint8_t>& rgba, const char* name) {
+    auto texture = gpu::Texture::createStrict(gpu::Element::COLOR_RGBA_32, (uint16_t)size, (uint16_t)size, gpu::Texture::SINGLE_MIP,
+                                              gpu::Sampler(gpu::Sampler::FILTER_MIN_MAG_LINEAR, gpu::Sampler::WRAP_CLAMP));
+    texture->setSource(name);
+    texture->setStoredMipFormat(gpu::Element::COLOR_RGBA_32);
+    texture->assignStoredMip(0, rgba.size(), rgba.data());
+    return texture;
+}
 
 // The main pass asks for the chunks' pipeline through their custom shape key; shadow passes draw them with the
 // standard shadow pipeline (renderShadowCasters picks it by the key's deformation bits, not the custom number).
@@ -93,10 +104,14 @@ void initTerrainPipelines() {
         _vertexFormat->setAttribute(gpu::Stream::POSITION, 0, gpu::Element(gpu::VEC3, gpu::FLOAT, gpu::XYZ), offsetof(TerrainVertex, position));
         _vertexFormat->setAttribute(gpu::Stream::NORMAL, 0, gpu::Element(gpu::VEC3, gpu::FLOAT, gpu::XYZ), offsetof(TerrainVertex, normal));
         _vertexFormat->setAttribute(gpu::Stream::COLOR, 0, gpu::Element(gpu::VEC4, gpu::NUINT8, gpu::RGBA), offsetof(TerrainVertex, materials));
+        _unpaintedTile = makeTileTexture(1, std::vector<uint8_t>(4, 0), "terrain unpainted");
     });
 }
 
 } // namespace
+
+const float RenderableTerrainEntityItem::PAINT_TEXEL_METRES = 0.125f;
+const int RenderableTerrainEntityItem::MAX_PAINT_TEXELS_PER_AXIS = 2048;
 
 // The entity item
 
@@ -109,17 +124,27 @@ EntityItemPointer RenderableTerrainEntityItem::factory(const EntityItemID& entit
 RenderableTerrainEntityItem::RenderableTerrainEntityItem(const EntityItemID& entityItemID) : TerrainEntityItem(entityItemID) {
 }
 
+int RenderableTerrainEntityItem::paintTexelsPerVoxel(float voxelMetres, const glm::ivec2& voxelFootprint) {
+    int texels = glm::clamp((int)std::lround(voxelMetres / PAINT_TEXEL_METRES), 1, 8);
+    const int longest = std::max(std::max(voxelFootprint.x, voxelFootprint.y), 1);
+    while (texels > 1 && longest * texels > MAX_PAINT_TEXELS_PER_AXIS) {
+        --texels;
+    }
+    return texels;
+}
+
 void RenderableTerrainEntityItem::makeDefaultGrid() {
     const glm::ivec3 voxelCount = getVoxelCount();
     terrain::VoxelGrid grid(voxelCount);
     grid.fillBelow(0.5f * voxelCount.y);
-    replaceGrid(std::move(grid));
+    replaceGrid(std::move(grid), terrain::PaintMap());
 }
 
 bool RenderableTerrainEntityItem::loadGrid(const QByteArray& file, QString& error) {
     terrain::VoxelGrid loaded;
+    terrain::PaintMap paint;
     std::string why;
-    if (!terrain::loadTerrain((const uint8_t*)file.constData(), (size_t)file.size(), loaded, &why)) {
+    if (!terrain::loadTerrain((const uint8_t*)file.constData(), (size_t)file.size(), loaded, &paint, &why)) {
         error = QString::fromStdString(why);
         return false;
     }
@@ -129,16 +154,29 @@ bool RenderableTerrainEntityItem::loadGrid(const QByteArray& file, QString& erro
                                     << "x" << loaded.getVoxelCount().z << "voxels but the entity's dimensions hold" << expected.x << "x"
                                     << expected.y << "x" << expected.z << "; drawing the file's";
     }
-    replaceGrid(std::move(loaded));
+    replaceGrid(std::move(loaded), std::move(paint));
     return true;
 }
 
 void RenderableTerrainEntityItem::clearGrid() {
-    replaceGrid(terrain::VoxelGrid());
+    replaceGrid(terrain::VoxelGrid(), terrain::PaintMap());
 }
 
-void RenderableTerrainEntityItem::replaceGrid(terrain::VoxelGrid grid) {
+void RenderableTerrainEntityItem::replaceGrid(terrain::VoxelGrid grid, terrain::PaintMap paint) {
     _grid = std::move(grid);
+    // the map: the given one when it covers the grid, a fresh one at the texel size otherwise, none without a grid
+    const glm::ivec2 footprint(_grid.getVoxelCount().x, _grid.getVoxelCount().z);
+    if (_grid.isEmpty()) {
+        _paint = terrain::PaintMap();
+    } else if (!paint.isEmpty() && paint.getVoxelFootprint() == footprint) {
+        _paint = std::move(paint);
+    } else {
+        const glm::vec3 voxelScale = getVoxelScale();
+        const float voxelMetres = std::max((voxelScale.x + voxelScale.z) * 0.5f, 1.0e-4f);
+        _paint = terrain::PaintMap(footprint, paintTexelsPerVoxel(voxelMetres, footprint));
+    }
+    _paint.markAllColumnsDirty();
+    ++_paintVersion;
     _mesher.reset();   // meshes of the old grid still being built are dropped when they come
     // a fresh grid has every chunk dirty, so the meshes within it are all replaced in time; those beyond it go now
     const terrain::ChunkSet& dirty = _grid.getDirtyChunks();
@@ -365,6 +403,9 @@ void TerrainLayerSet::updateParams() {
         params.layers[i].color = glm::vec4(LAYER_PALETTE[i], layer.textured ? 1.0f : 0.0f);
         params.layers[i].tiling = glm::vec4(1.0f / std::max(layer.spec.tiling, 0.01f), 0.0f, 0.0f, 0.0f);
     }
+    // a column's tile spans the chunk's voxels and the apron around them (PaintMap::fillTile)
+    const float perVoxel = 1.0f / (float)(terrain::CHUNK_SIZE + 2 * terrain::PAINT_TILE_APRON);
+    params.paint = glm::vec4(perVoxel, terrain::PAINT_TILE_APRON * perVoxel, 0.0f, 0.0f);
     _params->setSubData(0, params);
     _paramsDirty = false;
 }
@@ -385,6 +426,20 @@ void TerrainLayerSet::bind(gpu::Batch& batch) {
         updateParams();
     }
     batch.setUniformBuffer(ENTITIES_BUFFER_TERRAIN_LAYERS, _params, 0, sizeof(TerrainParams));
+}
+
+// The paint tile
+
+TerrainPaintTile::Pointer TerrainPaintTile::make(const terrain::PaintMap& paint, const glm::ivec2& column) {
+    if (paint.isEmpty()) {
+        return nullptr;
+    }
+    std::vector<uint8_t> layers0to3, layers4to7;
+    paint.fillTile(column, layers0to3, layers4to7);
+    auto tile = std::make_shared<TerrainPaintTile>();
+    tile->layers0to3 = makeTileTexture(paint.getTileSize(), layers0to3, "terrain paint 0-3");
+    tile->layers4to7 = makeTileTexture(paint.getTileSize(), layers4to7, "terrain paint 4-7");
+    return tile;
 }
 
 // The chunk payload
@@ -443,6 +498,8 @@ void TerrainChunkPayload::render(RenderArgs* args) {
     batch.setInputFormat(_vertexFormat);
     batch.setInputBuffer(0, _vertexBuffer, 0, sizeof(TerrainVertex));
     _layers->bind(batch);   // the shadow pass binds them too, and ignores them
+    batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_PAINT0, _paintTile ? _paintTile->layers0to3 : _unpaintedTile);
+    batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_PAINT1, _paintTile ? _paintTile->layers4to7 : _unpaintedTile);
     batch.draw(gpu::TRIANGLES, _vertexCount, 0);
 }
 
@@ -507,6 +564,9 @@ bool TerrainEntityRenderer::needsRenderUpdateFromTypedEntity(const TypedEntityPo
     if (entity->getMeshVersion() != _meshVersion) {
         return true;
     }
+    if (entity->getPaintVersion() != _paintVersion) {
+        return true;
+    }
     if (entity->getVoxelScale() != _lastVoxelScale) {
         return true;
     }
@@ -559,6 +619,19 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         layersChanged = true;
     }
 
+    // The paint map: the columns it marks dirty lose their tiles, which the chunk items below get anew.
+    terrain::PaintMap& paint = entity->getPaint();
+    const terrain::ColumnSet dirtyColumns = paint.getDirtyColumns();
+    paint.clearDirtyColumns();
+    _paintVersion = entity->getPaintVersion();
+    if (paint.isEmpty()) {
+        _paintTiles.clear();
+    } else {
+        for (const glm::ivec2& column : dirtyColumns) {
+            _paintTiles.erase(column);
+        }
+    }
+
     // The chunk items.
     const Transform& model = getModelTransform();
     const glm::vec3 dimensions = entity->getScaledDimensions();
@@ -589,6 +662,8 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         const glm::ivec3& chunk = pair.first;
         const RenderableTerrainEntityItem::ChunkMeshEntry& entry = pair.second;
         const Transform placement = chunkToWorld(model, dimensions, voxelScale, chunk);
+        const glm::ivec2 column(chunk.x, chunk.z);
+        const TerrainPaintTile::Pointer paintTile = paintTileFor(paint, column);
         auto found = _chunkItems.find(chunk);
         if (found == _chunkItems.end()) {
             auto payload = std::make_shared<TerrainChunkPayload>();
@@ -598,6 +673,7 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
             payload->setWireframe(wireframe);
             payload->setLayers(layerSet);
             payload->setWorldToTerrain(worldToTerrain);
+            payload->setPaintTile(paintTile);
             ChunkItem item;
             item.id = scene->allocateID();
             item.meshVersion = entry.version;
@@ -606,7 +682,8 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
             continue;
         }
         const bool meshChanged = found->second.meshVersion != entry.version;
-        if (!meshChanged && !placementChanged && !keyChanged && !layersChanged) {
+        const bool paintChanged = dirtyColumns.count(column) > 0;
+        if (!meshChanged && !placementChanged && !keyChanged && !layersChanged && !paintChanged) {
             continue;
         }
         found->second.meshVersion = entry.version;
@@ -614,7 +691,7 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         gpu::BufferPointer vertices = meshChanged ? TerrainChunkPayload::makeVertexBuffer(entry.mesh) : nullptr;
         const uint32_t vertexCount = TerrainChunkPayload::getVertexCount(entry.mesh);
         transaction.updateItem<TerrainChunkPayload>(found->second.id,
-                [vertices, vertexCount, placement, key, wireframe, layerSet, worldToTerrain](TerrainChunkPayload& payload) {
+                [vertices, vertexCount, placement, key, wireframe, layerSet, worldToTerrain, paintTile](TerrainChunkPayload& payload) {
             if (vertices) {
                 payload.setBuffers(vertices, vertexCount);
             }
@@ -623,8 +700,22 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
             payload.setWireframe(wireframe);
             payload.setLayers(layerSet);
             payload.setWorldToTerrain(worldToTerrain);
+            payload.setPaintTile(paintTile);
         });
     }
+}
+
+TerrainPaintTile::Pointer TerrainEntityRenderer::paintTileFor(const terrain::PaintMap& paint, const glm::ivec2& column) {
+    if (paint.isEmpty()) {
+        return nullptr;
+    }
+    auto found = _paintTiles.find(column);
+    if (found != _paintTiles.end()) {
+        return found->second;
+    }
+    TerrainPaintTile::Pointer tile = TerrainPaintTile::make(paint, column);
+    _paintTiles[column] = tile;
+    return tile;
 }
 
 void TerrainEntityRenderer::fetchTerrain(const QString& url, uint32_t version) {

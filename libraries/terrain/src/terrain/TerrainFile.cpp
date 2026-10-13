@@ -15,12 +15,14 @@ using namespace terrain;
 namespace {
 
 const char MAGIC[4] = { 'D', 'R', 'K', 'T' };
-const uint32_t VERSION = 1;
+const uint32_t VERSION_CHUNKS = 1;        // the chunks alone
+const uint32_t VERSION_PAINT = 2;         // the chunks, then the paint map
 const uint8_t KIND_UNIFORM = 0;
 const uint8_t KIND_DENSE = 1;
 const int MAX_VOXELS_PER_AXIS = 1 << 14;
 const size_t MAX_CHUNKS = 1 << 20;
 const size_t DENSE_BYTES = 2 * CHUNK_VOXEL_COUNT;
+const int MAX_PAINT_TEXELS_PER_AXIS = 1 << 13;
 
 class Writer {
 public:
@@ -81,20 +83,49 @@ private:
     bool _ok { true };
 };
 
-bool fail(std::string* error, const std::string& message, VoxelGrid& grid) {
+bool fail(std::string* error, const std::string& message, VoxelGrid& grid, PaintMap* paint) {
     grid.reset(glm::ivec3(0));
+    if (paint) {
+        *paint = PaintMap();
+    }
     if (error) {
         *error = message;
     }
     return false;
 }
 
+// Planar: a layer's weights at every texel, then the next layer's. Alike neighbours sit together, which zlib likes.
+std::vector<uint8_t> planesOf(const PaintMap& paint) {
+    const std::vector<uint8_t>& weights = paint.getWeights();
+    const size_t texelCount = weights.size() / PAINT_LAYERS;
+    std::vector<uint8_t> planes(weights.size());
+    for (size_t texel = 0; texel < texelCount; ++texel) {
+        for (int layer = 0; layer < PAINT_LAYERS; ++layer) {
+            planes[(size_t)layer * texelCount + texel] = weights[texel * PAINT_LAYERS + layer];
+        }
+    }
+    return planes;
+}
+
+std::vector<uint8_t> weightsOf(const std::vector<uint8_t>& planes) {
+    const size_t texelCount = planes.size() / PAINT_LAYERS;
+    std::vector<uint8_t> weights(planes.size());
+    for (size_t texel = 0; texel < texelCount; ++texel) {
+        for (int layer = 0; layer < PAINT_LAYERS; ++layer) {
+            weights[texel * PAINT_LAYERS + layer] = planes[(size_t)layer * texelCount + texel];
+        }
+    }
+    return weights;
+}
+
 } // namespace
 
-Bytes terrain::saveTerrain(const VoxelGrid& grid) {
+Bytes terrain::saveTerrain(const VoxelGrid& grid, const PaintMap* paint) {
+    const glm::ivec2 footprint(grid.getVoxelCount().x, grid.getVoxelCount().z);
+    const bool withPaint = paint && !paint->isEmpty() && paint->getVoxelFootprint() == footprint && paint->isPainted();
     Writer out;
     out.raw((const uint8_t*)MAGIC, 4);
-    out.u32(VERSION);
+    out.u32(withPaint ? VERSION_PAINT : VERSION_CHUNKS);
     const glm::ivec3 voxelCount = grid.getVoxelCount();
     out.i32(voxelCount.x);
     out.i32(voxelCount.y);
@@ -132,18 +163,35 @@ Bytes terrain::saveTerrain(const VoxelGrid& grid) {
         out.u32((uint32_t)length);
         out.raw(compressed.data(), length);
     });
+
+    if (withPaint) {
+        const std::vector<uint8_t> planes = planesOf(*paint);
+        std::vector<uint8_t> packed(compressBound((uLong)planes.size()));
+        uLongf length = (uLongf)packed.size();
+        if (compress2(packed.data(), &length, planes.data(), (uLong)planes.size(), Z_DEFAULT_COMPRESSION) != Z_OK) {
+            length = 0;   // as above: nothing sensible fails here; a map that cannot be packed is left out
+        }
+        out.u32(length > 0 ? (uint32_t)paint->getSize().x : 0);
+        out.u32(length > 0 ? (uint32_t)paint->getSize().y : 0);
+        out.u32((uint32_t)paint->getTexelsPerVoxel());
+        out.u32((uint32_t)length);
+        out.raw(packed.data(), length);
+    }
     return out.take();
 }
 
-bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, std::string* error) {
+bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, PaintMap* paint, std::string* error) {
+    if (paint) {
+        *paint = PaintMap();
+    }
     Reader in(data, size);
     const uint8_t* magic = in.raw(4);
     if (!magic || std::string((const char*)magic, 4) != std::string(MAGIC, 4)) {
-        return fail(error, "not a terrain file", grid);
+        return fail(error, "not a terrain file", grid, paint);
     }
     const uint32_t version = in.u32();
-    if (version != VERSION) {
-        return fail(error, "terrain file version " + std::to_string(version) + " is not supported", grid);
+    if (version != VERSION_CHUNKS && version != VERSION_PAINT) {
+        return fail(error, "terrain file version " + std::to_string(version) + " is not supported", grid, paint);
     }
     glm::ivec3 voxelCount;
     voxelCount.x = in.i32();
@@ -152,18 +200,18 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, std
     const int32_t chunkSize = in.i32();
     const uint32_t chunkCount = in.u32();
     if (!in.ok()) {
-        return fail(error, "terrain file header is cut short", grid);
+        return fail(error, "terrain file header is cut short", grid, paint);
     }
     if (chunkSize != CHUNK_SIZE) {
-        return fail(error, "terrain file has chunks of " + std::to_string(chunkSize) + " voxels, not " + std::to_string(CHUNK_SIZE), grid);
+        return fail(error, "terrain file has chunks of " + std::to_string(chunkSize) + " voxels, not " + std::to_string(CHUNK_SIZE), grid, paint);
     }
     if (glm::any(glm::lessThan(voxelCount, glm::ivec3(1))) || glm::any(glm::greaterThan(voxelCount, glm::ivec3(MAX_VOXELS_PER_AXIS)))) {
-        return fail(error, "terrain file has an impossible voxel count", grid);
+        return fail(error, "terrain file has an impossible voxel count", grid, paint);
     }
     grid.reset(voxelCount);
     const glm::ivec3 chunks = grid.getChunkCount();
     if ((size_t)chunks.x * chunks.y * chunks.z > MAX_CHUNKS || chunkCount > MAX_CHUNKS) {
-        return fail(error, "terrain file has too many chunks", grid);
+        return fail(error, "terrain file has too many chunks", grid, paint);
     }
 
     std::vector<uint8_t> dense(DENSE_BYTES);
@@ -175,31 +223,31 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, std
         coords.z = in.i32();
         const uint8_t kind = in.u8();
         if (!in.ok()) {
-            return fail(error, "terrain file is cut short at chunk " + std::to_string(i), grid);
+            return fail(error, "terrain file is cut short at chunk " + std::to_string(i), grid, paint);
         }
         if (!grid.containsChunk(coords)) {
-            return fail(error, "terrain file has a chunk outside the grid", grid);
+            return fail(error, "terrain file has a chunk outside the grid", grid, paint);
         }
         if (kind == KIND_UNIFORM) {
             const int8_t distance = in.i8();
             const uint8_t material = in.u8();
             if (!in.ok()) {
-                return fail(error, "terrain file is cut short at chunk " + std::to_string(i), grid);
+                return fail(error, "terrain file is cut short at chunk " + std::to_string(i), grid, paint);
             }
             grid.setChunk(coords, Chunk(Voxel(distance, material)));
             continue;
         }
         if (kind != KIND_DENSE) {
-            return fail(error, "terrain file has a chunk of unknown kind", grid);
+            return fail(error, "terrain file has a chunk of unknown kind", grid, paint);
         }
         const uint32_t length = in.u32();
         const uint8_t* compressed = in.raw(length);
         if (!compressed) {
-            return fail(error, "terrain file is cut short at chunk " + std::to_string(i), grid);
+            return fail(error, "terrain file is cut short at chunk " + std::to_string(i), grid, paint);
         }
         uLongf denseLength = (uLongf)DENSE_BYTES;
         if (uncompress(dense.data(), &denseLength, compressed, length) != Z_OK || denseLength != DENSE_BYTES) {
-            return fail(error, "terrain file chunk " + std::to_string(i) + " does not decompress", grid);
+            return fail(error, "terrain file chunk " + std::to_string(i) + " does not decompress", grid, paint);
         }
         voxels.resize(CHUNK_VOXEL_COUNT);
         for (int v = 0; v < CHUNK_VOXEL_COUNT; ++v) {
@@ -210,5 +258,32 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, std
         grid.setChunk(coords, std::move(chunk));
     }
     grid.markAllChunksDirty();
+
+    if (version >= VERSION_PAINT) {
+        const uint32_t width = in.u32();
+        const uint32_t height = in.u32();
+        const uint32_t texelsPerVoxel = in.u32();
+        const uint32_t length = in.u32();
+        const uint8_t* packed = in.raw(length);
+        if (!packed) {
+            return fail(error, "terrain file is cut short at the paint map", grid, paint);
+        }
+        if (width > 0 && height > 0) {
+            if (texelsPerVoxel < 1 || texelsPerVoxel > (uint32_t)MAX_PAINT_TEXELS_PER_VOXEL
+                    || width > (uint32_t)MAX_PAINT_TEXELS_PER_AXIS || height > (uint32_t)MAX_PAINT_TEXELS_PER_AXIS
+                    || width != texelsPerVoxel * (uint32_t)voxelCount.x || height != texelsPerVoxel * (uint32_t)voxelCount.z) {
+                return fail(error, "terrain file's paint map does not fit its voxels", grid, paint);
+            }
+            if (paint) {
+                std::vector<uint8_t> planes((size_t)width * height * PAINT_LAYERS);
+                uLongf planesLength = (uLongf)planes.size();
+                if (uncompress(planes.data(), &planesLength, packed, length) != Z_OK || planesLength != planes.size()) {
+                    return fail(error, "terrain file's paint map does not decompress", grid, paint);
+                }
+                paint->reset(glm::ivec2(voxelCount.x, voxelCount.z), (int)texelsPerVoxel);
+                paint->setWeights(weightsOf(planes));
+            }
+        }
+    }
     return true;
 }

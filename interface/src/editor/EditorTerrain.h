@@ -2,11 +2,12 @@
 //  EditorTerrain.h
 //  interface/src/editor
 //
-//  The Terrain tool of build mode: Unity's terrain brushes on a Terrain entity's voxels (TERRAIN.md). The pointer
-//  over a terrain shows the brush's outline on the ground; a press begins a stroke, which applies the brush under
-//  the pointer every frame until the button goes up, and one stroke is one undo step. The voxels change on this
-//  client first; a moment after the last stroke (or undo) the grid is saved as a terrain file in the user's files,
-//  and the entity's terrainURL and terrainVersion are set so every other client fetches it.
+//  The Terrain tool of build mode: Unity's terrain brushes on a Terrain entity's voxels and its paint map
+//  (TERRAIN.md). The pointer over a terrain shows the brush's outline on the ground; a press begins a stroke, which
+//  applies the brush under the pointer every frame until the button goes up, and one stroke is one undo step. The
+//  voxels or the map change on this client first; a moment after the last stroke (or undo) both are saved as a
+//  terrain file in the user's files, and the entity's terrainURL and terrainVersion are set so every other client
+//  fetches it.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -35,7 +36,8 @@
 class RenderableTerrainEntityItem;
 
 // The brush as the tool bar sets it. The radius is in metres and becomes voxels on each terrain; the strength is
-// how fast Raise, Lower, Smooth and Flatten work (Dig and Fill always take the whole sphere).
+// how fast Raise, Lower, Smooth and Flatten work, and how much one pass of Paint lays down (Dig, Fill and Paint
+// Voxels always take the whole sphere).
 struct EditorTerrainBrush {
     terrain::SculptMode mode { terrain::SculptMode::Raise };
     float radius { 3.0f };
@@ -92,12 +94,16 @@ private:
     std::shared_ptr<RenderableTerrainEntityItem> terrainEntity(const QUuid& id) const;
     void findTerrains();
     terrain::Brush voxelBrush(const RenderableTerrainEntityItem& entity, const Hit& hit) const;
-    // keeps a copy of every chunk the brush can reach, the first time the stroke reaches it
+    terrain::PaintBrush paintBrush(const RenderableTerrainEntityItem& entity, const Hit& hit) const;
+    // keeps a copy of every chunk (or, painting, every column's block of the map) the brush can reach, the first
+    // time the stroke reaches it
     void captureBefore(const RenderableTerrainEntityItem& entity, const terrain::Brush& brush);
+    void captureBeforePaint(const RenderableTerrainEntityItem& entity, const terrain::PaintBrush& brush);
     void showOutline(const RenderableTerrainEntityItem& entity, const Hit& hit);
     void dropStroke();
-    // puts the chunks a cancelled stroke kept back into the grid
+    // puts the chunks, or the paint blocks, a cancelled stroke kept back
     void restore(RenderableTerrainEntityItem& entity, const TerrainChunks& chunks);
+    void restorePaint(RenderableTerrainEntityItem& entity, const TerrainPaintBlocks& blocks);
     void saveDirty();
     void save(const QUuid& id);
 
@@ -118,12 +124,14 @@ private:
     PickRay _ray;
     bool _hasRay { false };
     terrain::SculptMode _strokeMode { terrain::SculptMode::Raise };
+    bool _erasing { false };        // a Paint stroke with Shift: back toward the voxels' own material
     float _flattenHeight { 0.0f };  // voxel units: where the stroke began
     float _accumulated { 0.0f };    // the brush's effect waiting to be applied as one step
     int _steps { 0 };
-    int _changed { 0 };             // voxels changed by the stroke so far
+    int _changed { 0 };             // voxels, or texels, changed by the stroke so far
     glm::vec3 _lastStepPoint { 0.0f };
     TerrainChunks _before;
+    TerrainPaintBlocks _beforePaint;
 
     // the terrains whose files are out of date, and those whose upload is on its way
     QSet<QUuid> _dirty;

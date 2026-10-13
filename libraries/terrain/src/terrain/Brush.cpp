@@ -26,7 +26,7 @@ float Brush::weightAt(const glm::vec3& point) const {
 }
 
 int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
-    if (grid.isEmpty() || brush.radius <= 0.0f) {
+    if (grid.isEmpty() || brush.radius <= 0.0f || mode == SculptMode::Paint) {
         return 0;
     }
     // Dig and Fill set the field to the distance to the sphere's wall, which the ground just outside the sphere
@@ -104,10 +104,12 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
                         next.setDistance(glm::mix(distance, sum / 7.0f, strength * weight));
                         break;
                     }
-                    case SculptMode::Paint:
+                    case SculptMode::PaintVoxels:
                         if (old.isGround()) {
                             next.material = brush.material;
                         }
+                        break;
+                    case SculptMode::Paint:
                         break;
                 }
                 if ((mode == SculptMode::Raise || mode == SculptMode::Fill) && next.isGround() && !old.isGround()) {

@@ -24,10 +24,13 @@
 #include <QtWidgets/QUndoStack>
 
 #include <EntityItemProperties.h>
+#include <terrain/PaintMap.h>
 #include <terrain/VoxelGrid.h>
 
 // the chunks of a terrain's grid as they were, or will be: what a sculpt stroke records
 using TerrainChunks = std::map<glm::ivec3, terrain::Chunk, terrain::IVec3Less>;
+// the blocks of a terrain's paint map (one per chunk column) as they were, or will be: what a paint stroke records
+using TerrainPaintBlocks = std::map<glm::ivec2, terrain::PaintBlock, terrain::IVec2Less>;
 
 class EditorUndo : public QObject {
     Q_OBJECT
@@ -74,6 +77,10 @@ public:
     // puts chunks into a terrain entity's grid, and has the collision shape follow; false when the entity is
     // not a terrain on this client
     bool applyTerrainChunks(const QUuid& id, const TerrainChunks& chunks);
+    // a paint stroke on a terrain, already applied: the blocks of its paint map it touched before and after
+    void pushTerrainPaint(const QString& text, const QUuid& id, const TerrainPaintBlocks& before, const TerrainPaintBlocks& after);
+    // puts blocks into a terrain entity's paint map; false when the entity is not a terrain on this client
+    bool applyTerrainPaint(const QUuid& id, const TerrainPaintBlocks& blocks);
 
     // a change made to a created entity since, which a redo of its creation should make too (a new model's own
     // size, once it has loaded): the dimensions and position in `changes` replace the recorded ones

@@ -2,16 +2,20 @@
 //  TerrainFile.h
 //  libraries/terrain/src/terrain
 //
-//  The terrain file: every chunk of a voxel grid in one file, the asset a Terrain entity's terrainURL points at.
-//  Little-endian throughout:
+//  The terrain file: every chunk of a voxel grid, and the paint map over it, in one file, the asset a Terrain
+//  entity's terrainURL points at. Little-endian throughout:
 //
-//    char[4] "DRKT"   uint32 version (1)   int32 voxelCount x, y, z   int32 chunkSize (32)   uint32 chunkCount
+//    char[4] "DRKT"   uint32 version (1 or 2)   int32 voxelCount x, y, z   int32 chunkSize (32)   uint32 chunkCount
 //    then chunkCount times:
 //      int32 chunk x, y, z   uint8 kind: 0 uniform, 1 dense
 //      uniform:  int8 distance   uint8 material
 //      dense:    uint32 length   bytes[length]: a zlib stream of the chunk's CHUNK_VOXEL_COUNT distance bytes
 //                followed by its CHUNK_VOXEL_COUNT material bytes, in Chunk::indexOf order
+//    version 2 goes on with the paint map (PaintMap.h):
+//      uint32 width, height (texels)   uint32 texelsPerVoxel   uint32 length   bytes[length]: a zlib stream of
+//      PAINT_LAYERS planes of width * height bytes, layer 0's weights at every texel (x fastest), then layer 1's…
 //
+//  A terrain whose map was never painted is written as version 1, which every reader of the format understands.
 //  Chunks keep their own coordinates so a later version can leave them in files of their own and fetch them one at
 //  a time (streaming, TERRAIN.md section 10). Chunks missing from a file take the grid's fill value.
 //
@@ -26,18 +30,21 @@
 #include <string>
 #include <vector>
 
+#include "PaintMap.h"
 #include "VoxelGrid.h"
 
 namespace terrain {
 
 using Bytes = std::vector<uint8_t>;
 
-Bytes saveTerrain(const VoxelGrid& grid);
+// The paint map, if given and painted, must cover the grid's footprint; otherwise the file holds the grid alone.
+Bytes saveTerrain(const VoxelGrid& grid, const PaintMap* paint = nullptr);
 
-// Replaces the grid with the file's contents. On failure the grid is left empty and error, if given, says why.
-bool loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, std::string* error = nullptr);
-inline bool loadTerrain(const Bytes& data, VoxelGrid& grid, std::string* error = nullptr) {
-    return loadTerrain(data.data(), data.size(), grid, error);
+// Replaces the grid, and the paint map if given, with the file's contents; a file without a paint map leaves the
+// map empty, for the caller to make a fresh one. On failure both are left empty and error, if given, says why.
+bool loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, PaintMap* paint, std::string* error = nullptr);
+inline bool loadTerrain(const Bytes& data, VoxelGrid& grid, PaintMap* paint, std::string* error = nullptr) {
+    return loadTerrain(data.data(), data.size(), grid, paint, error);
 }
 
 } // namespace terrain

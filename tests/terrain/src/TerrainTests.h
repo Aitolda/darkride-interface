@@ -2,8 +2,8 @@
 //  TerrainTests.h
 //  tests/terrain/src
 //
-//  The terrain library: chunks, the voxel grid, surface-nets meshing (on this thread and on a pool), brushes and
-//  the terrain file.
+//  The terrain library: chunks, the voxel grid, surface-nets meshing (on this thread and on a pool), brushes, the
+//  paint map and the terrain file.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -25,6 +25,7 @@ private slots:
     void brushesDigFillAndRaise();
     void fileRoundTripKeepsEveryVoxel();
     void asyncMesherMatchesTheMesherAndRedoesChunksEditedMeanwhile();
+    void paintMapPaintsErasesTilesAndRoundTripsThroughTheFile();
 };
 
 #endif // hifi_TerrainTests_h
