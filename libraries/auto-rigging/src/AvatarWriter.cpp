@@ -18,6 +18,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QRegularExpression>
 #include <QTextStream>
 #include <QVector>
 
@@ -205,7 +206,7 @@ static bool blackCutOut(const QString& path, QByteArray& png) {
 }
 
 WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, const Result& rig, const QString& sourcePath,
-                                   const QString& folder, const QString& name) {
+                                   const QString& folder, const QString& name, bool flipV) {
     WrittenAvatar written;
     if (!rig.ok || rig.joints.empty()) {
         written.error = "the character is not rigged";
@@ -313,6 +314,24 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         placed[path] = fileName;
         return fileName;
     };
+    // The UV layer a texture names: the engine's reader only asks whether the name is "map1" or "UVSet0" and otherwise
+    // takes the second layer (FBXSerializer_Material; its name matcher is never called), but 3ds Max names its first
+    // layer "UVChannel_1". Chloe's textures all name it, so her normal maps were read as being on the second layer,
+    // where the engine builds no tangents, and were left out (10-13). Exporters number their layers: 3ds Max's
+    // UVChannel_N and Maya's mapN are layer N-1, UVSetN is layer N.
+    auto layerOf = [](const hfm::Texture& texture) {
+        const QString name = texture.texcoordSetName;
+        static const QRegularExpression numbered("^(UVChannel_|map|UVSet)(\\d+)$", QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch match = numbered.match(name);
+        if (match.hasMatch()) {
+            const int n = match.captured(2).toInt();
+            const int layer = match.captured(1).compare("UVSet", Qt::CaseInsensitive) == 0 ? n : n - 1;
+            if (layer == 0 || layer == 1) {
+                return layer;
+            }
+        }
+        return texture.texcoordSet == 1 ? 1 : 0;
+    };
     auto addTexture = [&](const hfm::Texture& texture, qint64 material, const char* slot) {
         if (texture.filename.isEmpty() && texture.content.isEmpty()) {
             return;
@@ -323,7 +342,7 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         }
         const qint64 id = newId();
         // the reader gives a texture the mesh's UV layer of the same name (FBXSerializer::matchTextureUVSetToAttributeChannel)
-        const QByteArray uvSet = texture.texcoordSet == 1 ? SECOND_UV_SET : FIRST_UV_SET;
+        const QByteArray uvSet = layerOf(texture) == 1 ? SECOND_UV_SET : FIRST_UV_SET;
         add(makeNode("Texture", { id, objectName(fileName, "Texture"), QByteArray("") },
                      { makeNode("Type", { QByteArray("TextureVideoClip") }), makeNode("Version", { 202 }),
                        makeNode("TextureName", { objectName(fileName, "Texture") }),
@@ -403,11 +422,11 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         // on another layer is shaded in the wrong frame: Chloe's (game rips keep every texture on the second layer) made
         // a faceted honeycomb over her face. Such a normal map is left out. Writing the first layer as a copy of the
         // second instead, or swapping them, turned her untextured a moment after her textures appeared (10-13).
-        if (material.normalTexture.texcoordSet == 0) {
+        if (layerOf(material.normalTexture) == 0) {
             addTexture(material.normalTexture, id, "NormalMap");
         } else if (!material.normalTexture.filename.isEmpty() || !material.normalTexture.content.isEmpty()) {
             written.notes << QString("%1: its normal map is on UV layer %2, whose tangents the engine does not build: left out")
-                                 .arg(materialName).arg(material.normalTexture.texcoordSet + 1);
+                                 .arg(materialName).arg(layerOf(material.normalTexture) + 1);
         }
         addTexture(opacity, id, "TransparentColor");
         addTexture(material.specularTexture, id, "SpecularColor");
@@ -482,7 +501,7 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
             QVector<double> uvs;
             uvs.reserve(firstUVs.size() * 2);
             for (const glm::vec2& uv : firstUVs) {
-                uvs << uv.x << uv.y;
+                uvs << uv.x << (flipV ? 1.0f - uv.y : uv.y);
             }
             geometry << makeNode("LayerElementUV", { 0 },
                                  { makeNode("Version", { 101 }), makeNode("Name", { FIRST_UV_SET }),
@@ -497,7 +516,7 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
             QVector<double> uvs;
             uvs.reserve(secondUVs.size() * 2);
             for (const glm::vec2& uv : secondUVs) {
-                uvs << uv.x << uv.y;
+                uvs << uv.x << (flipV ? 1.0f - uv.y : uv.y);
             }
             geometry << makeNode("LayerElementUV", { 1 },
                                  { makeNode("Version", { 101 }), makeNode("Name", { SECOND_UV_SET }),

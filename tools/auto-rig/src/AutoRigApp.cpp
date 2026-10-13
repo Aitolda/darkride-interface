@@ -16,11 +16,14 @@
 #include <vector>
 
 #include <QCommandLineParser>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QImage>
 #include <QJsonObject>
+#include <QPainter>
 #include <QRegExp>
 #include <QUrl>
 
@@ -125,8 +128,15 @@ static void inspectModel(const HFMModel& model) {
         if (texture.filename.isEmpty() && texture.content.isEmpty()) {
             return QString();
         }
-        return QString(" %1=%2(set %3 %4)").arg(slot).arg(QString::fromUtf8(texture.filename).section('/', -1).section('\\', -1))
-            .arg(texture.texcoordSet).arg(texture.texcoordSetName);
+        QString transform;
+        if (!texture.transform.isIdentity()) {
+            const glm::vec3 t = texture.transform.getTranslation();
+            const glm::vec3 s = texture.transform.getScale();
+            const glm::vec3 r = glm::degrees(glm::eulerAngles(texture.transform.getRotation()));
+            transform = QString(" moved %1 %2, scaled %3 %4, turned %5").arg(t.x).arg(t.y).arg(s.x).arg(s.y).arg(r.z);
+        }
+        return QString(" %1=%2(set %3 %4%5)").arg(slot).arg(QString::fromUtf8(texture.filename).section('/', -1).section('\\', -1))
+            .arg(texture.texcoordSet).arg(texture.texcoordSetName).arg(transform);
     };
     for (size_t m = 0; m < model.materials.size(); m++) {
         const hfm::Material& material = model.materials[m];
@@ -161,6 +171,20 @@ static void inspectModel(const HFMModel& model) {
         for (const QString& line : partsOf[(uint32_t)m]) {
             fprintf(stdout, "    %s\n", qPrintable(line));
         }
+        // how far each UV layer spreads: a layer collapsed to a point (an unused lightmap channel) draws one texel
+        for (int layer = 0; layer < 2; layer++) {
+            const QVector<glm::vec2>& uvs = layer == 0 ? mesh.texCoords : mesh.texCoords1;
+            if (uvs.isEmpty()) {
+                continue;
+            }
+            glm::vec2 low = uvs[0];
+            glm::vec2 high = uvs[0];
+            for (const glm::vec2& uv : uvs) {
+                low = glm::min(low, uv);
+                high = glm::max(high, uv);
+            }
+            fprintf(stdout, "    uv%d spans u %.3f to %.3f, v %.3f to %.3f\n", layer, low.x, high.x, low.y, high.y);
+        }
         // flipped normals: a triangle whose vertex normals point against its winding (its front, which is drawn)
         if (mesh.normals.size() == mesh.vertices.size()) {
             int against = 0;
@@ -185,6 +209,79 @@ static void inspectModel(const HFMModel& model) {
     }
 }
 
+// Draws each material's UV triangles over its colour texture into <folder>/<material>-<name>.png, the first UV layer
+// (red) on the left and the second (cyan) on the right: whether each part's coordinates land on its part of the texture
+// (Chloe's jacket showed patches of skin, 10-13). V runs up from the picture's bottom edge, as the engine
+// samples it: a rip drawn upside down here needs --flip-v.
+static void drawUVSheets(const HFMModel& model, const QString& modelPath, const QString& folder) {
+    const int SIDE = 1024;
+    QDir().mkpath(folder);
+    const QDir modelFolder = QFileInfo(modelPath).absoluteDir();
+    for (size_t m = 0; m < model.materials.size(); m++) {
+        const hfm::Texture& texture = model.materials[m].albedoTexture;
+        QImage picture;
+        if (!texture.content.isEmpty()) {
+            picture = QImage::fromData(texture.content);
+        }
+        const QString name = QString::fromUtf8(texture.filename);
+        if (picture.isNull() && !name.isEmpty()) {
+            const QUrl url(name);
+            picture.load(url.isLocalFile() ? url.toLocalFile() : modelFolder.filePath(name));
+            if (picture.isNull()) {
+                picture.load(modelFolder.filePath(name.section('/', -1).section('\\', -1)));
+            }
+        }
+        QImage panel(SIDE, SIDE, QImage::Format_RGB32);
+        panel.fill(Qt::darkGray);
+        if (!picture.isNull()) {
+            panel = picture.scaled(SIDE, SIDE, Qt::IgnoreAspectRatio, Qt::SmoothTransformation).convertToFormat(QImage::Format_RGB32);
+        }
+        QImage sheet(SIDE * 2, SIDE, QImage::Format_RGB32);
+        QPainter painter(&sheet);
+        painter.drawImage(0, 0, panel);
+        painter.drawImage(SIDE, 0, panel);
+        painter.setBrush(Qt::NoBrush);
+        int drawn = 0;
+        for (const hfm::Shape& shape : model.shapes) {
+            if (shape.material != m || shape.mesh >= model.meshes.size() || shape.meshPart >= model.meshes[shape.mesh].parts.size()) {
+                continue;
+            }
+            const hfm::Mesh& mesh = model.meshes[shape.mesh];
+            const hfm::MeshPart& part = mesh.parts[shape.meshPart];
+            for (int layer = 0; layer < 2; layer++) {
+                const QVector<glm::vec2>& uvs = layer == 0 ? mesh.texCoords : mesh.texCoords1;
+                if (uvs.size() != mesh.vertices.size()) {
+                    continue;
+                }
+                painter.setPen(QPen(layer == 0 ? QColor(255, 40, 40, 150) : QColor(40, 255, 255, 150), 1.0));
+                for (const QVector<int>* indices : { &part.triangleIndices, &part.quadTrianglesIndices }) {
+                    for (int i = 0; i + 2 < indices->size(); i += 3) {
+                        const int a = indices->at(i), b = indices->at(i + 1), c = indices->at(i + 2);
+                        if (a < 0 || b < 0 || c < 0 || a >= uvs.size() || b >= uvs.size() || c >= uvs.size()) {
+                            continue;
+                        }
+                        // a triangle on a repeated tile is drawn on the first one
+                        const glm::vec2 tile = glm::floor(glm::min(uvs[a], glm::min(uvs[b], uvs[c])));
+                        QPointF corners[3];
+                        int k = 0;
+                        for (const int v : { a, b, c }) {
+                            const glm::vec2 uv = uvs[v] - tile;
+                            corners[k++] = QPointF(layer * SIDE + uv.x * SIDE, (1.0f - uv.y) * SIDE);
+                        }
+                        painter.drawPolygon(corners, 3);
+                        drawn += layer == 0 ? 1 : 0;
+                    }
+                }
+            }
+        }
+        painter.end();
+        const QString path = QDir(folder).filePath(QString("%1-%2.png").arg(m).arg(model.materials[m].name));
+        sheet.save(path);
+        fprintf(stdout, "uv sheet %s: %d triangles over %s\n", qPrintable(path), drawn,
+                picture.isNull() ? "no picture" : qPrintable(name.section('/', -1)));
+    }
+}
+
 AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     QCommandLineParser parser;
     parser.setApplicationDescription("Darkride auto-rigger: places the standard skeleton in a character");
@@ -195,6 +292,8 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     const QCommandLineOption jsonOption("json", "write the joints and the answer key as JSON", "file");
     const QCommandLineOption outputOption("o", "write the rigged avatar (FBX, textures, .fst) into this folder", "folder");
     const QCommandLineOption nameOption("name", "the avatar's name (default: the input file's)", "name");
+    const QCommandLineOption flipVOption("flip-v", "with -o: the textures' V runs down from the picture's top (DirectX-era rips): "
+                                         "write it the FBX way up");
     const QCommandLineOption previewOption("preview", "draw the rigged character into a PNG", "file");
     const QCommandLineOption animationOption("animation", "with --preview: also pose it by an animation", "fbx");
     const QCommandLineOption frameOption("frame", "with --animation: which frame (default 30)", "number");
@@ -211,6 +310,8 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     const QCommandLineOption jointsOnlyOption("joints-only", "place the joints and skip the skin weights");
     const QCommandLineOption dumpOption("dump", "print an FBX file's node tree and stop", "file");
     const QCommandLineOption inspectOption("inspect", "print a model's meshes, materials and textures and stop", "file");
+    const QCommandLineOption uvSheetsOption("uv-sheets", "with --inspect: draw each material's UV triangles over its texture into PNGs here",
+                                            "folder");
     const QCommandLineOption depthOption("depth", "with --dump: how deep (default 3)", "levels");
     const QCommandLineOption childrenOption("children", "with --dump: children shown per node (default 12)", "count");
     const QCommandLineOption falloffOption("falloff", "skin weights: how fast a bone's influence fades (0 to 1)", "a");
@@ -224,6 +325,7 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     parser.addOption(jsonOption);
     parser.addOption(outputOption);
     parser.addOption(nameOption);
+    parser.addOption(flipVOption);
     parser.addOption(previewOption);
     parser.addOption(animationOption);
     parser.addOption(frameOption);
@@ -237,6 +339,7 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     parser.addOption(jointsOnlyOption);
     parser.addOption(dumpOption);
     parser.addOption(inspectOption);
+    parser.addOption(uvSheetsOption);
     parser.addOption(depthOption);
     parser.addOption(childrenOption);
     parser.addOption(falloffOption);
@@ -252,6 +355,9 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
             return;
         }
         inspectModel(*model);
+        if (parser.isSet(uvSheetsOption)) {
+            drawUVSheets(*model, parser.value(inspectOption), parser.value(uvSheetsOption));
+        }
         return;
     }
     if (parser.parse(QCoreApplication::arguments()) && parser.isSet(dumpOption)) {
@@ -402,7 +508,8 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
         QString name = parser.isSet(nameOption) ? parser.value(nameOption) : QFileInfo(inputPath).completeBaseName();
         name.replace(QRegExp("[^A-Za-z0-9_-]+"), "_");
         const autorig::WrittenAvatar written =
-            autorig::writeAvatar(*model, body, result, inputPath, parser.value(outputOption), name);
+            autorig::writeAvatar(*model, body, result, inputPath, parser.value(outputOption), name,
+                                 parser.isSet(flipVOption));
         for (const QString& note : written.notes) {
             fprintf(stdout, "%s\n", qPrintable(note));
         }

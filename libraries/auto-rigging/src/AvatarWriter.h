@@ -30,8 +30,10 @@ struct WrittenAvatar {
 // +Z, the standard skeleton under one root with Mixamo's joint axes, the meshes with their materials, skin clusters and
 // a bind pose), the textures the model uses copied beside it, and <name>.fst. sourcePath is the file the model was
 // read from, for finding its textures. The body must be the one gathered from the model and rigged.
+// flipV writes every texture coordinate as (u, 1 - v): for rips whose coordinates count V down from the picture's top
+// edge, as DirectX-era game engines do, where FBX and the engine count it up from the bottom (Chloe, 10-13).
 WrittenAvatar writeAvatar(const hfm::Model& model, const Body& body, const Result& rig, const QString& sourcePath,
-                          const QString& folder, const QString& name);
+                          const QString& folder, const QString& name, bool flipV = false);
 
 // Writes an .fst: the avatar's name, its model file (a path beside the .fst, or a URL) at a scale of one, and the
 // joints the engine treats specially, by their standard names. False if it cannot be written.
