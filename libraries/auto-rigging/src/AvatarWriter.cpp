@@ -369,14 +369,22 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         const hfm::Material fallback;
         const hfm::Material& material = index < model.materials.size() ? model.materials[index] : fallback;
         const QString materialName = material.name.isEmpty() ? QString("material%1").arg(index) : material.name;
+        // The engine makes a phong material as metallic as its specular colour's brightest channel, and multiplies the
+        // colour map by the diffuse colour (FBXSerializer_Material, MaterialTextures.slh). A game rip's specular 0.9 made
+        // Chloe 90% metal, black wherever no bright reflection fell, and its default grey diffuse 0.59 darkened her
+        // textures (Caity's screenshot, 10-13). An avatar's skin, hair and cloth are not metal: its specular is black,
+        // its diffuse white under a colour map, and its shininess goes under "Shininess", the name the reader parses.
+        const bool colourMapped = !material.albedoTexture.filename.isEmpty() || !material.albedoTexture.content.isEmpty();
         const qint64 id = newId();
         add(makeNode("Material", { id, objectName(materialName, "Material"), QByteArray("") },
                      { makeNode("Version", { 102 }), makeNode("ShadingModel", { QByteArray("phong") }),
                        makeNode("MultiLayer", { 0 }),
                        makeNode("Properties70", {},
-                                { property("DiffuseColor", "Color", "", "A", vector3(material.diffuseColor)),
+                                { property("DiffuseColor", "Color", "", "A",
+                                           vector3(colourMapped ? glm::vec3(1.0f) : material.diffuseColor)),
                                   property("DiffuseFactor", "Number", "", "A", { 1.0 }),
-                                  property("SpecularColor", "Color", "", "A", vector3(material.specularColor)),
+                                  property("SpecularColor", "Color", "", "A", vector3(glm::vec3(0.0f))),
+                                  property("Shininess", "Number", "", "A", { (double)material.shininess }),
                                   property("ShininessExponent", "Number", "", "A", { (double)material.shininess }),
                                   property("EmissiveColor", "Color", "", "A", vector3(material.emissiveColor)),
                                   property("Opacity", "Number", "", "A", { (double)material.opacity }) }) }));

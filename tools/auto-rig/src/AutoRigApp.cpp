@@ -133,6 +133,11 @@ static void inspectModel(const HFMModel& model) {
         fprintf(stdout, "material %zu %s: opacity %.2f%s%s%s%s\n", m, qPrintable(material.name), material.opacity,
                 qPrintable(textureLine("albedo", material.albedoTexture)), qPrintable(textureLine("normal", material.normalTexture)),
                 qPrintable(textureLine("opacity", material.opacityTexture)), qPrintable(textureLine("specular", material.specularTexture)));
+        // the engine makes a phong material as metallic as its specular colour's brightest channel (FBXSerializer_Material)
+        fprintf(stdout, "    diffuse (%.2f %.2f %.2f) x %.2f, specular (%.2f %.2f %.2f), shininess %.1f, %s, metallic %.2f roughness %.2f\n",
+                material.diffuseColor.x, material.diffuseColor.y, material.diffuseColor.z, material.diffuseFactor,
+                material.specularColor.x, material.specularColor.y, material.specularColor.z, material.shininess,
+                material.isPBSMaterial ? "PBS" : "phong", material.metallic, material.roughness);
     }
     std::map<uint32_t, QStringList> partsOf;
     for (const hfm::Shape& shape : model.shapes) {
