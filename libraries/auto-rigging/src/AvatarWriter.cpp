@@ -13,9 +13,11 @@
 #include <algorithm>
 #include <map>
 
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QTextStream>
 #include <QVector>
 
@@ -97,6 +99,65 @@ FBXNode layerElement(const char* type) {
     return makeNode("LayerElement", {}, { makeNode("Type", { QByteArray(type) }), makeNode("TypedIndex", { 0 }) });
 }
 
+}
+
+// What a colour map's pixels hold: the shares its alpha leaves nearly clear and nearly solid, and the shares that are
+// pure black and nearly black. False when the image cannot be read.
+struct ColourMap {
+    bool hasAlpha { false };
+    float clear { 0.0f };
+    float solid { 0.0f };
+    float black { 0.0f };
+    float nearBlack { 0.0f };
+};
+
+static bool measureColourMap(const QString& path, ColourMap& measured) {
+    QImage image(path);
+    if (image.isNull() || image.width() <= 0 || image.height() <= 0) {
+        return false;
+    }
+    measured.hasAlpha = image.hasAlphaChannel();
+    image = image.convertToFormat(QImage::Format_ARGB32);
+    qint64 clear = 0;
+    qint64 solid = 0;
+    qint64 black = 0;
+    qint64 nearBlack = 0;
+    for (int y = 0; y < image.height(); y++) {
+        const QRgb* line = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); x++) {
+            const int alpha = qAlpha(line[x]);
+            const int brightest = std::max({ qRed(line[x]), qGreen(line[x]), qBlue(line[x]) });
+            clear += alpha < 32 ? 1 : 0;
+            solid += alpha > 223 ? 1 : 0;
+            black += brightest < 4 ? 1 : 0;
+            nearBlack += brightest >= 4 && brightest < 16 ? 1 : 0;
+        }
+    }
+    const double total = (double)image.width() * (double)image.height();
+    measured.clear = (float)(clear / total);
+    measured.solid = (float)(solid / total);
+    measured.black = (float)(black / total);
+    measured.nearBlack = (float)(nearBlack / total);
+    return true;
+}
+
+// A copy of a colour map, as PNG, whose pure black is clear and everything else solid.
+static bool blackCutOut(const QString& path, QByteArray& png) {
+    QImage image(path);
+    if (image.isNull()) {
+        return false;
+    }
+    image = image.convertToFormat(QImage::Format_ARGB32);
+    for (int y = 0; y < image.height(); y++) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < image.width(); x++) {
+            const int brightest = std::max({ qRed(line[x]), qGreen(line[x]), qBlue(line[x]) });
+            line[x] = qRgba(qRed(line[x]), qGreen(line[x]), qBlue(line[x]), brightest < 4 ? 0 : 255);
+        }
+    }
+    QBuffer buffer(&png);
+    buffer.open(QIODevice::WriteOnly);
+    return image.save(&buffer, "PNG");
 }
 
 WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, const Result& rig, const QString& sourcePath,
@@ -251,9 +312,43 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
                                   property("ShininessExponent", "Number", "", "A", { (double)material.shininess }),
                                   property("EmissiveColor", "Color", "", "A", vector3(material.emissiveColor)),
                                   property("Opacity", "Number", "", "A", { (double)material.opacity }) }) }));
-        addTexture(material.albedoTexture, id, "DiffuseColor");
+        // A colour map that cuts the shape out is the opacity map too: the engine reads a colour map's alpha only when the
+        // same map is linked as the opacity map (ProceduralMaterialCache). Its alpha may cut the shape out (a game's
+        // alpha-tested hair kept the mask there); or, for hair whose alpha is solid, a pure black background between the
+        // strands does (Chloe's: 55% black, 1% near black), and a copy with that black made clear is written. A skin map
+        // keeping a shine mask in its alpha has no large clear part, and only hair has its black cut out.
+        hfm::Texture colour = material.albedoTexture;
+        hfm::Texture opacity = material.opacityTexture;
+        const bool hasColourMap = !colour.filename.isEmpty() || !colour.content.isEmpty();
+        if (opacity.filename.isEmpty() && opacity.content.isEmpty() && hasColourMap) {
+            const QString colourMap = placeTexture(colour);
+            ColourMap measured;
+            if (!colourMap.isEmpty() && measureColourMap(out.filePath(colourMap), measured)) {
+                const bool hair = materialName.contains("hair", Qt::CaseInsensitive) ||
+                                  colourMap.contains("hair", Qt::CaseInsensitive);
+                QByteArray png;
+                if (measured.hasAlpha && measured.clear >= 0.10f && measured.solid >= 0.10f) {
+                    opacity = colour;
+                    written.notes << QString("%1: %2's alpha cuts it out (%3% clear), so it is the opacity map too")
+                                         .arg(materialName, colourMap).arg(measured.clear * 100.0f, 0, 'f', 0);
+                } else if (hair && measured.clear < 0.01f && measured.black >= 0.25f && measured.nearBlack < 0.03f &&
+                           blackCutOut(out.filePath(colourMap), png)) {
+                    colour.filename = (QFileInfo(colourMap).completeBaseName() + "_cutout.png").toUtf8();
+                    colour.content = png;
+                    opacity = colour;
+                    written.notes << QString("%1: %2 is %3% pure black between the strands, so %4 has that black clear")
+                                         .arg(materialName, colourMap).arg(measured.black * 100.0f, 0, 'f', 0)
+                                         .arg(QString::fromUtf8(colour.filename));
+                } else if (hair) {
+                    written.notes << QString("%1: no cut-out in %2 (%3% clear, %4% black), so the hair is drawn solid")
+                                         .arg(materialName, colourMap).arg(measured.clear * 100.0f, 0, 'f', 0)
+                                         .arg(measured.black * 100.0f, 0, 'f', 0);
+                }
+            }
+        }
+        addTexture(colour, id, "DiffuseColor");
         addTexture(material.normalTexture, id, "NormalMap");
-        addTexture(material.opacityTexture, id, "TransparentColor");
+        addTexture(opacity, id, "TransparentColor");
         addTexture(material.specularTexture, id, "SpecularColor");
         addTexture(material.glossTexture, id, "ShininessExponent");
         addTexture(material.emissiveTexture, id, "EmissiveColor");
