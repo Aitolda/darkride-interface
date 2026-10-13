@@ -65,6 +65,8 @@
 extern bool DEV_DECIMATE_TEXTURES;
 
 Menu* Menu::getInstance() {
+    // At quit a script thread can still ask for the menu after the application object is gone: there is none then.
+    if (qApp == nullptr) return nullptr;
     MainWindow* window = qApp->getWindow();
     if (window == nullptr) return nullptr;
     QMenuBar* menuBar = window->menuBar();
