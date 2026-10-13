@@ -17,10 +17,11 @@ namespace {
 const char MAGIC[4] = { 'D', 'R', 'K', 'T' };
 const uint32_t VERSION_CHUNKS = 1;        // the chunks alone
 const uint32_t VERSION_PAINT = 2;         // the chunks, then the paint map
+const uint32_t VERSION_LEVELS = 3;        // chunks with levels, then the paint map
 const uint8_t KIND_UNIFORM = 0;
 const uint8_t KIND_DENSE = 1;
 const int MAX_VOXELS_PER_AXIS = 1 << 14;
-const size_t MAX_CHUNKS = 1 << 20;
+const size_t MAX_CHUNKS = 1 << 24;
 const size_t DENSE_BYTES = 2 * CHUNK_VOXEL_COUNT;
 const int MAX_PAINT_TEXELS_PER_AXIS = 1 << 13;
 
@@ -123,23 +124,27 @@ std::vector<uint8_t> weightsOf(const std::vector<uint8_t>& planes) {
 Bytes terrain::saveTerrain(const VoxelGrid& grid, const PaintMap* paint) {
     const glm::ivec2 footprint(grid.getVoxelCount().x, grid.getVoxelCount().z);
     const bool withPaint = paint && !paint->isEmpty() && paint->getVoxelFootprint() == footprint && paint->isPainted();
+    const bool withLevels = grid.getFinestLevel() > 0;
+    const uint32_t version = withLevels ? VERSION_LEVELS : (withPaint ? VERSION_PAINT : VERSION_CHUNKS);
     Writer out;
     out.raw((const uint8_t*)MAGIC, 4);
-    out.u32(withPaint ? VERSION_PAINT : VERSION_CHUNKS);
+    out.u32(version);
     const glm::ivec3 voxelCount = grid.getVoxelCount();
     out.i32(voxelCount.x);
     out.i32(voxelCount.y);
     out.i32(voxelCount.z);
     out.i32(CHUNK_SIZE);
-    const glm::ivec3 chunkCount = grid.getChunkCount();
-    out.u32((uint32_t)(chunkCount.x * chunkCount.y * chunkCount.z));
+    out.u32((uint32_t)grid.countChunks());
 
     std::vector<uint8_t> dense(DENSE_BYTES);
     std::vector<uint8_t> compressed(compressBound((uLong)DENSE_BYTES));
-    grid.forEachChunk([&](const glm::ivec3& coords, const Chunk& chunk) {
-        out.i32(coords.x);
-        out.i32(coords.y);
-        out.i32(coords.z);
+    grid.forEachChunk([&](const ChunkKey& key, const Chunk& chunk) {
+        out.i32(key.coords.x);
+        out.i32(key.coords.y);
+        out.i32(key.coords.z);
+        if (withLevels) {
+            out.u8((uint8_t)key.level);
+        }
         if (chunk.isUniform()) {
             out.u8(KIND_UNIFORM);
             out.i8(chunk.getUniformValue().distance);
@@ -176,6 +181,12 @@ Bytes terrain::saveTerrain(const VoxelGrid& grid, const PaintMap* paint) {
         out.u32((uint32_t)paint->getTexelsPerVoxel());
         out.u32((uint32_t)length);
         out.raw(packed.data(), length);
+    } else if (version >= VERSION_PAINT) {
+        // the levels asked for a version that carries a map: none to carry
+        out.u32(0);
+        out.u32(0);
+        out.u32(1);
+        out.u32(0);
     }
     return out.take();
 }
@@ -190,7 +201,7 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, Pai
         return fail(error, "not a terrain file", grid, paint);
     }
     const uint32_t version = in.u32();
-    if (version != VERSION_CHUNKS && version != VERSION_PAINT) {
+    if (version != VERSION_CHUNKS && version != VERSION_PAINT && version != VERSION_LEVELS) {
         return fail(error, "terrain file version " + std::to_string(version) + " is not supported", grid, paint);
     }
     glm::ivec3 voxelCount;
@@ -217,15 +228,21 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, Pai
     std::vector<uint8_t> dense(DENSE_BYTES);
     std::vector<Voxel> voxels;
     for (uint32_t i = 0; i < chunkCount; ++i) {
-        glm::ivec3 coords;
-        coords.x = in.i32();
-        coords.y = in.i32();
-        coords.z = in.i32();
+        ChunkKey key;
+        key.coords.x = in.i32();
+        key.coords.y = in.i32();
+        key.coords.z = in.i32();
+        if (version >= VERSION_LEVELS) {
+            key.level = in.u8();
+        }
         const uint8_t kind = in.u8();
         if (!in.ok()) {
             return fail(error, "terrain file is cut short at chunk " + std::to_string(i), grid, paint);
         }
-        if (!grid.containsChunk(coords)) {
+        if (key.level > MAX_CHUNK_LEVEL) {
+            return fail(error, "terrain file has a chunk at level " + std::to_string(key.level) + ", finer than " + std::to_string(MAX_CHUNK_LEVEL), grid, paint);
+        }
+        if (!grid.containsChunk(key)) {
             return fail(error, "terrain file has a chunk outside the grid", grid, paint);
         }
         if (kind == KIND_UNIFORM) {
@@ -234,7 +251,7 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, Pai
             if (!in.ok()) {
                 return fail(error, "terrain file is cut short at chunk " + std::to_string(i), grid, paint);
             }
-            grid.setChunk(coords, Chunk(Voxel(distance, material)));
+            grid.placeChunk(key, Chunk(Voxel(distance, material)));
             continue;
         }
         if (kind != KIND_DENSE) {
@@ -255,7 +272,7 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, Pai
         }
         Chunk chunk;
         chunk.setVoxels(voxels);
-        grid.setChunk(coords, std::move(chunk));
+        grid.placeChunk(key, std::move(chunk));
     }
     grid.markAllChunksDirty();
 

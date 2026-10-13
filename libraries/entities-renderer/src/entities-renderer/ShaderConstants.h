@@ -20,9 +20,10 @@
 #define ENTITIES_TEXTURE_POLYVOX_ZMAP 2
 
 // Terrain: the layers' colour textures take the material texture slots, the chunk's paint map tiles (layers 0 to 3
-// and 4 to 7 of the weights) the two after them, and the parameters the material buffer slot, which the terrain's
-// own pipeline leaves free (the backend has fourteen buffer slots, 0 to 13); an item with a material binds its own
-// there before it draws, so a terrain chunk's leftover never reaches one
+// and 4 to 7 of the weights) the two after them, the terrain's parameters the material buffer slot and the chunk's
+// own (where its tile is read) the slot after, both of which the terrain's own pipeline leaves free (the backend
+// has fourteen buffer slots, 0 to 13; shadow passes bind their parameters at 2 with a pipeline of their own); an
+// item with a material binds its own there before it draws, so a terrain chunk's leftover never reaches one
 #define ENTITIES_TEXTURE_TERRAIN_LAYER0 0
 #define ENTITIES_TEXTURE_TERRAIN_LAYER1 1
 #define ENTITIES_TEXTURE_TERRAIN_LAYER2 2
@@ -34,6 +35,7 @@
 #define ENTITIES_TEXTURE_TERRAIN_PAINT0 8
 #define ENTITIES_TEXTURE_TERRAIN_PAINT1 9
 #define ENTITIES_BUFFER_TERRAIN_LAYERS 1
+#define ENTITIES_BUFFER_TERRAIN_CHUNK 2
 
 
 
@@ -54,6 +56,7 @@ enum Texture {
 namespace buffer {
 enum Buffer {
     TerrainLayers = ENTITIES_BUFFER_TERRAIN_LAYERS,
+    TerrainChunk = ENTITIES_BUFFER_TERRAIN_CHUNK,
 };
 } // namespace buffer
 

@@ -7,7 +7,9 @@
 //  meshes built from the grid by surface nets, and the collision shape built from those. The renderer puts one
 //  render item per chunk in the scene, an opaque shape with the terrain's own pipeline and a shadow caster, under
 //  the entity's item, which only groups them; each chunk item draws with a tile of the paint map cut for its
-//  column, remade when the map changes there. The grid, the map, the meshes and the shape are the main thread's:
+//  level-0 column, remade when the map changes there, read at the chunk's own place and scale within it. Chunks
+//  are named by level and coordinates (terrain::ChunkKey): a chunk split for finer ground is eight items in place
+//  of one, and the mesh of a chunk that is gone stays up until the chunks now in its place have theirs. The grid, the map, the meshes and the shape are the main thread's:
 //  the renderer's update, the editor's brushes and the physics simulation all run there. Only the meshing itself
 //  runs elsewhere: the update samples the dirty chunks and hands the samples to the terrain library's thread pool
 //  (terrain::AsyncMesher), and installs the meshes as they come back, asking to be called again each frame until
@@ -48,7 +50,7 @@ public:
         terrain::ChunkMesh mesh;
         uint64_t version { 0 };   // the mesh version the mesh was built at
     };
-    using ChunkMeshes = std::map<glm::ivec3, ChunkMeshEntry, terrain::IVec3Less>;
+    using ChunkMeshes = std::map<terrain::ChunkKey, ChunkMeshEntry>;
 
     terrain::VoxelGrid& getGrid() { return _grid; }
     const terrain::VoxelGrid& getGrid() const { return _grid; }
@@ -143,6 +145,8 @@ private:
     terrain::AsyncMesher _mesher;
     ChunkMeshes _chunkMeshes;
     uint64_t _meshVersion { 0 };
+    uint64_t _structureVersion { 0 };   // the grid's, when the meshes were last checked against its chunks
+    bool _staleMeshes { false };        // meshes of chunks that are gone wait for their replacements' meshes
     ShapeInfo _shapeInfo;
     bool _shapeReady { false };
     bool _shapeStale { false };
@@ -204,6 +208,8 @@ public:
     void setBuffers(const gpu::BufferPointer& vertices, uint32_t vertexCount);
     // The transform of the chunk's voxel (0, 0, 0) in the world; the bound follows from it.
     void setPlacement(const Transform& chunkToWorld);
+    // Which chunk this is: where in its level-0 column's paint tile its voxels are read, and how large they are.
+    void setChunk(const terrain::ChunkKey& chunk);
     void setKey(const ItemKey& key) { _key = key; }
     void setWireframe(bool wireframe) { _wireframe = wireframe; }
     void setLayers(const TerrainLayerSet::Pointer& layers) { _layers = layers; }
@@ -225,6 +231,7 @@ private:
     bool _wireframe { false };
     TerrainLayerSet::Pointer _layers;
     TerrainPaintTile::Pointer _paintTile;
+    gpu::BufferPointer _chunkParams;
 };
 
 class TerrainEntityRenderer : public TypedEntityRenderer<RenderableTerrainEntityItem> {
@@ -248,13 +255,13 @@ private:
     // The column's current tile, made from the map if there is none yet; null while the map is empty.
     TerrainPaintTile::Pointer paintTileFor(const terrain::PaintMap& paint, const glm::ivec2& column);
     ItemKey chunkKey() const;
-    static Transform chunkToWorld(const Transform& model, const glm::vec3& dimensions, const glm::vec3& voxelScale, const glm::ivec3& chunk);
+    static Transform chunkToWorld(const Transform& model, const glm::vec3& dimensions, const glm::vec3& voxelScale, const terrain::ChunkKey& chunk);
 
     struct ChunkItem {
         ItemID id { Item::INVALID_ITEM_ID };
         uint64_t meshVersion { 0 };
     };
-    std::map<glm::ivec3, ChunkItem, terrain::IVec3Less> _chunkItems;
+    std::map<terrain::ChunkKey, ChunkItem> _chunkItems;
     ItemKey _lastChunkKey;
     Transform _lastTransform;
     glm::vec3 _lastDimensions { 0.0f };

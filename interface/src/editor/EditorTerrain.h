@@ -18,6 +18,7 @@
 #define hifi_EditorTerrain_h
 
 #include <memory>
+#include <set>
 
 #include <QtCore/QObject>
 #include <QtCore/QSet>
@@ -100,9 +101,11 @@ private:
     void findTerrains();
     terrain::Brush voxelBrush(const RenderableTerrainEntityItem& entity, const Hit& hit) const;
     terrain::PaintBrush paintBrush(const RenderableTerrainEntityItem& entity, const Hit& hit) const;
-    // keeps a copy of every chunk (or, painting, every column's block of the map) the brush can reach, the first
-    // time the stroke reaches it
+    // keeps a copy of every chunk in the level-0 places the brush can reach (and those the 2:1 rule can split for
+    // it), the first time the stroke reaches a place; painting, every column's block of the map the brush can reach
     void captureBefore(const RenderableTerrainEntityItem& entity, const terrain::Brush& brush);
+    // every chunk now in the places the stroke recorded
+    TerrainChunks captureAfter(const RenderableTerrainEntityItem& entity) const;
     void captureBeforePaint(const RenderableTerrainEntityItem& entity, const terrain::PaintBrush& brush);
     void showOutline(const RenderableTerrainEntityItem& entity, const Hit& hit);
     void dropStroke();
@@ -137,6 +140,7 @@ private:
     int _changed { 0 };             // voxels, or texels, changed by the stroke so far
     glm::vec3 _lastStepPoint { 0.0f };
     TerrainChunks _before;
+    std::set<glm::ivec3, terrain::IVec3Less> _strokeSlots;   // the level-0 places _before holds
     TerrainPaintBlocks _beforePaint;
 
     // the terrains whose files are out of date, and those whose upload is on its way

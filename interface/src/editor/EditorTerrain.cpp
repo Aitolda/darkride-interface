@@ -47,8 +47,8 @@ namespace {
     const int FAILED_NOTE_MS = 12000;
     const QString TERRAIN_FOLDER = QStringLiteral("/terrain");
     const QString TERRAIN_MIME_TYPE = QStringLiteral("application/octet-stream");
-    // the most a resample makes: every chunk is one grid for now (chunks with levels of their own come next), and a
-    // grid of this many voxels is already tens of megabytes of chunks and a long first meshing
+    // the most a resample makes, at level 0 throughout (finer detail comes from chunks split under small brushes):
+    // a grid of this many voxels is already tens of megabytes of chunks and a long first meshing
     const int64_t MAX_RESAMPLE_VOXELS = 96LL * 1000 * 1000;
     const int MAX_RESAMPLE_AXIS = 2048;
 
@@ -257,25 +257,42 @@ void EditorTerrain::captureBeforePaint(const RenderableTerrainEntityItem& entity
 
 void EditorTerrain::captureBefore(const RenderableTerrainEntityItem& entity, const terrain::Brush& brush) {
     const terrain::VoxelGrid& grid = entity.getGrid();
-    // the same reach as the brush's (Brush.cpp): Dig and Fill go one voxel past the radius
-    const int reach = 1;
-    const glm::ivec3 low = glm::max(glm::ivec3(glm::floor(brush.center - brush.radius)) - reach, glm::ivec3(0));
-    const glm::ivec3 high = glm::min(glm::ivec3(glm::ceil(brush.center + brush.radius)) + reach, grid.getVoxelCount() - 1);
-    if (glm::any(glm::greaterThan(low, high))) {
+    glm::ivec3 low, high;
+    if (!terrain::brushBounds(grid, brush, low, high)) {
         return;
     }
-    const glm::ivec3 chunkLow = terrain::VoxelGrid::chunkOf(low);
-    const glm::ivec3 chunkHigh = terrain::VoxelGrid::chunkOf(high);
-    for (int z = chunkLow.z; z <= chunkHigh.z; ++z) {
-        for (int y = chunkLow.y; y <= chunkHigh.y; ++y) {
-            for (int x = chunkLow.x; x <= chunkHigh.x; ++x) {
-                const glm::ivec3 chunk(x, y, z);
-                if (grid.containsChunk(chunk) && _before.find(chunk) == _before.end()) {
-                    _before.emplace(chunk, grid.getChunk(chunk));
+    // A small brush splits the chunks under it, and the 2:1 rule (VoxelGrid.h) can split the level-0 places around
+    // those, one ring for each level beyond the first; the stroke records whole places, so a step can put back
+    // whatever the split made of them.
+    const int reach = std::max(grid.getMaxLevel() - 1, 0) * terrain::CHUNK_SIZE;
+    const glm::ivec3 slotLow = terrain::VoxelGrid::chunkOf(low - reach);
+    const glm::ivec3 slotHigh = terrain::VoxelGrid::chunkOf(high + reach);
+    for (int z = slotLow.z; z <= slotHigh.z; ++z) {
+        for (int y = slotLow.y; y <= slotHigh.y; ++y) {
+            for (int x = slotLow.x; x <= slotHigh.x; ++x) {
+                const glm::ivec3 slot(x, y, z);
+                if (!grid.containsChunk(slot) || !_strokeSlots.insert(slot).second) {
+                    continue;
+                }
+                const glm::ivec3 origin = slot * terrain::CHUNK_SIZE;
+                for (const terrain::ChunkKey& key : grid.chunksCovering(origin, origin + terrain::CHUNK_SIZE - 1)) {
+                    _before.emplace(key, grid.getChunk(key));
                 }
             }
         }
     }
+}
+
+TerrainChunks EditorTerrain::captureAfter(const RenderableTerrainEntityItem& entity) const {
+    const terrain::VoxelGrid& grid = entity.getGrid();
+    TerrainChunks after;
+    for (const glm::ivec3& slot : _strokeSlots) {
+        const glm::ivec3 origin = slot * terrain::CHUNK_SIZE;
+        for (const terrain::ChunkKey& key : grid.chunksCovering(origin, origin + terrain::CHUNK_SIZE - 1)) {
+            after.emplace(key, grid.getChunk(key));
+        }
+    }
+    return after;
 }
 
 // --- the stroke ---------------------------------------------------------------------------------
@@ -399,18 +416,29 @@ void EditorTerrain::endStroke(bool cancel) {
             }
         } else if (cancel) {
             restore(*entity, _before);
-        } else if (_changed > 0 && !_before.empty()) {
-            TerrainChunks after;
-            for (const auto& pair : _before) {
-                after.emplace(pair.first, entity->getGrid().getChunk(pair.first));
+        } else if (!_before.empty()) {
+            // the step keeps what the stroke changed: the chunks that differ, and those split or merged (whose keys
+            // are on one side only); a chunk the same before and after is left out of both
+            TerrainChunks after = captureAfter(*entity);
+            for (auto it = _before.begin(); it != _before.end();) {
+                auto same = after.find(it->first);
+                if (same != after.end() && same->second == it->second) {
+                    after.erase(same);
+                    it = _before.erase(it);
+                } else {
+                    ++it;
+                }
             }
-            _undo->pushTerrainEdit(modeName(_strokeMode) + QStringLiteral(" Terrain"), _strokeId, _before, after);
-            entity->markCollisionShapeStale();
-            entity->gridEdited();
-            markChanged(_strokeId);
+            if (!_before.empty() || !after.empty()) {
+                _undo->pushTerrainEdit(modeName(_strokeMode) + QStringLiteral(" Terrain"), _strokeId, _before, after);
+                entity->markCollisionShapeStale();
+                entity->gridEdited();
+                markChanged(_strokeId);
+            }
         }
     }
     _before.clear();
+    _strokeSlots.clear();
     _beforePaint.clear();
     _steps = 0;
     _changed = 0;
@@ -420,6 +448,7 @@ void EditorTerrain::endStroke(bool cancel) {
 void EditorTerrain::dropStroke() {
     _stroking = false;
     _before.clear();
+    _strokeSlots.clear();
     _beforePaint.clear();
     _steps = 0;
     _changed = 0;
@@ -432,7 +461,7 @@ void EditorTerrain::restore(RenderableTerrainEntityItem& entity, const TerrainCh
     terrain::VoxelGrid& grid = entity.getGrid();
     for (const auto& pair : chunks) {
         if (grid.containsChunk(pair.first)) {
-            grid.setChunk(pair.first, pair.second);
+            grid.placeChunk(pair.first, pair.second);   // whole places were recorded: fillers under a split are replaced
         }
     }
     entity.markCollisionShapeStale();

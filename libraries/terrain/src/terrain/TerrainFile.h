@@ -5,19 +5,22 @@
 //  The terrain file: every chunk of a voxel grid, and the paint map over it, in one file, the asset a Terrain
 //  entity's terrainURL points at. Little-endian throughout:
 //
-//    char[4] "DRKT"   uint32 version (1 or 2)   int32 voxelCount x, y, z   int32 chunkSize (32)   uint32 chunkCount
+//    char[4] "DRKT"   uint32 version (1, 2 or 3)   int32 voxelCount x, y, z   int32 chunkSize (32)   uint32 chunkCount
 //    then chunkCount times:
-//      int32 chunk x, y, z   uint8 kind: 0 uniform, 1 dense
+//      int32 chunk x, y, z   [version 3: uint8 level]   uint8 kind: 0 uniform, 1 dense
 //      uniform:  int8 distance   uint8 material
 //      dense:    uint32 length   bytes[length]: a zlib stream of the chunk's CHUNK_VOXEL_COUNT distance bytes
 //                followed by its CHUNK_VOXEL_COUNT material bytes, in Chunk::indexOf order
-//    version 2 goes on with the paint map (PaintMap.h):
+//    versions 2 and 3 go on with the paint map (PaintMap.h):
 //      uint32 width, height (texels)   uint32 texelsPerVoxel   uint32 length   bytes[length]: a zlib stream of
 //      PAINT_LAYERS planes of width * height bytes, layer 0's weights at every texel (x fastest), then layer 1's…
+//      (width and height 0 when there is no map to write)
 //
-//  A terrain whose map was never painted is written as version 1, which every reader of the format understands.
-//  Chunks keep their own coordinates so a later version can leave them in files of their own and fetch them one at
-//  a time (streaming, TERRAIN.md section 10). Chunks missing from a file take the grid's fill value.
+//  Version 3 gives each chunk its level (VoxelGrid.h), its coordinates then being at that level; versions 1 and 2
+//  hold level-0 chunks only. A terrain is written in the oldest version that holds it: version 1 while its map was
+//  never painted, 2 with paint, 3 once any chunk is split, so a file reads wherever it can. Chunks keep their own
+//  coordinates so a later version can leave them in files of their own and fetch them one at a time (streaming,
+//  TERRAIN.md section 10). Chunks missing from a file take the grid's fill value.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html

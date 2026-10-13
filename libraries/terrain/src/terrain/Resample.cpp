@@ -18,20 +18,6 @@ using namespace terrain;
 
 namespace {
 
-// A distance at the byte's limit says only "far on this side": it stays at the limit whatever the new voxel size.
-const float SATURATED = DISTANCE_MAX / DISTANCE_SCALE;
-const float SATURATION_EPSILON = 1.0e-4f;
-
-int8_t rescaleDistance(float sourceVoxels, float scale) {
-    if (sourceVoxels >= SATURATED - SATURATION_EPSILON) {
-        return DISTANCE_MAX;
-    }
-    if (sourceVoxels <= -SATURATED + SATURATION_EPSILON) {
-        return -DISTANCE_MAX;
-    }
-    return encodeDistance(sourceVoxels * scale);
-}
-
 // The box of source voxels one target chunk reads: the source points of the chunk's voxels, and the voxel after
 // each for the interpolation, clamped into the source.
 struct SourceBox {
@@ -57,28 +43,45 @@ Chunk resampleChunk(const VoxelGrid& source, const glm::ivec3& chunk, const glm:
     box.size = high - box.low + 1;
 
     // Source chunks that all hold one value make a target chunk of that value, without a sample taken.
-    const glm::ivec3 chunkLow = VoxelGrid::chunkOf(box.low);
-    const glm::ivec3 chunkHigh = VoxelGrid::chunkOf(high);
+    const std::vector<ChunkKey> covering = source.chunksCovering(box.low, high);
     bool uniform = true;
+    bool coarsest = true;   // every source chunk at level 0: the grid's own voxels are the whole field
     Voxel value;
     bool first = true;
-    for (int cz = chunkLow.z; cz <= chunkHigh.z && uniform; ++cz) {
-        for (int cy = chunkLow.y; cy <= chunkHigh.y && uniform; ++cy) {
-            for (int cx = chunkLow.x; cx <= chunkHigh.x && uniform; ++cx) {
-                const Chunk& sourceChunk = source.getChunk(glm::ivec3(cx, cy, cz));
-                if (!sourceChunk.isUniform()) {
-                    uniform = false;
-                } else if (first) {
-                    value = sourceChunk.getUniformValue();
-                    first = false;
-                } else if (sourceChunk.getUniformValue() != value) {
-                    uniform = false;
-                }
-            }
+    for (const ChunkKey& key : covering) {
+        const Chunk& sourceChunk = source.getChunk(key);
+        if (key.level > 0) {
+            coarsest = false;
+        }
+        if (!sourceChunk.isUniform()) {
+            uniform = false;
+        } else if (first) {
+            value = sourceChunk.getUniformValue();
+            first = false;
+        } else if (sourceChunk.getUniformValue() != value) {
+            uniform = false;
         }
     }
     if (uniform) {
         return Chunk(Voxel(rescaleDistance(value.getDistance(), distanceScale), value.material));
+    }
+
+    std::vector<Voxel> voxels(CHUNK_VOXEL_COUNT);
+    const glm::vec3 sourceLimit(sourceLast);
+    if (!coarsest) {
+        // finer chunks among the source: read the field as the grid interpolates it, at whatever level is there
+        for (int z = 0; z < CHUNK_SIZE; ++z) {
+            for (int y = 0; y < CHUNK_SIZE; ++y) {
+                for (int x = 0; x < CHUNK_SIZE; ++x) {
+                    const glm::vec3 point = glm::clamp(glm::vec3(origin + glm::ivec3(x, y, z)) * ratio, glm::vec3(0.0f), sourceLimit);
+                    const VoxelGrid::FieldSample sample = source.fieldAt(point);
+                    voxels[Chunk::indexOf(x, y, z)] = Voxel(rescaleDistance(sample.distance, distanceScale), sample.material);
+                }
+            }
+        }
+        Chunk result;
+        result.setVoxels(std::move(voxels));
+        return result;
     }
 
     box.distances.resize((size_t)box.size.x * box.size.y * box.size.z);
@@ -95,8 +98,6 @@ Chunk resampleChunk(const VoxelGrid& source, const glm::ivec3& chunk, const glm:
         }
     }
 
-    std::vector<Voxel> voxels(CHUNK_VOXEL_COUNT);
-    const glm::vec3 sourceLimit(sourceLast);
     for (int z = 0; z < CHUNK_SIZE; ++z) {
         for (int y = 0; y < CHUNK_SIZE; ++y) {
             for (int x = 0; x < CHUNK_SIZE; ++x) {

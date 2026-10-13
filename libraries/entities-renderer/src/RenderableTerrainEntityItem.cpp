@@ -50,7 +50,10 @@ struct TerrainLayerParams {
 struct TerrainParams {
     glm::mat4 worldToTerrain;
     TerrainLayerParams layers[TerrainLayerSet::LAYER_COUNT];
-    glm::vec4 paint;    // x: tile texture coordinates per voxel of the chunk; y: the coordinate of the chunk's voxel 0
+};
+// One chunk's own parameters (terrain.slf): where in its column's paint tile its voxels are read.
+struct TerrainChunkParams {
+    glm::vec4 paint;    // x: tile texture coordinates per voxel of the chunk; yz: the tile coordinates of its voxel (0, 0)
 };
 
 // The plain colours of layers without a texture: grass, dirt, rock, sand, clay, snow, dark stone, moss.
@@ -183,8 +186,10 @@ void RenderableTerrainEntityItem::replaceGrid(terrain::VoxelGrid grid, terrain::
     _paint.markAllColumnsDirty();
     ++_paintVersion;
     _mesher.reset();   // meshes of the old grid still being built are dropped when they come
+    _structureVersion = _grid.getStructureVersion();
+    _staleMeshes = false;
     // a fresh grid has every chunk dirty, so the meshes within it are all replaced in time; those beyond it go now
-    const terrain::ChunkSet& dirty = _grid.getDirtyChunks();
+    const terrain::ChunkKeySet& dirty = _grid.getDirtyChunks();
     bool erased = false;
     for (auto it = _chunkMeshes.begin(); it != _chunkMeshes.end();) {
         if (dirty.count(it->first)) {
@@ -207,14 +212,45 @@ bool RenderableTerrainEntityItem::updateMeshes() {
         ++_meshVersion;
         for (terrain::AsyncMesher::Result& result : results) {
             if (result.mesh.isEmpty()) {
-                _chunkMeshes.erase(result.chunk);
+                _chunkMeshes.erase(result.key);
                 continue;
             }
-            ChunkMeshEntry& entry = _chunkMeshes[result.chunk];
+            ChunkMeshEntry& entry = _chunkMeshes[result.key];
             entry.mesh = std::move(result.mesh);
             entry.version = _meshVersion;
         }
         changed = true;
+    }
+    // Chunks split or merged: a mesh whose chunk is gone stays up until the chunks now in its place all have
+    // theirs (or none, for a chunk without a surface), so the ground does not blink while they are meshed.
+    if (_grid.getStructureVersion() != _structureVersion) {
+        _structureVersion = _grid.getStructureVersion();
+        _staleMeshes = true;
+    }
+    if (_staleMeshes) {
+        _staleMeshes = false;
+        for (auto it = _chunkMeshes.begin(); it != _chunkMeshes.end();) {
+            if (_grid.hasChunk(it->first)) {
+                ++it;
+                continue;
+            }
+            bool pending = false;
+            const glm::ivec3 origin = it->first.getOrigin();
+            for (const terrain::ChunkKey& key : _grid.chunksCovering(origin, origin + it->first.getSpan() - 1)) {
+                if (_grid.getDirtyChunks().count(key) || _mesher.isInFlight(key)) {
+                    pending = true;
+                    break;
+                }
+            }
+            if (pending) {
+                _staleMeshes = true;
+                ++it;
+            } else {
+                it = _chunkMeshes.erase(it);
+                ++_meshVersion;
+                changed = true;
+            }
+        }
     }
     _mesher.submit(_grid);
     return changed;
@@ -225,10 +261,12 @@ void RenderableTerrainEntityItem::updateCollisionShape() {
     ShapeInfo::TriangleIndices indices;
     const glm::mat4 voxelToLocal = voxelToLocalMatrix();
     for (const auto& pair : _chunkMeshes) {
-        const glm::vec3 origin(pair.first * terrain::CHUNK_SIZE);
+        // the mesh is in the chunk's own voxels, from its origin; the grid's are the entity's
+        const glm::vec3 origin(pair.first.getOrigin());
+        const float perVoxel = 1.0f / (float)pair.first.getScale();
         const uint32_t base = (uint32_t)points.size();
         for (const glm::vec3& position : pair.second.mesh.positions) {
-            points.push_back(glm::vec3(voxelToLocal * glm::vec4(position + origin, 1.0f)));
+            points.push_back(glm::vec3(voxelToLocal * glm::vec4(position * perVoxel + origin, 1.0f)));
         }
         for (uint32_t index : pair.second.mesh.indices) {
             indices.push_back((int32_t)(base + index));
@@ -286,9 +324,10 @@ bool RenderableTerrainEntityItem::rayHitsGround(const glm::vec3& origin, const g
     float best = FLT_MAX;
     const glm::vec3 invDirection = 1.0f / direction;
     for (const auto& pair : _chunkMeshes) {
-        // the chunk's mesh lies within one voxel outside the chunk on the low side and inside it elsewhere
-        const glm::vec3 chunkOrigin(pair.first * terrain::CHUNK_SIZE);
-        const AABox box(chunkOrigin - 1.0f, glm::vec3((float)terrain::CHUNK_SIZE + 2.0f));
+        // the chunk's mesh lies within one of its voxels outside the chunk on the low side and inside it elsewhere
+        const glm::vec3 chunkOrigin(pair.first.getOrigin());
+        const float perVoxel = 1.0f / (float)pair.first.getScale();
+        const AABox box(chunkOrigin - perVoxel, glm::vec3(((float)terrain::CHUNK_SIZE + 2.0f) * perVoxel));
         if (!box.contains(origin)) {
             float boxDistance = 0.0f;
             BoxFace boxFace = UNKNOWN_FACE;
@@ -299,9 +338,9 @@ bool RenderableTerrainEntityItem::rayHitsGround(const glm::vec3& origin, const g
         }
         const terrain::ChunkMesh& mesh = pair.second.mesh;
         for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-            const glm::vec3 v0 = mesh.positions[mesh.indices[i]] + chunkOrigin;
-            const glm::vec3 v1 = mesh.positions[mesh.indices[i + 1]] + chunkOrigin;
-            const glm::vec3 v2 = mesh.positions[mesh.indices[i + 2]] + chunkOrigin;
+            const glm::vec3 v0 = mesh.positions[mesh.indices[i]] * perVoxel + chunkOrigin;
+            const glm::vec3 v1 = mesh.positions[mesh.indices[i + 1]] * perVoxel + chunkOrigin;
+            const glm::vec3 v2 = mesh.positions[mesh.indices[i + 2]] * perVoxel + chunkOrigin;
             float triangleDistance = 0.0f;
             // from either side: a dig is seen from inside the ground's box, and a cave's ceiling from below
             if (findRayTriangleIntersection(origin, direction, v0, v1, v2, triangleDistance, true)
@@ -408,9 +447,6 @@ void TerrainLayerSet::updateParams() {
         params.layers[i].color = glm::vec4(LAYER_PALETTE[i], layer.textured ? 1.0f : 0.0f);
         params.layers[i].tiling = glm::vec4(1.0f / std::max(layer.spec.tiling, 0.01f), 0.0f, 0.0f, 0.0f);
     }
-    // a column's tile spans the chunk's voxels and the apron around them (PaintMap::fillTile)
-    const float perVoxel = 1.0f / (float)(terrain::CHUNK_SIZE + 2 * terrain::PAINT_TILE_APRON);
-    params.paint = glm::vec4(perVoxel, terrain::PAINT_TILE_APRON * perVoxel, 0.0f, 0.0f);
     _params->setSubData(0, params);
     _paramsDirty = false;
 }
@@ -486,6 +522,22 @@ void TerrainChunkPayload::setPlacement(const Transform& chunkToWorld) {
     _bound = bound;
 }
 
+void TerrainChunkPayload::setChunk(const terrain::ChunkKey& chunk) {
+    // The tile is the level-0 column's: CHUNK_SIZE grid voxels with the apron around them (PaintMap::fillTile),
+    // tile coordinates 0 to 1 across. This chunk's voxels are a fraction of a grid voxel and start part way in.
+    const float perGridVoxel = 1.0f / (float)(terrain::CHUNK_SIZE + 2 * terrain::PAINT_TILE_APRON);
+    const glm::ivec3 inColumn = terrain::VoxelGrid::localOf(chunk.getOrigin());
+    TerrainChunkParams params;
+    params.paint = glm::vec4(perGridVoxel / (float)chunk.getScale(),
+                             (float)(terrain::PAINT_TILE_APRON + inColumn.x) * perGridVoxel,
+                             (float)(terrain::PAINT_TILE_APRON + inColumn.z) * perGridVoxel, 0.0f);
+    if (!_chunkParams) {
+        _chunkParams = std::make_shared<gpu::Buffer>(sizeof(TerrainChunkParams), (const gpu::Byte*)&params);
+    } else {
+        _chunkParams->setSubData(0, params);
+    }
+}
+
 ShapeKey TerrainChunkPayload::getShapeKey() const {
     ShapeKey::Builder builder = ShapeKey::Builder().withCustom(CUSTOM_PIPELINE_NUMBER);
     if (_wireframe) {
@@ -495,7 +547,7 @@ ShapeKey TerrainChunkPayload::getShapeKey() const {
 }
 
 void TerrainChunkPayload::render(RenderArgs* args) {
-    if (!_vertexBuffer || _vertexCount == 0 || !_layers) {
+    if (!_vertexBuffer || _vertexCount == 0 || !_layers || !_chunkParams) {
         return;
     }
     gpu::Batch& batch = *args->_batch;
@@ -503,6 +555,7 @@ void TerrainChunkPayload::render(RenderArgs* args) {
     batch.setInputFormat(_vertexFormat);
     batch.setInputBuffer(0, _vertexBuffer, 0, sizeof(TerrainVertex));
     _layers->bind(batch);   // the shadow pass binds them too, and ignores them
+    batch.setUniformBuffer(ENTITIES_BUFFER_TERRAIN_CHUNK, _chunkParams, 0, sizeof(TerrainChunkParams));
     batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_PAINT0, _paintTile ? _paintTile->layers0to3 : _unpaintedTile);
     batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_PAINT1, _paintTile ? _paintTile->layers4to7 : _unpaintedTile);
     batch.draw(gpu::TRIANGLES, _vertexCount, 0);
@@ -665,16 +718,18 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         }
     }
     for (const auto& pair : meshes) {
-        const glm::ivec3& chunk = pair.first;
+        const terrain::ChunkKey& chunk = pair.first;
         const RenderableTerrainEntityItem::ChunkMeshEntry& entry = pair.second;
         const Transform placement = chunkToWorld(model, dimensions, voxelScale, chunk);
-        const glm::ivec2 column(chunk.x, chunk.z);
+        const glm::ivec3 slot = chunk.getSlot();
+        const glm::ivec2 column(slot.x, slot.z);
         const TerrainPaintTile::Pointer paintTile = paintTileFor(paint, column);
         auto found = _chunkItems.find(chunk);
         if (found == _chunkItems.end()) {
             auto payload = std::make_shared<TerrainChunkPayload>();
             payload->setBuffers(TerrainChunkPayload::makeVertexBuffer(entry.mesh), TerrainChunkPayload::getVertexCount(entry.mesh));
             payload->setPlacement(placement);
+            payload->setChunk(chunk);
             payload->setKey(key);
             payload->setWireframe(wireframe);
             payload->setLayers(layerSet);
@@ -793,11 +848,13 @@ ItemKey TerrainEntityRenderer::chunkKey() const {
     return builder.build();
 }
 
-Transform TerrainEntityRenderer::chunkToWorld(const Transform& model, const glm::vec3& dimensions, const glm::vec3& voxelScale, const glm::ivec3& chunk) {
-    // The entity's model transform is its box's centre; voxel (0, 0, 0) is the box's low corner.
+Transform TerrainEntityRenderer::chunkToWorld(const Transform& model, const glm::vec3& dimensions, const glm::vec3& voxelScale, const terrain::ChunkKey& chunk) {
+    // The entity's model transform is its box's centre; grid voxel (0, 0, 0) is the box's low corner. The mesh is
+    // in the chunk's own voxels, 1 / 2^level of a grid voxel, from the chunk's origin.
     Transform transform = model;
     transform.postTranslate(-0.5f * dimensions);
     transform.postScale(voxelScale);
-    transform.postTranslate(glm::vec3(chunk * terrain::CHUNK_SIZE));
+    transform.postTranslate(glm::vec3(chunk.getOrigin()));
+    transform.postScale(glm::vec3(1.0f / (float)chunk.getScale()));
     return transform;
 }

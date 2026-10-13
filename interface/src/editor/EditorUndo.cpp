@@ -465,7 +465,8 @@ bool EditorUndo::applyTerrainChunks(const QUuid& id, const TerrainChunks& chunks
     terrain::VoxelGrid& grid = terrain->getGrid();
     for (const auto& pair : chunks) {
         if (grid.containsChunk(pair.first)) {
-            grid.setChunk(pair.first, pair.second);
+            // a step holds every chunk of the places it changed, so a coarser chunk split to make room is filled over
+            grid.placeChunk(pair.first, pair.second);
         }
     }
     terrain->markCollisionShapeStale();

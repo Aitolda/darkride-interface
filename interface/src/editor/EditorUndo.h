@@ -27,8 +27,9 @@
 #include <terrain/PaintMap.h>
 #include <terrain/VoxelGrid.h>
 
-// the chunks of a terrain's grid as they were, or will be: what a sculpt stroke records
-using TerrainChunks = std::map<glm::ivec3, terrain::Chunk, terrain::IVec3Less>;
+// the chunks of a terrain's grid as they were, or will be, by level and coordinates: what a sculpt stroke records.
+// A stroke that split a chunk records the one chunk before and the eight after; a step puts back whole places
+using TerrainChunks = std::map<terrain::ChunkKey, terrain::Chunk>;
 // the blocks of a terrain's paint map (one per chunk column) as they were, or will be: what a paint stroke records
 using TerrainPaintBlocks = std::map<glm::ivec2, terrain::PaintBlock, terrain::IVec2Less>;
 

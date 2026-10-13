@@ -8,9 +8,18 @@
 
 #include "Brush.h"
 
+#include <cmath>
 #include <vector>
 
 using namespace terrain;
+
+namespace {
+
+// How many of a chunk's voxels a brush's radius should span at least: a chunk whose voxels are coarser than that
+// under the brush is split first, so a small brush carves finely and a big one stays coarse.
+const float BRUSH_VOXELS_WANTED = 4.0f;
+
+} // namespace
 
 float Brush::weightAt(const glm::vec3& point) const {
     const float distance = glm::length(point - center);
@@ -25,100 +34,249 @@ float Brush::weightAt(const glm::vec3& point) const {
     return 1.0f - t * t * (3.0f - 2.0f * t);
 }
 
+int terrain::brushLevel(const VoxelGrid& grid, const Brush& brush) {
+    int level = 0;
+    while (level < grid.getMaxLevel() && brush.radius * (float)(1 << level) < BRUSH_VOXELS_WANTED) {
+        ++level;
+    }
+    return level;
+}
+
+bool terrain::brushBounds(const VoxelGrid& grid, const Brush& brush, glm::ivec3& low, glm::ivec3& high) {
+    if (grid.isEmpty() || brush.radius <= 0.0f) {
+        return false;
+    }
+    // the grid voxels the brush can touch, a voxel to spare: Dig and Fill reach a voxel past the radius, and finer
+    // chunks have voxels between the grid's
+    low = glm::max(glm::ivec3(glm::floor(brush.center - brush.radius)) - 1, glm::ivec3(0));
+    high = glm::min(glm::ivec3(glm::ceil(brush.center + brush.radius)) + 1, grid.getVoxelCount() - 1);
+    return glm::all(glm::lessThanEqual(low, high));
+}
+
 int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
-    if (grid.isEmpty() || brush.radius <= 0.0f || mode == SculptMode::Paint) {
+    glm::ivec3 low, high;
+    if (mode == SculptMode::Paint || !brushBounds(grid, brush, low, high)) {
         return 0;
     }
     // Dig and Fill set the field to the distance to the sphere's wall, which the ground just outside the sphere
     // needs too, so they reach one voxel further and use no falloff.
     const bool shaping = mode == SculptMode::Dig || mode == SculptMode::Fill;
     const int reach = shaping ? 1 : 0;
-    const glm::ivec3 low = glm::max(glm::ivec3(glm::floor(brush.center - brush.radius)) - reach, glm::ivec3(0));
-    const glm::ivec3 high = glm::min(glm::ivec3(glm::ceil(brush.center + brush.radius)) + reach, grid.getVoxelCount() - 1);
-    if (glm::any(glm::greaterThan(low, high))) {
-        return 0;
-    }
     const float strength = glm::clamp(brush.strength, 0.0f, 1.0f);
 
-    // Smooth reads neighbours, so it works from a copy of the region taken before any voxel changes.
-    std::vector<float> before;
-    const glm::ivec3 beforeLow = low - 1;
-    const glm::ivec3 beforeSize = high - low + 3;
-    if (mode == SculptMode::Smooth) {
-        before.resize((size_t)beforeSize.x * beforeSize.y * beforeSize.z);
-        for (int z = 0; z < beforeSize.z; ++z) {
-            for (int y = 0; y < beforeSize.y; ++y) {
-                for (int x = 0; x < beforeSize.x; ++x) {
-                    before[(z * beforeSize.y + y) * beforeSize.x + x] = grid.get(beforeLow + glm::ivec3(x, y, z)).getDistance();
+    // The chunks under the brush, split first where their voxels are too coarse for it; each is worked in its own
+    // voxels, the brush scaled to them.
+    grid.refine(low, high, brushLevel(grid, brush));
+    const std::vector<ChunkKey> keys = grid.chunksCovering(low, high);
+
+    struct Region {
+        ChunkKey key;
+        Chunk* chunk { nullptr };
+        glm::ivec3 low, high;          // the chunk's voxels under the brush, in the level's points
+        glm::ivec3 size;
+        glm::ivec3 beforeLow, beforeSize;
+        std::vector<float> before;     // Smooth reads neighbours: the distances around, before any voxel changes
+        std::vector<uint8_t> saturated;   // Raise and Lower: which voxels were at the byte's limit before the pass
+        glm::ivec3 changedLow { CHUNK_SIZE }, changedHigh { -1 };
+
+        size_t indexOf(const glm::ivec3& point) const {
+            const glm::ivec3 i = point - low;
+            return (size_t)(i.z * size.y + i.y) * size.x + i.x;
+        }
+        float beforeAt(const glm::ivec3& point) const {
+            const glm::ivec3 i = point - beforeLow;
+            return before[(i.z * beforeSize.y + i.y) * beforeSize.x + i.x];
+        }
+        // the distance at a point of the chunk's level: the chunk's own voxel, or the grid's reading beyond it
+        float distanceAt(const VoxelGrid& grid, const glm::ivec3& point) const {
+            const glm::ivec3 local = point - key.coords * CHUNK_SIZE;
+            if (glm::all(glm::greaterThanEqual(local, glm::ivec3(0))) && glm::all(glm::lessThan(local, glm::ivec3(CHUNK_SIZE)))) {
+                return chunk->get(local.x, local.y, local.z).getDistance();
+            }
+            return grid.sampleAt(key.level, point).getDistance();
+        }
+    };
+    std::vector<Region> regions;
+    for (const ChunkKey& key : keys) {
+        const float scale = (float)key.getScale();
+        const glm::vec3 center = brush.center * scale;
+        const float radius = brush.radius * scale;
+        const glm::ivec3 origin = key.coords * CHUNK_SIZE;
+        Region region;
+        region.key = key;
+        region.chunk = grid.findChunk(key);
+        region.low = glm::max(glm::ivec3(glm::floor(center - radius)) - reach, glm::max(origin, glm::ivec3(0)));
+        region.high = glm::min(glm::ivec3(glm::ceil(center + radius)) + reach,
+                               glm::min(origin + CHUNK_SIZE - 1, (grid.getVoxelCount() << key.level) - 1));
+        if (!region.chunk || glm::any(glm::greaterThan(region.low, region.high))) {
+            continue;
+        }
+        region.size = region.high - region.low + 1;
+        if (mode == SculptMode::Smooth) {
+            region.beforeLow = region.low - 1;
+            region.beforeSize = region.high - region.low + 3;
+            region.before.resize((size_t)region.beforeSize.x * region.beforeSize.y * region.beforeSize.z);
+            for (int z = 0; z < region.beforeSize.z; ++z) {
+                for (int y = 0; y < region.beforeSize.y; ++y) {
+                    for (int x = 0; x < region.beforeSize.x; ++x) {
+                        region.before[(z * region.beforeSize.y + y) * region.beforeSize.x + x] =
+                            grid.sampleAt(key.level, region.beforeLow + glm::ivec3(x, y, z)).getDistance();
+                    }
+                }
+            }
+        }
+        regions.push_back(std::move(region));
+    }
+
+    // Raise and Lower shift the field, which a byte can follow only within its band of a few voxels: a voxel at the
+    // byte's limit shifted by much would land where it should not. So they shift by at most a voxel of the finest
+    // chunk's at a time and, after each pass, give the voxels that were at the limit a distance read off their
+    // neighbours, every chunk shifted before any is read.
+    const bool shifting = mode == SculptMode::Raise || mode == SculptMode::Lower;
+    int finestScale = 1;
+    for (const Region& region : regions) {
+        finestScale = std::max(finestScale, region.key.getScale());
+    }
+    const int passes = shifting ? std::max(1, (int)std::ceil(strength * (float)finestScale - 1.0e-4f)) : 1;
+    int changed = 0;
+    auto record = [&](Region& region, const glm::ivec3& local) {
+        ++changed;
+        region.changedLow = glm::min(region.changedLow, local);
+        region.changedHigh = glm::max(region.changedHigh, local);
+    };
+    for (int pass = 0; pass < passes; ++pass) {
+        for (Region& region : regions) {
+            Chunk* chunk = region.chunk;
+            const float scale = (float)region.key.getScale();
+            const glm::vec3 center = brush.center * scale;
+            const float radius = brush.radius * scale;
+            const glm::ivec3 origin = region.key.coords * CHUNK_SIZE;
+            const float shift = shifting ? strength * scale / (float)passes : 0.0f;   // grid voxels of strength, in the chunk's
+            Brush scaled = brush;   // the falloff in the chunk's voxels
+            scaled.center = center;
+            scaled.radius = radius;
+            if (shifting) {
+                region.saturated.assign((size_t)region.size.x * region.size.y * region.size.z, 0);
+            }
+            for (int z = region.low.z; z <= region.high.z; ++z) {
+                for (int y = region.low.y; y <= region.high.y; ++y) {
+                    for (int x = region.low.x; x <= region.high.x; ++x) {
+                        const glm::ivec3 point(x, y, z);
+                        const glm::vec3 p(point);
+                        const float weight = shaping ? 1.0f : scaled.weightAt(p);
+                        if (weight <= 0.0f) {
+                            continue;
+                        }
+                        const glm::ivec3 local = point - origin;
+                        const Voxel old = chunk->get(local.x, local.y, local.z);
+                        const float distance = old.getDistance();
+                        Voxel next = old;
+                        switch (mode) {
+                            case SculptMode::Raise:
+                                next.setDistance(distance - shift * weight);
+                                break;
+                            case SculptMode::Lower:
+                                next.setDistance(distance + shift * weight);
+                                break;
+                            case SculptMode::Dig: {
+                                // Carve the sphere out: the field becomes the larger of itself and the sphere's inside.
+                                const float sphere = radius - glm::length(p - center);
+                                next.setDistance(glm::mix(distance, glm::max(distance, sphere), strength));
+                                break;
+                            }
+                            case SculptMode::Fill: {
+                                // Add the sphere: the field becomes the smaller of itself and the sphere's outside.
+                                const float sphere = glm::length(p - center) - radius;
+                                next.setDistance(glm::mix(distance, glm::min(distance, sphere), strength));
+                                break;
+                            }
+                            case SculptMode::Flatten:
+                                next.setDistance(glm::mix(distance, (float)y - brush.flattenHeight * scale, strength * weight));
+                                break;
+                            case SculptMode::Smooth: {
+                                float sum = region.beforeAt(point);
+                                for (int axis = 0; axis < 3; ++axis) {
+                                    glm::ivec3 step(0);
+                                    step[axis] = 1;
+                                    sum += region.beforeAt(point - step) + region.beforeAt(point + step);
+                                }
+                                next.setDistance(glm::mix(distance, sum / 7.0f, strength * weight));
+                                break;
+                            }
+                            case SculptMode::PaintVoxels:
+                                if (old.isGround()) {
+                                    next.material = brush.material;
+                                }
+                                break;
+                            case SculptMode::Paint:
+                                break;
+                        }
+                        if ((mode == SculptMode::Raise || mode == SculptMode::Fill) && next.isGround() && !old.isGround()) {
+                            next.material = brush.material;
+                        }
+                        if (shifting && std::abs((int)old.distance) == DISTANCE_MAX) {
+                            region.saturated[region.indexOf(point)] = 1;
+                        }
+                        if (next != old && chunk->set(local.x, local.y, local.z, next)) {
+                            record(region, local);
+                        }
+                    }
+                }
+            }
+        }
+        if (!shifting) {
+            break;
+        }
+        // The voxels that were at the limit: each is a voxel further from the surface than its nearest neighbour,
+        // on the side the shift left it. Two sweeps, one each way, carry the distances outward through them.
+        for (int sweep = 0; sweep < 2; ++sweep) {
+            const bool forward = sweep == 0;
+            for (Region& region : regions) {
+                Chunk* chunk = region.chunk;
+                const glm::ivec3 origin = region.key.coords * CHUNK_SIZE;
+                for (int k = 0; k < region.size.z; ++k) {
+                    const int z = forward ? region.low.z + k : region.high.z - k;
+                    for (int j = 0; j < region.size.y; ++j) {
+                        const int y = forward ? region.low.y + j : region.high.y - j;
+                        for (int i = 0; i < region.size.x; ++i) {
+                            const int x = forward ? region.low.x + i : region.high.x - i;
+                            const glm::ivec3 point(x, y, z);
+                            if (!region.saturated[region.indexOf(point)]) {
+                                continue;
+                            }
+                            const glm::ivec3 local = point - origin;
+                            const Voxel old = chunk->get(local.x, local.y, local.z);
+                            float nearest = SATURATED_DISTANCE;
+                            bool surface = false;
+                            for (int axis = 0; axis < 3 && !surface; ++axis) {
+                                glm::ivec3 step(0);
+                                step[axis] = 1;
+                                for (const glm::ivec3& neighbour : { point - step, point + step }) {
+                                    const float d = region.distanceAt(grid, neighbour);
+                                    if ((d < 0.0f) != old.isGround()) {
+                                        surface = true;   // the surface runs between them: the voxel's own value stands
+                                        break;
+                                    }
+                                    nearest = std::min(nearest, std::abs(d));
+                                }
+                            }
+                            if (surface) {
+                                continue;
+                            }
+                            Voxel next = old;
+                            next.setDistance((old.isGround() ? -1.0f : 1.0f) * std::min(nearest + 1.0f, SATURATED_DISTANCE));
+                            if (next != old && chunk->set(local.x, local.y, local.z, next)) {
+                                record(region, local);
+                            }
+                        }
+                    }
                 }
             }
         }
     }
-    auto beforeAt = [&](const glm::ivec3& voxel) {
-        const glm::ivec3 i = voxel - beforeLow;
-        return before[(i.z * beforeSize.y + i.y) * beforeSize.x + i.x];
-    };
-
-    int changed = 0;
-    for (int z = low.z; z <= high.z; ++z) {
-        for (int y = low.y; y <= high.y; ++y) {
-            for (int x = low.x; x <= high.x; ++x) {
-                const glm::ivec3 voxel(x, y, z);
-                const glm::vec3 point(voxel);
-                const float weight = shaping ? 1.0f : brush.weightAt(point);
-                if (weight <= 0.0f) {
-                    continue;
-                }
-                const Voxel old = grid.get(voxel);
-                const float distance = old.getDistance();
-                Voxel next = old;
-                switch (mode) {
-                    case SculptMode::Raise:
-                        next.setDistance(distance - strength * weight);
-                        break;
-                    case SculptMode::Lower:
-                        next.setDistance(distance + strength * weight);
-                        break;
-                    case SculptMode::Dig: {
-                        // Carve the sphere out: the field becomes the larger of itself and the sphere's inside.
-                        const float sphere = brush.radius - glm::length(point - brush.center);
-                        next.setDistance(glm::mix(distance, glm::max(distance, sphere), strength));
-                        break;
-                    }
-                    case SculptMode::Fill: {
-                        // Add the sphere: the field becomes the smaller of itself and the sphere's outside.
-                        const float sphere = glm::length(point - brush.center) - brush.radius;
-                        next.setDistance(glm::mix(distance, glm::min(distance, sphere), strength));
-                        break;
-                    }
-                    case SculptMode::Flatten:
-                        next.setDistance(glm::mix(distance, (float)y - brush.flattenHeight, strength * weight));
-                        break;
-                    case SculptMode::Smooth: {
-                        float sum = beforeAt(voxel);
-                        for (int axis = 0; axis < 3; ++axis) {
-                            glm::ivec3 step(0);
-                            step[axis] = 1;
-                            sum += beforeAt(voxel - step) + beforeAt(voxel + step);
-                        }
-                        next.setDistance(glm::mix(distance, sum / 7.0f, strength * weight));
-                        break;
-                    }
-                    case SculptMode::PaintVoxels:
-                        if (old.isGround()) {
-                            next.material = brush.material;
-                        }
-                        break;
-                    case SculptMode::Paint:
-                        break;
-                }
-                if ((mode == SculptMode::Raise || mode == SculptMode::Fill) && next.isGround() && !old.isGround()) {
-                    next.material = brush.material;
-                }
-                if (next != old && grid.set(voxel, next)) {
-                    ++changed;
-                }
-            }
+    for (const Region& region : regions) {
+        if (region.changedHigh.x >= 0) {
+            grid.voxelsChanged(region.key, region.changedLow, region.changedHigh);
         }
     }
     return changed;

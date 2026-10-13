@@ -52,11 +52,18 @@ struct TerrainLayer {
 struct TerrainParams {
     mat4 worldToTerrain;
     TerrainLayer layers[8];
-    vec4 paint;    // x: tile texture coordinates per voxel of the chunk; y: the coordinate of the chunk's voxel 0 (the apron before it)
+};
+
+// This chunk's own: its level's voxels are a fraction of its column's tile, and it starts part way across the tile.
+struct TerrainChunkParams {
+    vec4 paint;    // x: tile texture coordinates per voxel of the chunk; yz: the tile coordinates of the chunk's voxel (0, 0)
 };
 
 LAYOUT_STD140(binding=ENTITIES_BUFFER_TERRAIN_LAYERS) uniform terrainParamsBuffer {
     TerrainParams params;
+};
+LAYOUT_STD140(binding=ENTITIES_BUFFER_TERRAIN_CHUNK) uniform terrainChunkBuffer {
+    TerrainChunkParams chunk;
 };
 
 LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER0) uniform sampler2D layerMap0;
@@ -141,7 +148,7 @@ void main(void) {
     // the weights leave unpainted
     float facingUp = smoothstep(PAINT_FACING_LOW, PAINT_FACING_HIGH, terrainNormal.y);
     if (facingUp > 0.0) {
-        vec2 uv = _positionMS.xz * params.paint.x + params.paint.yy;
+        vec2 uv = _positionMS.xz * chunk.paint.x + chunk.paint.yz;
         vec4 low = texture(paintMap0, uv);
         vec4 high = texture(paintMap1, uv);
         float painted = dot(low, vec4(1.0)) + dot(high, vec4(1.0));

@@ -151,7 +151,7 @@ ChunkMesh terrain::meshChunk(const ChunkSamples& samples) {
     return Mesher(samples).run();
 }
 
-ChunkMesh terrain::meshChunk(const VoxelGrid& grid, const glm::ivec3& chunk) {
+ChunkMesh terrain::meshChunk(const VoxelGrid& grid, const ChunkKey& chunk) {
     ChunkSamples samples;
     grid.sampleChunk(chunk, samples);
     return meshChunk(samples);
