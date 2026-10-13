@@ -226,8 +226,11 @@ void PhysicsWorld::createBody(ObjectMotionState* motionState) {
             }
             settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
             settings.mMassPropertiesOverride.mMass = mass;
-            // an object that is not moving starts asleep, so a world full of resting things costs nothing
-            activate = motionState->isMoving();
+            // an object that is not moving starts asleep, so a world full of resting things costs nothing; but one with
+            // gravity must start awake, because gravity here is a force applied to active bodies (applyGravityForces)
+            // and Jolt ignores forces on a sleeping body: a ball placed in the air would hang there. Once it lands and
+            // settles, Jolt puts it to sleep as usual.
+            activate = motionState->isMoving() || glm::length2(motionState->getObjectGravity()) > 0.0f;
             break;
         }
         case MOTION_TYPE_STATIC:
