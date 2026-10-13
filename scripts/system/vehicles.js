@@ -5,8 +5,9 @@
 //
 //  Sitting in and driving vehicles (PHYSICS.md round 6). Click a vehicle (an entity with vehicle.type "wheeled", or one of
 //  its wheels) within reach to take a seat: the driver's seat if nobody holds it, else the nearest other seat. Seated, the
-//  avatar is parented to the vehicle at the seat; the driver's W/S (throttle, brake), A/D (steering) and Space (hand
-//  brake) go to the vehicle through Entities.setVehicleControls, and a chase camera follows. F stands up.
+//  avatar is parented to the vehicle at the seat; the driver's W/S or up/down (throttle, brake), A/D or left/right
+//  (steering) and Space (hand brake) go to the vehicle through Entities.setVehicleControls, and a chase camera follows.
+//  F stands up.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -103,7 +104,7 @@
         Camera.mode = "independent";
         cameraPosition = null;
         Script.update.connect(update);
-        print("vehicles.js: sitting in " + (seat.name || "a seat") + " of " + vehicle.id + (isDriver ? " as the driver" : ""));
+        print("vehicles.js: sitting in " + (seat.name || "a seat") + " of " + vehicle.id + (isDriver ? " as the driver" : " (the driver is " + vehicle.vehicle.driver + ")"));
     }
 
     function stand() {
@@ -155,9 +156,12 @@
         }
         var front = Quat.getFront(properties.rotation);
         if (seated.driver) {
-            var forward = Controller.getActionValue(Controller.Actions.Forward) - Controller.getActionValue(Controller.Actions.Backward);
-            var steering = -Controller.getActionValue(Controller.Actions.Yaw);
-            var handBrake = Controller.getActionValue(Controller.Actions.Up) > 0.5 ? 1 : 0;
+            // the keys themselves (the avatar's drive actions are off while seated, and the keyboard's own inputs are
+            // always there): W/S or the up and down arrows, A/D or the left and right arrows, Space
+            var keys = Controller.Hardware.Keyboard;
+            var forward = (Controller.getValue(keys.W) || Controller.getValue(keys.Up)) - (Controller.getValue(keys.S) || Controller.getValue(keys.Down));
+            var steering = (Controller.getValue(keys.D) || Controller.getValue(keys.Right)) - (Controller.getValue(keys.A) || Controller.getValue(keys.Left));
+            var handBrake = Controller.getValue(keys.Space) > 0.5 ? 1 : 0;
             var brake = 0;
             // pressing against the way the car is going is the brake until it has stopped; then it is reverse
             var speedAlong = Vec3.dot(properties.velocity, front);
@@ -194,7 +198,11 @@
         if (seats.length === 0) {
             return;
         }
-        var driverFree = !vehicle.vehicle.driver || vehicle.vehicle.driver === Uuid.NULL;
+        // the driver's seat is free when nobody holds it, or when whoever holds it has left the domain (a client that
+        // quit in the seat leaves its session in vehicle.driver)
+        var driver = vehicle.vehicle.driver;
+        var driverFree = !driver || driver === Uuid.NULL || driver === MyAvatar.sessionUUID ||
+            AvatarList.getAvatarIdentifiers().indexOf(driver) < 0;
         var chosen = null;
         var best = Infinity;
         for (var i = 0; i < seats.length; i++) {
