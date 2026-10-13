@@ -431,6 +431,10 @@ void AvatarImporter::importFile(const QString& path) {
         import->model = readModel(import->path);
         if (import->model) {
             import->body = autorig::gatherBody(*import->model);
+            const QString eyelids = autorig::openEyelids(import->body, *import->model);
+            if (!eyelids.isEmpty()) {
+                qCDebug(interfaceapp) << "Import Avatar:" << eyelids;
+            }
             import->rig = classify(*import->model, import->why);
         }
         qCDebug(interfaceapp) << "Import Avatar: read" << import->path << (import->model ? "" : "(not readable)");

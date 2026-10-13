@@ -86,6 +86,13 @@ struct Result {
 
 Body gatherBody(const hfm::Model& model);
 
+// Game rips keep their eyelids half shut in the pose their mesh was saved in, and the game opened them with lid bones
+// the standard skeleton does not have. When the file's own rig has them (LeftUpEye, LeftDownEye and the right ones,
+// on the eye bone's centre), this turns what each lid bone moves about the eye, by the file's weights, until the upper
+// lid's edge is 0.38 eyeball radii above the eye's centre and the lower lid's 0.42 below. For a body fresh from
+// gatherBody, before scale or turnAround. Returns a note for the log, empty when the file has no lid bones.
+QString openEyelids(Body& body, const hfm::Model& model);
+
 // Rigs a character standing in a T-pose or an A-pose, facing +Z (Body::turnAround first for one facing -Z): places
 // the standard skeleton and, with
 // Options::skin, computes skin weights by geodesic voxel binding (Dionne and de Lasa 2013).

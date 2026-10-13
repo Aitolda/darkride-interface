@@ -535,6 +535,129 @@ static bool placeJoints(const Body& body, const VoxelBody& voxels, const Options
     return true;
 }
 
+// --- the eyelids -------------------------------------------------------------------------------------------------
+
+// How much the file's own rig ties each vertex of the body to one joint and what hangs below it.
+static std::vector<float> fileWeights(const Body& body, const hfm::Model& model, int joint) {
+    std::vector<bool> under(model.joints.size(), false);
+    for (int j = 0; j < (int)model.joints.size(); j++) {
+        for (int k = j, steps = 0; k >= 0 && k < (int)model.joints.size() && steps < 256; k = model.joints[k].parentIndex, steps++) {
+            if (k == joint) {
+                under[j] = true;
+                break;
+            }
+        }
+    }
+    std::vector<float> weights(body.vertices.size(), 0.0f);
+    for (const Body::Piece& piece : body.pieces) {
+        if (piece.shapes.empty() || piece.mesh >= model.meshes.size()) {
+            continue;
+        }
+        const hfm::Shape& shape = model.shapes[piece.shapes[0]];
+        if (shape.skinDeformer >= model.skinDeformers.size()) {
+            continue;
+        }
+        const hfm::SkinDeformer& deformer = model.skinDeformers[shape.skinDeformer];
+        const hfm::Mesh& mesh = model.meshes[piece.mesh];
+        const size_t per = mesh.clusterWeightsPerVertex;
+        if (per == 0 || mesh.clusterIndices.size() < piece.vertexCount * per ||
+            mesh.clusterWeights.size() < piece.vertexCount * per) {
+            continue;
+        }
+        for (uint32_t v = 0; v < piece.vertexCount; v++) {
+            float weight = 0.0f;
+            for (size_t k = 0; k < per; k++) {
+                const uint16_t cluster = mesh.clusterIndices[v * per + k];
+                if (cluster < deformer.clusters.size()) {
+                    const uint32_t bound = deformer.clusters[cluster].jointIndex;
+                    if (bound < under.size() && under[bound]) {
+                        weight += (float)mesh.clusterWeights[v * per + k] / (float)UINT16_MAX;
+                    }
+                }
+            }
+            weights[piece.firstVertex + v] = std::min(weight, 1.0f);
+        }
+    }
+    return weights;
+}
+
+QString autorig::openEyelids(Body& body, const hfm::Model& model) {
+    auto find = [&](const QString& name) {
+        for (int j = 0; j < (int)model.joints.size(); j++) {
+            if (model.joints[j].name.section(':', -1).compare(name, Qt::CaseInsensitive) == 0) {
+                return j;
+            }
+        }
+        return -1;
+    };
+    // a turn about the left-right axis through the eye's centre; a positive angle lifts what is in front of it
+    auto turned = [](const glm::vec3& p, const glm::vec3& centre, float weight, float angle) {
+        const glm::vec3 d = p - centre;
+        const float c = std::cos(angle);
+        const float s = std::sin(angle);
+        return p + weight * (centre + glm::vec3(d.x, c * d.y + s * d.z, -s * d.y + c * d.z) - p);
+    };
+    QStringList notes;
+    for (const QString& side : { QString("Left"), QString("Right") }) {
+        const int eye = find(side + "Eye");
+        if (eye < 0) {
+            continue;
+        }
+        const glm::vec3 centre = extractTranslation(model.joints[eye].globalTransform);
+        // the eyeball's radius: its vertices follow the eye bone alone
+        const std::vector<float> eyeball = fileWeights(body, model, eye);
+        std::vector<float> distances;
+        for (uint32_t v = 0; v < body.vertices.size(); v++) {
+            if (eyeball[v] > 0.9f) {
+                distances.push_back(glm::distance(body.vertices[v], centre));
+            }
+        }
+        if (distances.size() < 12) {
+            continue;
+        }
+        std::nth_element(distances.begin(), distances.begin() + distances.size() / 2, distances.end());
+        const float radius = distances[distances.size() / 2];
+        // each lid's edge in front of the eye's middle, in eyeball radii above the centre, and where it should be
+        const struct { const char* bone; float target; bool upper; } lids[] = { { "UpEye", 0.38f, true },
+                                                                                  { "DownEye", -0.42f, false } };
+        for (const auto& lid : lids) {
+            const int bone = find(side + lid.bone);
+            if (bone < 0) {
+                continue;
+            }
+            const std::vector<float> moved = fileWeights(body, model, bone);
+            float edge = lid.upper ? std::numeric_limits<float>::max() : -std::numeric_limits<float>::max();
+            for (uint32_t v = 0; v < body.vertices.size(); v++) {
+                const glm::vec3& p = body.vertices[v];
+                if (moved[v] >= 0.5f && std::fabs(p.x - centre.x) < 0.3f * radius && p.z > centre.z + 0.3f * radius) {
+                    const float height = (p.y - centre.y) / radius;
+                    edge = lid.upper ? std::min(edge, height) : std::max(edge, height);
+                }
+            }
+            if (std::fabs(edge) > 0.95f || (lid.upper ? edge >= lid.target : edge <= lid.target)) {
+                continue;
+            }
+            const float angle = std::asin(lid.target) - std::asin(edge);
+            int count = 0;
+            for (uint32_t v = 0; v < body.vertices.size(); v++) {
+                if (moved[v] > 0.0f) {
+                    body.vertices[v] = turned(body.vertices[v], centre, moved[v], angle);
+                    count++;
+                }
+            }
+            notes << QString("%1 %2 lid opened %3 degrees (%4 vertices; its edge %5 eyeball radii from the centre, "
+                             "now %6)")
+                         .arg(side.toLower(), lid.upper ? "upper" : "lower").arg(std::fabs(glm::degrees(angle)), 0, 'f', 1)
+                         .arg(count).arg(edge, 0, 'f', 2).arg(lid.target, 0, 'f', 2);
+        }
+    }
+    if (notes.isEmpty()) {
+        return QString();
+    }
+    body.measure();
+    return "eyelids: " + notes.join("; ");
+}
+
 // --- the eyeballs ------------------------------------------------------------------------------------------------
 
 // An eyeball is a small closed piece of the head that a sphere fits, one each side of the face. Its centre is where

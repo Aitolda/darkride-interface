@@ -156,6 +156,27 @@ static void inspectModel(const HFMModel& model) {
         for (const QString& line : partsOf[(uint32_t)m]) {
             fprintf(stdout, "    %s\n", qPrintable(line));
         }
+        // flipped normals: a triangle whose vertex normals point against its winding (its front, which is drawn)
+        if (mesh.normals.size() == mesh.vertices.size()) {
+            int against = 0;
+            int total = 0;
+            for (const hfm::MeshPart& part : mesh.parts) {
+                for (const QVector<int>* indices : { &part.triangleIndices, &part.quadTrianglesIndices }) {
+                    for (int i = 0; i + 2 < indices->size(); i += 3) {
+                        const int a = indices->at(i), b = indices->at(i + 1), c = indices->at(i + 2);
+                        if (a < 0 || b < 0 || c < 0 || a >= mesh.vertices.size() || b >= mesh.vertices.size() ||
+                            c >= mesh.vertices.size()) {
+                            continue;
+                        }
+                        const glm::vec3 front = glm::cross(mesh.vertices[b] - mesh.vertices[a], mesh.vertices[c] - mesh.vertices[a]);
+                        const glm::vec3 normal = mesh.normals[a] + mesh.normals[b] + mesh.normals[c];
+                        against += glm::dot(front, normal) < 0.0f ? 1 : 0;
+                        total++;
+                    }
+                }
+            }
+            fprintf(stdout, "    normals against the winding: %d of %d triangles\n", against, total);
+        }
     }
 }
 
@@ -256,6 +277,10 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
         return;
     }
     autorig::Body body = autorig::gatherBody(*model);
+    const QString eyelids = autorig::openEyelids(body, *model);
+    if (!eyelids.isEmpty()) {
+        fprintf(stdout, "%s\n", qPrintable(eyelids));
+    }
     float scale = parser.isSet(scaleOption) ? parser.value(scaleOption).toFloat() : 1.0f;
     if (parser.isSet(heightOption) && body.maximum.y > body.minimum.y) {
         scale = parser.value(heightOption).toFloat() / (body.maximum.y - body.minimum.y);
