@@ -12,6 +12,7 @@
 #ifndef hifi_Agent_h
 #define hifi_Agent_h
 
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -26,6 +27,7 @@
 #include <EntityTree.h>
 #include <ScriptEngine.h>
 #include <ThreadedAssignment.h>
+#include <ViewFrustum.h>
 
 #include <plugins/CodecPlugin.h>
 
@@ -50,6 +52,8 @@ public:
     bool isPlayingAvatarSound() const { return _avatarSound != NULL; }
 
     bool isListeningToAudioStream() const { return _isListeningToAudioStream; }
+    float getAvatarViewRadius() const { return _avatarViewRadius; }
+    void setAvatarViewRadius(float radius) { _avatarViewRadius = std::max(0.0f, radius); }
     void setIsListeningToAudioStream(bool isListeningToAudioStream);
 
     bool isNoiseGateEnabled() const { return _isNoiseGateEnabled; }
@@ -119,6 +123,8 @@ private:
     QTimer* _scriptRequestTimeout { nullptr };
     ResourceRequest* _pendingScriptRequest { nullptr };
     bool _isListeningToAudioStream = false;
+    // the sphere around the agent's avatar in which every avatar counts as seen (ViewFrustum's centre sphere)
+    std::atomic<float> _avatarViewRadius { DEFAULT_CENTER_SPHERE_RADIUS };
     SharedSoundPointer _avatarSound;
     bool _shouldMuteRecordingAudio { false };
     int _numAvatarSoundSentBytes = 0;

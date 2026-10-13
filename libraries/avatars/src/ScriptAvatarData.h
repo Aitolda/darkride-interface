@@ -63,6 +63,8 @@ class ScriptAvatarData : public QObject {
     Q_PROPERTY(QString skeletonModelURL READ getSkeletonModelURLFromScript NOTIFY skeletonModelURLChanged)
     Q_PROPERTY(QVector<AttachmentData> attachmentData READ getAttachmentData)
     Q_PROPERTY(QStringList jointNames READ getJointNames)
+    // the point the avatar's eyes are aimed at, in the world (its client sends it with its joints)
+    Q_PROPERTY(glm::vec3 lookAtPosition READ getLookAtPosition)
 
     //
     // AUDIO PROPERTIES
@@ -236,6 +238,7 @@ public:
     // AUDIO PROPERTIES
     //
     float getAudioLoudness() const;
+    glm::vec3 getLookAtPosition() const;
     float getAudioAverageLoudness() const;
 
     //

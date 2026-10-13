@@ -37,6 +37,9 @@
  * @property {number} lastReceivedAudioLoudness - The current loudness of the audio input. Nominal range [<code>0.0</code> (no 
  *     sound) &ndash; <code>1.0</code> (the onset of clipping)]. <em>Read-only.</em>
  * @property {Uuid} sessionUUID - The unique ID associated with the agent's current session in the domain. <em>Read-only.</em>
+ * @property {number} avatarViewRadius - Every avatar within this many metres of the agent's avatar arrives in full detail
+ *     (its joints and gaze), whichever way the agent faces; beyond it, only avatars in front of its head do. Default
+ *     <code>3</code>. An AI resident reading body language sets it to the distance it reads at.
  */
 class AgentScriptingInterface : public QObject {
     Q_OBJECT
@@ -46,6 +49,7 @@ class AgentScriptingInterface : public QObject {
     Q_PROPERTY(bool isNoiseGateEnabled READ isNoiseGateEnabled WRITE setIsNoiseGateEnabled)
     Q_PROPERTY(float lastReceivedAudioLoudness READ getLastReceivedAudioLoudness)
     Q_PROPERTY(QUuid sessionUUID READ getSessionUUID)
+    Q_PROPERTY(float avatarViewRadius READ getAvatarViewRadius WRITE setAvatarViewRadius)
 
 public:
     AgentScriptingInterface(Agent* agent);
@@ -54,6 +58,9 @@ public:
 
     bool isListeningToAudioStream() const { return _agent->isListeningToAudioStream(); }
     void setIsListeningToAudioStream(bool isListeningToAudioStream) const { _agent->setIsListeningToAudioStream(isListeningToAudioStream); }
+
+    float getAvatarViewRadius() const { return _agent->getAvatarViewRadius(); }
+    void setAvatarViewRadius(float radius) const { _agent->setAvatarViewRadius(radius); }
 
     bool isNoiseGateEnabled() const { return _agent->isNoiseGateEnabled(); }
     void setIsNoiseGateEnabled(bool isNoiseGateEnabled) const { _agent->setIsNoiseGateEnabled(isNoiseGateEnabled); }

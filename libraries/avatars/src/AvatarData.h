@@ -1529,6 +1529,8 @@ public:
     void setIsClientAvatar(bool isClientAvatar) { _isClientAvatar = isClientAvatar; }
     void setSkeletonData(const std::vector<AvatarSkeletonTrait::UnpackedJointData>& skeletonData);
     std::vector<AvatarSkeletonTrait::UnpackedJointData> getSkeletonData() const;
+    // every joint's rotation and position in the rig frame, for an avatar with no rig of its own here; false without a skeleton
+    bool getSkeletonPosesInRigFrame(std::vector<glm::quat>& rotations, std::vector<glm::vec3>& translations) const;
     void sendSkeletonData() const;
     QVector<JointData> getJointData() const;
     glm::vec3 getHeadJointFrontVector() const;

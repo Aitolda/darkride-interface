@@ -343,6 +343,14 @@ float ScriptAvatarData::getAudioLoudness() const {
         return 0.0f;
     }
 }
+// the point the avatar's eyes are aimed at, in the world, as its client sends it
+glm::vec3 ScriptAvatarData::getLookAtPosition() const {
+    if (AvatarSharedPointer sharedAvatarData = _avatarData.lock()) {
+        return sharedAvatarData->getHeadData()->getLookAtPosition();
+    } else {
+        return glm::vec3();
+    }
+}
 float ScriptAvatarData::getAudioAverageLoudness() const {
     if (AvatarSharedPointer sharedAvatarData = _avatarData.lock()) {
         return sharedAvatarData->getAudioAverageLoudness();
