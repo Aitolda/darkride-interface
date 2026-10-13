@@ -2047,7 +2047,10 @@ void AvatarData::processAvatarIdentity(
         // set the store identity sequence number to match the incoming identity
         _identitySequenceNumber = incomingSequenceNumber;
 
-        if (identity.skeletonModelURL != _skeletonModelURL) {
+        // An identity carries the wire-safe address, blank for an avatar on this machine (file:, qrc:). The mixer sends
+        // our own identity back once when we join, and that blank must not swap a local avatar for the default one.
+        if (identity.skeletonModelURL != _skeletonModelURL &&
+            identity.skeletonModelURL != getWireSafeSkeletonModelURL()) {
             setSkeletonModelURL(identity.skeletonModelURL);
             identityChanged = true;
             skeletonModelURLChanged = true;
