@@ -8705,6 +8705,10 @@ void Application::importAvatarDialog() {
     }
 }
 
+void Application::putAvatarInMyFiles() {
+    AvatarImporter::putInMyFiles(getMyAvatar()->getFullAvatarURLFromPreferences());
+}
+
 QString Application::getPreviousScriptLocation() {
     QString result = _previousScriptLocation.get();
     return result;

@@ -13,10 +13,13 @@
 #include <map>
 #include <memory>
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QPushButton>
 #include <QRegExp>
 #include <QUrl>
@@ -28,6 +31,7 @@
 #include <FBXSerializer.h>
 #include <GLMHelpers.h>
 #include <GLTFSerializer.h>
+#include <NetworkAccessManager.h>
 #include <OBJSerializer.h>
 #include <PathUtils.h>
 #include <StandardSkeleton.h>
@@ -36,6 +40,7 @@
 #include "AvatarManager.h"
 #include "InterfaceLogging.h"
 #include "MyAvatar.h"
+#include "editor/EditorCreate.h"
 
 namespace {
 
@@ -167,10 +172,14 @@ void warn(const QString& text) {
     QMessageBox::warning(nullptr, TITLE, text);
 }
 
+void inform(const QString& text) {
+    qCDebug(interfaceapp) << "Import Avatar: telling" << text;
+    QMessageBox::information(nullptr, TITLE, text);
+}
+
 // A line before and after each step, so a client that stops here shows in its log the step it stopped in (a freeze
 // right after "Wear it", 10-13, left no trace).
-void wear(const QString& fstPath, const QString& name) {
-    const QString url = QUrl::fromLocalFile(fstPath).toString();
+void wearUrl(const QString& url, const QString& name) {
     qCDebug(interfaceapp) << "Import Avatar: putting on" << url;
     DependencyManager::get<AvatarManager>()->getMyAvatar()->useFullAvatarURL(url, name);
     qCDebug(interfaceapp) << "Import Avatar: avatar change started";
@@ -178,10 +187,142 @@ void wear(const QString& fstPath, const QString& name) {
     qCDebug(interfaceapp) << "Import Avatar: wear done";
 }
 
+void wear(const QString& fstPath, const QString& name) {
+    wearUrl(QUrl::fromLocalFile(fstPath).toString(), name);
+}
+
+// An avatar on this computer goes out to others as a blank address (AvatarData::getWireSafeSkeletonModelURL), so they
+// see the default. In My Files it has a web address everyone loads: the model goes up with the files it names beside
+// it (game rips name their textures; anything else in the folder stays here), then the .fst with its filename line
+// pointing beside it, and the client wears that copy. One file at a time, through the editor's upload.
+struct Share {
+    QString name;
+    QString fstName;
+    QString remoteFolder;
+    QStringList fstLines;
+    int modelLine { -1 };
+    bool modelIsLocal { false };
+    QStringList files;  // local paths, the model first
+    int next { 0 };
+};
+using SharePointer = std::shared_ptr<Share>;
+
+// The web copy is worn only once its .fst reads back from the web: a failed avatar load falls back to the default
+// without a word, and the files host sent every .fst labelled gzip over plain text until metaverse 19f3c7d (10-13).
+void wearOnceItReadsBack(const SharePointer& share, const QString& url) {
+    QNetworkRequest request { QUrl(url) };
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    QNetworkReply* reply = NetworkAccessManager::getInstance().get(request);
+    QObject::connect(reply, &QNetworkReply::finished, reply, [reply, share, url]() {
+        reply->deleteLater();
+        const QByteArray body = reply->readAll();
+        if (reply->error() != QNetworkReply::NoError || !body.contains("filename")) {
+            const QString why = reply->error() != QNetworkReply::NoError ? reply->errorString()
+                                                                         : QString("it came back different");
+            warn(share->name + " went up to My Files, but its avatar file does not read back from the web (" + why +
+                 "), so you are still wearing the copy on this computer.");
+            return;
+        }
+        qCDebug(interfaceapp) << "Import Avatar:" << share->name << "reads back from" << url;
+        wearUrl(url, share->name);
+        inform(share->name + " is in My Files now, and you are wearing that copy, so everyone sees it.");
+    });
+}
+
+void shareNext(const SharePointer& share) {
+    const bool fstNow = share->next >= share->files.size();
+    auto upload = new EditorUpload();
+    QString error;
+    bool started;
+    if (!fstNow) {
+        started = upload->start(share->files[share->next], share->remoteFolder, error);
+        if (started && share->next == 0 && share->modelIsLocal) {
+            share->fstLines[share->modelLine] = "filename = " + upload->fileName();
+        }
+        share->next++;
+    } else {
+        started = upload->startData(share->fstLines.join('\n').toUtf8(), share->fstName, share->remoteFolder,
+                                    "text/plain", error);
+    }
+    if (!started) {
+        delete upload;
+        warn("Could not put " + share->name + " in My Files: " + error + ".");
+        return;
+    }
+    QObject::connect(upload, &EditorUpload::failed, upload, [upload, share](const QString& error) {
+        upload->deleteLater();
+        warn("Could not put " + share->name + " in My Files: " + error + ".");
+    });
+    QObject::connect(upload, &EditorUpload::finished, upload, [upload, share, fstNow](const QString& url) {
+        upload->deleteLater();
+        if (!fstNow) {
+            shareNext(share);
+            return;
+        }
+        qCDebug(interfaceapp) << "Import Avatar:" << share->name << "is in My Files at" << url;
+        wearOnceItReadsBack(share, url);
+    });
+}
+
+void shareAvatar(const QString& fstPath, const QString& name) {
+    QFile fst(fstPath);
+    if (!fst.open(QIODevice::ReadOnly)) {
+        warn("Could not read " + fstPath + ".");
+        return;
+    }
+    auto share = std::make_shared<Share>();
+    share->name = name;
+    share->fstName = QFileInfo(fstPath).fileName();
+    share->remoteFolder = "/avatars/" + name + "-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
+    QString modelPath;
+    for (const QString& line : QString::fromUtf8(fst.readAll()).split('\n')) {
+        const QString key = line.section('=', 0, 0).trimmed();
+        if (key == "texdir") {
+            continue;  // the textures go up beside the model, where it looks for them anyway
+        }
+        if (key == "filename" && share->modelLine < 0) {
+            const QString value = line.section('=', 1).trimmed();
+            const QUrl url(value);
+            if (url.isLocalFile()) {
+                modelPath = url.toLocalFile();
+            } else if (url.isRelative()) {
+                modelPath = QFileInfo(fstPath).dir().absoluteFilePath(value);
+            }
+            share->modelLine = share->fstLines.size();
+        }
+        share->fstLines.append(line);
+    }
+    if (!modelPath.isEmpty()) {
+        QFile model(modelPath);
+        if (!model.open(QIODevice::ReadOnly)) {
+            warn("Could not read " + modelPath + ".");
+            return;
+        }
+        const QByteArray bytes = model.readAll();
+        const QFileInfo modelInfo(modelPath);
+        share->files.append(modelInfo.absoluteFilePath());
+        share->modelIsLocal = true;
+        for (const QFileInfo& file : modelInfo.dir().entryInfoList(QDir::Files)) {
+            if (file != modelInfo && file.suffix().toLower() != "fst" && bytes.contains(file.fileName().toUtf8())) {
+                share->files.append(file.absoluteFilePath());
+            }
+        }
+    }
+    qCDebug(interfaceapp) << "Import Avatar: putting" << name << "in My Files," << share->files.size()
+                          << "files and the .fst, into" << share->remoteFolder;
+    shareNext(share);
+}
+
 void offerToWear(const QString& fstPath, const QString& name, const QString& what) {
-    if (ask(what, "Only you will see it until it is in My Files.",
-            { { "Wear it", QMessageBox::AcceptRole }, { "Not now", QMessageBox::RejectRole } }) == 0) {
+    const int answer = ask(what, "Only you see it while it is on this computer. In My Files, everyone sees it.",
+                           { { "Wear it", QMessageBox::AcceptRole },
+                             { "Wear it and put it in My Files", QMessageBox::ActionRole },
+                             { "Not now", QMessageBox::RejectRole } });
+    if (answer == 0 || answer == 1) {
         wear(fstPath, name);
+    }
+    if (answer == 1) {
+        shareAvatar(fstPath, name);
     }
 }
 
@@ -297,4 +438,13 @@ void AvatarImporter::importFile(const QString& path) {
             decide(import);
         }, Qt::QueuedConnection);
     });
+}
+
+void AvatarImporter::putInMyFiles(const QUrl& fstUrl) {
+    if (!fstUrl.isLocalFile()) {
+        inform(fstUrl.scheme() == "qrc" ? QString("The default avatar is in every client already.")
+                                         : QString("Your avatar is on the web already, so everyone sees it."));
+        return;
+    }
+    shareAvatar(fstUrl.toLocalFile(), avatarName(fstUrl.toLocalFile()));
 }

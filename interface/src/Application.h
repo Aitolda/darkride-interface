@@ -418,6 +418,7 @@ public slots:
 
     Q_INVOKABLE void loadDialog();
     void importAvatarDialog();
+    void putAvatarInMyFiles();
     Q_INVOKABLE void loadScriptURLDialog() const;
     void toggleLogDialog();
     void recreateLogWindow(int);

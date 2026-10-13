@@ -12,15 +12,19 @@
 #define hifi_AvatarImporter_h
 
 #include <QString>
+#include <QUrl>
 
 // File > Import Avatar. An .fst is worn as it is. A character file (FBX, DAE, OBJ, glTF and the rest the client reads)
 // gets the standard skeleton from libraries/auto-rigging, after asking when the file already has a rig, and an
 // offer to fix a height that looks like a units mistake. The result is saved under the app data folder's
-// Avatars/<name>/, and the client offers to wear it. Saving to My Files is not here yet: until then only this
-// client sees an imported avatar.
+// Avatars/<name>/, and the client offers to wear it, here only or put in My Files.
+//
+// File > Put Avatar in My Files. An avatar on this computer is seen only by this client (others get a blank address
+// and see the default). This uploads the worn one to the user's files on the metaverse and wears that copy.
 class AvatarImporter {
 public:
     static void importFile(const QString& path);
+    static void putInMyFiles(const QUrl& fstUrl);
 };
 
 #endif // hifi_AvatarImporter_h
