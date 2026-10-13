@@ -11,7 +11,9 @@
 #include "AvatarWriter.h"
 
 #include <algorithm>
+#include <array>
 #include <map>
+#include <tuple>
 
 #include <QBuffer>
 #include <QDir>
@@ -205,8 +207,190 @@ static bool blackCutOut(const QString& path, QByteArray& png) {
     return image.save(&buffer, "PNG");
 }
 
+// Where a texture's picture is, found the way game rips need: as written, relative to the model, by file name, then by
+// file name in any case. Empty when it is not there.
+static QString findTextureFile(const QString& written, const QDir& sourceFolder) {
+    QString path = written;
+    path.replace('\\', '/');
+    const QString fileName = QFileInfo(path).fileName();
+    for (const QString& candidate : { path, sourceFolder.filePath(path), sourceFolder.filePath(fileName) }) {
+        if (!candidate.isEmpty() && QFileInfo(candidate).isFile()) {
+            return candidate;
+        }
+    }
+    if (!fileName.isEmpty()) {
+        for (const QString& entry : sourceFolder.entryList(QDir::Files)) {
+            if (entry.compare(fileName, Qt::CaseInsensitive) == 0) {
+                return sourceFolder.filePath(entry);
+            }
+        }
+    }
+    return QString();
+}
+
+// Whether the engine draws a model's textures upside down. Inside the engine V counts down from the picture's top edge
+// (the FBX reader negates the file's V, which counts up from the bottom). Texture artists paint the two sides of every
+// UV seam (an edge the mesh draws from two places in a texture) to match, so drawn the right way up the colours across
+// a seam agree, and drawn upside down they mostly do not. Yes when the seams agree clearly better upside down; with too
+// few seams to tell, or no clear difference, no. The note says what was measured. A file read right (Chloe's rip:
+// differences 11.6 drawn, 33.1 flipped, 10-13) is kept.
+static bool drawsUpsideDown(const hfm::Model& model, const QDir& sourceFolder, QString& note) {
+    // each colour map once, by the texture's name in the model
+    std::map<QString, int> pictureOf;
+    std::vector<QImage> pictures;
+    auto pictureIndex = [&](const hfm::Texture& texture) {
+        if (texture.filename.isEmpty() && texture.content.isEmpty()) {
+            return -1;
+        }
+        const QString key = QString::fromUtf8(texture.filename) + (texture.content.isEmpty() ? "" : "#embedded");
+        auto known = pictureOf.find(key);
+        if (known != pictureOf.end()) {
+            return known->second;
+        }
+        QImage picture;
+        if (!texture.content.isEmpty()) {
+            picture = QImage::fromData(texture.content);
+        } else {
+            const QString path = findTextureFile(QString::fromUtf8(texture.filename), sourceFolder);
+            if (!path.isEmpty()) {
+                picture.load(path);
+            }
+        }
+        int index = -1;
+        if (!picture.isNull() && picture.width() > 8 && picture.height() > 8) {
+            pictures.push_back(picture.convertToFormat(QImage::Format_RGB32));
+            index = (int)pictures.size() - 1;
+        }
+        pictureOf[key] = index;
+        return index;
+    };
+    // the average colour of the 3 by 3 pixels around a point, drawn as the engine draws it or upside down
+    auto colourAt = [](const QImage& picture, const glm::vec2& uv, bool flipped) {
+        const float u = uv.x - std::floor(uv.x);
+        const float v = uv.y - std::floor(uv.y);
+        const int x = glm::clamp((int)(u * picture.width()), 0, picture.width() - 1);
+        const int y = glm::clamp((int)((flipped ? 1.0f - v : v) * picture.height()), 0, picture.height() - 1);
+        glm::vec3 sum(0.0f);
+        int count = 0;
+        for (int dy = -1; dy <= 1; dy++) {
+            const int row = y + dy;
+            if (row < 0 || row >= picture.height()) {
+                continue;
+            }
+            const QRgb* line = reinterpret_cast<const QRgb*>(picture.constScanLine(row));
+            for (int dx = -1; dx <= 1; dx++) {
+                const int column = x + dx;
+                if (column >= 0 && column < picture.width()) {
+                    sum += glm::vec3(qRed(line[column]), qGreen(line[column]), qBlue(line[column]));
+                    count++;
+                }
+            }
+        }
+        return count > 0 ? sum / (float)count : sum;
+    };
+
+    // one side of an edge: its two ends' UVs (the lower-numbered corner first) and the third corner's, to step inside
+    struct Side {
+        glm::vec2 first;
+        glm::vec2 second;
+        glm::vec2 opposite;
+    };
+    const float AGREE = 16.0f;  // colours this close (0-255, averaged over red, green and blue) agree
+    double differenceDrawn = 0.0;
+    double differenceFlipped = 0.0;
+    int agreeDrawn = 0;
+    int agreeFlipped = 0;
+    int samples = 0;
+    int seams = 0;
+    for (size_t m = 0; m < model.meshes.size(); m++) {
+        const hfm::Mesh& mesh = model.meshes[m];
+        const QVector<glm::vec2>& uvs = mesh.texCoords;
+        if (uvs.size() != mesh.vertices.size()) {
+            continue;
+        }
+        // the corners a seam splits share a position: one number per position
+        std::map<std::array<float, 3>, int> numberOf;
+        std::vector<int> corner(mesh.vertices.size());
+        for (int v = 0; v < mesh.vertices.size(); v++) {
+            const glm::vec3& p = mesh.vertices[v];
+            corner[v] = numberOf.emplace(std::array<float, 3>{ { p.x, p.y, p.z } }, (int)numberOf.size()).first->second;
+        }
+        std::map<std::tuple<int, int, int>, std::vector<Side>> edges;  // (corner, corner, picture) to the sides drawn
+        for (const hfm::Shape& shape : model.shapes) {
+            if (shape.mesh != m || shape.meshPart >= mesh.parts.size() || shape.material >= model.materials.size()) {
+                continue;
+            }
+            const int picture = pictureIndex(model.materials[shape.material].albedoTexture);
+            if (picture < 0) {
+                continue;
+            }
+            const hfm::MeshPart& part = mesh.parts[shape.meshPart];
+            for (const QVector<int>* indices : { &part.triangleIndices, &part.quadTrianglesIndices }) {
+                for (int i = 0; i + 2 < indices->size(); i += 3) {
+                    const int t[3] = { indices->at(i), indices->at(i + 1), indices->at(i + 2) };
+                    if (t[0] < 0 || t[1] < 0 || t[2] < 0 || t[0] >= uvs.size() || t[1] >= uvs.size() || t[2] >= uvs.size()) {
+                        continue;
+                    }
+                    for (int e = 0; e < 3; e++) {
+                        int a = t[e];
+                        int b = t[(e + 1) % 3];
+                        if (corner[a] == corner[b]) {
+                            continue;
+                        }
+                        if (corner[a] > corner[b]) {
+                            std::swap(a, b);
+                        }
+                        edges[std::make_tuple(corner[a], corner[b], picture)].push_back({ uvs[a], uvs[b], uvs[t[(e + 2) % 3]] });
+                    }
+                }
+            }
+        }
+        for (const auto& entry : edges) {
+            const std::vector<Side>& sides = entry.second;
+            if (sides.size() != 2 || (glm::distance(sides[0].first, sides[1].first) < 1.0e-4f &&
+                                      glm::distance(sides[0].second, sides[1].second) < 1.0e-4f)) {
+                continue;  // not a seam: one side, or both drawn from the same place
+            }
+            const QImage& picture = pictures[std::get<2>(entry.first)];
+            const glm::vec2 pixels(picture.width(), picture.height());
+            seams++;
+            for (const float along : { 0.25f, 0.5f, 0.75f }) {
+                glm::vec2 points[2];
+                for (int s = 0; s < 2; s++) {
+                    // a point on the edge, stepped 2.5 pixels into its triangle, past any padding at the seam
+                    const glm::vec2 onEdge = glm::mix(sides[s].first, sides[s].second, along);
+                    const glm::vec2 inward = sides[s].opposite - onEdge;
+                    const float length = glm::length(inward * pixels);
+                    points[s] = length > 1.0e-6f ? onEdge + inward * std::min(2.5f / length, 0.5f) : onEdge;
+                }
+                const glm::vec3 asDrawn = glm::abs(colourAt(picture, points[0], false) - colourAt(picture, points[1], false));
+                const glm::vec3 asFlipped = glm::abs(colourAt(picture, points[0], true) - colourAt(picture, points[1], true));
+                const float drawn = (asDrawn.x + asDrawn.y + asDrawn.z) / 3.0f;
+                const float flipped = (asFlipped.x + asFlipped.y + asFlipped.z) / 3.0f;
+                differenceDrawn += drawn;
+                differenceFlipped += flipped;
+                agreeDrawn += drawn < AGREE ? 1 : 0;
+                agreeFlipped += flipped < AGREE ? 1 : 0;
+                samples++;
+            }
+        }
+    }
+    if (samples < 90) {
+        note = seams > 0 ? QString("texture V kept: only %1 UV seams to read it from").arg(seams) : QString();
+        return false;
+    }
+    const double meanDrawn = differenceDrawn / samples;
+    const double meanFlipped = differenceFlipped / samples;
+    const bool upsideDown = meanFlipped < 0.6 * meanDrawn && agreeFlipped >= agreeDrawn + samples / 10;
+    note = QString("texture V %1: across %2 UV seams the colours differ by %3 as the engine draws them (%4% agree) and "
+                   "%5 upside down (%6% agree)")
+               .arg(upsideDown ? "flipped" : "kept").arg(seams).arg(meanDrawn, 0, 'f', 1).arg(100 * agreeDrawn / samples)
+               .arg(meanFlipped, 0, 'f', 1).arg(100 * agreeFlipped / samples);
+    return upsideDown;
+}
+
 WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, const Result& rig, const QString& sourcePath,
-                                   const QString& folder, const QString& name, bool flipV) {
+                                   const QString& folder, const QString& name, FlipV flipV) {
     WrittenAvatar written;
     if (!rig.ok || rig.joints.empty()) {
         written.error = "the character is not rigged";
@@ -222,6 +406,14 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         return written;
     }
     const QDir sourceFolder = QFileInfo(sourcePath).absoluteDir();
+    bool flipTextures = flipV == FlipV::Always;
+    if (flipV == FlipV::Detect) {
+        QString note;
+        flipTextures = drawsUpsideDown(model, sourceFolder, note);
+        if (!note.isEmpty()) {
+            written.notes << note;
+        }
+    }
 
     qint64 nextId = 1000000;
     auto newId = [&]() {
@@ -265,7 +457,7 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         connect(jointIds[j], parent >= 0 ? jointIds[parent] : 0);
     }
 
-    // textures: copied beside the FBX, found the way game rips need (relative, by file name, any case)
+    // textures: copied beside the FBX
     std::map<QString, QString> placed;
     auto placeTexture = [&](const hfm::Texture& texture) -> QString {
         QString path = QString::fromUtf8(texture.filename);
@@ -284,21 +476,7 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
                 return QString();
             }
         } else {
-            QString found;
-            for (const QString& candidate : { path, sourceFolder.filePath(path), sourceFolder.filePath(fileName) }) {
-                if (!candidate.isEmpty() && QFileInfo(candidate).isFile()) {
-                    found = candidate;
-                    break;
-                }
-            }
-            if (found.isEmpty() && !fileName.isEmpty()) {
-                for (const QString& entry : sourceFolder.entryList(QDir::Files)) {
-                    if (entry.compare(fileName, Qt::CaseInsensitive) == 0) {
-                        found = sourceFolder.filePath(entry);
-                        break;
-                    }
-                }
-            }
+            const QString found = findTextureFile(path, sourceFolder);
             if (found.isEmpty()) {
                 written.notes << "texture not found: " + path;
                 placed[path] = QString();
@@ -495,13 +673,16 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
                                    makeNode("Normals", { doubles(normals) }) });
             layer << layerElement("LayerElementNormal");
         }
+        // The reader negates V as it reads (FBXSerializer::createVec2Vector), so V is written negated back. The writer
+        // wrote it as read until 10-13, which drew every rigged avatar's textures upside down: Chloe's eyes from her
+        // painted chin, her jacket from her skin.
         const QVector<glm::vec2>& firstUVs = mesh.texCoords;
         const QVector<glm::vec2>& secondUVs = mesh.texCoords1;
         if (firstUVs.size() == mesh.vertices.size()) {
             QVector<double> uvs;
             uvs.reserve(firstUVs.size() * 2);
             for (const glm::vec2& uv : firstUVs) {
-                uvs << uv.x << (flipV ? 1.0f - uv.y : uv.y);
+                uvs << uv.x << -(flipTextures ? 1.0f - uv.y : uv.y);
             }
             geometry << makeNode("LayerElementUV", { 0 },
                                  { makeNode("Version", { 101 }), makeNode("Name", { FIRST_UV_SET }),
@@ -516,7 +697,7 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
             QVector<double> uvs;
             uvs.reserve(secondUVs.size() * 2);
             for (const glm::vec2& uv : secondUVs) {
-                uvs << uv.x << (flipV ? 1.0f - uv.y : uv.y);
+                uvs << uv.x << -(flipTextures ? 1.0f - uv.y : uv.y);
             }
             geometry << makeNode("LayerElementUV", { 1 },
                                  { makeNode("Version", { 101 }), makeNode("Name", { SECOND_UV_SET }),

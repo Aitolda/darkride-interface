@@ -338,6 +338,9 @@ void autoRig(const ImportPointer& import, float scale) {
         if (result.ok) {
             written = autorig::writeAvatar(*import->model, body, result, import->path, avatarFolder(import->name), import->name);
         }
+        for (const QString& note : written.notes) {
+            qCDebug(interfaceapp) << "Import Avatar:" << import->name << "note:" << note;
+        }
         qCDebug(interfaceapp) << "Import Avatar:" << import->name
                               << (!result.ok ? "not rigged:" : !written.ok ? "rigged, not saved:" : "rigged and saved as")
                               << (!result.ok ? result.error : !written.ok ? written.error : written.fstPath);

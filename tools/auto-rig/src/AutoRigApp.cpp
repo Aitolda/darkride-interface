@@ -211,8 +211,8 @@ static void inspectModel(const HFMModel& model) {
 
 // Draws each material's UV triangles over its colour texture into <folder>/<material>-<name>.png, the first UV layer
 // (red) on the left and the second (cyan) on the right: whether each part's coordinates land on its part of the texture
-// (Chloe's jacket showed patches of skin, 10-13). V runs up from the picture's bottom edge, as the engine
-// samples it: a rip drawn upside down here needs --flip-v.
+// (Chloe's jacket showed patches of skin, 10-13). V counts down from the picture's top edge, as the engine draws it
+// (its FBX reader negates the file's V).
 static void drawUVSheets(const HFMModel& model, const QString& modelPath, const QString& folder) {
     const int SIDE = 1024;
     QDir().mkpath(folder);
@@ -266,7 +266,7 @@ static void drawUVSheets(const HFMModel& model, const QString& modelPath, const 
                         int k = 0;
                         for (const int v : { a, b, c }) {
                             const glm::vec2 uv = uvs[v] - tile;
-                            corners[k++] = QPointF(layer * SIDE + uv.x * SIDE, (1.0f - uv.y) * SIDE);
+                            corners[k++] = QPointF(layer * SIDE + uv.x * SIDE, uv.y * SIDE);
                         }
                         painter.drawPolygon(corners, 3);
                         drawn += layer == 0 ? 1 : 0;
@@ -292,8 +292,9 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     const QCommandLineOption jsonOption("json", "write the joints and the answer key as JSON", "file");
     const QCommandLineOption outputOption("o", "write the rigged avatar (FBX, textures, .fst) into this folder", "folder");
     const QCommandLineOption nameOption("name", "the avatar's name (default: the input file's)", "name");
-    const QCommandLineOption flipVOption("flip-v", "with -o: the textures' V runs down from the picture's top (DirectX-era rips): "
-                                         "write it the FBX way up");
+    const QCommandLineOption flipVOption("flip-v", "with -o: flip texture V, for a model the engine draws upside down; "
+                                         "without this or --keep-v the writer decides from the texture seams");
+    const QCommandLineOption keepVOption("keep-v", "with -o: keep texture V as the engine draws the input");
     const QCommandLineOption previewOption("preview", "draw the rigged character into a PNG", "file");
     const QCommandLineOption animationOption("animation", "with --preview: also pose it by an animation", "fbx");
     const QCommandLineOption frameOption("frame", "with --animation: which frame (default 30)", "number");
@@ -326,6 +327,7 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
     parser.addOption(outputOption);
     parser.addOption(nameOption);
     parser.addOption(flipVOption);
+    parser.addOption(keepVOption);
     parser.addOption(previewOption);
     parser.addOption(animationOption);
     parser.addOption(frameOption);
@@ -509,7 +511,9 @@ AutoRigApp::AutoRigApp(int argc, char* argv[]) : QCoreApplication(argc, argv) {
         name.replace(QRegExp("[^A-Za-z0-9_-]+"), "_");
         const autorig::WrittenAvatar written =
             autorig::writeAvatar(*model, body, result, inputPath, parser.value(outputOption), name,
-                                 parser.isSet(flipVOption));
+                                 parser.isSet(flipVOption)   ? autorig::FlipV::Always
+                                 : parser.isSet(keepVOption) ? autorig::FlipV::Never
+                                                             : autorig::FlipV::Detect);
         for (const QString& note : written.notes) {
             fprintf(stdout, "%s\n", qPrintable(note));
         }
