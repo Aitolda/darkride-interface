@@ -501,6 +501,10 @@ public:
     bool dynamicDataNeedsTransmit() const { return _dynamicDataNeedsTransmit; }
     void setTransitingWithAvatar(bool value) { _transitingWithAvatar = value; }
     bool getTransitingWithAvatar() { return _transitingWithAvatar; }
+    // the local physics places this entity itself (a car on a track, driven from the train's state), so the
+    // transform and velocities in a network update are not applied, as when this client owns the simulation
+    void setTransformDrivenLocally(bool value) { _transformDrivenLocally = value; }
+    bool getTransformDrivenLocally() const { return _transformDrivenLocally; }
 
     bool shouldSuppressLocationEdits() const;
 
@@ -765,6 +769,7 @@ protected:
 
     entity::HostType _hostType { entity::HostType::DOMAIN };
     bool _transitingWithAvatar{ false };
+    bool _transformDrivenLocally { false };
     QUuid _owningAvatarID;
 
     // physics related changes from the network to suppress any duplicates and make

@@ -118,6 +118,12 @@ public:
     static void setLeftoverTime(float seconds);
     static float getLeftoverTime();
 
+    // The wall-clock time (usec) of the substep being simulated, set by the engine before each substep: the paced
+    // clock's estimate of when this substep's boundary falls. A state stamped with it (a train's, PHYSICS.md 4.7)
+    // can be run on to another node's substep exactly.
+    static void setSubstepTime(uint64_t usecs);
+    static uint64_t getSubstepTime();
+
     // Moving reference frames (PHYSICS.md 4.1), for any object with a parent chain: entities and avatars.
     // The nearest ancestor that is a frame; null when there is none.
     static SpatiallyNestablePointer findFrameAncestor(const SpatiallyNestablePointer& object);

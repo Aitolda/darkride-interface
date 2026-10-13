@@ -287,6 +287,7 @@ enum class EntityVersion : PacketVersion {
     TerrainEntities, // darkride
     TerrainLayers, // darkride
     TrackEntities, // darkride: the Track entity type, and frame, trackID and trackOffset on every entity (PHYSICS.md round 4)
+    TrainState, // darkride: the train's state on the Track entity, written by the physics server (PHYSICS.md round 5)
     // TO DO - reinstate with tonemapping in zones
     // ToneMappingMode, // caitlyn
     

@@ -688,6 +688,12 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
     CHECK_PROPERTY_CHANGE(PROP_TRACK_CLOSED, trackClosed);
     CHECK_PROPERTY_CHANGE(PROP_TRACK_SPEED, trackSpeed);
     CHECK_PROPERTY_CHANGE(PROP_TRACK_ACCELERATION, trackAcceleration);
+    CHECK_PROPERTY_CHANGE(PROP_TRAIN_DISTANCE, trainDistance);
+    CHECK_PROPERTY_CHANGE(PROP_TRAIN_SPEED, trainSpeed);
+    CHECK_PROPERTY_CHANGE(PROP_TRAIN_REVERSED, trainReversed);
+    CHECK_PROPERTY_CHANGE(PROP_TRAIN_DWELL, trainDwell);
+    CHECK_PROPERTY_CHANGE(PROP_TRAIN_STATION, trainStation);
+    CHECK_PROPERTY_CHANGE(PROP_TRAIN_TIME, trainTime);
 
     CHECK_PROPERTY_CHANGE(PROP_LINE_POINTS, linePoints);
     CHECK_PROPERTY_CHANGE(PROP_STROKE_WIDTHS, strokeWidths);
@@ -1283,6 +1289,18 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
  *     forth between its ends.
  * @property {number} trackSpeed=5 - The train's cruising speed, in m/s.
  * @property {number} trackAcceleration=1 - The train's acceleration and braking, in m/s^2.
+ * @property {number} trainDistance=0 - <em>Read-only.</em> Where the train's reference point is along the track, in
+ *     meters of arc length, at <code>trainTime</code>. The physics server writes the train's state; every client runs
+ *     the same schedule on from it.
+ * @property {number} trainSpeed=0 - <em>Read-only.</em> The train's speed at <code>trainTime</code>, in m/s.
+ * @property {boolean} trainReversed=false - <em>Read-only.</em> <code>true</code> if the train runs against the arc
+ *     length (a shuttle on its way back).
+ * @property {number} trainDwell=0 - <em>Read-only.</em> How long the train still stands at its station, in seconds;
+ *     <code>0</code> when it is moving.
+ * @property {number} trainStation=65535 - <em>Read-only.</em> The control point the train stands at or heads for;
+ *     <code>65535</code> for none.
+ * @property {number} trainTime=0 - <em>Read-only.</em> The domain time the state is for, in microseconds; <code>0</code>
+ *     when no physics server has driven this track.
  */
 
 /**jsdoc
@@ -1713,7 +1731,15 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
     }
 
     // Core properties
-    //COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_SIMULATION_OWNER, simulationOwner); // not exposed yet
+    // the simulation owner, read-only from scripts: who drives the entity's physics and at what priority (a car on a
+    // track reads the physics server at 255, PHYSICS.md round 5); settable only through the physics
+    if ((_desiredProperties.isEmpty() || _desiredProperties.getHasProperty(PROP_SIMULATION_OWNER)) &&
+        (!skipDefaults || !_simulationOwner.isNull())) {
+        QScriptValue simulationOwner = engine->newObject();
+        simulationOwner.setProperty("ownerID", _simulationOwner.getID().toString());
+        simulationOwner.setProperty("priority", (int)_simulationOwner.getPriority());
+        properties.setProperty("simulationOwner", simulationOwner);
+    }
     COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_PARENT_ID, parentID);
     COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_PARENT_JOINT_INDEX, parentJointIndex);
     COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_VISIBLE, visible);
@@ -1994,6 +2020,12 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
         COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_CLOSED, trackClosed);
         COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_SPEED, trackSpeed);
         COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_ACCELERATION, trackAcceleration);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRAIN_DISTANCE, trainDistance);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRAIN_SPEED, trainSpeed);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRAIN_REVERSED, trainReversed);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRAIN_DWELL, trainDwell);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRAIN_STATION, trainStation);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRAIN_TIME, trainTime);
     }
 
     if (_type == EntityTypes::PolyLine) {
@@ -2374,6 +2406,12 @@ void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool 
     COPY_PROPERTY_FROM_QSCRIPTVALUE(trackClosed, bool, setTrackClosed);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(trackSpeed, float, setTrackSpeed);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(trackAcceleration, float, setTrackAcceleration);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trainDistance, float, setTrainDistance);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trainSpeed, float, setTrainSpeed);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trainReversed, bool, setTrainReversed);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trainDwell, float, setTrainDwell);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trainStation, quint16, setTrainStation);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trainTime, quint64, setTrainTime);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(linePoints, qVectorVec3, setLinePoints);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(strokeWidths, qVectorFloat, setStrokeWidths);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(normals, qVectorVec3, setNormals);
@@ -2682,6 +2720,12 @@ void EntityItemProperties::merge(const EntityItemProperties& other) {
     COPY_PROPERTY_IF_CHANGED(trackClosed);
     COPY_PROPERTY_IF_CHANGED(trackSpeed);
     COPY_PROPERTY_IF_CHANGED(trackAcceleration);
+    COPY_PROPERTY_IF_CHANGED(trainDistance);
+    COPY_PROPERTY_IF_CHANGED(trainSpeed);
+    COPY_PROPERTY_IF_CHANGED(trainReversed);
+    COPY_PROPERTY_IF_CHANGED(trainDwell);
+    COPY_PROPERTY_IF_CHANGED(trainStation);
+    COPY_PROPERTY_IF_CHANGED(trainTime);
     COPY_PROPERTY_IF_CHANGED(linePoints);
     COPY_PROPERTY_IF_CHANGED(strokeWidths);
     COPY_PROPERTY_IF_CHANGED(normals);
@@ -3106,6 +3150,12 @@ bool EntityItemProperties::getPropertyInfo(const QString& propertyName, EntityPr
         ADD_PROPERTY_TO_MAP(PROP_TRACK_CLOSED, TrackClosed, trackClosed, bool);
         ADD_PROPERTY_TO_MAP(PROP_TRACK_SPEED, TrackSpeed, trackSpeed, float);
         ADD_PROPERTY_TO_MAP(PROP_TRACK_ACCELERATION, TrackAcceleration, trackAcceleration, float);
+        ADD_PROPERTY_TO_MAP(PROP_TRAIN_DISTANCE, TrainDistance, trainDistance, float);
+        ADD_PROPERTY_TO_MAP(PROP_TRAIN_SPEED, TrainSpeed, trainSpeed, float);
+        ADD_PROPERTY_TO_MAP(PROP_TRAIN_REVERSED, TrainReversed, trainReversed, bool);
+        ADD_PROPERTY_TO_MAP(PROP_TRAIN_DWELL, TrainDwell, trainDwell, float);
+        ADD_PROPERTY_TO_MAP(PROP_TRAIN_STATION, TrainStation, trainStation, quint16);
+        ADD_PROPERTY_TO_MAP(PROP_TRAIN_TIME, TrainTime, trainTime, quint64);
 
         ADD_PROPERTY_TO_MAP(PROP_LINE_POINTS, LinePoints, linePoints, QVector<vec3>);
         ADD_PROPERTY_TO_MAP(PROP_STROKE_WIDTHS, StrokeWidths, strokeWidths, QVector<float>);
@@ -3565,6 +3615,12 @@ OctreeElement::AppendState EntityItemProperties::encodeEntityEditPacket(PacketTy
                 APPEND_ENTITY_PROPERTY(PROP_TRACK_CLOSED, properties.getTrackClosed());
                 APPEND_ENTITY_PROPERTY(PROP_TRACK_SPEED, properties.getTrackSpeed());
                 APPEND_ENTITY_PROPERTY(PROP_TRACK_ACCELERATION, properties.getTrackAcceleration());
+                APPEND_ENTITY_PROPERTY(PROP_TRAIN_DISTANCE, properties.getTrainDistance());
+                APPEND_ENTITY_PROPERTY(PROP_TRAIN_SPEED, properties.getTrainSpeed());
+                APPEND_ENTITY_PROPERTY(PROP_TRAIN_REVERSED, properties.getTrainReversed());
+                APPEND_ENTITY_PROPERTY(PROP_TRAIN_DWELL, properties.getTrainDwell());
+                APPEND_ENTITY_PROPERTY(PROP_TRAIN_STATION, properties.getTrainStation());
+                APPEND_ENTITY_PROPERTY(PROP_TRAIN_TIME, properties.getTrainTime());
             }
 
             if (properties.getType() == EntityTypes::Line) {
@@ -4065,6 +4121,12 @@ bool EntityItemProperties::decodeEntityEditPacket(const unsigned char* data, int
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_CLOSED, bool, setTrackClosed);
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_SPEED, float, setTrackSpeed);
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_ACCELERATION, float, setTrackAcceleration);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRAIN_DISTANCE, float, setTrainDistance);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRAIN_SPEED, float, setTrainSpeed);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRAIN_REVERSED, bool, setTrainReversed);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRAIN_DWELL, float, setTrainDwell);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRAIN_STATION, quint16, setTrainStation);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRAIN_TIME, quint64, setTrainTime);
     }
 
     if (properties.getType() == EntityTypes::Line) {
@@ -4475,6 +4537,12 @@ void EntityItemProperties::markAllChanged() {
     _trackClosedChanged = true;
     _trackSpeedChanged = true;
     _trackAccelerationChanged = true;
+    _trainDistanceChanged = true;
+    _trainSpeedChanged = true;
+    _trainReversedChanged = true;
+    _trainDwellChanged = true;
+    _trainStationChanged = true;
+    _trainTimeChanged = true;
     _linePointsChanged = true;
     _strokeWidthsChanged = true;
     _normalsChanged = true;
@@ -5182,6 +5250,24 @@ QList<QString> EntityItemProperties::listChangedProperties() {
     }
     if (trackAccelerationChanged()) {
         out += "trackAcceleration";
+    }
+    if (trainDistanceChanged()) {
+        out += "trainDistance";
+    }
+    if (trainSpeedChanged()) {
+        out += "trainSpeed";
+    }
+    if (trainReversedChanged()) {
+        out += "trainReversed";
+    }
+    if (trainDwellChanged()) {
+        out += "trainDwell";
+    }
+    if (trainStationChanged()) {
+        out += "trainStation";
+    }
+    if (trainTimeChanged()) {
+        out += "trainTime";
     }
     if (linePointsChanged()) {
         out += "linePoints";

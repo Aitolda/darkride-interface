@@ -20,6 +20,22 @@
 #include "PhysicsLogging.h"
 #include "ShapeManager.h"
 
+namespace {
+    // The physics server drives a car on a track without its real shape: it collides with nothing this round and loads
+    // no models, so a model car would wait for a shape forever. It gets a box of its dimensions instead.
+    bool serverDrivesAsBox(const EntityItemPointer& entity) {
+        return Physics::isServerAuthority() && !entity->getTrackID().isNull();
+    }
+
+    void computeEntityShape(const EntityItemPointer& entity, ShapeInfo& shapeInfo) {
+        if (serverDrivesAsBox(entity)) {
+            shapeInfo.setBox(0.5f * entity->getScaledDimensions());
+            return;
+        }
+        entity->computeShapeInfo(shapeInfo);
+    }
+}
+
 
 PhysicalEntitySimulation::PhysicalEntitySimulation() {
     _trackSimulation = std::make_unique<TrackSimulation>();
@@ -42,11 +58,15 @@ void PhysicalEntitySimulation::init(
     _entityPacketSender = packetSender;
 }
 
+uint8_t PhysicalEntitySimulation::regionOf(const EntityItemPointer& entity) const {
+    return _space ? _space->getRegion(entity->getSpaceIndex()) : (uint8_t)workload::Region::R1;
+}
+
 // begin EntitySimulation overrides
 void PhysicalEntitySimulation::addEntityToInternalLists(EntityItemPointer entity) {
     EntitySimulation::addEntityToInternalLists(entity);
     entity->deserializeActions(); // TODO: do this elsewhere
-    uint8_t region = _space->getRegion(entity->getSpaceIndex());
+    uint8_t region = regionOf(entity);
     bool maybeShouldBePhysical = (region < workload::Region::R3 || region == workload::Region::UNKNOWN) && entity->shouldBePhysical();
     bool canBeKinematic = region <= workload::Region::R4;
     if (maybeShouldBePhysical) {
@@ -120,7 +140,7 @@ void PhysicalEntitySimulation::processChangedEntity(const EntityItemPointer& ent
 
     // queue incoming changes: from external sources (script, EntityServer, etc) to physics engine
     EntityMotionState* motionState = static_cast<EntityMotionState*>(entity->getPhysicsInfo());
-    uint8_t region = _space->getRegion(entity->getSpaceIndex());
+    uint8_t region = regionOf(entity);
     bool shouldBePhysical = region < workload::Region::R3 && entity->shouldBePhysical();
     bool canBeKinematic = region <= workload::Region::R4;
     if (motionState) {
@@ -264,7 +284,7 @@ void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
     auto buildMotionState = [&](const JPH::Shape* shape, EntityItemPointer entity) {
         EntityMotionState* motionState = new EntityMotionState(shape, entity);
         entity->setPhysicsInfo(static_cast<void*>(motionState));
-        motionState->setRegion(_space->getRegion(entity->getSpaceIndex()));
+        motionState->setRegion(regionOf(entity));
         motionState->setTrackSimulation(_trackSimulation.get());
         _physicalObjects.insert(motionState);
         _incomingChanges.insert(motionState);
@@ -292,7 +312,7 @@ void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
                     // rebuild the ShapeInfo to verify hash because entity's desired shape may have changed
                     // TODO? is there a better way to do this?
                     ShapeInfo shapeInfo;
-                    entity->computeShapeInfo(shapeInfo);
+                    computeEntityShape(entity, shapeInfo);
 
                     if (shapeInfo.getType() == SHAPE_TYPE_NONE) {
                         requestItr = _shapeRequests.erase(requestItr);
@@ -354,7 +374,7 @@ void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
             continue;
         }
 
-        uint8_t region = _space->getRegion(entity->getSpaceIndex());
+        uint8_t region = regionOf(entity);
         if (region == workload::Region::UNKNOWN) {
             // the workload hasn't categorized it yet --> skip for later
             ++entityItr;
@@ -366,13 +386,13 @@ void PhysicalEntitySimulation::buildMotionStatesForEntitiesThatNeedThem() {
             continue;
         }
 
-        if (entity->isReadyToComputeShape()) {
+        if (entity->isReadyToComputeShape() || serverDrivesAsBox(entity)) {
             ShapeRequest shapeRequest(entity);
             ShapeRequests::iterator  requestItr = _shapeRequests.find(shapeRequest);
             if (requestItr == _shapeRequests.end()) {
                 // not waiting for a shape (yet)
                 ShapeInfo shapeInfo;
-                entity->computeShapeInfo(shapeInfo);
+                computeEntityShape(entity, shapeInfo);
                 uint32_t requestCount = ObjectMotionState::getShapeManager()->getWorkRequestCount();
                 const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
                 if (shape) {
@@ -435,7 +455,7 @@ void PhysicalEntitySimulation::buildPhysicsTransaction(PhysicsEngine::Transactio
                 ShapeRequests::iterator  requestItr = _shapeRequests.find(shapeRequest);
                 if (requestItr == _shapeRequests.end()) {
                     ShapeInfo shapeInfo;
-                    object->_entity->computeShapeInfo(shapeInfo);
+                    computeEntityShape(object->_entity, shapeInfo);
                     uint32_t requestCount = ObjectMotionState::getShapeManager()->getWorkRequestCount();
                     const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
                     if (shape) {
@@ -455,7 +475,7 @@ void PhysicalEntitySimulation::buildPhysicsTransaction(PhysicsEngine::Transactio
                 }
             } else {
                 ShapeInfo shapeInfo;
-                object->_entity->computeShapeInfo(shapeInfo);
+                computeEntityShape(object->_entity, shapeInfo);
                 const JPH::Shape* shape = ObjectMotionState::getShapeManager()->getShape(shapeInfo);
                 if (shape) {
                     object->setShape(shape);

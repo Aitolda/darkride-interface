@@ -193,6 +193,15 @@ enum EntityPropertyList
     PROP_TRACK_CLOSED = PROP_DERIVED_3,
     PROP_TRACK_SPEED = PROP_DERIVED_4,
     PROP_TRACK_ACCELERATION = PROP_DERIVED_5,
+    // the train's state on the track, written by the physics server (PHYSICS.md round 5): where its reference point is
+    // along the track, how fast and which way it goes, how long it still stands, the station it stands at or heads
+    // for, and the domain time the state is for; every client runs the follower on from it
+    PROP_TRAIN_DISTANCE = PROP_DERIVED_6,
+    PROP_TRAIN_SPEED = PROP_DERIVED_7,
+    PROP_TRAIN_REVERSED = PROP_DERIVED_8,
+    PROP_TRAIN_DWELL = PROP_DERIVED_9,
+    PROP_TRAIN_STATION = PROP_DERIVED_10,
+    PROP_TRAIN_TIME = PROP_DERIVED_11,
 
     // Particles
     PROP_MAX_PARTICLES = PROP_DERIVED_0,

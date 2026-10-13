@@ -94,6 +94,9 @@ public:
 
     EntityEditPacketSender* getPacketSender() { return _entityPacketSender; }
 
+    // the trains on the tracks (PHYSICS.md 4.8); the physics server takes their state publications from here
+    TrackSimulation* getTrackSimulation() const { return _trackSimulation.get(); }
+
     void addOwnershipBid(EntityMotionState* motionState);
     void addOwnership(EntityMotionState* motionState);
     void sendOwnershipBids(uint32_t numSubsteps);
@@ -101,6 +104,8 @@ public:
 
 private:
     void buildMotionStatesForEntitiesThatNeedThem();
+    // the workload region an entity is in; without a workload space (the physics server has none) everything is R1
+    uint8_t regionOf(const EntityItemPointer& entity) const;
 
     class ShapeRequest {
     public:

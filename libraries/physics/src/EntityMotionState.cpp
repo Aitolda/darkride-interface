@@ -179,6 +179,11 @@ void EntityMotionState::handleEasyChanges(uint32_t& flags) {
     }
 
     if (flags & Simulation::DIRTY_SIMULATOR_ID) {
+        if (_trackDriven && Physics::isServerAuthority()) {
+            qCInfo(physics) << "physics-server: car" << _entity->getName() << _entity->getID() << "owner now"
+                << _entity->getSimulatorID() << "at priority" << (int)_entity->getSimulationPriority()
+                << (isLocallyOwned() ? "(this server)" : "");
+        }
         if (_entity->getSimulatorID().isNull()) {
             // simulation ownership has been removed
             if (glm::length2(_entity->getWorldVelocity()) == 0.0f) {
@@ -352,13 +357,17 @@ void EntityMotionState::pushTransformToBody(float dt) {
         return;
     }
     bool driven = false;
-    if (_trackDriven && _tracks && (isLocallyOwned() || isServerlessMode())) {
-        // a car on a track: this client drives it along the curve (TrackSimulation, PHYSICS.md 4.8) when it owns the
-        // car, or when there is no server and so no owner (a serverless world is all ours). The record is
-        // set to the train's pose at this substep and read ahead from there as any keyframed entity's is.
+    if (_trackDriven && _tracks) {
+        // a car on a track is driven along the curve by the TrackSimulation (PHYSICS.md 4.8 and round 5): on the physics
+        // server, on every client while the track carries the server's train state, and otherwise by the client that
+        // owns the car or has the world to itself (serverless). The record is set to the train's pose at this substep
+        // and read ahead from there as any keyframed entity's is; while it is driven here the network's transform for
+        // it is not applied (EntityItem::setTransformDrivenLocally).
         glm::vec3 position, linearVelocity, angularVelocity;
         glm::quat rotation;
-        driven = _tracks->drive(_entity, thisStep, position, rotation, linearVelocity, angularVelocity);
+        driven = _tracks->drive(_entity, thisStep, isLocallyOwned() || isServerlessMode(), position, rotation,
+                                linearVelocity, angularVelocity);
+        _entity->setTransformDrivenLocally(driven);
         if (driven) {
             Transform local = _entity->getLocalTransform();
             local.setTranslation(position);
@@ -541,6 +550,19 @@ bool EntityMotionState::remoteSimulationOutOfSync(uint32_t simulationStep) {
     int numSteps = simulationStep - _lastStep;
     float dt = (float)(numSteps) * PHYSICS_ENGINE_FIXED_SUBSTEP;
 
+    if (_trackDriven) {
+        // a car on a track is never "inactive" to its owner: it stands at a station between runs and its owner (the
+        // physics server, or a client when there is none) keeps it, sending an update before the ownership would
+        // expire, and otherwise when the others' dead reckoning would be out (PHYSICS.md rounds 4 and 5)
+        // (with half the period in hand: the entity server expires an owner a second after this expiry, and one
+        // update in that second lost or late handed the physics server's car back)
+        const uint64_t KEEP_ALIVE_MARGIN = MAX_OUTGOING_SIMULATION_UPDATE_PERIOD / 2;
+        if (usecTimestampNow() + KEEP_ALIVE_MARGIN > _entity->getSimulationOwnershipExpiry()) {
+            return true;
+        }
+        return trackCarOutOfSync(simulationStep);
+    }
+
     if (_numInactiveUpdates > 0) {
         if (_numInactiveUpdates > MAX_NUM_INACTIVE_UPDATES) {
             // clear local ownership (stop sending updates) and let the server clear itself
@@ -565,9 +587,6 @@ bool EntityMotionState::remoteSimulationOutOfSync(uint32_t simulationStep) {
     }
 
     if (_body->IsStatic() || _body->IsKinematic()) {
-        if (_trackDriven) {
-            return trackCarOutOfSync(simulationStep);
-        }
         return false;
     }
 
@@ -648,9 +667,12 @@ bool EntityMotionState::remoteSimulationOutOfSync(uint32_t simulationStep) {
 // the entity server does), so an update goes out whenever that would be a centimetre or half a degree out, and at
 // most every few substeps.
 bool EntityMotionState::trackCarOutOfSync(uint32_t simulationStep) {
-    const uint32_t MIN_STEPS_BETWEEN_UPDATES = 3;   // 33 ms at 90 Hz
-    const float MAX_POSITION_ERROR_SQUARED = 0.0001f;   // a centimetre
-    const float MIN_ROTATION_DOT = 0.9999905f;   // half a degree
+    // the physics server sends far fewer: every client runs the train's state itself, and the entity server's own
+    // record of the car (for a client that has no state yet, and for scripts there) may lag a quarter of a metre
+    bool server = Physics::isServerAuthority();
+    const uint32_t MIN_STEPS_BETWEEN_UPDATES = server ? 22 : 3;   // 4 Hz on the server, 33 ms at 90 Hz on a client
+    const float MAX_POSITION_ERROR_SQUARED = server ? 0.0625f : 0.0001f;   // a quarter of a metre, or a centimetre
+    const float MIN_ROTATION_DOT = server ? 0.99905f : 0.9999905f;   // five degrees, or half a degree
     int numSteps = simulationStep - _lastStep;
     float dt = (float)numSteps * PHYSICS_ENGINE_FIXED_SUBSTEP;
     _lastStep = simulationStep;
@@ -699,7 +721,10 @@ void EntityMotionState::updateSendVelocities() {
         if (!_body->IsKinematic()) {
             clearObjectVelocities();
         }
-        if (_entity->getEntityHostType() == entity::HostType::AVATAR) {
+        if (_trackDriven) {
+            // a standing car is not released by its owner (see remoteSimulationOutOfSync)
+            _numInactiveUpdates = 0;
+        } else if (_entity->getEntityHostType() == entity::HostType::AVATAR) {
             // AvatarEntities only ever need to send one update (their updates are sent over a lossless protocol)
             // so we set the count to the max to prevent resends
             _numInactiveUpdates = MAX_NUM_INACTIVE_UPDATES;
@@ -765,6 +790,10 @@ void EntityMotionState::sendBid(OctreeEditPacketSender* packetSender, uint32_t s
     EntityItemID id(_entity->getID());
     EntityEditPacketSender* entityPacketSender = static_cast<EntityEditPacketSender*>(packetSender);
     entityPacketSender->queueEditEntityMessage(PacketType::EntityPhysics, tree, id, properties);
+    if (_trackDriven && Physics::isServerAuthority()) {
+        qCInfo(physics) << "physics-server: bid for car" << _entity->getName() << _entity->getID() << "at priority"
+            << (int)finalBidPriority << "(owner" << _entity->getSimulatorID() << "at" << (int)_entity->getSimulationPriority() << ")";
+    }
 
     // NOTE: we don't descend to children for ownership bid.  Instead, if we win ownership of the parent
     // then in sendUpdate() we'll walk descendents and send updates for their QueryAACubes if necessary.
@@ -825,8 +854,11 @@ void EntityMotionState::sendUpdate(OctreeEditPacketSender* packetSender, uint32_
         // if newPriority is zero, then it must be outside of R1, which means we should really set it to YIELD
         // which we achive by just setting it to the max of the two
         newPriority = glm::max(newPriority, YIELD_SIMULATION_PRIORITY);
-        if (newPriority != _entity->getSimulationPriority() &&
-                !(newPriority == VOLUNTEER_SIMULATION_PRIORITY && _entity->getSimulationPriority() == RECRUIT_SIMULATION_PRIORITY)) {
+        // the physics server says who owns a car in every update: should the entity server have expired its ownership
+        // on a lost update, the next one takes the car back without waiting to hear of the loss
+        bool reassert = _trackDriven && Physics::isServerAuthority();
+        if (reassert || (newPriority != _entity->getSimulationPriority() &&
+                !(newPriority == VOLUNTEER_SIMULATION_PRIORITY && _entity->getSimulationPriority() == RECRUIT_SIMULATION_PRIORITY))) {
             // our desired priority has changed
             if (newPriority == 0) {
                 // we should release ownership
@@ -1010,13 +1042,17 @@ void EntityMotionState::computeCollisionGroupAndMask(int32_t& group, int32_t& ma
 
 bool EntityMotionState::shouldSendBid() const {
     // NOTE: this method is only ever called when the entity's simulation is NOT locally owned
-    bool unownedTrackCar = _trackDriven && _entity->getSimulatorID().isNull();   // a train needs a driver, moving or not
-    return (_body->IsActive() || unownedTrackCar)
-        && (_region == workload::Region::R1)
+    // A train needs a driver, moving or not: the physics server takes every car from whoever has it, at SERVER
+    // priority; a client bids for an unowned car only while no server drives its track (PHYSICS.md round 5).
+    bool serverTakesCar = _trackDriven && Physics::isServerAuthority();
+    bool serverDriven = _trackDriven && _tracks && _tracks->isServerDriven(_entity->getTrackID());
+    bool unownedTrackCar = _trackDriven && _entity->getSimulatorID().isNull() && !serverDriven;
+    return (_body->IsActive() || unownedTrackCar || serverTakesCar)
+        && (_region == workload::Region::R1 || serverTakesCar)
         && _ownershipState != EntityMotionState::OwnershipState::Unownable
-        && glm::max(glm::max(VOLUNTEER_SIMULATION_PRIORITY, _bumpedPriority), _entity->getScriptSimulationPriority()) >= _entity->getSimulationPriority()
+        && computeFinalBidPriority() >= _entity->getSimulationPriority()
         && !_entity->getLocked()
-        && (!(_body->IsStatic() || _body->IsKinematic()) || _entity->stillHasMyGrab() || unownedTrackCar);
+        && (!(_body->IsStatic() || _body->IsKinematic()) || _entity->stillHasMyGrab() || unownedTrackCar || serverTakesCar);
 }
 
 void EntityMotionState::setBody(JPH::Body* body, PhysicsWorld* world) {
@@ -1029,6 +1065,9 @@ void EntityMotionState::setBody(JPH::Body* body, PhysicsWorld* world) {
 }
 
 uint8_t EntityMotionState::computeFinalBidPriority() const {
+    if (_trackDriven && Physics::isServerAuthority()) {
+        return SERVER_SIMULATION_PRIORITY;   // the physics server's claim on a car outranks any client's
+    }
     return (_region == workload::Region::R1) ?
         glm::max(glm::max(VOLUNTEER_SIMULATION_PRIORITY, _bumpedPriority), _entity->getScriptSimulationPriority()) : 0;
 }

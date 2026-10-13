@@ -1579,6 +1579,21 @@
       ]
     },
     {
+      "name": "physics_server",
+      "label": "Physics Server",
+      "assignment-types": [ 7 ],
+      "settings": [
+        {
+          "name": "enabled",
+          "type": "checkbox",
+          "label": "Enabled",
+          "help": "Assigns a physics-server in your domain: the server-authoritative simulation that drives trains along Track entities and owns the cars that ride them, so every visitor sees the same train in the same place (PHYSICS.md).",
+          "default": true,
+          "advanced": true
+        }
+      ]
+    },
+    {
       "name": "entity_script_server",
       "label": "Entity Script Server (ESS)",
       "assignment-types": [ 5 ],

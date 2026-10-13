@@ -437,6 +437,9 @@ void PhysicsEngine::stepSimulation() {
 
     uint64_t start = usecTimestampNow();
     for (int i = 0; i < numSubsteps; ++i) {
+        // this substep's boundary on the wall clock: the present less the leftover and the substeps still to run
+        float behind = _accumulatedTime + (float)(numSubsteps - 1 - i) * PHYSICS_ENGINE_FIXED_SUBSTEP;
+        ObjectMotionState::setSubstepTime(now - (uint64_t)(behind * (float)USECS_PER_SECOND));
         stepOnce(PHYSICS_ENGINE_FIXED_SUBSTEP);
     }
     _lastStepDuration = 1.0e-3f * (float)(usecTimestampNow() - start);

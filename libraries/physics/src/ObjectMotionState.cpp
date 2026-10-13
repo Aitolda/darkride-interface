@@ -49,6 +49,18 @@ float ObjectMotionState::getLeftoverTime() {
     return _leftoverTime;
 }
 
+uint64_t _substepTime(0);
+
+// static
+void ObjectMotionState::setSubstepTime(uint64_t usecs) {
+    _substepTime = usecs;
+}
+
+// static
+uint64_t ObjectMotionState::getSubstepTime() {
+    return _substepTime;
+}
+
 static bool isFrameEntity(const SpatiallyNestablePointer& object) {
     return object && object->getNestableType() == NestableType::Entity &&
         std::static_pointer_cast<EntityItem>(object)->isFrame();

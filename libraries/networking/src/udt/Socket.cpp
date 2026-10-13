@@ -11,6 +11,9 @@
 
 #include "Socket.h"
 
+#include <glm/glm.hpp>
+#include <SharedUtil.h>
+
 #ifdef Q_OS_ANDROID
 #include <sys/socket.h>
 #endif
@@ -234,7 +237,33 @@ qint64 Socket::writeDatagram(const char* data, qint64 size, const HifiSockAddr& 
     return writeDatagram(QByteArray::fromRawData(data, size), sockAddr);
 }
 
+// A test knob: TIVOLI_PACKET_LOSS=0.05 in the environment drops that fraction of the datagrams this process sends
+// and receives, at random, so a client can be watched under loss (PHYSICS.md round 5's acceptance test). Off
+// unless set; never set it for a server.
+static float simulatedPacketLoss() {
+    static const float rate = []{
+        QByteArray value = qgetenv("TIVOLI_PACKET_LOSS");
+        bool ok = false;
+        float parsed = value.isEmpty() ? 0.0f : value.toFloat(&ok);
+        float clamped = ok ? glm::clamp(parsed, 0.0f, 0.99f) : 0.0f;
+        if (clamped > 0.0f) {
+            qCWarning(networking) << "TIVOLI_PACKET_LOSS set: dropping" << clamped * 100.0f << "% of datagrams, in and out";
+        }
+        return clamped;
+    }();
+    return rate;
+}
+
+static bool dropForTest() {
+    float rate = simulatedPacketLoss();
+    return rate > 0.0f && randFloat() < rate;
+}
+
 qint64 Socket::writeDatagram(const QByteArray& datagram, const HifiSockAddr& sockAddr) {
+
+    if (dropForTest()) {
+        return datagram.size();   // lost on the way out, as far as the sender knows
+    }
 
     // don't attempt to write the datagram if we're unbound.  Just drop it.
     // _udpSocket.writeDatagram will return an error anyway, but there are
@@ -408,6 +437,10 @@ void Socket::readPendingDatagrams() {
             // we either didn't pull anything for this packet or there was an error reading (this seems to trigger
             // on windows even if there's not a packet available)
             continue;
+        }
+
+        if (dropForTest()) {
+            continue;   // lost on the way in
         }
 
         auto it = _unfilteredHandlers.find(senderSockAddr);

@@ -807,7 +807,8 @@ int EntityItem::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
     }
 
     auto lastEdited = lastEditedFromBufferAdjusted;
-    bool otherOverwrites = overwriteLocalData && !weOwnSimulation;
+    // a transform the local physics drives (a car on a track) is kept as an owner keeps its own
+    bool otherOverwrites = overwriteLocalData && !weOwnSimulation && !_transformDrivenLocally;
     // calculate hasGrab once outside the lambda rather than calling it every time inside
     bool hasGrab = stillHasGrab();
     auto shouldUpdate = [lastEdited, otherOverwrites, filterRejection, hasGrab](quint64 updatedTimestamp, bool valueChanged) {
@@ -999,7 +1000,10 @@ int EntityItem::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
     // by doing this parsing here... but it's not likely going to fully recover the content.
     //
 
-    if (overwriteLocalData && !hasGrab && (getDirtyFlags() & (Simulation::DIRTY_TRANSFORM | Simulation::DIRTY_VELOCITIES))) {
+    if (overwriteLocalData && !hasGrab && !_transformDrivenLocally &&
+            (getDirtyFlags() & (Simulation::DIRTY_TRANSFORM | Simulation::DIRTY_VELOCITIES))) {
+        // (not for a transform the local physics drives: the record is the train's, and skipping it forward by the
+        // packet's age moved a car a quarter of a metre for a frame whenever its owner's update landed)
         // NOTE: This code is attempting to "repair" the old data we just got from the server to make it more
         // closely match where the entities should be if they'd stepped forward in time to "now". The server
         // is sending us data with a known "last simulated" time. That time is likely in the past, and therefore
@@ -2701,24 +2705,50 @@ bool EntityItem::matchesJSONFilters(const QJsonObject& jsonFilters) const {
     // currently the only property filter we handle in EntityItem is '+' for serverScripts
     // which means that we only handle a filtered query asking for entities where the serverScripts property is non-default
 
+    // The filters handled here: '+' (non-default) for serverScripts, trackID and frame, and type as one type name or a
+    // list of them. An entity matches when any one of the filters given matches, so a viewer can ask for, say, every
+    // Track and everything that rides one (the physics server does); a query with one filter reads as before.
+
     static const QString SERVER_SCRIPTS_PROPERTY = "serverScripts";
+    static const QString TRACK_ID_PROPERTY = "trackID";
+    static const QString FRAME_PROPERTY = "frame";
     static const QString ENTITY_TYPE_PROPERTY = "type";
 
+    bool anyFilter = false;
     foreach(const auto& property, jsonFilters.keys()) {
-        if (property == SERVER_SCRIPTS_PROPERTY && jsonFilters[property] == EntityQueryFilterSymbol::NonDefault) {
-            // check if this entity has a non-default value for serverScripts
+        const QJsonValue& value = jsonFilters[property];
+        if (property == SERVER_SCRIPTS_PROPERTY && value == EntityQueryFilterSymbol::NonDefault) {
+            anyFilter = true;
             if (_serverScripts != ENTITY_ITEM_DEFAULT_SERVER_SCRIPTS) {
                 return true;
-            } else {
-                return false;
+            }
+        } else if (property == TRACK_ID_PROPERTY && value == EntityQueryFilterSymbol::NonDefault) {
+            anyFilter = true;
+            if (!getTrackID().isNull()) {
+                return true;
+            }
+        } else if (property == FRAME_PROPERTY && value == EntityQueryFilterSymbol::NonDefault) {
+            anyFilter = true;
+            if (isFrame()) {
+                return true;
             }
         } else if (property == ENTITY_TYPE_PROPERTY) {
-            return (jsonFilters[property] == EntityTypes::getEntityTypeName(getType()));
+            anyFilter = true;
+            QString typeName = EntityTypes::getEntityTypeName(getType());
+            if (value.isArray()) {
+                for (const auto& name : value.toArray()) {
+                    if (name == typeName) {
+                        return true;
+                    }
+                }
+            } else if (value == typeName) {
+                return true;
+            }
         }
     }
 
-    // the json filter syntax did not match what we expected, return a match
-    return true;
+    // no filter given that we understand: a match
+    return !anyFilter;
 }
 
 quint64 EntityItem::getLastSimulated() const {
