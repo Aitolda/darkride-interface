@@ -1413,6 +1413,9 @@ public:
     // The moving reference frame the avatar is in (PHYSICS.md 4.1): its parent, when that is a frame entity;
     // null in the domain itself. The character then moves in that frame's physics world, in its coordinates.
     QUuid getFrameID() const;
+    // The frame's world orientation; identity outside a frame. The camera, the look-at yaw and the motors are world
+    // rotations, and the character in a frame moves in the frame's coordinates: the inverse takes them there.
+    glm::quat getFrameOrientation() const;
 
     const QString& getCollisionSoundURL() { return _collisionSoundURL; }
     void setCollisionSoundURL(const QString& url);

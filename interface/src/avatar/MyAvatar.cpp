@@ -2715,6 +2715,9 @@ glm::quat MyAvatar::getOffHandRotation() const {
 void MyAvatar::updateMotors() {
     _characterController.clearMotors();
     glm::quat motorRotation;
+    // In a frame the character moves through the frame's own world (PHYSICS.md 4.3), but the motors are built from
+    // the camera and the avatar's world orientation: each is taken into the frame's coordinates. Identity outside.
+    glm::quat toFrame = glm::inverse(getFrameOrientation());
 
     const float FLYING_MOTOR_TIMESCALE = 0.05f;
     const float WALKING_MOTOR_TIMESCALE = 0.2f;
@@ -2754,11 +2757,11 @@ void MyAvatar::updateMotors() {
         }
 
         if (_isPushing || _isBraking || !_isBeingPushed) {
-            _characterController.addMotor(_actionMotorVelocity, motorRotation, horizontalMotorTimescale, verticalMotorTimescale);
+            _characterController.addMotor(_actionMotorVelocity, toFrame * motorRotation, horizontalMotorTimescale, verticalMotorTimescale);
         } else {
             // _isBeingPushed must be true --> disable action motor by giving it a long timescale,
             // otherwise it's attempt to "stand in in place" could defeat scripted motor/thrusts
-            _characterController.addMotor(_actionMotorVelocity, motorRotation, INVALID_MOTOR_TIMESCALE);
+            _characterController.addMotor(_actionMotorVelocity, toFrame * motorRotation, INVALID_MOTOR_TIMESCALE);
         }
     }
     if (_motionBehaviors & AVATAR_MOTION_SCRIPTED_MOTOR_ENABLED) {
@@ -2771,16 +2774,16 @@ void MyAvatar::updateMotors() {
             motorRotation = glm::quat();
         }
         if (_scriptedMotorMode == SCRIPTED_MOTOR_SIMPLE_MODE) {
-            _characterController.addMotor(_scriptedMotorVelocity, motorRotation, _scriptedMotorTimescale);
+            _characterController.addMotor(_scriptedMotorVelocity, toFrame * motorRotation, _scriptedMotorTimescale);
         } else {
             // dynamic mode
-            _characterController.addMotor(_scriptedMotorVelocity, motorRotation, horizontalMotorTimescale, verticalMotorTimescale);
+            _characterController.addMotor(_scriptedMotorVelocity, toFrame * motorRotation, horizontalMotorTimescale, verticalMotorTimescale);
         }
     }
 
     // legacy support for 'MyAvatar::applyThrust()', which has always been implemented as a
     // short-lived linearAcceleration
-    _characterController.setLinearAcceleration(_thrust);
+    _characterController.setLinearAcceleration(toFrame * _thrust);
     _thrust = Vectors::ZERO;
 }
 
@@ -2794,6 +2797,14 @@ QUuid MyAvatar::getFrameID() const {
     return QUuid();
 }
 
+glm::quat MyAvatar::getFrameOrientation() const {
+    if (getFrameID().isNull()) {
+        return Quaternions::IDENTITY;
+    }
+    bool success = false;
+    Transform parentTransform = getParentTransform(success);
+    return success ? parentTransform.getRotation() : Quaternions::IDENTITY;
+}
 
 void MyAvatar::prepareForPhysicsSimulation() {
     relayDriveKeysToCharacterController();
@@ -3707,7 +3718,16 @@ void MyAvatar::updateOrientation(float deltaTime) {
                     blend = 1.0f;
                 }
             }
-            if (!_characterController.getSeated()) setLocalOrientation(glm::slerp(getLocalOrientation(), faceRotation, blend));
+            if (!_characterController.getSeated()) {
+                // faceRotation is a world yaw and the orientation set is local: in a frame, take it into the frame's
+                // coordinates and keep the turn about the frame's up, which the character stands on.
+                glm::quat localFaceRotation = faceRotation;
+                if (!getFrameID().isNull()) {
+                    glm::quat swing;
+                    swingTwistDecomposition(glm::inverse(getFrameOrientation()) * faceRotation, Vectors::UNIT_Y, swing, localFaceRotation);
+                }
+                setLocalOrientation(glm::slerp(getLocalOrientation(), localFaceRotation, blend));
+            }
         } else if (isRotatingWhileSeated) {
             float direction = -getDriveKey(TRANSLATE_X);
             float seatedTargetSpeed = direction * _yawSpeed * deltaTime;  //deg/renderframe
@@ -4089,14 +4109,17 @@ void MyAvatar::updatePosition(float deltaTime) {
         const float MOVING_SPEED_THRESHOLD_SQUARED = 0.0001f; // 0.01 m/s
         _moving = speed2 > sensorToWorldScale2 * MOVING_SPEED_THRESHOLD_SQUARED;
         if (_moving) {
-            if (hasParent()) {
-              _characterController.setStepUpEnabled(false);
-              return;
+            bool inFrame = !getFrameID().isNull();
+            if (hasParent() && !inFrame) {
+                // carried by a seat or a hand: the character takes no step of its own
+                _characterController.setStepUpEnabled(false);
+                return;
             }
-            // scan for walkability
-            glm::vec3 position = getWorldPosition();
+            // scan for walkability, in the coordinates of the world the character moves through (a frame's own)
+            glm::vec3 position = inFrame ? getLocalPosition() : getWorldPosition();
+            glm::quat orientation = inFrame ? getLocalOrientation() : getWorldOrientation();
             MyCharacterController::RayShotgunResult result;
-            glm::vec3 step = deltaTime * (getWorldOrientation() * _actionMotorVelocity);
+            glm::vec3 step = deltaTime * (orientation * _actionMotorVelocity);
             _characterController.testRayShotgun(position, step, result);
             _characterController.setStepUpEnabled(result.walkable);
         }
