@@ -11,6 +11,8 @@
 #include <algorithm>
 
 #include <Jolt/Jolt.h>
+#include <Jolt/Physics/StateRecorderImpl.h>
+#include <atomic>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Core/JobSystem.h>
 #include <Jolt/Physics/PhysicsSettings.h>
@@ -72,9 +74,14 @@ public:
         out.swap(_records);
         _records.clear();
     }
+    // a replayed substep's contacts are not events (they happened already, or will again)
+    void setMuted(bool muted) { _muted = muted; }
 
 private:
     void record(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold) {
+        if (_muted) {
+            return;
+        }
         ObjectMotionState* a = PhysicsWorld::motionStateOf(body1);
         ObjectMotionState* b = PhysicsWorld::motionStateOf(body2);
         if (!a && !b) {
@@ -108,6 +115,7 @@ private:
 
     std::mutex _mutex;
     std::vector<Record> _records;
+    std::atomic<bool> _muted { false };
 };
 
 // Jolt tells us when bodies fall asleep, also from its worker threads.
@@ -455,6 +463,49 @@ void PhysicsWorld::stepOnce(float dt, CharacterController* character) {
     }
 
     harvestContacts();
+}
+
+namespace {
+    // the non-static bodies, less the one the authority's state replaces
+    class RollbackFilter : public JPH::StateRecorderFilter {
+    public:
+        explicit RollbackFilter(const JPH::BodyID& exclude) : _exclude(exclude) {}
+        bool ShouldSaveBody(const JPH::Body& body) const override { return !body.IsStatic() && body.GetID() != _exclude; }
+        bool ShouldSaveConstraint(const JPH::Constraint&) const override { return false; }
+        bool ShouldSaveContact(const JPH::BodyID&, const JPH::BodyID&) const override { return false; }
+        bool ShouldRestoreContact(const JPH::BodyID&, const JPH::BodyID&) const override { return false; }
+    private:
+        JPH::BodyID _exclude;
+    };
+}
+
+std::string PhysicsWorld::saveBodies(const JPH::BodyID& exclude) const {
+    JPH::StateRecorderImpl recorder;
+    RollbackFilter filter(exclude);
+    _system->SaveState(recorder, JPH::EStateRecorderState::Bodies, &filter);
+    return recorder.GetData();
+}
+
+bool PhysicsWorld::restoreBodies(const std::string& saved, const JPH::BodyID& exclude) {
+    JPH::StateRecorderImpl recorder;
+    recorder.WriteBytes(saved.data(), saved.size());
+    recorder.Rewind();
+    RollbackFilter filter(exclude);
+    return _system->RestoreState(recorder, &filter);
+}
+
+void PhysicsWorld::replayStep(float dt) {
+    applyGravityForces();
+    _replaying = true;
+    _contactRecorder->setMuted(true);
+    JPH::EPhysicsUpdateError error = _system->Update(dt, 1, _tempAllocator, _jobSystem);
+    _contactRecorder->setMuted(false);
+    _replaying = false;
+    if (error != JPH::EPhysicsUpdateError::None) {
+        qCWarning(physics) << "PhysicsWorld: Jolt replay error" << (int)error;
+    }
+    std::vector<ContactRecorder::Record> dropped;
+    _contactRecorder->take(dropped);   // anything recorded between mute and unmute
 }
 
 // private

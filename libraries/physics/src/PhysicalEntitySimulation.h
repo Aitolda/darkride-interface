@@ -28,6 +28,7 @@
 
 class PhysicalEntitySimulation;
 class TrackSimulation;
+class VehicleSimulation;
 using PhysicalEntitySimulationPointer = std::shared_ptr<PhysicalEntitySimulation>;
 using SetOfEntityMotionStates = QSet<EntityMotionState*>;
 
@@ -66,6 +67,7 @@ public:
     void takeDeadAvatarEntities(SetOfEntities& deadEntities);
 
     virtual void clearEntities() override;
+    QVariantMap getVehicleStats() const override;
     void queueEraseDomainEntity(const QUuid& id) const override;
 
 signals:
@@ -96,6 +98,8 @@ public:
 
     // the trains on the tracks (PHYSICS.md 4.8); the physics server takes their state publications from here
     TrackSimulation* getTrackSimulation() const { return _trackSimulation.get(); }
+    // the driven vehicles (PHYSICS.md round 6); the physics server hands it the drivers' inputs
+    VehicleSimulation* getVehicleSimulation() const { return _vehicleSimulation.get(); }
 
     void addOwnershipBid(EntityMotionState* motionState);
     void addOwnership(EntityMotionState* motionState);
@@ -138,6 +142,7 @@ private:
 
     workload::SpacePointer _space;
     std::unique_ptr<TrackSimulation> _trackSimulation; // the trains on the tracks (PHYSICS.md 4.8)
+    std::unique_ptr<VehicleSimulation> _vehicleSimulation; // the driven vehicles (PHYSICS.md round 6)
     uint64_t _nextBidExpiry;
     uint32_t _lastStepSendPackets { 0 };
     uint32_t _lastWorkDeliveryCount { 0 };

@@ -20,6 +20,7 @@
 #include "ObjectMotionState.h"
 
 class TrackSimulation;
+class VehicleSimulation;
 
 
 // From the MotionState's perspective:
@@ -62,6 +63,11 @@ public:
     // a car on a track (PHYSICS.md 4.8): driven along the curve by the client that owns it, through the TrackSimulation
     bool isTrackDriven() const { return _trackDriven; }
     void setTrackSimulation(TrackSimulation* tracks) { _tracks = tracks; }
+    // a vehicle (PHYSICS.md round 6): simulated here by the VehicleSimulation, whoever the authority is
+    bool isVehicle() const { return _vehicle; }
+    void setVehicleSimulation(VehicleSimulation* vehicles) { _vehicles = vehicles; }
+    // a correction's leftover, taken out of the shown pose and decayed with the time constant (0 clears it)
+    void setCorrection(const glm::vec3& offset, const glm::quat& rotation, float blendTime);
     void sendBid(OctreeEditPacketSender* packetSender, uint32_t step);
     void sendUpdate(OctreeEditPacketSender* packetSender, uint32_t step);
 
@@ -114,6 +120,9 @@ public:
 
     void setRegion(uint8_t region);
 
+
+    // a vehicle's mass is the number on its spec sheet (vehicle.mass), not a density times a volume
+    float getMass() const override;
 protected:
     void setBody(JPH::Body* body, PhysicsWorld* world) override;
 
@@ -175,6 +184,16 @@ protected:
     TrackSimulation* _tracks { nullptr };
     uint32_t _lastTrackUpdateStep { 0 }; // the substep an owned car last sent an update at
     bool trackCarOutOfSync(uint32_t simulationStep);
+    mutable bool _vehicle { false }; // the entity has a wheeled vehicle group (refreshed with its motion type)
+    VehicleSimulation* _vehicles { nullptr };
+    uint32_t _lastVehicleUpdateStep { 0 };
+    glm::vec3 _correctionOffset { 0.0f };
+    glm::quat _correctionRotation;
+    float _correctionBlendTime { 0.0f };
+    uint64_t _correctionTime { 0 };
+    bool vehicleOutOfSync(uint32_t simulationStep, bool& handled);
+    bool hasLocalVehicleControls() const;
+    bool serverTakes() const; // the physics server owns this (a car on a track, a vehicle) at SERVER priority
 
     bool isServerlessMode();
 };

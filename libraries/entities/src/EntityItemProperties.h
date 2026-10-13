@@ -59,6 +59,7 @@
 #include "HazePropertyGroup.h"
 #include "BloomPropertyGroup.h"
 #include "ZoneCullingPropertyGroup.h"
+#include "VehiclePropertyGroup.h"
 #include "ToneMappingPropertyGroup.h"
 #include "PulsePropertyGroup.h"
 #include "RingGizmoPropertyGroup.h"
@@ -157,6 +158,8 @@ public:
     static void entityPropertyFlagsFromScriptValue(const QScriptValue& object, EntityPropertyFlags& flags);
 
     static bool getPropertyInfo(const QString& propertyName, EntityPropertyInfo& propertyInfo);
+    // every property of a group, by the group's name ("grab", "vehicle"): empty for a name that is no group
+    static QList<EntityPropertyList> getPropertiesOfGroup(const QString& groupName);
 
     // editing related features supported by all entities
     quint64 getLastEdited() const { return _lastEdited; }
@@ -218,6 +221,7 @@ public:
     DEFINE_PROPERTY_REF(PROP_TRACK_ID, TrackID, trackID, QUuid, UNKNOWN_ENTITY_ID);
     DEFINE_PROPERTY(PROP_TRACK_OFFSET, TrackOffset, trackOffset, float, 0.0f);
     DEFINE_PROPERTY_GROUP(Grab, grab, GrabPropertyGroup);
+    DEFINE_PROPERTY_GROUP(Vehicle, vehicle, VehiclePropertyGroup);
 
 
 

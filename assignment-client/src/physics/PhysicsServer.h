@@ -10,8 +10,10 @@
 //  something happens and once a second besides; clients run the state on in the same substeps and blend corrections.
 //  If it dies, ownership of the cars expires as any owner's does and the clients drive them as in round 4.
 //
-//  Not in this round: bodies for avatars, entities marked for the server beyond track cars, vehicle models with a
-//  driver, a direct state stream to clients.
+//  Round 6 adds the driven vehicles: the server simulates every vehicle (an entity with a wheeled vehicle group) on the
+//  Terrain entities and the collidable primitive shapes of the domain, applies the drivers' inputs (VehicleInput packets,
+//  one input per substep) and publishes each vehicle's state in its ownership updates. Not yet: bodies for avatars,
+//  model hulls on the server (a vehicle's chassis is a box here), a direct state stream to clients.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -48,10 +50,12 @@ public slots:
 
 private slots:
     void handleOctreePacket(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode);
+    void handleVehicleInput(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode);
     void step();
 
 private:
     void publishTrainStates();
+    void updateTerrains();
 
     EntityEditPacketSender _entityEditSender;
     EntityTreeHeadlessViewer _entityViewer;
@@ -60,6 +64,7 @@ private:
     PhysicalEntitySimulationPointer _entitySimulation;
     QTimer* _stepTimer { nullptr };
     quint64 _lastQueryTime { 0 };
+    quint64 _lastTerrainTime { 0 };
     bool _running { false };
 
     // stats

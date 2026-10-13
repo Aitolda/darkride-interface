@@ -66,6 +66,7 @@
 #include "MovingEntitiesOperator.h"
 #include "SceneScriptingInterface.h"
 
+
 using namespace std;
 
 const float DEFAULT_REAL_WORLD_FIELD_OF_VIEW_DEGREES = 30.0f;
@@ -2793,6 +2794,7 @@ QUuid MyAvatar::getFrameID() const {
     return QUuid();
 }
 
+
 void MyAvatar::prepareForPhysicsSimulation() {
     relayDriveKeysToCharacterController();
     updateMotors();
@@ -2859,7 +2861,12 @@ void MyAvatar::harvestResultsFromPhysicsSimulation(float deltaTime) {
     glm::vec3 position = inFrame ? getLocalPosition() : getWorldPosition();
     glm::quat orientation = inFrame ? getLocalOrientation() : getWorldOrientation();
     glm::vec3 velocity;
-    if (_characterController.isEnabledAndReady() && !(_characterController.needsSafeLandingSupport() || _goToPending)) {
+    // Parented to something that is not a frame (a seat, a hand): the parent carries the avatar and a script owns its
+    // local pose. The character still runs (collisionless, re-placed every prepare) but its step is not taken: it
+    // integrates the parent's velocity of the previous frame, which lags an accelerating vehicle and slides the rider
+    // off the seat (PHYSICS.md round 6).
+    bool carried = !inFrame && hasParent();
+    if (_characterController.isEnabledAndReady() && !carried && !(_characterController.needsSafeLandingSupport() || _goToPending)) {
         _characterController.getPositionAndOrientation(position, orientation);
         velocity = _characterController.getLinearVelocity() + _characterController.getFollowVelocity();
     } else {

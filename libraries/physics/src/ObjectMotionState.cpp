@@ -472,7 +472,8 @@ void ObjectMotionState::updateBodyMassProperties() {
     if (mass != mass || mass < MIN_DYNAMIC_MASS) {
         mass = MIN_DYNAMIC_MASS;
     }
-    JPH::MassProperties massProperties = _shape->GetMassProperties();
+    // the body's shape, not _shape: a vehicle's body wears its shape inside an offset-centre-of-mass shape (round 6)
+    JPH::MassProperties massProperties = _body->GetShape()->GetMassProperties();
     massProperties.ScaleToMass(mass);
     motion->SetMassProperties(motion->GetAllowedDOFs(), massProperties);
 }

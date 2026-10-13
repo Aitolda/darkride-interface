@@ -114,6 +114,7 @@ EntityPropertyFlags EntityItem::getEntityProperties(EncodeBitstreamParams& param
     requestedProperties += PROP_TRACK_ID;
     requestedProperties += PROP_TRACK_OFFSET;
     requestedProperties += _grabProperties.getEntityProperties(params);
+    requestedProperties += _vehicleProperties.getEntityProperties(params);
 
     // Physics
     requestedProperties += PROP_DENSITY;
@@ -319,6 +320,8 @@ OctreeElement::AppendState EntityItem::appendEntityData(
         withReadLock([&] {
             _grabProperties.appendSubclassData(packetData, params, entityTreeElementExtraEncodeData, requestedProperties,
                                                propertyFlags, propertiesDidntFit, propertyCount, appendState);
+            _vehicleProperties.appendSubclassData(packetData, params, entityTreeElementExtraEncodeData, requestedProperties,
+                                                  propertyFlags, propertiesDidntFit, propertyCount, appendState);
         });
 
         // Physics
@@ -848,7 +851,13 @@ int EntityItem::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
 
         // Note: duplicate packets are expected and not wrong. They may be sent for any number of
         // reasons and the contract is that the client handles them in an idempotent manner.
-        auto customUpdatePositionFromNetwork = [this, shouldUpdate, lastEdited](glm::vec3 value) {
+        auto customUpdatePositionFromNetwork = [this, shouldUpdate, lastEdited, weOwnSimulation, overwriteLocalData](glm::vec3 value) {
+            if (_transformDrivenLocally && overwriteLocalData && !weOwnSimulation && lastEdited > _networkPose.lastEdited) {
+                // a correction for the local simulation to adopt (a vehicle from the physics server), not a placement
+                _networkPose.position = value;
+                _networkPose.lastEdited = lastEdited;
+                ++_networkPose.version;
+            }
             if (shouldUpdate(_lastUpdatedPositionTimestamp, value != _lastUpdatedPositionValue)) {
                 setPosition(value);
                 _lastUpdatedPositionTimestamp = lastEdited;
@@ -859,7 +868,10 @@ int EntityItem::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
     }
     READ_ENTITY_PROPERTY(PROP_DIMENSIONS, glm::vec3, setScaledDimensions);
     {  // See comment above
-        auto customUpdateRotationFromNetwork = [this, shouldUpdate, lastEdited](glm::quat value) {
+        auto customUpdateRotationFromNetwork = [this, shouldUpdate, lastEdited, weOwnSimulation, overwriteLocalData](glm::quat value) {
+            if (_transformDrivenLocally && overwriteLocalData && !weOwnSimulation && lastEdited >= _networkPose.lastEdited) {
+                _networkPose.rotation = value;
+            }
             if (shouldUpdate(_lastUpdatedRotationTimestamp, value != _lastUpdatedRotationValue)) {
                 setRotation(value);
                 _lastUpdatedRotationTimestamp = lastEdited;
@@ -912,11 +924,23 @@ int EntityItem::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
                                                              overwriteLocalData, somethingChanged);
         bytesRead += bytesFromGrab;
         dataAt += bytesFromGrab;
+        uint64_t vehicleDefinition = _vehicleProperties.definitionHash();
+        int bytesFromVehicle =
+            _vehicleProperties.readEntitySubclassDataFromBuffer(dataAt, (bytesLeftToRead - bytesRead), args, propertyFlags,
+                                                                overwriteLocalData, somethingChanged);
+        bytesRead += bytesFromVehicle;
+        dataAt += bytesFromVehicle;
+        if (bytesFromVehicle > 0 && overwriteLocalData && _vehicleProperties.definitionHash() != vehicleDefinition) {
+            ++_vehicleDefinitionVersion;
+        }
     });
 
     READ_ENTITY_PROPERTY(PROP_DENSITY, float, setDensity);
     {
-        auto customUpdateVelocityFromNetwork = [this, shouldUpdate, lastEdited](glm::vec3 value) {
+        auto customUpdateVelocityFromNetwork = [this, shouldUpdate, lastEdited, weOwnSimulation, overwriteLocalData](glm::vec3 value) {
+            if (_transformDrivenLocally && overwriteLocalData && !weOwnSimulation && lastEdited >= _networkPose.lastEdited) {
+                _networkPose.velocity = value;
+            }
             if (shouldUpdate(_lastUpdatedVelocityTimestamp, value != _lastUpdatedVelocityValue)) {
                 setVelocity(value);
                 _lastUpdatedVelocityTimestamp = lastEdited;
@@ -924,7 +948,10 @@ int EntityItem::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
             }
         };
         READ_ENTITY_PROPERTY(PROP_VELOCITY, glm::vec3, customUpdateVelocityFromNetwork);
-        auto customUpdateAngularVelocityFromNetwork = [this, shouldUpdate, lastEdited](glm::vec3 value) {
+        auto customUpdateAngularVelocityFromNetwork = [this, shouldUpdate, lastEdited, weOwnSimulation, overwriteLocalData](glm::vec3 value) {
+            if (_transformDrivenLocally && overwriteLocalData && !weOwnSimulation && lastEdited >= _networkPose.lastEdited) {
+                _networkPose.angularVelocity = value;
+            }
             if (shouldUpdate(_lastUpdatedAngularVelocityTimestamp, value != _lastUpdatedAngularVelocityValue)) {
                 setAngularVelocity(value);
                 _lastUpdatedAngularVelocityTimestamp = lastEdited;
@@ -1071,6 +1098,9 @@ void EntityItem::adjustEditPacketForClockSkew(QByteArray& buffer, qint64 clockSk
 }
 
 float EntityItem::computeMass() const {
+    if (_vehicleProperties.isVehicle() && _vehicleProperties.getMass() > 0.0f) {
+        return _vehicleProperties.getMass();   // a vehicle's mass is a number on its spec sheet, not its density (PHYSICS.md 4.8)
+    }
     glm::vec3 dimensions = getScaledDimensions();
     return getDensity() * _volumeMultiplier * dimensions.x * dimensions.y * dimensions.z;
 }
@@ -1394,7 +1424,7 @@ EntityItemProperties EntityItem::getProperties(const EntityPropertyFlags& desire
     COPY_ENTITY_PROPERTY_TO_PROPERTIES(frame, getFrame);
     COPY_ENTITY_PROPERTY_TO_PROPERTIES(trackID, getTrackID);
     COPY_ENTITY_PROPERTY_TO_PROPERTIES(trackOffset, getTrackOffset);
-    withReadLock([&] { _grabProperties.getProperties(properties); });
+    withReadLock([&] { _grabProperties.getProperties(properties); _vehicleProperties.getProperties(properties); });
 
     // Physics
     COPY_ENTITY_PROPERTY_TO_PROPERTIES(density, getDensity);
@@ -1548,6 +1578,13 @@ bool EntityItem::setProperties(const EntityItemProperties& properties) {
     withWriteLock([&] {
         bool grabPropertiesChanged = _grabProperties.setProperties(properties);
         somethingChanged |= grabPropertiesChanged;
+        uint64_t vehicleDefinition = _vehicleProperties.definitionHash();
+        bool vehiclePropertiesChanged = _vehicleProperties.setProperties(properties);
+        somethingChanged |= vehiclePropertiesChanged;
+        if (vehiclePropertiesChanged && _vehicleProperties.definitionHash() != vehicleDefinition) {
+            ++_vehicleDefinitionVersion;
+            _flags |= Simulation::DIRTY_MASS;   // a new mass or centre of mass reaches the body through the mass flag
+        }
     });
 
     // Physics
@@ -2713,6 +2750,8 @@ bool EntityItem::matchesJSONFilters(const QJsonObject& jsonFilters) const {
     static const QString TRACK_ID_PROPERTY = "trackID";
     static const QString FRAME_PROPERTY = "frame";
     static const QString ENTITY_TYPE_PROPERTY = "type";
+    static const QString VEHICLE_PROPERTY = "vehicle";
+    static const QString COLLIDABLE_PROPERTY = "collidable";
 
     bool anyFilter = false;
     foreach(const auto& property, jsonFilters.keys()) {
@@ -2731,6 +2770,32 @@ bool EntityItem::matchesJSONFilters(const QJsonObject& jsonFilters) const {
             anyFilter = true;
             if (isFrame()) {
                 return true;
+            }
+        } else if (property == VEHICLE_PROPERTY && value == EntityQueryFilterSymbol::NonDefault) {
+            // a vehicle (a chassis, or a wheel of one): the physics server simulates them (PHYSICS.md round 6)
+            anyFilter = true;
+            if (_vehicleProperties.getType() != VehicleType::NONE) {
+                return true;
+            }
+        } else if (property == COLLIDABLE_PROPERTY && value == EntityQueryFilterSymbol::NonDefault) {
+            // anything a vehicle can hit without an asset to load: a collidable entity with a primitive shape
+            anyFilter = true;
+            if (!getCollisionless()) {
+                switch (getShapeType()) {
+                    case SHAPE_TYPE_BOX:
+                    case SHAPE_TYPE_SPHERE:
+                    case SHAPE_TYPE_ELLIPSOID:
+                    case SHAPE_TYPE_CAPSULE_X:
+                    case SHAPE_TYPE_CAPSULE_Y:
+                    case SHAPE_TYPE_CAPSULE_Z:
+                    case SHAPE_TYPE_CYLINDER_X:
+                    case SHAPE_TYPE_CYLINDER_Y:
+                    case SHAPE_TYPE_CYLINDER_Z:
+                    case SHAPE_TYPE_PLANE:
+                        return true;
+                    default:
+                        break;
+                }
             }
         } else if (property == ENTITY_TYPE_PROPERTY) {
             anyFilter = true;

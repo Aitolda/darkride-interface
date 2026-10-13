@@ -15,7 +15,7 @@ link_hifi_libraries(
   networking animation recording shared script-engine embedded-webserver
   controllers physics plugins midi image
   material-networking model-networking ktx shaders
-  workload vehicles
+  workload vehicles terrain
 )
 include_hifi_library_headers(procedural)
 

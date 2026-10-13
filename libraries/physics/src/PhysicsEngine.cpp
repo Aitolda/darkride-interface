@@ -378,6 +378,10 @@ void PhysicsEngine::stepOnce(float dt) {
         }
     }
 
+    if (_substepListener) {
+        _substepListener->preSubstep(_numSubsteps, dt);
+    }
+
     PhysicsWorld* avatarWorld = characterWorld();
     _rootWorld->stepOnce(dt, avatarWorld == _rootWorld.get() ? _myAvatarController : nullptr);
 
@@ -388,6 +392,10 @@ void PhysicsEngine::stepOnce(float dt) {
     }
 
     doOwnershipInfectionForConstraints();
+
+    if (_substepListener) {
+        _substepListener->postSubstep(_numSubsteps, dt);
+    }
 }
 
 void PhysicsEngine::stepSimulation() {

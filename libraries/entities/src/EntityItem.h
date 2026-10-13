@@ -38,6 +38,7 @@
 #include "SimulationOwner.h"
 #include "EntityDynamicInterface.h"
 #include "GrabPropertyGroup.h"
+#include "VehiclePropertyGroup.h"
 #include "EntityPriority.h"
 
 class EntitySimulation;
@@ -599,6 +600,35 @@ public:
     void setVisuallyReady(bool visuallyReady) { _visuallyReady = visuallyReady; }
 
     const GrabPropertyGroup& getGrabProperties() const { return _grabProperties; }
+    const VehiclePropertyGroup& getVehicleProperties() const { return _vehicleProperties; }
+    bool isVehicle() const { return _vehicleProperties.isVehicle(); }
+    bool isWheel() const { return _vehicleProperties.isWheel(); }
+    // a vehicle's definition changed (the version the simulation built from is stale)
+    uint32_t getVehicleDefinitionVersion() const { return _vehicleDefinitionVersion; }
+
+    // The driver's controls, set by the local script (Entities.setVehicleControls) and read by the local physics every
+    // substep; never sent as properties (the inputs travel in VehicleInput packets, the applied ones in the state).
+    struct VehicleControls {
+        float throttle { 0.0f };    // -1 reverse .. 1 forward
+        float steering { 0.0f };    // -1 left .. 1 right
+        float brake { 0.0f };       // 0 .. 1
+        float handBrake { 0.0f };   // 0 .. 1
+    };
+    void setLocalVehicleControls(const VehicleControls& controls) { withWriteLock([&] { _localVehicleControls = controls; _hasLocalVehicleControls = true; }); }
+    void clearLocalVehicleControls() { withWriteLock([&] { _hasLocalVehicleControls = false; _localVehicleControls = VehicleControls(); }); }
+    bool getLocalVehicleControls(VehicleControls& controls) const { return resultWithReadLock<bool>([&] { controls = _localVehicleControls; return _hasLocalVehicleControls; }); }
+
+    // The last transform and velocities the network sent while the local physics was driving this entity's transform
+    // (setTransformDrivenLocally): kept here instead of being applied, for the simulation to adopt as a correction.
+    struct NetworkPose {
+        glm::vec3 position { 0.0f };
+        glm::quat rotation;
+        glm::vec3 velocity { 0.0f };
+        glm::vec3 angularVelocity { 0.0f };
+        quint64 lastEdited { 0 };   // the sender's stamp on the update
+        uint32_t version { 0 };     // bumps with every update that carried a position
+    };
+    NetworkPose getNetworkPose() const { return resultWithReadLock<NetworkPose>([&] { return _networkPose; }); }
 
     void prepareForSimulationOwnershipBid(EntityItemProperties& properties, uint64_t now, uint8_t priority);
 
@@ -812,6 +842,11 @@ protected:
     QVector<QUuid> _cloneIDs;
 
     GrabPropertyGroup _grabProperties;
+    VehiclePropertyGroup _vehicleProperties;
+    uint32_t _vehicleDefinitionVersion { 0 };
+    VehicleControls _localVehicleControls;
+    bool _hasLocalVehicleControls { false };
+    NetworkPose _networkPose;
 
     QHash<QUuid, EntityDynamicPointer> _grabActions;
 

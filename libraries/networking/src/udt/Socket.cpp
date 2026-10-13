@@ -11,6 +11,8 @@
 
 #include "Socket.h"
 
+#include <QtCore/QTimer>
+
 #include <glm/glm.hpp>
 #include <SharedUtil.h>
 
@@ -259,11 +261,40 @@ static bool dropForTest() {
     return rate > 0.0f && randFloat() < rate;
 }
 
+// A second test knob: TIVOLI_PACKET_DELAY_MS=100 holds every datagram this process sends for that long before it goes
+// out, so a client can be watched with latency (PHYSICS.md round 6: the driver's prediction). Off unless set; never
+// set it for a server.
+static int simulatedDelayMs() {
+    static const int delay = []{
+        QByteArray value = qgetenv("TIVOLI_PACKET_DELAY_MS");
+        bool ok = false;
+        int parsed = value.isEmpty() ? 0 : value.toInt(&ok);
+        int clamped = ok ? glm::clamp(parsed, 0, 5000) : 0;
+        if (clamped > 0) {
+            qCWarning(networking) << "TIVOLI_PACKET_DELAY_MS set: every datagram out is held" << clamped << "ms";
+        }
+        return clamped;
+    }();
+    return delay;
+}
+
 qint64 Socket::writeDatagram(const QByteArray& datagram, const HifiSockAddr& sockAddr) {
 
     if (dropForTest()) {
         return datagram.size();   // lost on the way out, as far as the sender knows
     }
+    int delay = simulatedDelayMs();
+    if (delay > 0) {
+        // held on this socket's thread, which has the event loop, and sent from there; a deep copy, since the caller's
+        // array usually wraps a packet's buffer without owning it (QByteArray::fromRawData) and the packet is gone by then
+        QByteArray copy(datagram.constData(), datagram.size());
+        QTimer::singleShot(delay, this, [this, copy, sockAddr] { writeDatagramNow(copy, sockAddr); });
+        return datagram.size();
+    }
+    return writeDatagramNow(datagram, sockAddr);
+}
+
+qint64 Socket::writeDatagramNow(const QByteArray& datagram, const HifiSockAddr& sockAddr) {
 
     // don't attempt to write the datagram if we're unbound.  Just drop it.
     // _udpSocket.writeDatagram will return an error anyway, but there are

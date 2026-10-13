@@ -21,6 +21,8 @@ namespace EntityJSONQueryProperties {
     static const QString TRACK_ID_PROPERTY = "trackID";
     static const QString FRAME_PROPERTY = "frame";
     static const QString ENTITY_TYPE_PROPERTY = "type";
+    static const QString VEHICLE_PROPERTY = "vehicle";       // "+": a vehicle chassis or wheel (PHYSICS.md round 6)
+    static const QString COLLIDABLE_PROPERTY = "collidable"; // "+": collidable with a primitive shape
     static const QString FLAGS_PROPERTY = "flags";
     static const QString INCLUDE_ANCESTORS_PROPERTY = "includeAncestors";
     static const QString INCLUDE_DESCENDANTS_PROPERTY = "includeDescendants";

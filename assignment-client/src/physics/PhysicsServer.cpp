@@ -21,14 +21,18 @@
 #include <ResourceManager.h>
 #include <TrackEntityItem.h>
 #include <TrackSimulation.h>
+#include <VehicleInput.h>
+#include <VehicleSimulation.h>
 
 #include "../AssignmentDynamicFactory.h"
 #include "../entities/AssignmentParentFinder.h"
+#include "ServerTerrainEntityItem.h"
 
 namespace {
     const QString PHYSICS_SERVER_LOGGING_NAME = "physics-server";
     const int STEP_INTERVAL_MSECS = 11;   // a little faster than the 90 Hz substep; the engine's paced clock does the rest
     const quint64 QUERY_INTERVAL = USECS_PER_SECOND;   // the entity server is asked again this often
+    const quint64 TERRAIN_INTERVAL = USECS_PER_SECOND; // the terrains are checked for a new file this often
     const int EDIT_PACKETS_PER_SECOND = 300;
 }
 
@@ -42,6 +46,7 @@ PhysicsServer::PhysicsServer(ReceivedMessage& message) : ThreadedAssignment(mess
     auto& packetReceiver = DependencyManager::get<NodeList>()->getPacketReceiver();
     packetReceiver.registerListenerForTypes({ PacketType::OctreeStats, PacketType::EntityData, PacketType::EntityErase },
                                             this, "handleOctreePacket");
+    packetReceiver.registerListener(PacketType::VehicleInput, this, "handleVehicleInput");
 }
 
 PhysicsServer::~PhysicsServer() {
@@ -51,7 +56,9 @@ void PhysicsServer::run() {
     ThreadedAssignment::commonInit(PHYSICS_SERVER_LOGGING_NAME, NodeType::PhysicsServer);
 
     auto nodeList = DependencyManager::get<NodeList>();
-    nodeList->addSetOfNodeTypesToNodeInterestSet({ NodeType::EntityServer });
+    // the entity server for the tree; the clients (agents) so that the domain introduces them and the hole punch
+    // completes: a driver's VehicleInput packets come straight from its client (round 6)
+    nodeList->addSetOfNodeTypesToNodeInterestSet({ NodeType::EntityServer, NodeType::Agent });
     connect(nodeList.data(), &LimitedNodeList::nodeActivated, this, &PhysicsServer::nodeActivated);
     connect(nodeList.data(), &LimitedNodeList::nodeKilled, this, &PhysicsServer::nodeKilled);
     connect(nodeList.data(), &LimitedNodeList::uuidChanged, this, [](const QUuid& sessionUUID, const QUuid&) {
@@ -62,16 +69,28 @@ void PhysicsServer::run() {
 
     _entityEditSender.setPacketsPerSecond(EDIT_PACKETS_PER_SECOND);
 
+    // this server's Terrain entities hold the ground's collision mesh (round 6); the plain one is only its properties
+    EntityTypes::registerEntityType(EntityTypes::Terrain, "Terrain", ServerTerrainEntityItem::factory);
+
     _entityViewer.init();
     EntityTreePointer tree = _entityViewer.getTree();
 
-    // what this server sees of the domain: every Track, everything that rides one, and their ancestors (a car's
-    // parent places it); nothing else, so a big world costs it nothing
+    // what this server sees of the domain: every Track and everything that rides one, every vehicle (round 6) and the
+    // ground (Terrain entities and anything collidable with a primitive shape); nothing that needs a model loaded, so
+    // a big world costs it little. Not their ancestors: the entity server rebuilds a filtered query's ancestor set on
+    // every pass and takes every ancestor for a new one, which forces a full re-send of the view each pass (with a few
+    // hundred matching entities, ten seconds of lag on everything, round 6 found). A car or a vehicle with a parent
+    // entity is therefore placed by its own transform here.
     QJsonObject queryJSONParameters;
     queryJSONParameters[EntityJSONQueryProperties::TRACK_ID_PROPERTY] = EntityQueryFilterSymbol::NonDefault;
-    queryJSONParameters[EntityJSONQueryProperties::ENTITY_TYPE_PROPERTY] = EntityTypes::getEntityTypeName(EntityTypes::Track);
+    queryJSONParameters[EntityJSONQueryProperties::VEHICLE_PROPERTY] = EntityQueryFilterSymbol::NonDefault;
+    queryJSONParameters[EntityJSONQueryProperties::COLLIDABLE_PROPERTY] = EntityQueryFilterSymbol::NonDefault;
+    QJsonArray types;
+    types.append(EntityTypes::getEntityTypeName(EntityTypes::Track));
+    types.append(EntityTypes::getEntityTypeName(EntityTypes::Terrain));
+    queryJSONParameters[EntityJSONQueryProperties::ENTITY_TYPE_PROPERTY] = types;
     QJsonObject queryFlags;
-    queryFlags[EntityJSONQueryProperties::INCLUDE_ANCESTORS_PROPERTY] = true;
+    queryFlags[EntityJSONQueryProperties::INCLUDE_ANCESTORS_PROPERTY] = false;
     queryFlags[EntityJSONQueryProperties::INCLUDE_DESCENDANTS_PROPERTY] = false;
     queryJSONParameters[EntityJSONQueryProperties::FLAGS_PROPERTY] = queryFlags;
     _entityViewer.getOctreeQuery().setJSONParameters(queryJSONParameters);
@@ -111,6 +130,10 @@ void PhysicsServer::step() {
     if (now - _lastQueryTime > QUERY_INTERVAL) {
         _entityViewer.queryOctree();
         _lastQueryTime = now;
+    }
+    if (now - _lastTerrainTime > TERRAIN_INTERVAL) {
+        updateTerrains();
+        _lastTerrainTime = now;
     }
 
     // the same order as the client's update: the tree's bookkeeping, the physics transaction, the step, the results
@@ -153,7 +176,11 @@ void PhysicsServer::step() {
         qCInfo(physics) << "physics-server:" << (seconds > 0.0f ? (float)steps / seconds : 0.0f) << "steps/s,"
             << _physicsEngine->getNumSubsteps() << "substeps," << _physicsEngine->getNumCollisionObjects() << "bodies,"
             << _physicsEngine->getNumFrames() << "frames," << tree->getOctreeElementsCount() << "tree elements,"
-            << _statesPublished << "train states published," << _entityEditSender.getPacketsPerSecond() << "pps";
+            << _statesPublished << "train states published," << _entityEditSender.getPacketsPerSecond() << "pps;"
+            << _entitySimulation->getVehicleSimulation()->getNumVehicles() << "vehicles,"
+            << _entitySimulation->getVehicleSimulation()->getStats().inputsReceived << "inputs received,"
+            << _entitySimulation->getVehicleSimulation()->getStats().inputsStarved << "starved,"
+            << _entitySimulation->getVehicleSimulation()->getStats().inputsDropped << "dropped";
         _lastLogTime = now;
         _stepsAtLastLog = _stepsTaken;
     }
@@ -194,6 +221,42 @@ void PhysicsServer::publishTrainStates() {
         }
         _statesPublished++;
     }
+}
+
+// The Terrain entities fetch their files and build their meshes from here, once a second.
+void PhysicsServer::updateTerrains() {
+    EntityTreePointer tree = _entityViewer.getTree();
+    if (!tree) {
+        return;
+    }
+    QVector<QUuid> terrainIDs;
+    unsigned int searchFilter = PickFilter::getBitMask(PickFilter::FlagBit::DOMAIN_ENTITIES);
+    std::vector<std::shared_ptr<ServerTerrainEntityItem>> terrains;
+    tree->withReadLock([&] {
+        tree->evalEntitiesInSphereWithType(Vectors::ZERO, (float)TREE_SCALE, EntityTypes::Terrain, PickFilter(searchFilter), terrainIDs);
+        for (const QUuid& id : terrainIDs) {
+            if (auto terrain = std::dynamic_pointer_cast<ServerTerrainEntityItem>(tree->findEntityByID(id))) {
+                terrains.push_back(terrain);
+            }
+        }
+    });
+    for (auto& terrain : terrains) {
+        terrain->update();
+    }
+}
+
+// A driver's inputs for a vehicle, to apply one per substep; only the one in the driver's seat is heard.
+void PhysicsServer::handleVehicleInput(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode) {
+    if (!senderNode || !_entitySimulation) {
+        return;
+    }
+    QUuid vehicleID;
+    std::vector<VehicleInput> inputs;
+    if (!VehicleInputPacket::unpack(message->getMessage(), vehicleID, inputs)) {
+        qCWarning(physics) << "physics-server: a vehicle input packet from" << senderNode->getUUID() << "could not be read";
+        return;
+    }
+    _entitySimulation->getVehicleSimulation()->receiveInputs(vehicleID, senderNode->getUUID(), inputs);
 }
 
 void PhysicsServer::nodeActivated(SharedNodePointer activatedNode) {
@@ -237,6 +300,15 @@ void PhysicsServer::sendStatsPacket() {
     physicsStats["bodies"] = _physicsEngine ? _physicsEngine->getNumCollisionObjects() : 0;
     physicsStats["frames"] = (double)(_physicsEngine ? _physicsEngine->getNumFrames() : 0);
     physicsStats["train_states_published"] = (double)_statesPublished;
+    if (_entitySimulation) {
+        const VehicleSimulation::Stats& vehicleStats = _entitySimulation->getVehicleSimulation()->getStats();
+        QJsonObject vehicles;
+        vehicles["count"] = (double)_entitySimulation->getVehicleSimulation()->getNumVehicles();
+        vehicles["inputs_received"] = vehicleStats.inputsReceived;
+        vehicles["inputs_starved"] = vehicleStats.inputsStarved;
+        vehicles["inputs_dropped"] = vehicleStats.inputsDropped;
+        physicsStats["vehicles"] = vehicles;
+    }
 
     QJsonArray trains;
     EntityTreePointer tree = _entityViewer.getTree();

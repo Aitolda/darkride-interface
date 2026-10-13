@@ -26,6 +26,7 @@
 #include "PhysicsHelpers.h"
 #include "PhysicsLogging.h"
 #include "TrackSimulation.h"
+#include "VehicleSimulation.h"
 
 const uint8_t LOOPS_FOR_SIMULATION_ORPHAN = 50;
 const quint64 USECS_BETWEEN_OWNERSHIP_BIDS = USECS_PER_SECOND / 15;
@@ -94,12 +95,14 @@ EntityMotionState::EntityMotionState(const JPH::Shape* shape, EntityItemPointer 
 
     _type = MOTIONSTATE_TYPE_ENTITY;
     assert(_entity);
-    setMass(_entity->computeMass());
     // we need the side-effects of EntityMotionState::setShape() so we call it explicitly here
     // rather than pass the legit shape pointer to the ObjectMotionState ctor above.
     setShape(shape);
+    // after the shape: the mass is kept as a density over the shape's bounds, and without a shape it was lost (1 kg/m^3)
+    setMass(_entity->computeMass());
 
     _trackDriven = !_entity->getTrackID().isNull();
+    _vehicle = _entity->isVehicle();
 
     if (_entity->isAvatarEntity() && !_entity->isMyAvatarEntity()) {
         // avatar entities are always thus, so we cache this fact in _ownershipState
@@ -179,7 +182,7 @@ void EntityMotionState::handleEasyChanges(uint32_t& flags) {
     }
 
     if (flags & Simulation::DIRTY_SIMULATOR_ID) {
-        if (_trackDriven && Physics::isServerAuthority()) {
+        if (serverTakes()) {
             qCInfo(physics) << "physics-server: car" << _entity->getName() << _entity->getID() << "owner now"
                 << _entity->getSimulatorID() << "at priority" << (int)_entity->getSimulationPriority()
                 << (isLocallyOwned() ? "(this server)" : "");
@@ -234,6 +237,7 @@ PhysicsMotionType EntityMotionState::computePhysicsMotionType() const {
     }
 
     _trackDriven = !_entity->getTrackID().isNull();
+    _vehicle = _entity->isVehicle();
     if (_trackDriven) {
         // a car on a track: moved along the curve by its owner, and by the owner's velocities everywhere else
         return MOTION_TYPE_KINEMATIC;
@@ -454,6 +458,23 @@ void EntityMotionState::pullTransformFromBody() {
         position += leftover * getBodyLinearVelocity();
         rotation = glm::normalize(computeBulletRotationStep(getBodyAngularVelocity(), leftover) * rotation);
     }
+    if (_correctionBlendTime > 0.0f) {
+        // a vehicle's correction (PHYSICS.md 4.6): the jump is shown as a residual that decays, never a snap
+        uint64_t now = usecTimestampNow();
+        float dt = _correctionTime ? (float)(now - _correctionTime) * 1.0e-6f : 0.0f;
+        _correctionTime = now;
+        float keep = expf(-dt / _correctionBlendTime);
+        _correctionOffset *= keep;
+        _correctionRotation = glm::normalize(glm::slerp(glm::quat(), _correctionRotation, keep));
+        const float DONE_DISTANCE = 0.001f;   // a millimetre
+        const float DONE_DOT = 0.9999999f;
+        if (glm::length2(_correctionOffset) < DONE_DISTANCE * DONE_DISTANCE && fabsf(_correctionRotation.w) > DONE_DOT) {
+            _correctionBlendTime = 0.0f;
+        } else {
+            position += _correctionOffset;
+            rotation = glm::normalize(_correctionRotation * rotation);
+        }
+    }
 
     Transform parentInFrame;
     glm::vec3 parentVelocity, parentAngularVelocity;
@@ -549,6 +570,14 @@ bool EntityMotionState::remoteSimulationOutOfSync(uint32_t simulationStep) {
 
     int numSteps = simulationStep - _lastStep;
     float dt = (float)(numSteps) * PHYSICS_ENGINE_FIXED_SUBSTEP;
+
+    if (_vehicle) {
+        bool handled = false;
+        bool out = vehicleOutOfSync(simulationStep, handled);
+        if (handled) {
+            return out;
+        }
+    }
 
     if (_trackDriven) {
         // a car on a track is never "inactive" to its owner: it stands at a station between runs and its owner (the
@@ -692,6 +721,58 @@ bool EntityMotionState::trackCarOutOfSync(uint32_t simulationStep) {
     return out;
 }
 
+// A vehicle's authority publishes its state at a steady rate while the vehicle is awake (every UPDATE_STEPS substeps,
+// 10 Hz), and keeps its ownership while someone sits at the wheel; a vehicle nobody drives sleeps and is released like
+// any other body. `handled` says the generic rule need not run.
+bool EntityMotionState::vehicleOutOfSync(uint32_t simulationStep, bool& handled) {
+    handled = false;
+    bool seated = !_entity->getVehicleProperties().getDriver().isNull();
+    bool server = Physics::isServerAuthority();
+    if (!_body->IsActive()) {
+        if (seated || server) {
+            handled = true;
+            const uint64_t KEEP_ALIVE_MARGIN = MAX_OUTGOING_SIMULATION_UPDATE_PERIOD / 2;
+            if (usecTimestampNow() + KEEP_ALIVE_MARGIN > _entity->getSimulationOwnershipExpiry()) {
+                _lastVehicleUpdateStep = simulationStep;
+                return true;
+            }
+        }
+        return false;
+    }
+    handled = true;
+    if (simulationStep >= _lastVehicleUpdateStep + VehicleSimulation::UPDATE_STEPS) {
+        _lastVehicleUpdateStep = simulationStep;
+        return true;
+    }
+    return false;
+}
+
+float EntityMotionState::getMass() const {
+    if (_entity && _entity->isVehicle()) {
+        float mass = _entity->getVehicleProperties().getMass();
+        if (mass > 0.0f) {
+            return mass;
+        }
+    }
+    return ObjectMotionState::getMass();
+}
+
+bool EntityMotionState::hasLocalVehicleControls() const {
+    EntityItem::VehicleControls controls;
+    return _vehicle && _entity->getLocalVehicleControls(controls);
+}
+
+bool EntityMotionState::serverTakes() const {
+    return (_trackDriven || _vehicle) && Physics::isServerAuthority();
+}
+
+void EntityMotionState::setCorrection(const glm::vec3& offset, const glm::quat& rotation, float blendTime) {
+    _correctionOffset = offset;
+    _correctionRotation = rotation;
+    _correctionBlendTime = blendTime;
+    _correctionTime = usecTimestampNow();
+}
+
 bool EntityMotionState::shouldSendUpdate(uint32_t simulationStep) {
     // NOTE: this method is only ever called when the entity simulation is locally owned
     DETAILED_PROFILE_RANGE(simulation_physics, "ShouldSend");
@@ -721,8 +802,8 @@ void EntityMotionState::updateSendVelocities() {
         if (!_body->IsKinematic()) {
             clearObjectVelocities();
         }
-        if (_trackDriven) {
-            // a standing car is not released by its owner (see remoteSimulationOutOfSync)
+        if (_trackDriven || (_vehicle && (!_entity->getVehicleProperties().getDriver().isNull() || Physics::isServerAuthority()))) {
+            // a standing car is not released by its owner, nor a vehicle with a driver aboard (see remoteSimulationOutOfSync)
             _numInactiveUpdates = 0;
         } else if (_entity->getEntityHostType() == entity::HostType::AVATAR) {
             // AvatarEntities only ever need to send one update (their updates are sent over a lossless protocol)
@@ -790,7 +871,7 @@ void EntityMotionState::sendBid(OctreeEditPacketSender* packetSender, uint32_t s
     EntityItemID id(_entity->getID());
     EntityEditPacketSender* entityPacketSender = static_cast<EntityEditPacketSender*>(packetSender);
     entityPacketSender->queueEditEntityMessage(PacketType::EntityPhysics, tree, id, properties);
-    if (_trackDriven && Physics::isServerAuthority()) {
+    if (serverTakes()) {
         qCInfo(physics) << "physics-server: bid for car" << _entity->getName() << _entity->getID() << "at priority"
             << (int)finalBidPriority << "(owner" << _entity->getSimulatorID() << "at" << (int)_entity->getSimulationPriority() << ")";
     }
@@ -831,6 +912,10 @@ void EntityMotionState::sendUpdate(OctreeEditPacketSender* packetSender, uint32_
         _entity->setDynamicDataNeedsTransmit(false);
         properties.setActionData(_serverActionData);
     }
+    if (_vehicle && _vehicles) {
+        // the applied input, its sequence, the engine and the gear travel with every update (PHYSICS.md round 6)
+        _vehicles->fillState(this, properties);
+    }
 
     if (_entity->updateQueryAACube()) {
         // due to parenting, the server may not know where something is in world-space, so include the bounding cube.
@@ -856,7 +941,7 @@ void EntityMotionState::sendUpdate(OctreeEditPacketSender* packetSender, uint32_
         newPriority = glm::max(newPriority, YIELD_SIMULATION_PRIORITY);
         // the physics server says who owns a car in every update: should the entity server have expired its ownership
         // on a lost update, the next one takes the car back without waiting to hear of the loss
-        bool reassert = _trackDriven && Physics::isServerAuthority();
+        bool reassert = serverTakes();
         if (reassert || (newPriority != _entity->getSimulationPriority() &&
                 !(newPriority == VOLUNTEER_SIMULATION_PRIORITY && _entity->getSimulationPriority() == RECRUIT_SIMULATION_PRIORITY))) {
             // our desired priority has changed
@@ -1044,10 +1129,12 @@ bool EntityMotionState::shouldSendBid() const {
     // NOTE: this method is only ever called when the entity's simulation is NOT locally owned
     // A train needs a driver, moving or not: the physics server takes every car from whoever has it, at SERVER
     // priority; a client bids for an unowned car only while no server drives its track (PHYSICS.md round 5).
-    bool serverTakesCar = _trackDriven && Physics::isServerAuthority();
+    // A vehicle (round 6) likewise; and the client at its wheel bids for it, moving or not, when no server holds it.
+    bool serverTakesCar = serverTakes();
     bool serverDriven = _trackDriven && _tracks && _tracks->isServerDriven(_entity->getTrackID());
     bool unownedTrackCar = _trackDriven && _entity->getSimulatorID().isNull() && !serverDriven;
-    return (_body->IsActive() || unownedTrackCar || serverTakesCar)
+    bool driverWants = hasLocalVehicleControls();
+    return (_body->IsActive() || unownedTrackCar || serverTakesCar || driverWants)
         && (_region == workload::Region::R1 || serverTakesCar)
         && _ownershipState != EntityMotionState::OwnershipState::Unownable
         && computeFinalBidPriority() >= _entity->getSimulationPriority()
@@ -1065,11 +1152,18 @@ void EntityMotionState::setBody(JPH::Body* body, PhysicsWorld* world) {
 }
 
 uint8_t EntityMotionState::computeFinalBidPriority() const {
-    if (_trackDriven && Physics::isServerAuthority()) {
-        return SERVER_SIMULATION_PRIORITY;   // the physics server's claim on a car outranks any client's
+    if (serverTakes()) {
+        return SERVER_SIMULATION_PRIORITY;   // the physics server's claim on a car or a vehicle outranks any client's
     }
-    return (_region == workload::Region::R1) ?
-        glm::max(glm::max(VOLUNTEER_SIMULATION_PRIORITY, _bumpedPriority), _entity->getScriptSimulationPriority()) : 0;
+    if (_region != workload::Region::R1) {
+        return 0;
+    }
+    uint8_t priority = glm::max(glm::max(VOLUNTEER_SIMULATION_PRIORITY, _bumpedPriority), _entity->getScriptSimulationPriority());
+    if (hasLocalVehicleControls()) {
+        // the driver holds the wheel as a hand holds a grabbed thing
+        priority = glm::max(priority, SCRIPT_GRAB_SIMULATION_PRIORITY);
+    }
+    return priority;
 }
 
 bool EntityMotionState::isLocallyOwned() const {

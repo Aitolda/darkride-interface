@@ -45,6 +45,7 @@ ToneMappingPropertyGroup EntityItemProperties::_staticToneMapping;
 KeyLightPropertyGroup EntityItemProperties::_staticKeyLight;
 AmbientLightPropertyGroup EntityItemProperties::_staticAmbientLight;
 GrabPropertyGroup EntityItemProperties::_staticGrab;
+VehiclePropertyGroup EntityItemProperties::_staticVehicle;
 PulsePropertyGroup EntityItemProperties::_staticPulse;
 RingGizmoPropertyGroup EntityItemProperties::_staticRing;
 
@@ -86,6 +87,7 @@ void EntityItemProperties::debugDump() const {
     getAmbientLight().debugDump();
     getBloom().debugDump();
     getGrab().debugDump();
+    getVehicle().debugDump();
 
     qCDebug(entities) << "   changed properties...";
     EntityPropertyFlags props = getChangedProperties();
@@ -508,6 +510,7 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
     CHECK_PROPERTY_CHANGE(PROP_TRACK_ID, trackID);
     CHECK_PROPERTY_CHANGE(PROP_TRACK_OFFSET, trackOffset);
     changedProperties += _grab.getChangedProperties();
+    changedProperties += _vehicle.getChangedProperties();
 
     // Physics
     CHECK_PROPERTY_CHANGE(PROP_DENSITY, density);
@@ -913,6 +916,8 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
  * @property {Uuid} cloneOriginID - The ID of the entity that this entity was cloned from.
  *
  * @property {Entities.Grab} grab - The entity's grab-related properties.
+ * @property {Entities.Vehicle} vehicle - The entity's vehicle properties (PHYSICS.md round 6): what makes it a chassis
+ *     with wheels and seats, or a wheel of one, and the simulation's state.
  *
  * @property {string} itemName="" - Certifiable name of the Marketplace item.
  * @property {string} itemDescription="" - Certifiable description of the Marketplace item.
@@ -1769,6 +1774,7 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
     COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_ID, trackID);
     COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_OFFSET, trackOffset);
     _grab.copyToScriptValue(_desiredProperties, properties, engine, skipDefaults, defaultEntityProperties);
+    _vehicle.copyToScriptValue(_desiredProperties, properties, engine, skipDefaults, defaultEntityProperties);
 
     // Physics
     COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_DENSITY, density);
@@ -2220,6 +2226,7 @@ void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool 
     COPY_PROPERTY_FROM_QSCRIPTVALUE(trackID, QUuid, setTrackID);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(trackOffset, float, setTrackOffset);
     _grab.copyFromScriptValue(object, _defaultSettings);
+    _vehicle.copyFromScriptValue(object, _defaultSettings);
 
     // Physics
     COPY_PROPERTY_FROM_QSCRIPTVALUE(density, float, setDensity);
@@ -2543,6 +2550,7 @@ void EntityItemProperties::merge(const EntityItemProperties& other) {
     COPY_PROPERTY_IF_CHANGED(trackID);
     COPY_PROPERTY_IF_CHANGED(trackOffset);
     _grab.merge(other._grab);
+    _vehicle.merge(other._vehicle);
 
     // Physics
     COPY_PROPERTY_IF_CHANGED(density);
@@ -2802,21 +2810,29 @@ QScriptValue EntityItemProperties::entityPropertyFlagsToScriptValue(QScriptEngin
     return result;
 }
 
+// A property's name ("position", "grab.grabbable") names one flag; a group's name alone ("grab", "vehicle") names every
+// property of the group, so a script can ask Entities.getEntityProperties(id, ["vehicle"]) for the whole group.
+static void addPropertyFlagsByName(const QString& name, EntityPropertyFlags& flags) {
+    EntityPropertyInfo propertyInfo;
+    if (EntityItemProperties::getPropertyInfo(name, propertyInfo)) {
+        flags << propertyInfo.propertyEnum;
+        return;
+    }
+    if (!name.contains('.')) {
+        for (EntityPropertyList property : EntityItemProperties::getPropertiesOfGroup(name)) {
+            flags << property;
+        }
+    }
+}
+
 void EntityItemProperties::entityPropertyFlagsFromScriptValue(const QScriptValue& object, EntityPropertyFlags& flags) {
     if (object.isString()) {
-        EntityPropertyInfo propertyInfo;
-        if (getPropertyInfo(object.toString(), propertyInfo)) {
-            flags << propertyInfo.propertyEnum;
-        }
+        addPropertyFlagsByName(object.toString(), flags);
     }
     else if (object.isArray()) {
         quint32 length = object.property("length").toInt32();
         for (quint32 i = 0; i < length; i++) {
-            QString propertyName = object.property(i).toString();
-            EntityPropertyInfo propertyInfo;
-            if (getPropertyInfo(propertyName, propertyInfo)) {
-                flags << propertyInfo.propertyEnum;
-            }
+            addPropertyFlagsByName(object.property(i).toString(), flags);
         }
     }
 }
@@ -2881,6 +2897,36 @@ bool EntityItemProperties::getPropertyInfo(const QString& propertyName, EntityPr
                                       EquippableIndicatorScale, equippableIndicatorScale);
             ADD_GROUP_PROPERTY_TO_MAP(PROP_GRAB_EQUIPPABLE_INDICATOR_OFFSET, Grab, grab,
                                       EquippableIndicatorOffset, equippableIndicatorOffset);
+        }
+        { // Vehicle
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_TYPE, Vehicle, vehicle, Type, type);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_MASS, Vehicle, vehicle, Mass, mass);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_CENTER_OF_MASS, Vehicle, vehicle, CenterOfMass, centerOfMass);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_WHEELS, Vehicle, vehicle, Wheels, wheels);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_SEATS, Vehicle, vehicle, Seats, seats);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_MAX_STEER_ANGLE, Vehicle, vehicle, MaxSteerAngle, maxSteerAngle);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_MAX_TORQUE, Vehicle, vehicle, MaxTorque, maxTorque);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_MIN_RPM, Vehicle, vehicle, MinRPM, minRPM);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_MAX_RPM, Vehicle, vehicle, MaxRPM, maxRPM);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_GEAR_RATIOS, Vehicle, vehicle, GearRatios, gearRatios);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_REVERSE_GEAR_RATIO, Vehicle, vehicle, ReverseGearRatio, reverseGearRatio);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_FINAL_DRIVE_RATIO, Vehicle, vehicle, FinalDriveRatio, finalDriveRatio);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_MAX_BRAKE_TORQUE, Vehicle, vehicle, MaxBrakeTorque, maxBrakeTorque);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_MAX_HAND_BRAKE_TORQUE, Vehicle, vehicle, MaxHandBrakeTorque, maxHandBrakeTorque);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_DRIVE_TYPE, Vehicle, vehicle, DriveType, driveType);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_SUSPENSION_FREQUENCY, Vehicle, vehicle, SuspensionFrequency, suspensionFrequency);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_SUSPENSION_DAMPING, Vehicle, vehicle, SuspensionDamping, suspensionDamping);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_WHEEL, Vehicle, vehicle, Wheel, wheel);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_AXLE, Vehicle, vehicle, Axle, axle);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_DRIVER, Vehicle, vehicle, Driver, driver);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_INPUT_SEQUENCE, Vehicle, vehicle, InputSequence, inputSequence);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_THROTTLE, Vehicle, vehicle, Throttle, throttle);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_STEERING, Vehicle, vehicle, Steering, steering);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_BRAKE, Vehicle, vehicle, Brake, brake);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_HAND_BRAKE, Vehicle, vehicle, HandBrake, handBrake);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_ENGINE_RPM, Vehicle, vehicle, EngineRPM, engineRPM);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_GEAR, Vehicle, vehicle, Gear, gear);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_STATE_TIME, Vehicle, vehicle, StateTime, stateTime);
         }
 
         // Physics
@@ -3232,6 +3278,19 @@ bool EntityItemProperties::getPropertyInfo(const QString& propertyName, EntityPr
     return false;
 }
 
+QList<EntityPropertyList> EntityItemProperties::getPropertiesOfGroup(const QString& groupName) {
+    EntityPropertyInfo unused;
+    getPropertyInfo(QString(), unused);   // fills the maps once
+    QList<EntityPropertyList> properties;
+    const QString prefix = groupName + ".";
+    for (auto it = _enumsToPropertyStrings.constBegin(); it != _enumsToPropertyStrings.constEnd(); ++it) {
+        if (it.value().startsWith(prefix)) {
+            properties << it.key();
+        }
+    }
+    return properties;
+}
+
 /**jsdoc
  * Information about an entity property.
  * @typedef {object} Entities.EntityPropertyInfo
@@ -3386,6 +3445,9 @@ OctreeElement::AppendState EntityItemProperties::encodeEntityEditPacket(PacketTy
             _staticGrab.setProperties(properties);
             _staticGrab.appendToEditPacket(packetData, requestedProperties, propertyFlags,
                                            propertiesDidntFit, propertyCount, appendState);
+            _staticVehicle.setProperties(properties);
+            _staticVehicle.appendToEditPacket(packetData, requestedProperties, propertyFlags,
+                                              propertiesDidntFit, propertyCount, appendState);
 
             // Physics
             APPEND_ENTITY_PROPERTY(PROP_DENSITY, properties.getDensity());
@@ -3914,6 +3976,7 @@ bool EntityItemProperties::decodeEntityEditPacket(const unsigned char* data, int
     READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_ID, QUuid, setTrackID);
     READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_OFFSET, float, setTrackOffset);
     properties.getGrab().decodeFromEditPacket(propertyFlags, dataAt, processedBytes);
+    properties.getVehicle().decodeFromEditPacket(propertyFlags, dataAt, processedBytes);
 
     // Physics
     READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_DENSITY, float, setDensity);
@@ -4365,6 +4428,7 @@ void EntityItemProperties::markAllChanged() {
     _trackIDChanged = true;
     _trackOffsetChanged = true;
     _grab.markAllChanged();
+    _vehicle.markAllChanged();
 
     // Physics
     _densityChanged = true;
@@ -4805,6 +4869,7 @@ QList<QString> EntityItemProperties::listChangedProperties() {
         out += "trackOffset";
     }
     getGrab().listChangedProperties(out);
+    getVehicle().listChangedProperties(out);
 
     // Physics
     if (densityChanged()) {

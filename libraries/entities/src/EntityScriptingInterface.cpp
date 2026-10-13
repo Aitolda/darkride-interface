@@ -1931,6 +1931,35 @@ bool EntityScriptingInterface::setLocalJointTranslation(const QUuid& entityID, i
     return false;
 }
 
+bool EntityScriptingInterface::setVehicleControls(const QUuid& entityID, const QVariantMap& controls) {
+    EntityItemPointer entity = checkForTreeEntityAndTypeMatch(entityID);
+    if (!entity || !entity->isVehicle()) {
+        return false;
+    }
+    EntityItem::VehicleControls values;
+    values.throttle = glm::clamp(controls.value("throttle", 0.0f).toFloat(), -1.0f, 1.0f);
+    values.steering = glm::clamp(controls.value("steering", 0.0f).toFloat(), -1.0f, 1.0f);
+    values.brake = glm::clamp(controls.value("brake", 0.0f).toFloat(), 0.0f, 1.0f);
+    values.handBrake = glm::clamp(controls.value("handBrake", 0.0f).toFloat(), 0.0f, 1.0f);
+    entity->setLocalVehicleControls(values);
+    return true;
+}
+
+QVariantMap EntityScriptingInterface::getVehicleStats() {
+    if (_entityTree) {
+        if (EntitySimulationPointer simulation = _entityTree->getSimulation()) {
+            return simulation->getVehicleStats();
+        }
+    }
+    return QVariantMap();
+}
+
+void EntityScriptingInterface::clearVehicleControls(const QUuid& entityID) {
+    if (EntityItemPointer entity = checkForTreeEntityAndTypeMatch(entityID)) {
+        entity->clearLocalVehicleControls();
+    }
+}
+
 bool EntityScriptingInterface::setLocalJointRotation(const QUuid& entityID, int jointIndex, glm::quat rotation) {
     if (auto entity = checkForTreeEntityAndTypeMatch(entityID, EntityTypes::Model)) {
         auto now = usecTimestampNow();

@@ -36,6 +36,8 @@ PacketVersion versionForPacketType(PacketType packetType) {
             return static_cast<PacketVersion>(EntityVersion::LAST_PACKET_TYPE);
         case PacketType::EntityQuery:
             return static_cast<PacketVersion>(EntityQueryPacketVersion::ConicalFrustums);
+        case PacketType::VehicleInput:
+            return 1;
         case PacketType::AvatarIdentity:
         case PacketType::AvatarData:
             return static_cast<PacketVersion>(AvatarMixerPacketVersion::ARKitBlendshapes);

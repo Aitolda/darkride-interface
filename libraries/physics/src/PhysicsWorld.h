@@ -154,6 +154,12 @@ public:
     // one substep: kinematics pushed (parents before children), the character moved, gravity applied, the
     // world stepped, contacts harvested
     void stepOnce(float dt, CharacterController* character);
+    // Rollback for prediction (PHYSICS.md 4.6, round 6): the state of every non-static body but one (the vehicle, which
+    // is set from the authority's state instead), as Jolt's state recorder writes it, and the same put back; then
+    // substeps run again with nothing but gravity and Jolt (no kinematic push, no character, no contact events).
+    std::string saveBodies(const JPH::BodyID& exclude) const;
+    bool restoreBodies(const std::string& saved, const JPH::BodyID& exclude);
+    void replayStep(float dt);
 
     // after the frame's steps: every body that was active is pulled, the sleepers are listed
     void harvestChanges(VectorOfMotionStates& changed, VectorOfMotionStates& deactivated);
@@ -201,6 +207,7 @@ private:
     std::unique_ptr<JoltLayers::Tables> _layers;
     std::unique_ptr<JPH::PhysicsSystem> _system;
     std::unique_ptr<ContactRecorder> _contactRecorder;
+    bool _replaying { false };
     std::unique_ptr<ActivationRecorder> _activationRecorder;
 
     ContactMap _contactMap;
