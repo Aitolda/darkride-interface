@@ -624,6 +624,87 @@ bool twoToOneRuleHolds(const VoxelGrid& grid) {
     return holds;
 }
 
+// Vertices of different chunks' meshes, in grid units, told apart: two within a hair of each other are one
+// vertex (each chunk places its own in its own units, so the same vertex comes out a rounding apart).
+class VertexMerger {
+public:
+    int idOf(const glm::vec3& p) {
+        const glm::ivec3 q(glm::floor(p * 16.0f));
+        for (int dz = -1; dz <= 1; ++dz) {
+            for (int dy = -1; dy <= 1; ++dy) {
+                for (int dx = -1; dx <= 1; ++dx) {
+                    auto found = _cells.find(std::make_tuple(q.x + dx, q.y + dy, q.z + dz));
+                    if (found == _cells.end()) {
+                        continue;
+                    }
+                    for (const auto& entry : found->second) {
+                        if (near(entry.first, p, 1.0e-4f)) {
+                            return entry.second;
+                        }
+                    }
+                }
+            }
+        }
+        _cells[std::make_tuple(q.x, q.y, q.z)].push_back(std::make_pair(p, _next));
+        _positions.push_back(p);
+        return _next++;
+    }
+    const glm::vec3& positionOf(int id) const { return _positions[id]; }
+
+private:
+    std::map<std::tuple<int, int, int>, std::vector<std::pair<glm::vec3, int>>> _cells;
+    std::vector<glm::vec3> _positions;
+    int _next { 0 };
+};
+
+// Meshes every chunk and counts the edges of the surface they make together that lie on an odd number of
+// triangles: an open edge, a crack between chunks, or a hole. Edges along the grid's sides are left out: the
+// surface runs out of the grid open there.
+int countOpenEdges(const VoxelGrid& grid, int* triangles = nullptr) {
+    VertexMerger merger;
+    std::map<std::pair<int, int>, int> edgeCounts;
+    int triangleCount = 0;
+    grid.forEachChunk([&](const ChunkKey& key, const Chunk&) {
+        const ChunkMesh mesh = meshChunk(grid, key);
+        std::vector<int> ids;
+        for (const glm::vec3& p : mesh.positions) {
+            ids.push_back(merger.idOf(glm::vec3(key.getOrigin()) + p / (float)key.getScale()));
+        }
+        for (size_t t = 0; t < mesh.getTriangleCount(); ++t) {
+            ++triangleCount;
+            for (int k = 0; k < 3; ++k) {
+                const int a = ids[mesh.indices[3 * t + k]];
+                const int b = ids[mesh.indices[3 * t + (k + 1) % 3]];
+                if (a != b) {
+                    ++edgeCounts[std::make_pair(std::min(a, b), std::max(a, b))];
+                }
+            }
+        }
+    });
+    if (triangles) {
+        *triangles = triangleCount;
+    }
+    const glm::vec3 high(grid.getVoxelCount() - 1);
+    int open = 0;
+    for (const auto& entry : edgeCounts) {
+        if (entry.second % 2 == 0) {
+            continue;
+        }
+        const glm::vec3& a = merger.positionOf(entry.first.first);
+        const glm::vec3& b = merger.positionOf(entry.first.second);
+        bool onSide = false;
+        for (int axis = 0; axis < 3; ++axis) {
+            if ((a[axis] <= 0.0f && b[axis] <= 0.0f) || (a[axis] >= high[axis] && b[axis] >= high[axis])) {
+                onSide = true;
+            }
+        }
+        if (!onSide) {
+            ++open;
+        }
+    }
+    return open;
+}
+
 } // namespace
 
 void TerrainTests::chunkKeysNameTheirGridVoxels() {
@@ -756,11 +837,12 @@ void TerrainTests::splitChunkKeepsTheGroundAndWhatTheNeighboursSample() {
             QVERIFY(std::abs(fineSamples.at(0, y, 16).getDistance() - 2.0f * coarse1) < 0.05f);
         }
     }
-    // the fine chunk meshes in its own voxels (half grid voxels, from its origin), over the same ground
+    // the fine chunk meshes in its own voxels (half grid voxels, from its origin), over the same ground, reaching
+    // two of its voxels into the coarser neighbours on its low sides (their cells along the join are its to draw)
     ChunkMesh mesh = meshChunk(grid, ChunkKey(1, 2, 0, 2));
     QVERIFY(mesh.getTriangleCount() > 1000);
     for (const glm::vec3& p : mesh.positions) {
-        QVERIFY(p.x >= -1.0f && p.x <= 32.0f && p.z >= -1.0f && p.z <= 32.0f);
+        QVERIFY(p.x >= -2.0f && p.x <= 32.0f && p.z >= -2.0f && p.z <= 32.0f);
         const float groundHeight = hills((int)std::round(32.0f + p.x * 0.5f), (int)std::round(32.0f + p.z * 0.5f));
         QVERIFY(std::abs(p.y * 0.5f - groundHeight) < 1.5f);
     }
@@ -908,6 +990,114 @@ void TerrainTests::smallBrushDigsFineDetailWithoutResamplingTheGrid() {
     coarseRaise.radius = 8.0f;
     QVERIFY(sculpt(lifted, coarseRaise, SculptMode::Raise) > 0);
     QVERIFY(std::abs(surfaceHeight(lifted, 10.0f, 10.0f, 39.0f, 44.0f) - 41.5f) < 0.1f);
+}
+
+void TerrainTests::chunksOfDifferentLevelsMeetWithoutACrack() {
+    // Hills over nine chunks, all at level 0: the surface is closed but for the grid's sides.
+    VoxelGrid grid(glm::ivec3(96, 32, 96));
+    grid.fillHeightField(hills, 2);
+    int triangles = 0;
+    QCOMPARE(countOpenEdges(grid, &triangles), 0);
+    QVERIFY(triangles > 9 * 2000);
+
+    // The middle chunk split: level 1 beside 0 across faces, edges and corners, in every orientation.
+    QVERIFY(grid.splitChunk(ChunkKey(0, 1, 0, 1)));
+    QCOMPARE(grid.countChunks(), 16);
+    QCOMPARE(countOpenEdges(grid, &triangles), 0);
+    QVERIFY(triangles > 9 * 2000);
+
+    // What the samples say about the neighbours: the child at the split chunk's low corner has level-0 chunks
+    // below it in x and z and at that edge, nothing below in y (the grid ends there, and samples beyond it read
+    // its bottom row: the chunk's own, or across the low x face the level-0 neighbour's), and its blocks hold
+    // those chunks' own voxels.
+    ChunkSamples samples;
+    grid.sampleChunk(ChunkKey(1, 2, 0, 2), samples);   // origin (32, 0, 32)
+    QCOMPARE(samples.getNeighbourLevel(1), -1);
+    QCOMPARE(samples.getNeighbourLevel(4), -1);
+    QCOMPARE(samples.getNeighbourLevel(5), -1);
+    QCOMPARE(samples.getNeighbourLevel(2), 0);
+    QCOMPARE(samples.getNeighbourLevel(3), -1);
+    QCOMPARE(samples.getNeighbourLevel(6), -1);
+    QCOMPARE((int)samples.getBlocks().size(), 5);
+    for (const SampleBlock& block : samples.getBlocks()) {
+        QCOMPARE(block.levelDelta, -1);
+    }
+    QCOMPARE(samples.getBlocks()[0].size, glm::ivec3(2, 17, 17));
+    QCOMPARE(samples.getBlocks()[1].size, glm::ivec3(2, 2, 17));
+    const Voxel* corner = samples.findAt(-1, glm::ivec3(-1, 5, 3));
+    QVERIFY(corner);
+    QVERIFY(*corner == grid.get(glm::ivec3(31, 5, 35)));
+    QVERIFY(!samples.findAt(-1, glm::ivec3(-2, 5, 3)));
+    QVERIFY(!samples.findAt(1, glm::ivec3(-1, 5, 3)));
+    // and the level-0 chunk beyond the split one in x sees level-1 chunks below it in x: their own voxels at
+    // its face, and between its own at the face
+    grid.sampleChunk(ChunkKey(0, 2, 0, 1), samples);   // origin (64, 0, 32)
+    QCOMPARE(samples.getNeighbourLevel(1), 1);
+    QCOMPARE(samples.getNeighbourLevel(3), 1);   // beyond the grid's bottom: the low x neighbours' bottom row again
+    QCOMPARE(samples.getNeighbourLevel(4), 0);
+    QCOMPARE(samples.getNeighbourLevel(5), 0);
+    QCOMPARE((int)samples.getBlocks().size(), 2);
+    QCOMPARE(samples.getBlocks()[0].size, glm::ivec3(2, 65, 65));
+    QCOMPARE(samples.getBlocks()[1].size, glm::ivec3(2, 2, 65));
+    const Voxel* fine = samples.findAt(1, glm::ivec3(-1, 7, 9));
+    QVERIFY(fine);
+    QVERIFY(*fine == grid.getChunk(ChunkKey(1, 3, 0, 2)).get(31, 7, 9));
+    QVERIFY(samples.findAt(1, glm::ivec3(0, 7, 64)));
+    QVERIFY(!samples.findAt(1, glm::ivec3(1, 7, 9)));
+    // a resampling of the chunk alone asks for none of this
+    grid.sampleChunk(ChunkKey(0, 2, 0, 1), samples, false);
+    QCOMPARE(samples.getNeighbourLevel(1), 0);
+    QVERIFY(samples.getBlocks().empty());
+
+    // The child at the split chunk's low corner split again: level 2 beside 1 beside 0, the level-0 chunks at
+    // that corner split once for the 2:1 rule.
+    QVERIFY(grid.splitChunk(ChunkKey(1, 2, 0, 2)));
+    QVERIFY(twoToOneRuleHolds(grid));
+    QCOMPARE(grid.getFinestLevel(), 2);
+    QVERIFY(grid.countChunks() > 40);
+    QCOMPARE(countOpenEdges(grid, &triangles), 0);
+    QVERIFY(triangles > 9 * 2000);
+
+    // A bump smaller than a coarse voxel on the plane between a fine chunk and the coarse one below it in x:
+    // the fine chunk's own voxel there, which the coarse chunk's cell never sees. The fine chunk closes the
+    // surface around it to that cell's centre.
+    VoxelGrid bumped(glm::ivec3(96, 32, 96));
+    bumped.fillBelow(10.5f, 1);
+    QVERIFY(bumped.splitChunk(ChunkKey(0, 1, 0, 1)));
+    const ChunkKey fineKey(1, 2, 0, 2);   // origin (32, 0, 32); its low x neighbour is level-0 chunk (0, 0, 1)
+    Chunk* fineChunk = bumped.findChunk(fineKey);
+    QVERIFY(fineChunk);
+    QVERIFY(fineChunk->set(0, 29, 15, Voxel::ground(1)));
+    bumped.voxelsChanged(fineKey, glm::ivec3(0, 29, 15), glm::ivec3(0, 29, 15));
+    QVERIFY(bumped.getDirtyChunks().count(ChunkKey(0, 0, 0, 1)) > 0);
+    QCOMPARE(countOpenEdges(bumped), 0);
+    ChunkMesh fineMesh = meshChunk(bumped, fineKey);
+    bool centred = false;
+    for (const glm::vec3& p : fineMesh.positions) {
+        centred = centred || near(p, glm::vec3(-1.0f, 29.0f, 15.0f), 1.0e-4f);
+    }
+    QVERIFY(centred);
+
+    // The small brush's dig of smallBrushDigsFineDetailWithoutResamplingTheGrid: ninety chunks of three levels,
+    // closed; then a wide brush over the fine ones and the coarse ones beside them, closed still.
+    VoxelGrid dug(glm::ivec3(96, 96, 96));
+    dug.fillBelow(40.5f, 1);
+    Brush small;
+    small.center = glm::vec3(40.0f, 40.5f, 40.0f);
+    small.radius = 1.5f;
+    QVERIFY(sculpt(dug, small, SculptMode::Dig) > 0);
+    QCOMPARE(dug.countChunks(), 90);
+    QElapsedTimer timer;
+    timer.start();
+    QCOMPARE(countOpenEdges(dug, &triangles), 0);
+    qDebug() << "meshed" << dug.countChunks() << "chunks of three levels," << triangles << "triangles, in" << timer.elapsed() << "ms";
+    Brush wide;
+    wide.center = glm::vec3(48.0f, 40.5f, 48.0f);
+    wide.radius = 6.0f;
+    QVERIFY(sculpt(dug, wide, SculptMode::Dig) > 0);
+    QVERIFY(sculpt(dug, wide, SculptMode::Raise) > 0);
+    QVERIFY(twoToOneRuleHolds(dug));
+    QCOMPARE(countOpenEdges(dug), 0);
 }
 
 void TerrainTests::setChunkAndPlaceChunkReplaceWhatCoversTheKey() {

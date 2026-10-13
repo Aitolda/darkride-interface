@@ -324,10 +324,10 @@ bool RenderableTerrainEntityItem::rayHitsGround(const glm::vec3& origin, const g
     float best = FLT_MAX;
     const glm::vec3 invDirection = 1.0f / direction;
     for (const auto& pair : _chunkMeshes) {
-        // the chunk's mesh lies within one of its voxels outside the chunk on the low side and inside it elsewhere
+        // the chunk's mesh lies within two of its voxels outside the chunk on the low side and inside it elsewhere
         const glm::vec3 chunkOrigin(pair.first.getOrigin());
         const float perVoxel = 1.0f / (float)pair.first.getScale();
-        const AABox box(chunkOrigin - perVoxel, glm::vec3(((float)terrain::CHUNK_SIZE + 2.0f) * perVoxel));
+        const AABox box(chunkOrigin - 2.0f * perVoxel, glm::vec3(((float)terrain::CHUNK_SIZE + 3.0f) * perVoxel));
         if (!box.contains(origin)) {
             float boxDistance = 0.0f;
             BoxFace boxFace = UNKNOWN_FACE;
@@ -516,8 +516,8 @@ void TerrainChunkPayload::setWorldToTerrain(const glm::mat4& worldToTerrain) {
 
 void TerrainChunkPayload::setPlacement(const Transform& chunkToWorld) {
     _transform = chunkToWorld;
-    // The mesh's vertices lie within one voxel outside the chunk on the low side (SurfaceNets.h) and inside it elsewhere.
-    AABox bound(glm::vec3(-1.0f), glm::vec3((float)terrain::CHUNK_SIZE + 1.0f));
+    // The mesh's vertices lie within two voxels outside the chunk on the low side (SurfaceNets.h) and inside it elsewhere.
+    AABox bound(glm::vec3(-2.0f), glm::vec3((float)terrain::CHUNK_SIZE + 2.0f));
     bound.transform(chunkToWorld);
     _bound = bound;
 }

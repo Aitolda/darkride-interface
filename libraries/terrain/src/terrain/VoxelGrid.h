@@ -15,8 +15,10 @@
 //
 //  The grid tracks which chunks' meshes are out of date and hands the mesher the samples one chunk needs
 //  (ChunkSamples): its own voxels and one layer of its neighbours' all around, at its own level, so neighbouring
-//  meshes of one level meet without a seam. Nothing here is thread safe: edit on one thread, sample there, mesh the
-//  samples anywhere (AsyncMesher does that on a thread pool).
+//  meshes of one level meet without a seam, and across each low face and low edge where the neighbours are at
+//  another level, their voxels at that level (SampleBlock), so the meshes meet there too (SurfaceNets.h). Nothing
+//  here is thread safe: edit on one thread, sample there, mesh the samples anywhere (AsyncMesher does that on a
+//  thread pool).
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -117,8 +119,30 @@ private:
 
 const int SAMPLE_SIZE = CHUNK_SIZE + 2;
 
-// The voxels one chunk's mesh is built from, at the chunk's own level. Local coordinates run from -1 to CHUNK_SIZE
-// inclusive.
+// Samples at a level next to a chunk's: the voxels of one of the chunk's low neighbours (across a low face or a
+// low edge) at that neighbour's level, where it differs from the chunk's, over the neighbour's cells that touch
+// the chunk. The mesher builds those cells from them as the neighbour does from its own samples, so the two
+// meshes meet (SurfaceNets.h).
+struct SampleBlock {
+    int levelDelta { 0 };        // the block's level less the chunk's: -1 one coarser, +1 one finer
+    glm::ivec3 origin { 0 };     // the block's first point, in its level's lattice, relative to the chunk's origin
+    glm::ivec3 size { 0 };
+    std::vector<Voxel> voxels;   // x fastest
+
+    bool contains(const glm::ivec3& point) const {
+        const glm::ivec3 local = point - origin;
+        return glm::all(glm::greaterThanEqual(local, glm::ivec3(0))) && glm::all(glm::lessThan(local, size));
+    }
+    // The point must lie in the block.
+    const Voxel& at(const glm::ivec3& point) const {
+        const glm::ivec3 local = point - origin;
+        return voxels[((size_t)local.z * size.y + local.y) * size.x + local.x];
+    }
+};
+
+// The voxels one chunk's mesh is built from, at the chunk's own level: local coordinates run from -1 to CHUNK_SIZE
+// inclusive. With them, the level of the neighbours across the chunk's low faces and low edges, and their voxels
+// at that level where it is not the chunk's own.
 class ChunkSamples {
 public:
     ChunkSamples() : _voxels(SAMPLE_SIZE * SAMPLE_SIZE * SAMPLE_SIZE) {}
@@ -136,9 +160,25 @@ public:
     const ChunkKey& getKey() const { return _key; }
     void setKey(const ChunkKey& key) { _key = key; }
 
+    // The level of the neighbours across the chunk's low faces and low edges, less the chunk's own. A region is
+    // named by bits: 1 for below x = 0, 2 for below y = 0, 4 for below z = 0, so region 1 lies across the low x
+    // face and region 3 across the edge where the low x and y faces meet. 0 where the neighbours are at the
+    // chunk's level, or the grid ends.
+    int getNeighbourLevel(int region) const { return _neighbourLevels[region & 7]; }
+    void setNeighbourLevel(int region, int levelDelta) { _neighbourLevels[region & 7] = levelDelta; }
+    // The sample at a point of a neighbouring level's lattice (relative to the chunk's origin), from whichever
+    // block holds it; null when none does.
+    const Voxel* findAt(int levelDelta, const glm::ivec3& point) const;
+    void addBlock(SampleBlock block) { _blocks.push_back(std::move(block)); }
+    const std::vector<SampleBlock>& getBlocks() const { return _blocks; }
+    // Every neighbour at the chunk's level again, and no blocks.
+    void clearBlocks();
+
 private:
     ChunkKey _key;
     std::vector<Voxel> _voxels;
+    int _neighbourLevels[8] { 0, 0, 0, 0, 0, 0, 0, 0 };
+    std::vector<SampleBlock> _blocks;
 };
 
 class VoxelGrid {
@@ -173,6 +213,8 @@ public:
 
     // The chunk covering a grid voxel (clamped into the grid), at whatever level it is.
     ChunkKey chunkCovering(const glm::ivec3& voxel) const;
+    // The chunk covering one of a level's points (grid position point / 2^level, clamped into the grid).
+    ChunkKey chunkCoveringPoint(int level, const glm::ivec3& point) const;
     // Every chunk covering any grid voxel from low to high (inclusive), at their own levels, in key order.
     std::vector<ChunkKey> chunksCovering(const glm::ivec3& low, const glm::ivec3& high) const;
     // Whether a chunk sits at exactly this key: not one coarser over it, nor finer ones under it.
@@ -227,8 +269,10 @@ public:
     void markChunkDirty(const ChunkKey& key);
     void markAllChunksDirty();
 
-    // The chunk's voxels and one layer of its neighbours' around them, at the chunk's level.
-    void sampleChunk(const ChunkKey& key, ChunkSamples& samples) const;
+    // The chunk's voxels and one layer of its neighbours' around them, at the chunk's level; and, for the
+    // mesher, the neighbours' levels across the low faces and edges with their voxels at those levels where they
+    // differ (ChunkSamples' blocks), which a resampling of the chunk alone has no use for.
+    void sampleChunk(const ChunkKey& key, ChunkSamples& samples, bool forMeshing = true) const;
 
     // Ground below a height field: height(x, z) in grid voxels is where the surface lies in that column. Every
     // chunk is at level 0 again afterwards.

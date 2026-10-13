@@ -32,6 +32,7 @@ private slots:
     void splitChunkKeepsTheGroundAndWhatTheNeighboursSample();
     void refineKeepsTheTwoToOneRule();
     void smallBrushDigsFineDetailWithoutResamplingTheGrid();
+    void chunksOfDifferentLevelsMeetWithoutACrack();
     void setChunkAndPlaceChunkReplaceWhatCoversTheKey();
     void fileRoundTripKeepsChunkLevels();
     void resampleReadsTheFineChunks();
