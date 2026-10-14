@@ -6526,17 +6526,22 @@ void MyAvatar::addAvatarHandsToFlow(const std::shared_ptr<Avatar>& otherAvatar) 
  * @property {boolean} [active=true] - <code>true</code> to enable flow on the joint, otherwise <code>false</code>.
  * @property {number} [radius=0.01] - The thickness of segments and knots (needed for collisions).
  * @property {number} [gravity=-0.0096] - Y-value of the gravity vector.
- * @property {number} [inertia=0.8] - Rotational inertia multiplier.
- * @property {number} [damping=0.85] - The amount of damping on joint oscillation.
- * @property {number} [stiffness=0.0] - The stiffness of each thread.
- * @property {number} [delta=0.55] - Delta time for every integration step.
+ * @property {number} [inertia=0.8] - How much of the chain root's movement every joint takes on at once (a quarter of
+ *     this value, capped at 0.5).
+ * @property {number} [damping=0.85] - The fraction of velocity kept per 60 Hz step (<code>1 - drag</code>).
+ * @property {number} [stiffness=0.0] - How hard each joint springs back to its modelled rest direction.
+ * @property {number} [delta=0.55] - Legacy scale on gravity and stiffness; leave at the default.
+ * @property {number} [maxAngle=75] - The most, in degrees, a bone may swing away from its rest direction.
  */
 /**jsdoc
  * Collision options to use in the flow simulation of a joint.
  * @typedef {object} MyAvatar.FlowCollisionsOptions
- * @property {string} [type="sphere"] - Currently, only <code>"sphere"</code> is supported.
- * @property {number} [radius=0.05] - Collision sphere radius.
- * @property {number} [offset=Vec3.ZERO] - Offset of the collision sphere from the joint.
+ * @property {string} [type="sphere"] - <code>"sphere"</code> or <code>"capsule"</code>. A capsule runs from the joint to
+ *     the <code>end</code> joint.
+ * @property {number} [radius=0.05] - Collision sphere or capsule radius.
+ * @property {number} [offset=Vec3.ZERO] - Offset of the collision shape from the joint.
+ * @property {string} [end] - For a capsule, the joint at its far end; the joint's first child when omitted.
+ * @property {number} [endOffset=Vec3.ZERO] - For a capsule, offset of the far end from the <code>end</code> joint.
  */
 void MyAvatar::useFlow(bool isActive, bool isCollidable, const QVariantMap& physicsConfig, const QVariantMap& collisionsConfig) {
     if (QThread::currentThread() != thread()) {
@@ -6582,6 +6587,9 @@ void MyAvatar::useFlow(bool isActive, bool isCollidable, const QVariantMap& phys
                 if (settings.contains("stiffness")) {
                     physicsSettings._stiffness = settings["stiffness"].toFloat();
                 }
+                if (settings.contains("maxAngle")) {
+                    physicsSettings._maxAngle = settings["maxAngle"].toFloat();
+                }
                 flow.setPhysicsSettingsForGroup(groupName, physicsSettings);
             }
         }
@@ -6598,6 +6606,21 @@ void MyAvatar::useFlow(bool isActive, bool isCollidable, const QVariantMap& phys
                 }
                 if (settings.contains("offset")) {
                     collisionsSettings._offset = vec3FromVariant(settings["offset"]);
+                }
+                if (settings.contains("type") && settings["type"].toString().toLower() == "capsule") {
+                    // a capsule runs from this joint to the "end" joint (its first child when none is named)
+                    collisionsSettings._type = FlowCollisionType::CollisionCapsule;
+                    int endJointIndex = -1;
+                    if (settings.contains("end")) {
+                        endJointIndex = getJointIndex(settings["end"].toString());
+                    } else {
+                        auto children = _skeletonModel->getRig().getAnimSkeleton()->getChildrenOfJoint(jointIndex);
+                        endJointIndex = children.size() > 0 ? children[0] : -1;
+                    }
+                    collisionsSettings._endJointIndex = endJointIndex;
+                    if (settings.contains("endOffset")) {
+                        collisionsSettings._endOffset = vec3FromVariant(settings["endOffset"]);
+                    }
                 }
                 collisionSystem.addCollisionSphere(jointIndex, collisionsSettings);
             }
@@ -6680,6 +6703,7 @@ QVariantMap MyAvatar::getFlowData() {
             settingsObject.insert("inertia", groupSettings._inertia);
             settingsObject.insert("radius", groupSettings._radius);
             settingsObject.insert("stiffness", groupSettings._stiffness);
+            settingsObject.insert("maxAngle", groupSettings._maxAngle);
             settingsObject.insert("jointIndices", groupJointsMap[groupName]);
             physicsData.insert(groupName, settingsObject);
         }
@@ -6690,6 +6714,11 @@ QVariantMap MyAvatar::getFlowData() {
             collisionObject.insert("offset", vec3toVariant(collision._offset));
             collisionObject.insert("radius", collision._radius);
             collisionObject.insert("jointIndex", collision._jointIndex);
+            collisionObject.insert("type", collision._type == FlowCollisionType::CollisionCapsule ? "capsule" : "sphere");
+            if (collision._type == FlowCollisionType::CollisionCapsule) {
+                collisionObject.insert("end", jointNames.size() > collision._endJointIndex && collision._endJointIndex >= 0 ? jointNames[collision._endJointIndex] : "unknown");
+                collisionObject.insert("endOffset", vec3toVariant(collision._endOffset));
+            }
             QString jointName = jointNames.size() > collision._jointIndex ? jointNames[collision._jointIndex] : "unknown";
             collisionsData.insert(jointName, collisionObject);
         }

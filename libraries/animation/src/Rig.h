@@ -478,7 +478,6 @@ protected:
     SnapshotBlendPoseHelper _hipsBlendHelper;
     ControllerParameters _previousControllerParameters;
     Flow _internalFlow;
-    Flow _networkFlow;
 };
 
 #endif /* defined(__hifi__Rig__) */
