@@ -44,6 +44,8 @@ private slots:
     void lodCutKeepsItsSplitsWithinTheHysteresis();
     void lodMeshesMeetWithoutACrack();
     void levelOfDetailShowsANewCutOnceItsMeshesAreIn();
+    void levelOfDetailSettlesAfterAnUndoBurst();
+    void levelOfDetailAsksAgainForAStalledNodeAndThenShowsWithoutIt();
     void paintTilesOfCoarserNodesAverageTheMap();
     void smoothLevelsAHillUnderAWideBrush();
     void layersRoundTripThroughTheFile();

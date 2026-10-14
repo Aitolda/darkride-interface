@@ -70,7 +70,8 @@ struct TerrainParams {
 };
 // One chunk's own parameters (terrain.slf): where in its column's paint tile its voxels are read.
 struct TerrainChunkParams {
-    glm::vec4 paint;    // x: tile texture coordinates per voxel of the chunk; yz: the tile coordinates of its voxel (0, 0)
+    glm::vec4 paint;    // x: tile texture coordinates per voxel of the chunk; yz: the tile coordinates of its voxel (0, 0);
+                        // w: 1 while the Height blend applies here, 0 on a coarse node (its tile averages the map)
 };
 
 // The plain colours of slots the stack has no layer for, and of layers named by the entity's terrainLayers property
@@ -349,9 +350,35 @@ bool RenderableTerrainEntityItem::updateLevelOfDetail(const glm::vec3& cameraWor
     }
     const glm::vec3 camera(worldToVoxelMatrix() * glm::vec4(cameraWorld, 1.0f));
     // a chunk of the grid is drawn with its own mesh once that is there, or known to have no surface
-    return _levelOfDetail.update(_grid, camera, getVoxelScale(), [this](const terrain::ChunkKey& key) {
-        return _chunkMeshes.count(key) > 0 || (!_grid.getDirtyChunks().count(key) && !_mesher.isInFlight(key));
+    struct Refused {
+        bool mesh { false };
+        bool dirty { false };
+        bool inFlight { false };
+    } refused;   // the state of the last chunk refused: the one holding a new cut back, if any
+    const bool changed = _levelOfDetail.update(_grid, camera, getVoxelScale(), [&](const terrain::ChunkKey& key) {
+        const bool mesh = _chunkMeshes.count(key) > 0;
+        const bool dirty = _grid.getDirtyChunks().count(key) > 0;
+        const bool inFlight = _mesher.isInFlight(key);
+        if (!mesh && (dirty || inFlight)) {
+            refused = Refused { mesh, dirty, inFlight };
+            return false;
+        }
+        return true;
     });
+    // A node of a new cut that has had no mesh for seconds (terrain::LodSettings::stallNudgeMs, stallForceMs) is
+    // asked for again, then shown without: say so, with the state that held it, so a stuck cut can be read off the log.
+    const terrain::LevelOfDetail::Stall& stall = _levelOfDetail.getStall();
+    if (stall.events != _stallEventsLogged) {
+        _stallEventsLogged = stall.events;
+        const QString state = stall.isGridChunk
+            ? QString("a chunk of the grid; mesh %1, dirty %2, in flight %3").arg(refused.mesh).arg(refused.dirty).arg(refused.inFlight)
+            : QString("a node of the level of detail; %1 meshes kept, %2 jobs out").arg(_levelOfDetail.getMeshCount()).arg(_levelOfDetail.getInFlightCount());
+        qCWarning(entitiesrenderer) << "Terrain" << getID()
+            << (stall.forced ? "shows a new cut without a node that has had no mesh for" : "asks again for the mesh of a node that has had none for")
+            << (int)stall.ms << "ms: level" << stall.key.level << "at" << stall.key.coords.x << stall.key.coords.y << stall.key.coords.z
+            << qPrintable(state);
+    }
+    return changed;
 }
 
 void RenderableTerrainEntityItem::getDrawnChunks(std::vector<DrawnChunk>& drawn) const {
@@ -778,10 +805,12 @@ void TerrainChunkPayload::setChunk(const terrain::ChunkKey& chunk) {
     // of its level-0 column's and start part way in.
     const float perTileVoxel = 1.0f / (float)(terrain::CHUNK_SIZE + 2 * terrain::PAINT_TILE_APRON);
     const glm::ivec3 inColumn = chunk.level > 0 ? terrain::VoxelGrid::localOf(chunk.getOrigin()) : glm::ivec3(0);
+    // The Height blend decides between layers by their heights at an edge 0.2 tall; a coarse node's tile is an
+    // average of the map's texels, and the edge would draw their lattice, so there the layers mix plainly instead.
     TerrainChunkParams params;
     params.paint = glm::vec4(perTileVoxel * std::min(chunk.getVoxelSize(), 1.0f),
                              (float)(terrain::PAINT_TILE_APRON + inColumn.x) * perTileVoxel,
-                             (float)(terrain::PAINT_TILE_APRON + inColumn.z) * perTileVoxel, 0.0f);
+                             (float)(terrain::PAINT_TILE_APRON + inColumn.z) * perTileVoxel, chunk.level < 0 ? 0.0f : 1.0f);
     if (!_chunkParams) {
         _chunkParams = std::make_shared<gpu::Buffer>(sizeof(TerrainChunkParams), (const gpu::Byte*)&params);
     } else {

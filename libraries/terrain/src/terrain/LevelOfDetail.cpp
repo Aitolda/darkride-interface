@@ -637,11 +637,13 @@ bool LevelOfDetail::update(VoxelGrid& grid, const glm::vec3& camera, const glm::
         }
     }
 
-    // the wanted cut is shown once every node of it has its mesh (at once when nothing is shown yet)
+    // the wanted cut is shown once every node of it has its mesh (at once when nothing is shown yet), or once a
+    // node without one has held it back for the settings' force time
     if (_shown != wanted) {
-        bool ready = true;
+        const LodCut::Node* stalled = nullptr;
         if (!_shown.empty()) {
             for (const LodCut::Node& node : wanted) {
+                bool ready;
                 if (node.isGridChunk) {
                     ready = gridChunkReady(node.key);
                 } else {
@@ -649,14 +651,17 @@ bool LevelOfDetail::update(VoxelGrid& grid, const glm::vec3& camera, const glm::
                     ready = found != _entries.end() && found->second.hasMesh;
                 }
                 if (!ready) {
+                    stalled = &node;
                     break;
                 }
             }
         }
-        if (ready) {
+        if (trackStall(grid, stalled)) {
             _shown = wanted;
             drawnChanged = true;
         }
+    } else {
+        _stall.active = false;
     }
 
     evict();
@@ -665,6 +670,47 @@ bool LevelOfDetail::update(VoxelGrid& grid, const glm::vec3& camera, const glm::
         ++_drawnVersion;
     }
     return drawnChanged;
+}
+
+bool LevelOfDetail::trackStall(VoxelGrid& grid, const LodCut::Node* stalled) {
+    if (!stalled) {
+        _stall.active = false;
+        return true;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (!_stall.active || _stall.key != stalled->key || _stall.isGridChunk != stalled->isGridChunk) {
+        _stall = Stall();
+        _stall.key = stalled->key;
+        _stall.isGridChunk = stalled->isGridChunk;
+        _stall.active = true;
+        _stallSince = now;
+    }
+    _stall.ms = std::chrono::duration<float, std::milli>(now - _stallSince).count();
+    if (!_stall.nudged && _stall.ms >= _settings.stallNudgeMs) {
+        // ask for the mesh again: a grid chunk's from the terrain's own mesher, a node's from here, dropping the
+        // job out for it (its mesh, should it still come, is ignored: the job is no longer known)
+        _stall.nudged = true;
+        ++_stall.events;
+        if (stalled->isGridChunk) {
+            grid.markChunkDirty(stalled->key);
+        } else {
+            const EntryKey entryKey { stalled->key, stalled->context.getSignature() };
+            for (auto it = _jobs.begin(); it != _jobs.end();) {
+                it = !(it->second < entryKey) && !(entryKey < it->second) ? _jobs.erase(it) : std::next(it);
+            }
+            Entry& entry = entryFor(*stalled);
+            entry.inFlight = false;
+            entry.stale = true;
+            _requestsDirty = true;
+        }
+    }
+    if (!_stall.forced && _stall.ms >= _settings.stallForceMs) {
+        _stall.forced = true;
+        ++_stall.events;
+        _stall.active = false;
+        return true;
+    }
+    return false;
 }
 
 void LevelOfDetail::rebuildDrawn() {
@@ -742,6 +788,7 @@ void LevelOfDetail::gridReplaced() {
 
 void LevelOfDetail::clear() {
     _mesher.reset();
+    _stall = Stall();
     _jobs.clear();
     _entries.clear();
     _shown.clear();

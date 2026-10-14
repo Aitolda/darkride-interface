@@ -1690,6 +1690,276 @@ void TerrainTests::levelOfDetailShowsANewCutOnceItsMeshesAreIn() {
     QVERIFY(allGridChunks);
 }
 
+void TerrainTests::levelOfDetailSettlesAfterAnUndoBurst() {
+    // The renderer's loop (RenderableTerrainEntityItem::updateMeshes and updateLevelOfDetail) through strokes that
+    // split chunks near the camera and then undo them in a burst, as the editor's Undo does (whole level-0 places
+    // put back with placeChunk): the cut shown must move to the cut wanted once the burst is over, every node near
+    // the camera drawn as the grid's own chunk, and no mesh may stay for a chunk that is gone (the collision shape
+    // is built from every mesh kept).
+    QThreadPool pool;
+    pool.setMaxThreadCount(4);
+    VoxelGrid grid(glm::ivec3(256, 64, 256));
+    grid.fillHeightField(hills, 2);
+    const int chunksAtRest = grid.countChunks();
+
+    // the terrain's own chunk meshes, as the renderer keeps them
+    AsyncMesher mesher(&pool);
+    std::map<ChunkKey, ChunkMesh> chunkMeshes;
+    uint64_t structureVersion = grid.getStructureVersion();
+    bool staleMeshes = false;
+    auto updateMeshes = [&] {
+        for (AsyncMesher::Result& result : mesher.collect()) {
+            if (result.mesh.isEmpty()) {
+                chunkMeshes.erase(result.key);
+                continue;
+            }
+            chunkMeshes[result.key] = std::move(result.mesh);
+        }
+        if (grid.getStructureVersion() != structureVersion) {
+            structureVersion = grid.getStructureVersion();
+            staleMeshes = true;
+        }
+        if (staleMeshes) {
+            staleMeshes = false;
+            for (auto it = chunkMeshes.begin(); it != chunkMeshes.end();) {
+                if (grid.hasChunk(it->first)) {
+                    ++it;
+                    continue;
+                }
+                bool pending = false;
+                const glm::ivec3 origin = it->first.getOrigin();
+                for (const ChunkKey& key : grid.chunksCovering(origin, origin + it->first.getSpan() - 1)) {
+                    if (grid.getDirtyChunks().count(key) || mesher.isInFlight(key)) {
+                        pending = true;
+                        break;
+                    }
+                }
+                if (pending) {
+                    staleMeshes = true;
+                    ++it;
+                } else {
+                    it = chunkMeshes.erase(it);
+                }
+            }
+        }
+        mesher.submit(grid);
+    };
+
+    LevelOfDetail lod(&pool);
+    LodSettings settings;
+    settings.detail = 4.0f;
+    lod.setSettings(settings);
+    const glm::vec3 metres(1.0f);
+    const glm::vec3 camera(70.0f, 20.0f, 70.0f);
+    auto gridChunkReady = [&](const ChunkKey& key) {
+        return chunkMeshes.count(key) > 0 || (!grid.getDirtyChunks().count(key) && !mesher.isInFlight(key));
+    };
+    auto frame = [&] {
+        updateMeshes();
+        lod.update(grid, camera, metres, gridChunkReady);
+    };
+    auto settled = [&] { return lod.isSettled() && grid.getDirtyChunks().empty() && mesher.isIdle(); };
+    auto settle = [&] {
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < 20000) {
+            frame();
+            if (settled()) {
+                return true;
+            }
+            QThread::msleep(1);
+        }
+        return false;
+    };
+    auto frames = [&](int count) {
+        for (int i = 0; i < count; ++i) {
+            frame();
+            QThread::msleep(1);
+        }
+    };
+    QVERIFY(settle());
+
+    // A stroke records whole level-0 places, as EditorTerrain does, so that undoing it puts back whatever the
+    // split made of them.
+    using Chunks = std::map<ChunkKey, Chunk>;
+    auto capture = [&](const Brush& brush) {
+        Chunks before;
+        glm::ivec3 low, high;
+        if (!brushBounds(grid, brush, low, high)) {
+            return before;
+        }
+        const int reach = std::max(grid.getMaxLevel() - 1, 0) * CHUNK_SIZE;
+        const glm::ivec3 slotLow = VoxelGrid::chunkOf(low - reach);
+        const glm::ivec3 slotHigh = VoxelGrid::chunkOf(high + reach);
+        for (int z = slotLow.z; z <= slotHigh.z; ++z) {
+            for (int y = slotLow.y; y <= slotHigh.y; ++y) {
+                for (int x = slotLow.x; x <= slotHigh.x; ++x) {
+                    const glm::ivec3 slot(x, y, z);
+                    if (!grid.containsChunk(slot)) {
+                        continue;
+                    }
+                    const glm::ivec3 origin = slot * CHUNK_SIZE;
+                    for (const ChunkKey& key : grid.chunksCovering(origin, origin + CHUNK_SIZE - 1)) {
+                        before.emplace(key, grid.getChunk(key));
+                    }
+                }
+            }
+        }
+        return before;
+    };
+    std::vector<Chunks> undo;
+    for (int i = 0; i < 12; ++i) {
+        Brush brush;
+        const int x = 56 + (i * 7) % 48;
+        const int z = 56 + (i * 11) % 48;
+        brush.center = glm::vec3((float)x, hills(x, z), (float)z);
+        brush.radius = 3.0f + (float)(i % 3);
+        undo.push_back(capture(brush));
+        QVERIFY(sculpt(grid, brush, (i % 2) ? SculptMode::Dig : SculptMode::Raise) > 0);
+        frames(3);
+    }
+    QVERIFY(grid.countChunks() > chunksAtRest);
+    QVERIFY(settle());
+
+    // the burst: every stroke undone, three frames apart, as keystrokes come
+    for (auto it = undo.rbegin(); it != undo.rend(); ++it) {
+        for (const auto& pair : *it) {
+            if (grid.containsChunk(pair.first)) {
+                grid.placeChunk(pair.first, pair.second);
+            }
+        }
+        frames(3);
+    }
+    QCOMPARE(grid.countChunks(), chunksAtRest);
+    QVERIFY(settle());
+
+    // what is drawn is the cut wanted, and near the camera the grid's own chunks
+    const std::vector<LodCut::Node>& cut = lod.getCut().getNodes();
+    QCOMPARE(lod.getDrawn().size(), cut.size());
+    bool nearIsGrid = true;
+    int nearNodes = 0;
+    for (size_t i = 0; i < cut.size(); ++i) {
+        const LevelOfDetail::Drawn& drawn = lod.getDrawn()[i];
+        QVERIFY(drawn.key == cut[i].key);
+        const float size = (float)cut[i].key.getSpan();
+        if (cut[i].distance < settings.detail * size) {
+            ++nearNodes;
+            nearIsGrid = nearIsGrid && drawn.isGridChunk && grid.hasChunk(drawn.key);
+        }
+    }
+    QVERIFY(nearNodes > 0);
+    QVERIFY(nearIsGrid);
+    // and every mesh kept is a chunk of the grid's
+    int meshesOfGoneChunks = 0;
+    for (const auto& pair : chunkMeshes) {
+        if (!grid.hasChunk(pair.first)) {
+            ++meshesOfGoneChunks;
+        }
+    }
+    QCOMPARE(meshesOfGoneChunks, 0);
+}
+
+void TerrainTests::levelOfDetailAsksAgainForAStalledNodeAndThenShowsWithoutIt() {
+    // A node of the cut wanted whose mesh never comes (lost, say) holds the cut shown back: after the nudge time
+    // its mesh is asked for again (a grid chunk is marked dirty for the terrain's own mesher), and after the force
+    // time the cut wanted is shown without it. The stall says which node, for the renderer's log.
+    QThreadPool pool;
+    pool.setMaxThreadCount(4);
+    VoxelGrid grid(glm::ivec3(256, 64, 256));
+    grid.fillHeightField(hills, 2);
+    grid.clearDirtyChunks();   // as if the terrain's mesher had meshed every chunk
+    LevelOfDetail lod(&pool);
+    LodSettings settings;
+    settings.detail = 1.0f;
+    settings.stallNudgeMs = 50.0f;
+    settings.stallForceMs = 150.0f;
+    lod.setSettings(settings);
+    const glm::vec3 metres(0.5f);
+    glm::vec3 camera(20.0f, 20.0f, 20.0f);
+    ChunkKey refused;   // the grid chunk whose mesh never comes
+    bool refusing = false;
+    auto gridChunkReady = [&](const ChunkKey& key) { return !(refusing && key == refused); };
+    auto update = [&] { lod.update(grid, camera, metres, gridChunkReady); };
+    auto settle = [&] {
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < 20000) {
+            update();
+            if (lod.isSettled()) {
+                return true;
+            }
+            QThread::msleep(1);
+        }
+        return false;
+    };
+    auto drawnKeys = [&] {
+        std::vector<ChunkKey> keys;
+        for (const LevelOfDetail::Drawn& drawn : lod.getDrawn()) {
+            keys.push_back(drawn.key);
+        }
+        return keys;
+    };
+    auto cutKeys = [&] {
+        std::vector<ChunkKey> keys;
+        for (const LodCut::Node& node : lod.getCut().getNodes()) {
+            keys.push_back(node.key);
+        }
+        return keys;
+    };
+    QVERIFY(settle());
+    QVERIFY(!lod.getStall().active);
+    const std::vector<ChunkKey> before = drawnKeys();
+
+    // the camera at the far corner: the new cut has the grid's own chunks near it, and one of them never gets its mesh
+    camera = glm::vec3(236.0f, 20.0f, 236.0f);
+    update();
+    for (const LodCut::Node& node : lod.getCut().getNodes()) {
+        if (node.isGridChunk && node.key.level == 0) {
+            refused = node.key;
+            refusing = true;
+            break;
+        }
+    }
+    QVERIFY(refusing);
+    QVERIFY(cutKeys() != before);
+    // once every other node has its mesh, the refused chunk is what holds the cut back
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 20000 && !(lod.getStall().active && lod.getStall().key == refused)) {
+        update();
+        QThread::msleep(1);
+    }
+    QVERIFY(lod.getStall().active);
+    QVERIFY(lod.getStall().key == refused);
+    QVERIFY(lod.getStall().isGridChunk);
+    QVERIFY(!lod.getStall().nudged);
+    QVERIFY(drawnKeys() == before);
+    // the nudge: the chunk is marked dirty for the terrain's mesher
+    timer.start();
+    while (timer.elapsed() < 5000 && !lod.getStall().nudged) {
+        update();
+        QThread::msleep(1);
+    }
+    QVERIFY(lod.getStall().nudged);
+    QVERIFY(!lod.getStall().forced);
+    QVERIFY(grid.getDirtyChunks().count(refused) > 0);
+    QVERIFY(drawnKeys() == before);
+    // the force: the cut wanted is shown without the chunk
+    timer.start();
+    while (timer.elapsed() < 5000 && !lod.getStall().forced) {
+        update();
+        QThread::msleep(1);
+    }
+    QVERIFY(lod.getStall().forced);
+    QVERIFY(!lod.getStall().active);
+    QCOMPARE((int)lod.getStall().events, 2);
+    QVERIFY(drawnKeys() == cutKeys());
+    // its mesh there at last, nothing stalls
+    refusing = false;
+    QVERIFY(settle());
+    QVERIFY(!lod.getStall().active);
+}
+
 void TerrainTests::paintTilesOfCoarserNodesAverageTheMap() {
     PaintMap map(glm::ivec2(128, 128), 2);   // 256 texels a side
     // A level -1 node's tile: 36 of its voxels a side at two texels each, a texel the mean of 2 x 2 of the map's,

@@ -29,6 +29,7 @@
 #define hifi_terrain_LevelOfDetail_h
 
 #include <array>
+#include <chrono>
 #include <functional>
 #include <map>
 #include <unordered_map>
@@ -54,9 +55,15 @@ struct LodSettings {
     float hysteresis { 0.25f };
     // Time a frame may spend sampling nodes for meshing on the editing thread (the meshing itself runs on a pool).
     float sampleBudgetMs { 4.0f };
+    // A new cut is shown only once every node of it has its mesh (LevelOfDetail). A node that has had none for the
+    // nudge time is asked for again, in case its mesh was lost; one that still has none at the force time no longer
+    // holds the cut back: the cut is shown without it (LevelOfDetail::getStall says which node, and why).
+    float stallNudgeMs { 2000.0f };
+    float stallForceMs { 6000.0f };
 
     bool operator==(const LodSettings& other) const {
-        return detail == other.detail && hysteresis == other.hysteresis && sampleBudgetMs == other.sampleBudgetMs;
+        return detail == other.detail && hysteresis == other.hysteresis && sampleBudgetMs == other.sampleBudgetMs &&
+               stallNudgeMs == other.stallNudgeMs && stallForceMs == other.stallForceMs;
     }
     bool operator!=(const LodSettings& other) const { return !(*this == other); }
 };
@@ -179,6 +186,20 @@ public:
     // The cut shown is the cut wanted, and no mesh is missing, out of date or being made.
     bool isSettled() const;
 
+    // The node of the cut wanted that has had no mesh the longest while holding the cut shown back, if any: the
+    // first such node in key order, with how long it has (LodSettings::stallNudgeMs and stallForceMs say what is
+    // done about it). The events count goes up at each nudge and each force, for a caller that logs them.
+    struct Stall {
+        ChunkKey key;
+        bool isGridChunk { false };
+        bool active { false };     // a node is holding the cut back now
+        float ms { 0.0f };         // for how long (the last value stays after the cut moved on)
+        bool nudged { false };     // its mesh was asked for again
+        bool forced { false };     // the cut wanted was shown without it
+        uint64_t events { 0 };
+    };
+    const Stall& getStall() const { return _stall; }
+
     // The grid was replaced: every mesh here is out of date. What is drawn stays until the new cut's meshes are in.
     void gridReplaced();
     // Forgets everything, drawn or not: for a terrain without a grid.
@@ -213,6 +234,9 @@ private:
     void send(const EntryKey& entryKey, Entry& entry, const VoxelGrid& grid);
     void rebuildDrawn();
     void evict();
+    // The wanted cut's node without a mesh (first in key order), while the cut shown is held back by it; returns
+    // whether the cut may be shown anyway (no node is stalled, or the stall has reached the force time).
+    bool trackStall(VoxelGrid& grid, const LodCut::Node* stalled);
 
     LodSettings _settings;
     LodCut _cut;
@@ -232,6 +256,8 @@ private:
     uint64_t _cutStructure { 0 };
     glm::ivec3 _cutVoxelCount { 0 };
     std::vector<std::pair<glm::ivec3, glm::ivec3>> _changes;
+    Stall _stall;
+    std::chrono::steady_clock::time_point _stallSince;
 };
 
 } // namespace terrain

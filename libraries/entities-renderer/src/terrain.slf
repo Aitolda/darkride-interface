@@ -63,7 +63,8 @@ struct TerrainParams {
 
 // This chunk's own: its level's voxels are a fraction of its column's tile, and it starts part way across the tile.
 struct TerrainChunkParams {
-    vec4 paint;    // x: tile texture coordinates per voxel of the chunk; yz: the tile coordinates of the chunk's voxel (0, 0)
+    vec4 paint;    // x: tile texture coordinates per voxel of the chunk; yz: the tile coordinates of the chunk's voxel (0, 0);
+                   // w: 1 while the Height blend applies here, 0 on a coarse node (its tile averages the map)
 };
 
 LAYOUT_STD140(binding=ENTITIES_BUFFER_TERRAIN_LAYERS) uniform terrainParamsBuffer {
@@ -327,8 +328,11 @@ void main(void) {
                 Surface painted = layerSurface(slot, point, blend, terrainNormal, g);
                 if (l.flags.y == 4) {
                     // the heights decide the mix where the map applies; the slope decides how much it applies, after,
-                    // or a tall material would hold a steep wall at a trace of coverage
-                    amount = heightWeight(surface.height, painted.height, amount);
+                    // or a tall material would hold a steep wall at a trace of coverage. On a coarse node the tile
+                    // is an average of the map's texels and the edge would draw their lattice: a plain mix there.
+                    if (chunk.paint.w > 0.5) {
+                        amount = heightWeight(surface.height, painted.height, amount);
+                    }
                 } else {
                     painted.albedo = blendLayer(l.flags.y, surface.albedo, painted.albedo);
                 }

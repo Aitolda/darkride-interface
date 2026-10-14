@@ -189,6 +189,7 @@ private:
     uint64_t _meshVersion { 0 };
     uint64_t _structureVersion { 0 };   // the grid's, when the meshes were last checked against its chunks
     bool _staleMeshes { false };        // meshes of chunks that are gone wait for their replacements' meshes
+    uint64_t _stallEventsLogged { 0 };  // the level of detail's stall events already in the log
     ShapeInfo _shapeInfo;
     bool _shapeReady { false };
     bool _shapeStale { false };
