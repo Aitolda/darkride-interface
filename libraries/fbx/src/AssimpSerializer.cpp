@@ -5,8 +5,8 @@
 //  Created by Maki Deprez on 12/20/20.
 //  Copyright 2020 Tivoli Cloud VR, Inc.
 //
-//  Distributed under the GNU Affero General Public License, Version 3.0.
-//  See the accompanying file LICENSE or https://www.gnu.org/licenses/agpl-3.0.en.html
+//  Distributed under the MIT License.
+//  See the accompanying file LICENSE-MIT or https://opensource.org/licenses/MIT
 //
 
 #include "AssimpSerializer.h"
