@@ -45,6 +45,14 @@ var tablet = Tablet.getTablet("com.highfidelity.interface.tablet.system");
 var activeTimer = false; // Used to cancel active timer if a user plays an animation while another animation is playing
 var activeEmote = false; // To keep track of the currently playing emote
 
+// Other scripts hear which emote this avatar plays: an AI resident's body reads it as body language (the Waving clip
+// is a hand up for about a second, too short to read from the pose, and Dancing or Love have no one pose to read).
+// {emote, seconds}: seconds is null for a sit, which holds until the user moves; {emote: null} when it stops early.
+var EMOTE_CHANNEL = "tivoli.emote";
+function announce(emoteName, seconds) {
+    Messages.sendMessage(EMOTE_CHANNEL, JSON.stringify({ emote: emoteName, seconds: seconds }), false);
+}
+
 button = tablet.addButton({
     icon: "icons/tablet-icons/emote.svg",
     // activeIcon: "icons/tablet-icons/emote.svg",
@@ -105,12 +113,14 @@ function onWebEventReceived(event) {
                     Controller.keyPressEvent.connect(restoreAnimation);
                     Controller.enableMapping(eventMappingName);
                     MyAvatar.overrideAnimation(ANIMATIONS[emoteName].url, FPS, false, 0, frameCount);
-                
+                    announce(emoteName, null);
+
                 } else {
-                    
+
                     activeEmote = emoteName;
                     var frameCount = ANIMATIONS[emoteName].animation.frames.length;
                     MyAvatar.overrideAnimation(ANIMATIONS[emoteName].url, FPS, false, 0, frameCount);
+                    announce(emoteName, frameCount / FPS);
 
                     var timeOut = MSEC_PER_SEC * frameCount / FPS;
                     activeTimer = Script.setTimeout(function () {
@@ -124,6 +134,7 @@ function onWebEventReceived(event) {
             } else {
                 activeEmote = false;
                 MyAvatar.restoreAnimation();
+                announce(null, 0);
             }
         }
     }
@@ -132,7 +143,8 @@ function onWebEventReceived(event) {
 // Restore the navigation animation states (idle, walk, run)
 function restoreAnimation() {
     MyAvatar.restoreAnimation();
-    
+    announce(null, 0);
+
     // Make sure the input is disconnected after animations are restored so it doesn't affect any emotes other than sit
     Controller.keyPressEvent.disconnect(restoreAnimation);
     Controller.disableMapping(eventMappingName);
