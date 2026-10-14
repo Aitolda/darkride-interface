@@ -63,7 +63,9 @@ endif()
 
         if arch == "x86_64" or arch == "amd64":
             if system == 'Windows':
-                self.qtUrl = baseQtUrl + 'tivoli-qt5-install-5.15.2-windows.tar.gz'
+                # Tivoli's CDN is gone; Overte hosts its build of the same Qt 5.15.2 for MSVC 2019 (x64), 1.65 GB,
+                # in the layout this script expects (qt5-install/lib/cmake)
+                self.qtUrl = 'https://build-deps.overte.org/dependencies/vcpkg/qt5-install-5.15.2-windows.tar.gz'
             elif system == 'Darwin':
                 self.qtUrl = baseQtUrl + 'tivoli-qt5-install-5.15.2-macos.tar.gz'
             elif system == 'Linux':
