@@ -22,6 +22,8 @@ const uint32_t VERSION_CHUNKS = 1;        // the chunks alone
 const uint32_t VERSION_PAINT = 2;         // the chunks, then the paint map
 const uint32_t VERSION_LEVELS = 3;        // chunks with levels, then the paint map
 const uint32_t VERSION_LAYERS = 4;        // as 3, the map's bytes now coverages, then the layer stack
+const uint32_t VERSION_MAPS = 5;          // as 4, each layer with its normal, roughness, occlusion and height maps
+const uint8_t LAYER_FLAG_USE_NORMAL = 1;  // the layer's flags byte, version 5 on
 const uint8_t KIND_UNIFORM = 0;
 const uint8_t KIND_DENSE = 1;
 const int MAX_VOXELS_PER_AXIS = 1 << 14;
@@ -163,8 +165,10 @@ Bytes terrain::saveTerrain(const VoxelGrid& grid, const PaintMap* paint, const L
     const glm::ivec2 footprint(grid.getVoxelCount().x, grid.getVoxelCount().z);
     const bool withPaint = paint && !paint->isEmpty() && paint->getVoxelFootprint() == footprint && paint->isPainted();
     const bool withLayers = layers && !layers->isEmpty() && layers->isValid();
+    const bool withMaps = withLayers && std::any_of(layers->layers.begin(), layers->layers.end(),
+                                                    [](const Layer& layer) { return layer.hasMaps(); });
     const bool withLevels = withLayers || grid.getFinestLevel() > 0;
-    const uint32_t version = withLayers ? VERSION_LAYERS : (withLevels ? VERSION_LEVELS : (withPaint ? VERSION_PAINT : VERSION_CHUNKS));
+    const uint32_t version = withMaps ? VERSION_MAPS : (withLayers ? VERSION_LAYERS : (withLevels ? VERSION_LEVELS : (withPaint ? VERSION_PAINT : VERSION_CHUNKS)));
     Writer out;
     out.raw((const uint8_t*)MAGIC, 4);
     out.u32(version);
@@ -234,7 +238,7 @@ Bytes terrain::saveTerrain(const VoxelGrid& grid, const PaintMap* paint, const L
             out.u8(layer.slot);
             out.u8((uint8_t)layer.blend);
             out.u8(layer.visible ? 1 : 0);
-            out.u8(0);
+            out.u8(withMaps && layer.useNormal ? LAYER_FLAG_USE_NORMAL : 0);
             out.f32(layer.tiling);
             out.f32(layer.offset.x);
             out.f32(layer.offset.y);
@@ -248,6 +252,12 @@ Bytes terrain::saveTerrain(const VoxelGrid& grid, const PaintMap* paint, const L
             out.f32(layer.tint.b);
             out.text(layer.name);
             out.text(layer.materialURL);
+            if (withMaps) {
+                out.text(layer.normalURL);
+                out.text(layer.roughnessURL);
+                out.text(layer.occlusionURL);
+                out.text(layer.heightURL);
+            }
         }
     }
     return out.take();
@@ -266,7 +276,7 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, Pai
         return fail(error, "not a terrain file", grid, paint);
     }
     const uint32_t version = in.u32();
-    if (version < VERSION_CHUNKS || version > VERSION_LAYERS) {
+    if (version < VERSION_CHUNKS || version > VERSION_MAPS) {
         return fail(error, "terrain file version " + std::to_string(version) + " is not supported", grid, paint);
     }
     glm::ivec3 voxelCount;
@@ -384,7 +394,8 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, Pai
             layer.slot = in.u8();
             const uint8_t blend = in.u8();
             layer.visible = in.u8() != 0;
-            in.u8();
+            const uint8_t flags = in.u8();
+            layer.useNormal = version < VERSION_MAPS || (flags & LAYER_FLAG_USE_NORMAL) != 0;
             layer.tiling = in.f32();
             layer.offset.x = in.f32();
             layer.offset.y = in.f32();
@@ -398,6 +409,12 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, Pai
             layer.tint.b = in.f32();
             layer.name = in.text();
             layer.materialURL = in.text();
+            if (version >= VERSION_MAPS) {
+                layer.normalURL = in.text();
+                layer.roughnessURL = in.text();
+                layer.occlusionURL = in.text();
+                layer.heightURL = in.text();
+            }
             layer.blend = blend < LAYER_BLEND_COUNT ? (LayerBlend)blend : LayerBlend::Normal;
             stack.layers.push_back(layer);
         }
@@ -406,6 +423,14 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, Pai
         }
         if (!stack.isValid()) {
             return fail(error, "terrain file's layers are not usable", grid, paint);
+        }
+        // the default materials gained their maps with version 5: a stack without a map anywhere, from an older file or
+        // saved before any layer had one, gets the defaults' (a stack with any map is taken as it is)
+        const bool anyMaps = std::any_of(stack.layers.begin(), stack.layers.end(), [](const Layer& layer) {
+            return !layer.normalURL.empty() || !layer.roughnessURL.empty() || !layer.occlusionURL.empty() || !layer.heightURL.empty();
+        });
+        if (!anyMaps) {
+            stack.fillDefaultMaps();
         }
         if (layers) {
             *layers = std::move(stack);

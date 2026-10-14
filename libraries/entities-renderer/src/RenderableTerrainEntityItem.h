@@ -200,26 +200,52 @@ namespace render { namespace entities {
 // A terrain's layers as its chunk items draw them: the colour textures and the parameter buffer the terrain shader
 // reads (TERRAIN.md section 5), shared by every chunk item of one entity. Made on the main thread, which starts the
 // texture fetches, handed to the items through the scene's transaction, and used on the render thread from then on.
+// The layers' other maps, normal, roughness, occlusion and height, are kept in two texture arrays with a slice per
+// slot, so the eight layers take two sampler slots for them: the normals (the map's xyz, 0 to 1; flat for a slot
+// without one) and the masks (r roughness, g occlusion, b height). The maps come in through the texture cache as
+// the colour textures do; as each arrives its slice is drawn from it on the GPU (terrain_layer_maps.slf, a quad over
+// the slice, which also scales the map to the slice), since the macOS GL backend takes no array slice from memory,
+// in a batch of its own that the frame runs before the pass being recorded. A set made for a changed stack takes
+// over the arrays and the drawn slices of the set it replaces, so a slider's scrub draws no slice again.
 class TerrainLayerSet {
 public:
     using Pointer = std::shared_ptr<TerrainLayerSet>;
     static const int LAYER_COUNT = TerrainEntityItem::MAX_TERRAIN_LAYERS;
+    static const int MAP_SIZE = 512;   // a side of a slice of the arrays: a map is scaled to it
 
-    explicit TerrainLayerSet(const terrain::LayerStack& stack);
+    // previous: the set this one replaces, whose arrays it takes over
+    explicit TerrainLayerSet(const terrain::LayerStack& stack, const Pointer& previous = nullptr);
 
     // World space to the terrain's own: its box's axes, in metres, from the box's centre. The textures are tiled
     // in that space, so they stay put on the ground when the entity moves or turns.
     void setWorldToTerrain(const glm::mat4& worldToTerrain);
-    // Binds the textures that have arrived (white for the rest, which draw as plain colours) and the parameters.
+    // Draws the slices whose maps have arrived, or changed, since they were drawn, if any: in a batch of its own that
+    // the frame runs before the one being recorded. Called from a chunk's render; nothing to do most frames.
+    void drawMapsDue(RenderArgs* args);
+    // Binds the textures that have arrived (white for the rest, which draw as plain colours), the arrays and the
+    // parameters.
     void bind(gpu::Batch& batch);
 
 private:
     struct Layer {
         terrain::Layer spec;
         NetworkTexturePointer texture;
+        NetworkTexturePointer normalMap;
+        NetworkTexturePointer roughnessMap;
+        NetworkTexturePointer occlusionMap;
+        NetworkTexturePointer heightMap;
         bool textured { false };
         bool present { false };   // in the stack; a slot without a layer draws a plain colour of its own
     };
+    using Sources = std::array<gpu::TexturePointer, 3>;   // what a slice is drawn from: the normal map; or the roughness, occlusion and height maps
+    // One slice of an array: what it was last drawn from, to draw it again when that changes.
+    struct Slice {
+        bool drawn { false };
+        Sources sources;
+    };
+    void makeArrays();
+    Sources normalSources(int slot) const;
+    Sources maskSources(int slot) const;
     void updateParams();
 
     std::array<Layer, LAYER_COUNT> _layers;   // by slot
@@ -227,6 +253,14 @@ private:
     glm::mat4 _worldToTerrain { 1.0f };
     gpu::BufferPointer _params;
     bool _paramsDirty { true };
+
+    gpu::TexturePointer _normals;                            // the array of the layers' normal maps
+    gpu::TexturePointer _masks;                              // the array of their masks
+    std::vector<gpu::FramebufferPointer> _normalTargets;     // a framebuffer on each slice
+    std::vector<gpu::FramebufferPointer> _maskTargets;
+    std::array<Slice, LAYER_COUNT> _normalSlices;
+    std::array<Slice, LAYER_COUNT> _maskSlices;
+    std::mutex _mapsMutex;   // the slices: drawn on the render thread, taken over by the next set on the main thread
 };
 
 // One column's tile of the paint map (PaintMap::fillTile: a level-0 chunk column's, or a coarser node's wider one) as

@@ -47,6 +47,7 @@ private slots:
     void paintTilesOfCoarserNodesAverageTheMap();
     void smoothLevelsAHillUnderAWideBrush();
     void layersRoundTripThroughTheFile();
+    void layerMapsTakeFileVersionFive();
     void sharesBecomeCoveragesThatDrawTheSame();
     void paintCoversOneLayerAlone();
     void brushMaskShapesTheBrushAndItsOutline();

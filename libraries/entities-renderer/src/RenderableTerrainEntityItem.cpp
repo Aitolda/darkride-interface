@@ -27,6 +27,7 @@
 #include <SimulationFlags.h>
 #include <StencilMaskPass.h>
 #include <ViewFrustum.h>
+#include <gpu/Context.h>
 #include <render/ShapePipeline.h>
 #include <shaders/Shaders.h>
 #include <terrain/TerrainFile.h>
@@ -50,9 +51,18 @@ struct TerrainVertex {
 struct TerrainLayerParams {
     glm::vec4 color;    // rgb: the plain colour; a: 1 while a texture is bound
     glm::vec4 tiling;   // x: repeats per metre; yz: the offset, in repeats; w: opacity
-    glm::vec4 tint;     // rgb: multiplies the texture
-    glm::ivec4 flags;   // x: visible; y: the blend mode (terrain::LayerBlend)
+    glm::vec4 tint;     // rgb: multiplies the texture; w: the normal map's strength
+    glm::ivec4 flags;   // x: visible; y: the blend mode (terrain::LayerBlend); z: the normal array's slice holds the
+                        // layer's normal map and it is on; w: the mask array's slice is drawn
 };
+// The parameters of a draw that fills a slice of the arrays (terrain_layer_maps.slf).
+struct TerrainMapParams {
+    glm::ivec4 which;   // x: 0 the normal slice, 1 the mask slice; y, z, w: whether the first, second and third source is bound
+    glm::vec4 plain;    // x: roughness, y: occlusion, z: height, written for a source that is not bound
+};
+const float PLAIN_ROUGHNESS = 0.9f;   // what a layer without a roughness map is, as the whole terrain was before maps
+const float PLAIN_OCCLUSION = 1.0f;
+const float PLAIN_HEIGHT = 0.5f;
 struct TerrainParams {
     glm::mat4 worldToTerrain;
     TerrainLayerParams layers[TerrainLayerSet::LAYER_COUNT];   // by slot
@@ -77,6 +87,16 @@ uint8_t CUSTOM_PIPELINE_NUMBER = 0;
 std::map<std::pair<bool, bool>, ShapePipelinePointer> _pipelines;   // (forward, wireframe)
 gpu::Stream::FormatPointer _vertexFormat;
 gpu::TexturePointer _unpaintedTile;   // one texel of no weight at all: a chunk without a tile reads it
+gpu::PipelinePointer _mapPipeline;    // draws a layer's map into a slice of a set's arrays, shared by every set
+
+gpu::PipelinePointer mapPipeline() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        auto program = gpu::Shader::createProgram(shader::entities_renderer::program::terrain_layer_maps);
+        _mapPipeline = gpu::Pipeline::create(program, std::make_shared<gpu::State>());
+    });
+    return _mapPipeline;
+}
 
 gpu::TexturePointer makeTileTexture(int size, const std::vector<uint8_t>& rgba, const char* name) {
     auto texture = gpu::Texture::createStrict(gpu::Element::COLOR_RGBA_32, (uint16_t)size, (uint16_t)size, gpu::Texture::SINGLE_MIP,
@@ -208,6 +228,7 @@ terrain::LayerStack RenderableTerrainEntityItem::legacyOrDefaultLayers() const {
         layer.color = LAYER_PALETTE[i];
         stack.layers.push_back(layer);
     }
+    stack.fillDefaultMaps();   // a default material named by its colour texture gets its maps
     return stack;
 }
 
@@ -510,8 +531,18 @@ void RenderableTerrainEntityItem::computeShapeInfo(ShapeInfo& info) {
 
 // The layer set
 
-TerrainLayerSet::TerrainLayerSet(const terrain::LayerStack& stack) {
+TerrainLayerSet::TerrainLayerSet(const terrain::LayerStack& stack, const Pointer& previous) {
     auto textureCache = DependencyManager::get<TextureCache>();
+    auto fetch = [&](const std::string& address, image::TextureUsage::Type type) -> NetworkTexturePointer {
+        if (address.empty()) {
+            return nullptr;
+        }
+        QUrl url(QString::fromStdString(address));
+        if (url.scheme() == QStringLiteral("qrc")) {
+            url = PathUtils::resourcesUrl(url.path().mid(1));   // the client's own textures, wherever its resources are
+        }
+        return textureCache->getTexture(url, type);
+    };
     for (const terrain::Layer& spec : stack.layers) {
         if (spec.slot >= LAYER_COUNT || _layers[spec.slot].present) {
             continue;
@@ -519,16 +550,126 @@ TerrainLayerSet::TerrainLayerSet(const terrain::LayerStack& stack) {
         Layer& layer = _layers[spec.slot];
         layer.spec = spec;
         layer.present = true;
-        if (!spec.materialURL.empty()) {
-            QUrl url(QString::fromStdString(spec.materialURL));
-            if (url.scheme() == QStringLiteral("qrc")) {
-                url = PathUtils::resourcesUrl(url.path().mid(1));   // the client's own textures, wherever its resources are
-            }
-            layer.texture = textureCache->getTexture(url, image::TextureUsage::ALBEDO_TEXTURE);
-        }
+        layer.texture = fetch(spec.materialURL, image::TextureUsage::ALBEDO_TEXTURE);
+        layer.normalMap = fetch(spec.normalURL, image::TextureUsage::NORMAL_TEXTURE);
+        layer.roughnessMap = fetch(spec.roughnessURL, image::TextureUsage::ROUGHNESS_TEXTURE);
+        layer.occlusionMap = fetch(spec.occlusionURL, image::TextureUsage::OCCLUSION_TEXTURE);
+        layer.heightMap = fetch(spec.heightURL, image::TextureUsage::OCCLUSION_TEXTURE);   // one linear channel, read as an occlusion map is
         _order.push_back(spec.slot);
     }
     _params = std::make_shared<gpu::Buffer>(sizeof(TerrainParams), nullptr);
+    if (previous) {
+        std::lock_guard<std::mutex> lock(previous->_mapsMutex);
+        _normals = previous->_normals;
+        _masks = previous->_masks;
+        _normalTargets = previous->_normalTargets;
+        _maskTargets = previous->_maskTargets;
+        _normalSlices = previous->_normalSlices;
+        _maskSlices = previous->_maskSlices;
+    }
+    if (!_normals || !_masks) {
+        makeArrays();
+    }
+}
+
+void TerrainLayerSet::makeArrays() {
+    gpu::Sampler::Desc samplerDesc;
+    samplerDesc._filter = gpu::Sampler::FILTER_ANISOTROPIC;
+    samplerDesc._wrapModeU = gpu::Sampler::WRAP_REPEAT;
+    samplerDesc._wrapModeV = gpu::Sampler::WRAP_REPEAT;
+    samplerDesc._maxAnisotropy = 8;
+    auto make = [&](const char* name, std::vector<gpu::FramebufferPointer>& targets) {
+        // linear 8 bits a channel, drawn into, with mips for the ground further off
+        auto array = gpu::Texture::createRenderBufferArray(gpu::Element::COLOR_RGBA_32, MAP_SIZE, MAP_SIZE, LAYER_COUNT,
+                                                           gpu::Texture::MAX_NUM_MIPS, gpu::Sampler(samplerDesc));
+        array->setSource(name);
+        targets.clear();
+        for (int slice = 0; slice < LAYER_COUNT; ++slice) {
+            auto framebuffer = gpu::FramebufferPointer(gpu::Framebuffer::create(name));
+            framebuffer->setRenderBuffer(0, array, slice);
+            targets.push_back(framebuffer);
+        }
+        return array;
+    };
+    _normals = make("terrain layer normals", _normalTargets);
+    _masks = make("terrain layer masks", _maskTargets);
+    _normalSlices = {};
+    _maskSlices = {};
+}
+
+TerrainLayerSet::Sources TerrainLayerSet::normalSources(int slot) const {
+    const Layer& layer = _layers[slot];
+    return { layer.normalMap ? layer.normalMap->getGPUTexture() : nullptr, nullptr, nullptr };
+}
+
+TerrainLayerSet::Sources TerrainLayerSet::maskSources(int slot) const {
+    const Layer& layer = _layers[slot];
+    return { layer.roughnessMap ? layer.roughnessMap->getGPUTexture() : nullptr,
+             layer.occlusionMap ? layer.occlusionMap->getGPUTexture() : nullptr,
+             layer.heightMap ? layer.heightMap->getGPUTexture() : nullptr };
+}
+
+void TerrainLayerSet::drawMapsDue(RenderArgs* args) {
+    struct Due {
+        int slot;
+        bool masks;
+        Sources sources;
+    };
+    std::vector<Due> due;
+    {
+        std::lock_guard<std::mutex> lock(_mapsMutex);
+        for (int slot = 0; slot < LAYER_COUNT; ++slot) {
+            const Sources normal = normalSources(slot);
+            if (!_normalSlices[slot].drawn || _normalSlices[slot].sources != normal) {
+                _normalSlices[slot].drawn = true;
+                _normalSlices[slot].sources = normal;
+                due.push_back({ slot, false, normal });
+            }
+            const Sources masks = maskSources(slot);
+            if (!_maskSlices[slot].drawn || _maskSlices[slot].sources != masks) {
+                _maskSlices[slot].drawn = true;
+                _maskSlices[slot].sources = masks;
+                due.push_back({ slot, true, masks });
+            }
+        }
+    }
+    if (due.empty() || !args || !args->_context) {
+        return;
+    }
+    _paramsDirty = true;   // the flags say which slices are drawn
+
+    auto white = DependencyManager::get<TextureCache>()->getWhiteTexture();
+    // a batch of its own, appended to the frame now, so it runs before the pass whose batch is being recorded
+    gpu::doInBatch("TerrainLayerSet::drawMapsDue", args->_context, [&](gpu::Batch& batch) {
+        batch.enableStereo(false);
+        batch.setPipeline(mapPipeline());
+        batch.setViewportTransform(glm::ivec4(0, 0, MAP_SIZE, MAP_SIZE));
+        bool normalsDrawn = false;
+        bool masksDrawn = false;
+        for (const Due& d : due) {
+            TerrainMapParams params;
+            params.which = glm::ivec4(d.masks ? 1 : 0, d.sources[0] ? 1 : 0, d.sources[1] ? 1 : 0, d.sources[2] ? 1 : 0);
+            params.plain = glm::vec4(PLAIN_ROUGHNESS, PLAIN_OCCLUSION, PLAIN_HEIGHT, 0.0f);
+            // a buffer per draw: the batch reads its buffers when it runs, so one shared would hold the last draw's
+            auto buffer = std::make_shared<gpu::Buffer>(sizeof(TerrainMapParams), (const gpu::Byte*)&params);
+            batch.setUniformBuffer(ENTITIES_BUFFER_TERRAIN_MAPS, buffer, 0, sizeof(TerrainMapParams));
+            batch.setFramebuffer(d.masks ? _maskTargets[d.slot] : _normalTargets[d.slot]);
+            for (int i = 0; i < 3; ++i) {
+                batch.setResourceTexture(i, d.sources[i] ? d.sources[i] : white);
+            }
+            batch.draw(gpu::TRIANGLE_STRIP, 4);
+            (d.masks ? masksDrawn : normalsDrawn) = true;
+        }
+        for (int i = 0; i < 3; ++i) {
+            batch.setResourceTexture(i, nullptr);
+        }
+        if (normalsDrawn) {
+            batch.generateTextureMips(_normals);
+        }
+        if (masksDrawn) {
+            batch.generateTextureMips(_masks);
+        }
+    });
 }
 
 void TerrainLayerSet::setWorldToTerrain(const glm::mat4& worldToTerrain) {
@@ -547,8 +688,9 @@ void TerrainLayerSet::updateParams() {
         const float repeats = 1.0f / std::max(spec.tiling, 0.01f);
         params.layers[i].color = glm::vec4(layer.present ? spec.color : LAYER_PALETTE[i], layer.textured ? 1.0f : 0.0f);
         params.layers[i].tiling = glm::vec4(repeats, spec.offset.x * repeats, spec.offset.y * repeats, glm::clamp(spec.opacity, 0.0f, 1.0f));
-        params.layers[i].tint = glm::vec4(layer.present ? spec.tint : glm::vec3(1.0f), 1.0f);
-        params.layers[i].flags = glm::ivec4(spec.visible ? 1 : 0, (int)spec.blend, 0, 0);
+        params.layers[i].tint = glm::vec4(layer.present ? spec.tint : glm::vec3(1.0f), spec.normalStrength);
+        const bool normalMapped = spec.useNormal && _normalSlices[i].drawn && _normalSlices[i].sources[0] != nullptr;
+        params.layers[i].flags = glm::ivec4(spec.visible ? 1 : 0, (int)spec.blend, normalMapped ? 1 : 0, _maskSlices[i].drawn ? 1 : 0);
     }
     for (int i = 0; i < 2 * 4; ++i) {
         params.order[i / 4][i % 4] = i < (int)_order.size() ? (int)_order[i] : -1;
@@ -569,6 +711,8 @@ void TerrainLayerSet::bind(gpu::Batch& batch) {
         }
         batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_LAYER0 + i, textured ? texture : textureCache->getWhiteTexture());
     }
+    batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_NORMALS, _normals);
+    batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_MASKS, _masks);
     if (_paramsDirty) {
         updateParams();
     }
@@ -657,6 +801,7 @@ void TerrainChunkPayload::render(RenderArgs* args) {
     if (!_vertexBuffer || _vertexCount == 0 || !_layers || !_chunkParams) {
         return;
     }
+    _layers->drawMapsDue(args);   // in a batch of its own, before this one
     gpu::Batch& batch = *args->_batch;
     batch.setModelTransform(_transform);
     batch.setInputFormat(_vertexFormat);
@@ -815,7 +960,7 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         }
     }
     if (!_layerSetMade || entity->getLayersVersion() != _lastLayersVersion) {
-        _layerSet = std::make_shared<TerrainLayerSet>(entity->getLayers());
+        _layerSet = std::make_shared<TerrainLayerSet>(entity->getLayers(), _layerSet);
         _lastLayersVersion = entity->getLayersVersion();
         _layerSetMade = true;
         layersChanged = true;

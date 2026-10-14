@@ -26,6 +26,7 @@
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
+#include <QtWidgets/QStyle>
 #include <QtWidgets/QListWidget>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QToolButton>
@@ -39,7 +40,7 @@ namespace {
     const int SWATCH_PIXELS = 22;
     const int ROW_PIXELS = 26;
     const char* LIBRARY_PATH = ":/terrain/materials/library.json";
-    const QStringList BLEND_NAMES = { "Normal", "Multiply", "Screen", "Overlay" };
+    const QStringList BLEND_NAMES = { "Normal", "Multiply", "Screen", "Overlay", "Height" };
 
     // the swatches by URL, shared by every Layers section there has been
     QHash<QString, QPixmap>& swatches() {
@@ -110,6 +111,10 @@ const QVector<TerrainLayersEditor::LibraryEntry>& TerrainLayersEditor::library()
                 LibraryEntry entry;
                 entry.name = object.value("name").toString();
                 entry.url = object.value("url").toString();
+                entry.normal = object.value("normal").toString();
+                entry.roughness = object.value("roughness").toString();
+                entry.occlusion = object.value("occlusion").toString();
+                entry.height = object.value("height").toString();
                 entry.tiling = (float)object.value("tiling").toDouble(4.0);
                 const QJsonArray color = object.value("color").toArray();
                 if (color.size() == 3) {
@@ -157,6 +162,7 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
         }
         auto item = _list->item(row);
         _selectedSlot = item ? item->data(Qt::UserRole).toInt() : -1;
+        markSelectedRow();
         showSelected();
         if (_selectedSlot >= 0) {
             emit layerChosen(_selectedSlot);
@@ -176,7 +182,8 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
         b->setAutoRaise(true);
         return b;
     };
-    _addButton = button("+", "Add a layer from the material library, or an empty one (eight at most)");
+    _addButton = button("+ ▾", "Add a layer from the material library, or an empty one (eight at most)");
+    _addButton->setObjectName("EditorTerrainLayerAdd");   // the text carries the menu's chevron; the stylesheet drops Qt's
     _addButton->setPopupMode(QToolButton::InstantPopup);
     auto addMenu = new QMenu(_addButton);
     const QVector<LibraryEntry>& entries = library();
@@ -235,7 +242,7 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
     addRow(new QLabel("Name", _fields), _name);
 
     _material = new QComboBox(_fields);
-    _material->setToolTip("The layer's material: one of the library's, or Custom for any colour texture by its URL below");
+    _material->setToolTip("The layer's material: one of the library's, with its maps, or Custom for any textures by their URLs below");
     for (const LibraryEntry& entry : entries) {
         _material->addItem(entry.name);
     }
@@ -248,6 +255,10 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
         if (index < library().size()) {
             const LibraryEntry& entry = library()[index];
             layer->materialURL = entry.url.toStdString();
+            layer->normalURL = entry.normal.toStdString();
+            layer->roughnessURL = entry.roughness.toStdString();
+            layer->occlusionURL = entry.occlusion.toStdString();
+            layer->heightURL = entry.height.toStdString();
             layer->color = entry.color;
             commit("Layer Material");
         } else {
@@ -271,6 +282,40 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
     });
     addRow(new QLabel("URL", _fields), _url);
 
+    // the other maps, by URL: one line each, applied when editing ends
+    auto mapField = [&](QLineEdit*& edit, const char* label, const char* tooltip, const char* undoText,
+                        std::function<void(terrain::Layer&, const std::string&)> apply) {
+        edit = new QLineEdit(_fields);
+        edit->setPlaceholderText("https://… (none)");
+        edit->setToolTip(tooltip);
+        QLineEdit* field = edit;
+        QString text = undoText;
+        connect(edit, &QLineEdit::editingFinished, this, [this, field, apply, text] {
+            auto layer = selectedLayer();
+            if (_updating || !layer || !field->isModified()) {
+                return;
+            }
+            apply(*layer, field->text().trimmed().toStdString());
+            field->setModified(false);
+            commit(text);
+        });
+        addRow(new QLabel(label, _fields), edit);
+    };
+    mapField(_normalURL, "Normal map", "The layer's normal map, tangent space with green up (OpenGL's way); none leaves the ground's own normal",
+             "Layer Normal Map", [](terrain::Layer& layer, const std::string& url) { layer.normalURL = url; });
+
+    _useNormal = new QCheckBox(_fields);
+    _useNormal->setToolTip("Whether the normal map is drawn");
+    connect(_useNormal, &QCheckBox::toggled, this, [this](bool on) {
+        auto layer = selectedLayer();
+        if (_updating || !layer) {
+            return;
+        }
+        layer->useNormal = on;
+        commit(on ? "Normal Map On" : "Normal Map Off");
+    });
+    addRow(new QLabel("Normal map on", _fields), _useNormal);
+
     auto number = [&](NumberEditor*& editor, const PropertySpec& spec, const char* undoText, std::function<void(terrain::Layer&, double)> apply) {
         editor = new NumberEditor(spec, _fields);
         connect(editor, &PropertyEditor::editBegan, this, [this] { beginScrub(); });
@@ -290,6 +335,15 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
         connect(editor, &PropertyEditor::editCancelled, this, [this] { cancelScrub(); });
         addRow(editor->createLabel(_fields), editor);
     };
+    number(_normalStrength, numberSpec("normalStrength", "Normal strength", PropertyKind::Float, 0.0, 4.0, 0.05, 2, ""), "Layer Normal Strength",
+           [](terrain::Layer& layer, double value) { layer.normalStrength = (float)value; });
+    _normalStrength->setToolTip("How far the normal map tilts the ground: 0 is flat, 1 as the map says, more exaggerates it");
+    mapField(_roughnessURL, "Roughness map", "One channel, black smooth to white rough; none is the terrain's plain roughness",
+             "Layer Roughness Map", [](terrain::Layer& layer, const std::string& url) { layer.roughnessURL = url; });
+    mapField(_occlusionURL, "Occlusion map", "One channel, black shaded to white open; none is no occlusion",
+             "Layer Occlusion Map", [](terrain::Layer& layer, const std::string& url) { layer.occlusionURL = url; });
+    mapField(_heightURL, "Height map", "One channel, black low to white high, read by the Height blend; none is half height",
+             "Layer Height Map", [](terrain::Layer& layer, const std::string& url) { layer.heightURL = url; });
     number(_tiling, numberSpec("tiling", "Tiling", PropertyKind::Float, 0.05, 1000.0, 0.1, 2, "m"), "Layer Tiling",
            [](terrain::Layer& layer, double value) { layer.tiling = (float)value; });
     _tiling->setToolTip("Metres per repeat of the texture");
@@ -303,8 +357,9 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
 
     _blend = new QComboBox(_fields);
     _blend->addItems(BLEND_NAMES);
-    _blend->setToolTip("How the layer's colour meets what is below it where it is painted: covers it, darkens it (Multiply), lightens it "
-                       "(Screen) or deepens its contrast (Overlay)");
+    _blend->setToolTip("How the layer meets what is below it where it is painted: covers it, darkens it (Multiply), lightens it "
+                       "(Screen), deepens its contrast (Overlay), or shows where its height map plus its paint rises above what is "
+                       "below (Height)");
     connect(_blend, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
         auto layer = selectedLayer();
         if (_updating || !layer || index < 0 || index >= terrain::LAYER_BLEND_COUNT) {
@@ -372,7 +427,7 @@ bool TerrainLayersEditor::isEditing() const {
     if (_menuOpen || _reordering) {
         return true;
     }
-    for (NumberEditor* editor : { _tiling, _offsetX, _offsetZ, _opacity }) {
+    for (NumberEditor* editor : { _tiling, _offsetX, _offsetZ, _opacity, _normalStrength }) {
         if (editor->isEditing()) {
             return true;
         }
@@ -380,7 +435,12 @@ bool TerrainLayersEditor::isEditing() const {
     if (_tint->isEditing() || _color->isEditing()) {
         return true;
     }
-    return (_name->hasFocus() && _name->isModified()) || (_url->hasFocus() && _url->isModified());
+    for (QLineEdit* edit : { _name, _url, _normalURL, _roughnessURL, _occlusionURL, _heightURL }) {
+        if (edit->hasFocus() && edit->isModified()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void TerrainLayersEditor::showTerrain(const QUuid& id, bool multiple) {
@@ -438,12 +498,35 @@ void TerrainLayersEditor::rebuildList() {
     _list->setCurrentRow(selectRow);
     _addButton->setEnabled(_stack.freeSlot() >= 0);
     _updating = false;
+    markSelectedRow();
     showSelected();
     emit layersShown();
 }
 
+void TerrainLayersEditor::markSelectedRow() {
+    for (int i = 0; i < _list->count(); ++i) {
+        auto item = _list->item(i);
+        auto row = _list->itemWidget(item);
+        if (!row) {
+            continue;
+        }
+        const bool selected = item->data(Qt::UserRole).toInt() == _selectedSlot;
+        if (row->property("selected").toBool() != selected) {
+            row->setProperty("selected", selected);
+            for (QWidget* widget : row->findChildren<QWidget*>()) {
+                widget->style()->unpolish(widget);
+                widget->style()->polish(widget);
+            }
+            row->style()->unpolish(row);
+            row->style()->polish(row);
+        }
+    }
+}
+
 QWidget* TerrainLayersEditor::makeRow(const terrain::Layer& layer) {
     auto row = new QWidget(_list);
+    row->setObjectName("EditorTerrainLayerRow");
+    row->setAttribute(Qt::WA_StyledBackground);   // a plain widget paints its stylesheet background only when asked to
     auto layout = new QHBoxLayout(row);
     layout->setContentsMargins(4, 1, 4, 1);
     layout->setSpacing(6);
@@ -466,6 +549,7 @@ QWidget* TerrainLayersEditor::makeRow(const terrain::Layer& layer) {
     swatch->setPixmap(swatchFor(layer));
     layout->addWidget(swatch);
     auto name = new QLabel(QString::fromStdString(layer.name), row);
+    name->setObjectName("EditorTerrainLayerName");
     name->setToolTip(QString("Slot %1: material index %1 of the voxels, plane %1 of the paint map").arg(layer.slot));
     layout->addWidget(name, 1);
     if (!layer.materialURL.empty()) {
@@ -563,6 +647,16 @@ void TerrainLayersEditor::showSelected() {
         _material->setCurrentIndex(materialIndex);
         _url->setText(url);
         _url->setModified(false);
+        _normalURL->setText(QString::fromStdString(layer->normalURL));
+        _normalURL->setModified(false);
+        _useNormal->setChecked(layer->useNormal);
+        _normalStrength->setValue(QVariant((double)layer->normalStrength), false);
+        _roughnessURL->setText(QString::fromStdString(layer->roughnessURL));
+        _roughnessURL->setModified(false);
+        _occlusionURL->setText(QString::fromStdString(layer->occlusionURL));
+        _occlusionURL->setModified(false);
+        _heightURL->setText(QString::fromStdString(layer->heightURL));
+        _heightURL->setModified(false);
         _tiling->setValue(QVariant((double)layer->tiling), false);
         _offsetX->setValue(QVariant((double)layer->offset.x), false);
         _offsetZ->setValue(QVariant((double)layer->offset.y), false);

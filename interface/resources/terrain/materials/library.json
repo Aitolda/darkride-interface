@@ -1,10 +1,10 @@
 [
-    { "name": "Grass", "url": "qrc:///terrain/materials/grass.jpg", "tiling": 4, "color": [0.33, 0.52, 0.22] },
-    { "name": "Dirt", "url": "qrc:///terrain/materials/dirt.jpg", "tiling": 3, "color": [0.42, 0.30, 0.18] },
-    { "name": "Rock", "url": "qrc:///terrain/materials/rock.jpg", "tiling": 6, "color": [0.50, 0.50, 0.50] },
-    { "name": "Sand", "url": "qrc:///terrain/materials/sand.jpg", "tiling": 3, "color": [0.78, 0.70, 0.50] },
-    { "name": "Gravel", "url": "qrc:///terrain/materials/gravel.jpg", "tiling": 2, "color": [0.55, 0.52, 0.48] },
-    { "name": "Mud", "url": "qrc:///terrain/materials/mud.jpg", "tiling": 3, "color": [0.36, 0.28, 0.20] },
-    { "name": "Moss", "url": "qrc:///terrain/materials/moss.jpg", "tiling": 2, "color": [0.24, 0.40, 0.20] },
-    { "name": "Snow", "url": "qrc:///terrain/materials/snow.jpg", "tiling": 4, "color": [0.92, 0.93, 0.95] }
+    {"name": "Grass", "url": "qrc:///terrain/materials/grass.jpg", "normal": "qrc:///terrain/materials/grass-normal.jpg", "roughness": "qrc:///terrain/materials/grass-roughness.jpg", "occlusion": "qrc:///terrain/materials/grass-occlusion.jpg", "height": "qrc:///terrain/materials/grass-height.jpg", "tiling": 4, "color": [0.33, 0.52, 0.22]},
+    {"name": "Dirt", "url": "qrc:///terrain/materials/dirt.jpg", "normal": "qrc:///terrain/materials/dirt-normal.jpg", "roughness": "qrc:///terrain/materials/dirt-roughness.jpg", "occlusion": "qrc:///terrain/materials/dirt-occlusion.jpg", "height": "qrc:///terrain/materials/dirt-height.jpg", "tiling": 3, "color": [0.42, 0.3, 0.18]},
+    {"name": "Rock", "url": "qrc:///terrain/materials/rock.jpg", "normal": "qrc:///terrain/materials/rock-normal.jpg", "roughness": "qrc:///terrain/materials/rock-roughness.jpg", "occlusion": "qrc:///terrain/materials/rock-occlusion.jpg", "height": "qrc:///terrain/materials/rock-height.jpg", "tiling": 6, "color": [0.5, 0.5, 0.5]},
+    {"name": "Sand", "url": "qrc:///terrain/materials/sand.jpg", "normal": "qrc:///terrain/materials/sand-normal.jpg", "roughness": "qrc:///terrain/materials/sand-roughness.jpg", "occlusion": "qrc:///terrain/materials/sand-occlusion.jpg", "height": "qrc:///terrain/materials/sand-height.jpg", "tiling": 3, "color": [0.78, 0.7, 0.5]},
+    {"name": "Gravel", "url": "qrc:///terrain/materials/gravel.jpg", "normal": "qrc:///terrain/materials/gravel-normal.jpg", "roughness": "qrc:///terrain/materials/gravel-roughness.jpg", "occlusion": "qrc:///terrain/materials/gravel-occlusion.jpg", "height": "qrc:///terrain/materials/gravel-height.jpg", "tiling": 2, "color": [0.55, 0.52, 0.48]},
+    {"name": "Mud", "url": "qrc:///terrain/materials/mud.jpg", "normal": "qrc:///terrain/materials/mud-normal.jpg", "roughness": "qrc:///terrain/materials/mud-roughness.jpg", "occlusion": "qrc:///terrain/materials/mud-occlusion.jpg", "height": "qrc:///terrain/materials/mud-height.jpg", "tiling": 3, "color": [0.36, 0.28, 0.2]},
+    {"name": "Moss", "url": "qrc:///terrain/materials/moss.jpg", "normal": "qrc:///terrain/materials/moss-normal.jpg", "roughness": "qrc:///terrain/materials/moss-roughness.jpg", "occlusion": "qrc:///terrain/materials/moss-occlusion.jpg", "height": "qrc:///terrain/materials/moss-height.jpg", "tiling": 2, "color": [0.24, 0.4, 0.2]},
+    {"name": "Snow", "url": "qrc:///terrain/materials/snow.jpg", "normal": "qrc:///terrain/materials/snow-normal.jpg", "roughness": "qrc:///terrain/materials/snow-roughness.jpg", "occlusion": "", "height": "qrc:///terrain/materials/snow-height.jpg", "tiling": 4, "color": [0.92, 0.93, 0.95]}
 ]

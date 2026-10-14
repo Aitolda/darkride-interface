@@ -13,7 +13,14 @@ using namespace terrain;
 bool Layer::operator==(const Layer& other) const {
     return slot == other.slot && name == other.name && materialURL == other.materialURL && color == other.color
         && tint == other.tint && tiling == other.tiling && offset == other.offset && opacity == other.opacity && blend == other.blend
-        && visible == other.visible && normalStrength == other.normalStrength;
+        && visible == other.visible && normalStrength == other.normalStrength && normalURL == other.normalURL
+        && roughnessURL == other.roughnessURL && occlusionURL == other.occlusionURL && heightURL == other.heightURL
+        && useNormal == other.useNormal;
+}
+
+bool Layer::hasMaps() const {
+    return !normalURL.empty() || !roughnessURL.empty() || !occlusionURL.empty() || !heightURL.empty() || !useNormal
+        || blend == LayerBlend::Height;
 }
 
 bool LayerStack::isValid() const {
@@ -70,30 +77,59 @@ std::vector<uint8_t> LayerStack::order() const {
 LayerStack LayerStack::defaults() {
     struct Default {
         const char* name;
-        const char* file;
+        const char* file;     // <file>.jpg is the colour, <file>-normal.jpg, -roughness.jpg, -occlusion.jpg, -height.jpg the maps
         glm::vec3 color;
         float tiling;
+        bool occlusion;       // whether the set has an occlusion map
     };
     // the textures live in the client's resources (interface/resources/terrain/materials)
     static const Default DEFAULTS[MAX_LAYERS] = {
-        { "Grass", "grass.jpg", glm::vec3(0.33f, 0.52f, 0.22f), 4.0f },
-        { "Dirt", "dirt.jpg", glm::vec3(0.42f, 0.30f, 0.18f), 3.0f },
-        { "Rock", "rock.jpg", glm::vec3(0.50f, 0.50f, 0.50f), 6.0f },
-        { "Sand", "sand.jpg", glm::vec3(0.78f, 0.70f, 0.50f), 3.0f },
-        { "Gravel", "gravel.jpg", glm::vec3(0.55f, 0.52f, 0.48f), 2.0f },
-        { "Mud", "mud.jpg", glm::vec3(0.36f, 0.28f, 0.20f), 3.0f },
-        { "Moss", "moss.jpg", glm::vec3(0.24f, 0.40f, 0.20f), 2.0f },
-        { "Snow", "snow.jpg", glm::vec3(0.92f, 0.93f, 0.95f), 4.0f }
+        { "Grass", "grass", glm::vec3(0.33f, 0.52f, 0.22f), 4.0f, true },
+        { "Dirt", "dirt", glm::vec3(0.42f, 0.30f, 0.18f), 3.0f, true },
+        { "Rock", "rock", glm::vec3(0.50f, 0.50f, 0.50f), 6.0f, true },
+        { "Sand", "sand", glm::vec3(0.78f, 0.70f, 0.50f), 3.0f, true },
+        { "Gravel", "gravel", glm::vec3(0.55f, 0.52f, 0.48f), 2.0f, true },
+        { "Mud", "mud", glm::vec3(0.36f, 0.28f, 0.20f), 3.0f, true },
+        { "Moss", "moss", glm::vec3(0.24f, 0.40f, 0.20f), 2.0f, true },
+        { "Snow", "snow", glm::vec3(0.92f, 0.93f, 0.95f), 4.0f, false }
     };
+    const std::string base = "qrc:///terrain/materials/";
     LayerStack stack;
     for (int slot = 0; slot < MAX_LAYERS; ++slot) {
+        const Default& d = DEFAULTS[slot];
         Layer layer;
         layer.slot = (uint8_t)slot;
-        layer.name = DEFAULTS[slot].name;
-        layer.materialURL = std::string("qrc:///terrain/materials/") + DEFAULTS[slot].file;
-        layer.color = DEFAULTS[slot].color;
-        layer.tiling = DEFAULTS[slot].tiling;
+        layer.name = d.name;
+        layer.materialURL = base + d.file + ".jpg";
+        layer.normalURL = base + d.file + "-normal.jpg";
+        layer.roughnessURL = base + d.file + "-roughness.jpg";
+        layer.occlusionURL = d.occlusion ? base + d.file + "-occlusion.jpg" : std::string();
+        layer.heightURL = base + d.file + "-height.jpg";
+        layer.color = d.color;
+        layer.tiling = d.tiling;
         stack.layers.push_back(layer);
     }
     return stack;
+}
+
+bool LayerStack::fillDefaultMaps() {
+    static const LayerStack DEFAULTS = defaults();
+    bool changed = false;
+    for (Layer& layer : layers) {
+        if (layer.materialURL.empty() || !layer.normalURL.empty() || !layer.roughnessURL.empty() || !layer.occlusionURL.empty()
+            || !layer.heightURL.empty()) {
+            continue;
+        }
+        for (const Layer& d : DEFAULTS.layers) {
+            if (d.materialURL == layer.materialURL) {
+                layer.normalURL = d.normalURL;
+                layer.roughnessURL = d.roughnessURL;
+                layer.occlusionURL = d.occlusionURL;
+                layer.heightURL = d.heightURL;
+                changed = true;
+                break;
+            }
+        }
+    }
+    return changed;
 }

@@ -9,8 +9,9 @@
 //  library (interface/resources/terrain/materials/library.json) or an empty one, − removes the selected one (its
 //  slot's paint and voxels stay, unseen, until a layer takes the slot again) and Reset brings back the eight
 //  defaults. Below the list, the selected layer's own settings: name, material (the library, or any texture's
-//  URL), tiling and offset in metres, opacity, blend mode, tint, and the plain colour drawn until the texture is
-//  in. The selected row is also the layer the Paint tools paint. Every change is an undo step and is saved with
+//  URL), its normal map (with an on/off and a strength), roughness, occlusion and height maps by URL, tiling and
+//  offset in metres, opacity, blend mode, tint, and the plain colour drawn until the texture is in. The selected
+//  row is also the layer the Paint tools paint. Every change is an undo step and is saved with
 //  the terrain; the layers are not an entity property, so the editor reads and sets them through EditorTerrain.
 //
 //  Distributed under the Apache License, Version 2.0.
@@ -58,7 +59,11 @@ signals:
 private:
     struct LibraryEntry {
         QString name;
-        QString url;
+        QString url;         // the colour texture
+        QString normal;      // the maps; empty for none
+        QString roughness;
+        QString occlusion;
+        QString height;
         float tiling { 4.0f };
         glm::vec3 color { 0.5f };
     };
@@ -67,6 +72,9 @@ private:
     int selectedIndex() const;   // in the stack, or -1
     terrain::Layer* selectedLayer();
     void rebuildList();
+    // the selected row's widget gets a "selected" property for the stylesheet, so the row reads as chosen beyond the
+    // list's own highlight, which its widgets cover
+    void markSelectedRow();
     void showSelected();
     QWidget* makeRow(const terrain::Layer& layer);
     QPixmap swatchFor(const terrain::Layer& layer) const;
@@ -102,6 +110,12 @@ private:
     QLineEdit* _name { nullptr };
     QComboBox* _material { nullptr };
     QLineEdit* _url { nullptr };
+    QLineEdit* _normalURL { nullptr };
+    QCheckBox* _useNormal { nullptr };
+    NumberEditor* _normalStrength { nullptr };
+    QLineEdit* _roughnessURL { nullptr };
+    QLineEdit* _occlusionURL { nullptr };
+    QLineEdit* _heightURL { nullptr };
     NumberEditor* _tiling { nullptr };
     NumberEditor* _offsetX { nullptr };
     NumberEditor* _offsetZ { nullptr };

@@ -117,7 +117,14 @@ QDockWidget#EditorHierarchy::title, QDockWidget#EditorInspector::title {
 }
 #EditorInspector QComboBox::drop-down {
     border: none;
+    border-left: 1px solid #1f1f1f;
     width: 16px;
+}
+/* a chevron, as a dropdown is known by: the style's own arrow was lost on the dark field */
+#EditorInspector QComboBox::down-arrow {
+    image: url(:/styles/down.svg);
+    width: 9px;
+    height: 6px;
 }
 #EditorInspector QComboBox QAbstractItemView {
     background: #2a2a2a;
@@ -129,8 +136,8 @@ QDockWidget#EditorHierarchy::title, QDockWidget#EditorInspector::title {
     border-radius: 3px;
     padding: 2px 6px;
 }
-/* + Add opens a menu: its text says so, without Qt's arrow drawn over it */
-#EditorInspector QToolButton#EditorUserDataAdd::menu-indicator {
+/* + Add and the layer list's + open a menu: their text says so, without Qt's arrow drawn over it */
+#EditorInspector QToolButton#EditorUserDataAdd::menu-indicator, #EditorInspector QToolButton#EditorTerrainLayerAdd::menu-indicator {
     image: none;
     width: 0;
 }
@@ -327,4 +334,24 @@ QToolBar#EditorTerrainBar QLabel#EditorHint {
     color: #7a7a7a;
     font-size: 11px;
     padding: 0 8px 0 16px;
+}
+
+/* the Inspector's terrain layer list: rows are widgets (eye, swatch, name), which cover the list's own selection
+   highlight, so the selected row is marked by a property set in TerrainLayersEditor::markSelectedRow */
+#EditorTerrainLayerList::item {
+    height: 26px;
+}
+#EditorTerrainLayerList::item:hover {
+    background: #404040;
+}
+#EditorTerrainLayerList::item:selected {
+    background: #2c5d87;
+}
+#EditorTerrainLayerRow[selected="true"] {
+    background: #2c5d87;
+    border-radius: 3px;
+}
+#EditorTerrainLayerRow[selected="true"] QLabel#EditorTerrainLayerName {
+    color: #ffffff;
+    font-weight: bold;
 }

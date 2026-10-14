@@ -1932,6 +1932,92 @@ void TerrainTests::layersRoundTripThroughTheFile() {
     QVERIFY(!loadTerrain(cut, loaded, &loadedMap, &loadedStack, &error));
 }
 
+void TerrainTests::layerMapsTakeFileVersionFive() {
+    // A stack whose layers have no maps, the normal map on and no Height blend writes version 4, as before; a map on
+    // any layer, the normal map turned off, or the Height blend writes version 5, which carries all of it back; a
+    // version 4 file reads with the normal map on and no maps.
+    auto versionOf = [](const Bytes& bytes) {
+        return (uint32_t)bytes[4] | ((uint32_t)bytes[5] << 8) | ((uint32_t)bytes[6] << 16) | ((uint32_t)bytes[7] << 24);
+    };
+    VoxelGrid grid(glm::ivec3(32, 32, 32));
+    grid.fillBelow(16.0f);
+    PaintMap map(glm::ivec2(32, 32), 1);
+
+    LayerStack plain = LayerStack::defaults();
+    QVERIFY(plain.layers[0].hasMaps());   // the defaults carry maps
+    for (Layer& layer : plain.layers) {
+        layer.normalURL.clear();
+        layer.roughnessURL.clear();
+        layer.occlusionURL.clear();
+        layer.heightURL.clear();
+    }
+    QVERIFY(!plain.layers[0].hasMaps());
+    const Bytes four = saveTerrain(grid, &map, &plain);
+    QCOMPARE(versionOf(four), 4u);
+
+    VoxelGrid loaded;
+    PaintMap loadedMap;
+    LayerStack loadedStack;
+    std::string error;
+    QVERIFY2(loadTerrain(four, loaded, &loadedMap, &loadedStack, &error), error.c_str());
+    // a version 4 file's default materials come back with their maps (snow without an occlusion map), as if saved
+    // with them; a layer with any other texture, or a map of its own, is left alone
+    QVERIFY(loadedStack.layers[3].useNormal);
+    QCOMPARE(loadedStack.layers[3].normalURL, LayerStack::defaults().layers[3].normalURL);
+    QVERIFY(loadedStack.layers[7].occlusionURL.empty());
+    QVERIFY(loadedStack == LayerStack::defaults());
+    LayerStack custom = plain;
+    custom.layers[1].materialURL = "https://example.com/dirt.jpg";
+    custom.layers[2].heightURL = "https://example.com/rock-height.png";
+    QVERIFY(custom.fillDefaultMaps());
+    QVERIFY(custom.layers[1].normalURL.empty());
+    QVERIFY(custom.layers[2].normalURL.empty());
+    QVERIFY(custom.layers[2].heightURL == "https://example.com/rock-height.png");
+    QVERIFY(!custom.layers[0].normalURL.empty());
+    QVERIFY(!custom.fillDefaultMaps());   // nothing left to fill
+
+    LayerStack withMaps = plain;
+    withMaps.layers[2].normalURL = "https://example.com/rock-normal.png";
+    withMaps.layers[2].useNormal = false;
+    withMaps.layers[2].normalStrength = 1.5f;
+    withMaps.layers[4].roughnessURL = "https://example.com/gravel-roughness.png";
+    withMaps.layers[4].occlusionURL = "https://example.com/gravel-ao.png";
+    withMaps.layers[4].heightURL = "https://example.com/gravel-height.png";
+    withMaps.layers[4].blend = LayerBlend::Height;
+    const Bytes five = saveTerrain(grid, &map, &withMaps);
+    QCOMPARE(versionOf(five), 5u);
+    QVERIFY2(loadTerrain(five, loaded, &loadedMap, &loadedStack, &error), error.c_str());
+    QVERIFY(loadedStack == withMaps);
+    QVERIFY(!loadedStack.layers[2].useNormal);
+    QCOMPARE(loadedStack.layers[4].blend, LayerBlend::Height);
+
+    // the toggle alone, and the blend alone, each need version 5; a version 5 stack with no map on any layer gets the
+    // defaults' maps as a version 4 one does
+    LayerStack toggled = plain;
+    toggled.layers[0].useNormal = false;
+    const Bytes toggledBytes = saveTerrain(grid, &map, &toggled);
+    QCOMPARE(versionOf(toggledBytes), 5u);
+    QVERIFY2(loadTerrain(toggledBytes, loaded, &loadedMap, &loadedStack, &error), error.c_str());
+    QVERIFY(!loadedStack.layers[0].useNormal);
+    QCOMPARE(loadedStack.layers[0].normalURL, LayerStack::defaults().layers[0].normalURL);
+    LayerStack byHeight = plain;
+    byHeight.layers[0].blend = LayerBlend::Height;
+    QCOMPARE(versionOf(saveTerrain(grid, &map, &byHeight)), 5u);
+
+    // the defaults themselves round-trip, maps and all
+    const LayerStack defaults = LayerStack::defaults();
+    const Bytes bytes = saveTerrain(grid, &map, &defaults);
+    QCOMPARE(versionOf(bytes), 5u);
+    QVERIFY2(loadTerrain(bytes, loaded, &loadedMap, &loadedStack, &error), error.c_str());
+    QVERIFY(loadedStack == defaults);
+    QVERIFY(loadedStack.layers[7].occlusionURL.empty());   // snow has none
+    QVERIFY(!loadedStack.layers[6].occlusionURL.empty());
+
+    // cut short in the maps: refused
+    Bytes cut(five.begin(), five.end() - 3);
+    QVERIFY(!loadTerrain(cut, loaded, &loadedMap, &loadedStack, &error));
+}
+
 void TerrainTests::sharesBecomeCoveragesThatDrawTheSame() {
     // A map from a file before version 4 holds shares of each texel, summing to 255 at most with the voxel material
     // taking the rest; converted to coverages drawn bottom to top in slot order, the stack composes the same colour.
