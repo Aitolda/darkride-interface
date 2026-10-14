@@ -19,6 +19,7 @@
 
 #include <memory>
 #include <set>
+#include <vector>
 
 #include <QtCore/QObject>
 #include <QtCore/QSet>
@@ -95,6 +96,7 @@ private:
         QUuid id;
         glm::vec3 worldPoint { 0.0f };
         glm::vec3 voxelPoint { 0.0f };
+        glm::vec3 normal { 0.0f, 1.0f, 0.0f };   // the ground's, in voxel units, unit length
     };
     bool pick(const PickRay& ray, Hit& hit);
     std::shared_ptr<RenderableTerrainEntityItem> terrainEntity(const QUuid& id) const;
@@ -139,6 +141,11 @@ private:
     int _steps { 0 };
     int _changed { 0 };             // voxels, or texels, changed by the stroke so far
     glm::vec3 _lastStepPoint { 0.0f };
+    // Dig and Fill: the sphere the stroke is cutting (Fill: adding), how far it has gone into the ground it first
+    // touched, and every sphere the stroke has cut so far, which tells its own cut from fresh ground
+    glm::vec3 _sphereCenter { 0.0f };   // voxel units
+    float _sphereAdvance { 0.0f };      // voxels
+    std::vector<glm::vec4> _spheres;    // centre and radius
     TerrainChunks _before;
     std::set<glm::ivec3, terrain::IVec3Less> _strokeSlots;   // the level-0 places _before holds
     TerrainPaintBlocks _beforePaint;

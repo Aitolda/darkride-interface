@@ -31,10 +31,11 @@
 #include "InterfaceLogging.h"
 
 namespace {
-    const float RAISE_RATE = 6.0f;          // voxels of distance a second at full strength, for Raise and Lower
+    const float RAISE_RATE = 6.0f;          // voxels a second at full strength: the shift for Raise and Lower, the sphere's pace for Dig and Fill
     const float BLEND_RATE = 4.0f;          // blending a second at full strength, for Smooth and Flatten
     const float STEP_MIN = 0.2f;            // the smallest step applied: below it the byte distances lose the falloff
     const float REAPPLY_FRACTION = 0.25f;   // Dig, Fill and the paint modes go again once the pointer has moved this much of the radius
+    const float CUT_MARGIN = 1.0f;          // voxels: a mesh's vertices sit within a voxel of the field's surface, so a hit this near one of the stroke's spheres is on it
     const float MIN_VOXEL_RADIUS = 0.75f;   // a brush smaller than a voxel would change nothing
     const float MIN_PAINT_RADIUS_TEXELS = 0.75f;
     const int TERRAIN_SEARCH_FRAMES = 30;   // how often the world's terrains are looked for
@@ -76,10 +77,29 @@ namespace {
         return renderer ? renderer->getTree() : nullptr;
     }
 
-    // Dig, Fill and the paint modes set what is under the brush rather than pushing it a little each step
-    bool isShaping(terrain::SculptMode mode) {
-        return mode == terrain::SculptMode::Dig || mode == terrain::SculptMode::Fill || mode == terrain::SculptMode::Paint
-            || mode == terrain::SculptMode::PaintVoxels;
+    // Dig and Fill cut the brush's sphere out of the ground, or add it, a whole sphere a step
+    bool isSphere(terrain::SculptMode mode) {
+        return mode == terrain::SculptMode::Dig || mode == terrain::SculptMode::Fill;
+    }
+
+    // Whether the ray (in voxel units) enters one of the spheres before, or within the margin of, the point it hit at
+    // hitDistance along it: the pointer is then over what the stroke has cut, not over fresh ground. A sphere behind
+    // the ray's origin does not count.
+    bool rayThroughSpheres(const glm::vec3& origin, const glm::vec3& direction, float hitDistance,
+                           const std::vector<glm::vec4>& spheres, float margin) {
+        for (const glm::vec4& sphere : spheres) {
+            const glm::vec3 toOrigin = origin - glm::vec3(sphere);
+            const float b = glm::dot(toOrigin, direction);
+            const float discriminant = b * b - (glm::dot(toOrigin, toOrigin) - sphere.w * sphere.w);
+            if (discriminant < 0.0f) {
+                continue;   // the ray misses it
+            }
+            const float root = std::sqrt(discriminant);
+            if (-b + root >= 0.0f && -b - root <= hitDistance + margin) {
+                return true;
+            }
+        }
+        return false;
     }
 
     bool isBlending(terrain::SculptMode mode) {
@@ -181,6 +201,10 @@ bool EditorTerrain::pick(const PickRay& ray, Hit& hit) {
     hit.id = result.entityID;
     hit.worldPoint = result.intersection;
     hit.voxelPoint = glm::vec3(entity->worldToVoxelMatrix() * glm::vec4(hit.worldPoint, 1.0f));
+    // a normal goes to voxel space by the transpose of the way voxel points go to the world
+    const glm::vec3 normal = glm::transpose(glm::mat3(entity->voxelToWorldMatrix())) * result.surfaceNormal;
+    const float length = glm::length(normal);
+    hit.normal = length > 1.0e-12f ? normal / length : glm::vec3(0.0f, 1.0f, 0.0f);
     return true;
 }
 
@@ -322,6 +346,8 @@ bool EditorTerrain::beginStroke(const PickRay& ray, bool inverted, QString& refu
     _changed = 0;
     _before.clear();
     _beforePaint.clear();
+    _spheres.clear();
+    _sphereAdvance = 0.0f;
     update(0.0f);
     return true;
 }
@@ -367,12 +393,52 @@ void EditorTerrain::update(float deltaTime) {
         return;
     }
     terrain::Brush brush = voxelBrush(*entity, hit);
-    if (isShaping(_strokeMode)) {
+    if (_strokeMode == terrain::SculptMode::PaintVoxels) {
+        // one pass of the brush, again once the pointer has moved on a little
         if (_steps > 0 && glm::distance(hit.voxelPoint, _lastStepPoint) < brush.radius * REAPPLY_FRACTION) {
             showOutline(*entity, hit);
             return;
         }
         brush.strength = 1.0f;
+    } else if (isSphere(_strokeMode)) {
+        // Dig and Fill: the sphere starts a radius short of the ground under the pointer, above it along the ground's
+        // normal (Fill: below), and moves toward the point under the pointer at the pace the strength sets, no
+        // further than that point. While the pointer stays over the stroke's own cut that point is the cut's far
+        // wall, so a hold sinks the sphere in and then bores a tunnel (raises a column) at the pace, rather than a
+        // sphere a frame, which the pick chasing the ground into each new sphere used to give. Over fresh ground the
+        // sphere moves with the pointer at once, as far in as it has got, at most to its middle. Moving on brings a
+        // step even before the pace has one due, so a drag at a low strength is not a row of dots.
+        const glm::mat4 worldToVoxel = entity->worldToVoxelMatrix();
+        const glm::vec3 origin = glm::vec3(worldToVoxel * glm::vec4(_ray.origin, 1.0f));
+        const glm::vec3 direction = glm::normalize(glm::mat3(worldToVoxel) * _ray.direction);
+        const float sign = _strokeMode == terrain::SculptMode::Dig ? 1.0f : -1.0f;   // into the ground, or out of it
+        _accumulated += deltaTime * RAISE_RATE * glm::clamp(_brush.strength, 0.0f, 1.0f);
+        const bool moved = _steps == 0 || glm::distance(hit.voxelPoint, _lastStepPoint) >= brush.radius * REAPPLY_FRACTION;
+        if (_accumulated < STEP_MIN && !moved) {
+            showOutline(*entity, hit);
+            return;
+        }
+        const float step = _accumulated;
+        _accumulated = 0.0f;
+        const float hitDistance = glm::dot(hit.voxelPoint - origin, direction);
+        if (_steps > 0 && rayThroughSpheres(origin, direction, hitDistance, _spheres, CUT_MARGIN)) {
+            // over the cut: toward the point under the pointer at the pace; what goes into the ground there (out of
+            // it, for Fill) counts as how far in the sphere has got
+            const glm::vec3 toHit = hit.voxelPoint - _sphereCenter;
+            const float distance = glm::length(toHit);
+            if (distance > 1.0e-6f) {
+                const glm::vec3 move = toHit * (std::min(distance, step) / distance);
+                _sphereCenter += move;
+                _sphereAdvance = std::max(0.0f, _sphereAdvance - sign * glm::dot(move, hit.normal));
+            }
+        } else {
+            // fresh ground: under the pointer, as far in as the sphere has got
+            _sphereAdvance += step;
+            _sphereCenter = hit.voxelPoint + hit.normal * (sign * (brush.radius - std::min(_sphereAdvance, brush.radius)));
+        }
+        brush.center = _sphereCenter;
+        brush.strength = 1.0f;
+        _spheres.emplace_back(_sphereCenter, brush.radius);
     } else {
         _accumulated += deltaTime * (isBlending(_strokeMode) ? BLEND_RATE : RAISE_RATE) * glm::clamp(_brush.strength, 0.0f, 1.0f);
         if (_accumulated < STEP_MIN) {
@@ -443,6 +509,7 @@ void EditorTerrain::endStroke(bool cancel) {
     _steps = 0;
     _changed = 0;
     _accumulated = 0.0f;
+    _spheres.clear();
 }
 
 void EditorTerrain::dropStroke() {
@@ -453,6 +520,7 @@ void EditorTerrain::dropStroke() {
     _steps = 0;
     _changed = 0;
     _accumulated = 0.0f;
+    _spheres.clear();
     _hasLastHit = false;
     _outline.clear();
 }

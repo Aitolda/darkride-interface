@@ -39,8 +39,10 @@ TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
     addMode("Lower", "Lower the ground under the brush; hold Shift to raise it", terrain::SculptMode::Lower);
     addMode("Smooth", "Smooth the ground under the brush", terrain::SculptMode::Smooth);
     addMode("Flatten", "Pull the ground to the height where the stroke began", terrain::SculptMode::Flatten);
-    addMode("Dig", "Carve the brush's sphere out of the ground; hold Shift to fill instead", terrain::SculptMode::Dig);
-    addMode("Fill", "Add the brush's sphere to the ground; hold Shift to dig instead", terrain::SculptMode::Fill);
+    addMode("Dig", "Cut the brush's sphere into the ground at the Strength pace, boring on while held; hold Shift to fill instead",
+            terrain::SculptMode::Dig);
+    addMode("Fill", "Add the brush's sphere to the ground at the Strength pace, building on while held; hold Shift to dig instead",
+            terrain::SculptMode::Fill);
     addSeparator();
     addMode("Paint", "Paint the material onto the ground, where it faces up; hold Shift to erase back to the voxels' own material",
             terrain::SculptMode::Paint);
@@ -72,7 +74,7 @@ TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
     _strength->setSingleStep(5.0);
     _strength->setSuffix(" %");
     _strength->setValue(50.0);
-    addField("Strength", _strength, 0.5, false, "How fast Raise, Lower, Smooth and Flatten work, and how much Paint lays down in one pass (Dig and Fill take the whole sphere)");
+    addField("Strength", _strength, 0.5, false, "How fast Raise, Lower, Smooth and Flatten work and how fast Dig and Fill go in, and how much Paint lays down in one pass");
 
     _hardness = new QDoubleSpinBox(this);
     _hardness->setRange(0.0, 100.0);
