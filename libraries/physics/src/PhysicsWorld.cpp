@@ -430,6 +430,23 @@ void PhysicsWorld::wakeBodiesAround(const JPH::Body* body) {
 }
 
 // private
+void PhysicsWorld::rememberSubstepStarts() {
+    JPH::BodyIDVector activeBodies;
+    _system->GetActiveBodies(JPH::EBodyType::RigidBody, activeBodies);
+    const JPH::BodyLockInterfaceNoLock& lockInterface = _system->GetBodyLockInterfaceNoLock();
+    for (const JPH::BodyID& bodyID : activeBodies) {
+        JPH::BodyLockRead lock(lockInterface, bodyID);
+        if (!lock.Succeeded()) {
+            continue;
+        }
+        ObjectMotionState* motionState = motionStateOf(lock.GetBody());
+        if (motionState) {
+            motionState->rememberSubstepStart();
+        }
+    }
+}
+
+// private
 void PhysicsWorld::applyGravityForces() {
     // Every object carries its own gravity, in world coordinates, applied as a force to the active dynamic
     // bodies. Inside a frame it is turned into the frame's coordinates, so "down" stays down when the frame tilts.
@@ -473,6 +490,8 @@ void PhysicsWorld::stepOnce(float dt, CharacterController* character) {
         character->substep(dt);
     }
 
+    // every awake body's pose before the substep, for the presentation (ObjectMotionState::getPresentedBodyTransform)
+    rememberSubstepStarts();
     applyGravityForces();
 
     JPH::EPhysicsUpdateError error = _system->Update(dt, 1, _tempAllocator, _jobSystem);

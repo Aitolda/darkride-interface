@@ -297,7 +297,8 @@
         phaseIndex = index;
         phase = phases[index];
         phaseStart = now();
-        log("phase " + phase.name + " at " + phaseStart.toFixed(2) + " s");
+        log("phase " + phase.name + " at " + phaseStart.toFixed(2) + " s" +
+            (Test.getGameLoopRate ? ", game loop " + Test.getGameLoopRate().toFixed(0) + " Hz, render " + Test.getRenderLoopRate().toFixed(0) + " Hz" : ""));
         // the observer on another client reads the phase from the message channel (and the display name)
         MyAvatar.displayName = "flow-" + phase.name;
         publishPhase(phase.name);

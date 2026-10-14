@@ -196,6 +196,7 @@ private:
     void destroyBody(ObjectMotionState* motionState);
     void wakeBodiesAround(const JPH::Body* body);
     void applyGravityForces();
+    void rememberSubstepStarts();
     void harvestContacts();
     void doOwnershipInfection(ObjectMotionState* motionStateA, bool aIsCharacter, bool aIsStatic,
                               ObjectMotionState* motionStateB, bool bIsStatic, bool bIsKinematic);

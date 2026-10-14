@@ -204,6 +204,14 @@ void TestScriptingInterface::setMinimumGPUTextureMemStabilityCount(int count) {
     QMetaObject::invokeMethod(qApp, "setMinimumGPUTextureMemStabilityCount", Qt::DirectConnection, Q_ARG(int, count));
 }
 
+float TestScriptingInterface::getGameLoopRate() {
+    return qApp->getGameLoopRate();
+}
+
+float TestScriptingInterface::getRenderLoopRate() {
+    return qApp->getRenderLoopRate();
+}
+
 bool TestScriptingInterface::isTextureLoadingComplete() {
     bool result;
     QMetaObject::invokeMethod(qApp, "gpuTextureMemSizeStable", Qt::DirectConnection, Q_RETURN_ARG(bool, result));

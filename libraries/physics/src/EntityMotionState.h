@@ -45,7 +45,10 @@ public:
 
     // The chain of transforms between the entity's parent and its frame, composed: the transform of the parent
     // in the frame's coordinates. Returns false when the entity has no frame.
-    bool getParentTransformInFrame(Transform& transform, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const;
+    bool getParentTransformInFrame(Transform& transform, glm::vec3& linearVelocity, glm::vec3& angularVelocity, bool asSimulated = false) const;
+    // the body's pose as the entity's local transform, and back (the body is the simulated state of a keyframed entity)
+    void bodyPoseAsLocal(Transform& local) const;
+    void localToBodyPose(const Transform& local, glm::vec3& position, glm::quat& rotation) const;
 
     /// \return PhysicsMotionType based on params set in EntityItem
     virtual PhysicsMotionType computePhysicsMotionType() const override;
@@ -90,7 +93,7 @@ public:
     QUuid getFrameID() const override;
     bool isFrame() const override;
     bool getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorner) const override;
-    bool getFrameTransformInDomain(glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const override;
+    bool getFrameTransformInDomain(glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity, bool asSimulated = false) const override;
     int getFrameDepth() const override;
     virtual glm::vec3 getObjectLinearVelocityChange() const override;
 

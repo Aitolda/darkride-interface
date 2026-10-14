@@ -176,11 +176,6 @@ void EntityMotionState::handleEasyChanges(uint32_t& flags) {
     }
     ObjectMotionState::handleEasyChanges(flags);
 
-    if (flags & Simulation::DIRTY_TRANSFORM) {
-        // the entity was placed from outside (a script, the network): that is the present, nothing is read ahead
-        _extrapolatedTime = 0.0f;
-    }
-
     if (flags & Simulation::DIRTY_SIMULATOR_ID) {
         if (serverTakes()) {
             qCInfo(physics) << "physics-server: car" << _entity->getName() << _entity->getID() << "owner now"
@@ -307,12 +302,17 @@ bool EntityMotionState::getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorne
 // A nested frame's own record is in its frame ancestor's coordinates (getObject*); the domain transform composes
 // that with the ancestor's, which composes with its own, up to the domain. An ancestor without a motion state here
 // (not yet in the physics) leaves the entity's world transform as the best there is.
-bool EntityMotionState::getFrameTransformInDomain(glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const {
+bool EntityMotionState::getFrameTransformInDomain(glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity, bool asSimulated) const {
     if (!_entity || !_entity->isFrame()) {
         return false;
     }
-    position = getObjectPosition();
-    rotation = getObjectRotation();
+    if (asSimulated && _body && !_body->IsStatic()) {
+        // inside the step the frame is where its body is; its record presents a substep behind
+        getBodyTransform(position, rotation);
+    } else {
+        position = getObjectPosition();
+        rotation = getObjectRotation();
+    }
     linearVelocity = getObjectLinearVelocity();
     angularVelocity = getObjectAngularVelocity();
     SpatiallyNestablePointer ancestor = ObjectMotionState::findFrameAncestor(_entity);
@@ -322,7 +322,7 @@ bool EntityMotionState::getFrameTransformInDomain(glm::vec3& position, glm::quat
     EntityMotionState* ancestorState = static_cast<EntityMotionState*>(std::static_pointer_cast<EntityItem>(ancestor)->getPhysicsInfo());
     glm::vec3 ancestorPosition, ancestorLinear, ancestorAngular;
     glm::quat ancestorRotation;
-    if (ancestorState && ancestorState->getFrameTransformInDomain(ancestorPosition, ancestorRotation, ancestorLinear, ancestorAngular)) {
+    if (ancestorState && ancestorState->getFrameTransformInDomain(ancestorPosition, ancestorRotation, ancestorLinear, ancestorAngular, asSimulated)) {
         glm::vec3 offset = ancestorRotation * position;
         linearVelocity = ancestorLinear + glm::cross(ancestorAngular, offset) + ancestorRotation * linearVelocity;
         angularVelocity = ancestorAngular + ancestorRotation * angularVelocity;
@@ -347,8 +347,61 @@ int EntityMotionState::getFrameDepth() const {
     return depth;
 }
 
-bool EntityMotionState::getParentTransformInFrame(Transform& transform, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const {
-    return ObjectMotionState::getParentTransformInFrame(_entity, transform, linearVelocity, angularVelocity);
+bool EntityMotionState::getParentTransformInFrame(Transform& transform, glm::vec3& linearVelocity, glm::vec3& angularVelocity, bool asSimulated) const {
+    return ObjectMotionState::getParentTransformInFrame(_entity, transform, linearVelocity, angularVelocity, asSimulated);
+}
+
+void EntityMotionState::bodyPoseAsLocal(Transform& local) const {
+    glm::vec3 position;
+    glm::quat rotation;
+    getBodyTransform(position, rotation);
+    local = _entity->getLocalTransform();   // keeps the scale
+    Transform parentInFrame;
+    glm::vec3 v, w;
+    Transform body;
+    body.setTranslation(position);
+    body.setRotation(rotation);
+    if (getParentTransformInFrame(parentInFrame, v, w, true)) {
+        // the body is in its frame's coordinates
+        Transform relative;
+        Transform::inverseMult(relative, parentInFrame, body);
+        local.setTranslation(relative.getTranslation());
+        local.setRotation(relative.getRotation());
+        return;
+    }
+    // the body is in the domain, less the offset; the record is relative to the parent, if any
+    body.setTranslation(position + ObjectMotionState::getWorldOffset());
+    bool success = false;
+    Transform parent = _entity->getParentTransform(success);
+    if (success && !_entity->getParentID().isNull()) {
+        Transform relative;
+        Transform::inverseMult(relative, parent, body);
+        local.setTranslation(relative.getTranslation());
+        local.setRotation(relative.getRotation());
+    } else {
+        local.setTranslation(body.getTranslation());
+        local.setRotation(body.getRotation());
+    }
+}
+
+void EntityMotionState::localToBodyPose(const Transform& local, glm::vec3& position, glm::quat& rotation) const {
+    Transform parentInFrame;
+    glm::vec3 v, w;
+    if (getParentTransformInFrame(parentInFrame, v, w, true)) {
+        position = parentInFrame.transform(local.getTranslation());
+        rotation = glm::normalize(parentInFrame.getRotation() * local.getRotation());
+        return;
+    }
+    bool success = false;
+    Transform parent = _entity->getParentTransform(success);
+    if (success && !_entity->getParentID().isNull()) {
+        position = parent.transform(local.getTranslation());
+        rotation = glm::normalize(parent.getRotation() * local.getRotation());
+    } else {
+        position = local.getTranslation();
+        rotation = local.getRotation();
+    }
+    position -= ObjectMotionState::getWorldOffset();
 }
 
 glm::vec3 EntityMotionState::getObjectPosition() const {
@@ -416,34 +469,46 @@ void EntityMotionState::pushTransformToBody(float dt) {
                                 linearVelocity, angularVelocity);
         _entity->setTransformDrivenLocally(driven);
         if (driven) {
+            // the train's pose at this substep is the body's; the record presents it after the step
             Transform local = _entity->getLocalTransform();
             local.setTranslation(position);
             local.setRotation(rotation);
             _entity->setAcceleration(Vectors::ZERO);
-            _entity->setLocalTransformAndVelocities(local, linearVelocity, angularVelocity);
+            _entity->setLocalVelocity(linearVelocity);
+            _entity->setLocalAngularVelocity(angularVelocity);
             _lastKinematicStep = thisStep;
-            _extrapolatedTime = 0.0f;
+            glm::vec3 bodyPosition;
+            glm::quat bodyRotation;
+            localToBodyPose(local, bodyPosition, bodyRotation);
+            bodyInterface()->MoveKinematic(_body->GetID(), glmToJoltR(bodyPosition), glmToJolt(bodyRotation), dt);
         }
     }
     if (!driven) {
-        // This is physical kinematic motion which steps strictly by the subframe count
-        // of the physics simulation and uses full gravity for acceleration.
+        // Physical kinematic motion, stepped strictly by the substep count, with full gravity for acceleration.
+        // The body is the simulated state: its pose (where the last substep left it) is run on with the record's
+        // velocities, and the velocities go back to the record; the record's own pose is the presentation, set
+        // after the step (pullTransformFromBody), a substep behind.
         _entity->setAcceleration(_entity->getGravity());
-
-        // (less what pullTransformFromBody already read ahead to the present after the last step)
-        float stepDt = (thisStep - _lastKinematicStep) * PHYSICS_ENGINE_FIXED_SUBSTEP - _extrapolatedTime;
+        float stepDt = (thisStep - _lastKinematicStep) * PHYSICS_ENGINE_FIXED_SUBSTEP;
         _lastKinematicStep = thisStep;
-        _extrapolatedTime = 0.0f;
+        Transform local;
+        bodyPoseAsLocal(local);
+        glm::vec3 linearVelocity = _entity->getLocalVelocity();
+        glm::vec3 angularVelocity = _entity->getLocalAngularVelocity();
         if (stepDt > 0.0f) {
-            _entity->stepKinematicMotion(stepDt);
+            _entity->integrateKinematicMotion(local, linearVelocity, angularVelocity, stepDt);
+            _entity->setLocalVelocity(linearVelocity);
+            _entity->setLocalAngularVelocity(angularVelocity);
         }
+        glm::vec3 bodyPosition;
+        glm::quat bodyRotation;
+        localToBodyPose(local, bodyPosition, bodyRotation);
+        bodyInterface()->MoveKinematic(_body->GetID(), glmToJoltR(bodyPosition), glmToJolt(bodyRotation), dt);
     }
 
     // and set the acceleration-matches-gravity count high so that if we send an update
     // it will use the correct acceleration for remote simulations
     _accelerationNearlyGravityCount = (uint8_t)(-1);
-
-    bodyInterface()->MoveKinematic(_body->GetID(), glmToJoltR(getObjectPosition()), glmToJolt(getObjectRotation()), dt);
 
     // a child that is still a static body has to become kinematic now that its parent moves (not so for a
     // frame: its children live in its own world, where it does not move)
@@ -472,35 +537,13 @@ void EntityMotionState::pullTransformFromBody() {
     }
     measureBodyAcceleration();
 
-    float leftover = ObjectMotionState::getLeftoverTime();
-    if (_body->IsKinematic() && !hasInternalKinematicChanges()) {
-        // A keyframed body went where the entity told it, up to the last substep. The entity's own record is
-        // now read ahead to the present along its own motion (the body stays at the substep; the next push
-        // integrates only what is left), so what is rendered and sent does not step by substeps. The entity's
-        // velocity stays the truth; the body's (which may include a catch-up) is never written back.
-        if (_entity->getDirtyFlags() & Simulation::DIRTY_TRANSFORM) {
-            // placed from outside since the step began: that transform is the present
-            _extrapolatedTime = 0.0f;
-        } else {
-            float ahead = leftover - _extrapolatedTime;
-            if (ahead > 0.0f) {
-                _entity->setAcceleration(_entity->getGravity());
-                _entity->stepKinematicMotion(ahead);
-            }
-            _extrapolatedTime = leftover;
-        }
-        _entity->setLastSimulated(usecTimestampNow());
-        return;
-    }
-
+    // The body is at the last substep; the record presents it blended between the start and the end of that
+    // substep (one substep behind the present), so what is rendered and sent moves evenly at any display rate.
+    // A keyframed body's velocity is the record's own and is never written back (below).
     glm::vec3 position;
     glm::quat rotation;
-    getBodyTransform(position, rotation);
-    if (leftover > 0.0f && !_body->IsKinematic()) {
-        // the body is at the last substep; it is read ahead to the present along its velocity
-        position += leftover * getBodyLinearVelocity();
-        rotation = glm::normalize(computeBulletRotationStep(getBodyAngularVelocity(), leftover) * rotation);
-    }
+    getPresentedBodyTransform(position, rotation);
+    const quint64 presentedNow = usecTimestampNow() - (quint64)(ObjectMotionState::getPresentationLag() * (float)USECS_PER_SECOND);
     if (_correctionBlendTime > 0.0f) {
         // a vehicle's correction (PHYSICS.md 4.6): the jump is shown as a residual that decays, never a snap
         uint64_t now = usecTimestampNow();
@@ -549,7 +592,7 @@ void EntityMotionState::pullTransformFromBody() {
             local = _entity->getLocalTransform();
         }
         _entity->setLocalTransformAndVelocities(local, linearVelocity, angularVelocity);
-        _entity->setLastSimulated(usecTimestampNow());
+        _entity->setLastSimulated(presentedNow);
         return;
     }
     position += ObjectMotionState::getWorldOffset();
@@ -561,7 +604,7 @@ void EntityMotionState::pullTransformFromBody() {
         if (!kinematicFlags) {
             _entity->setWorldTransform(position, rotation);
         }
-        _entity->setLastSimulated(usecTimestampNow());
+        _entity->setLastSimulated(presentedNow);
         return;
     }
 
@@ -574,7 +617,7 @@ void EntityMotionState::pullTransformFromBody() {
         _entity->setWorldTransform(position, rotation);
         _entity->setWorldVelocity(getBodyLinearVelocity());
         _entity->setWorldAngularVelocity(getBodyAngularVelocity());
-        _entity->setLastSimulated(usecTimestampNow());
+        _entity->setLastSimulated(presentedNow);
     } else {
         // only set properties NOT flagged
         if (!(flags & Simulation::DIRTY_TRANSFORM)) {
@@ -587,7 +630,7 @@ void EntityMotionState::pullTransformFromBody() {
             _entity->setWorldAngularVelocity(getBodyAngularVelocity());
         }
         if (flags != (Simulation::DIRTY_TRANSFORM | Simulation::DIRTY_VELOCITIES)) {
-            _entity->setLastSimulated(usecTimestampNow());
+            _entity->setLastSimulated(presentedNow);
         }
     }
 

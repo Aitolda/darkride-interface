@@ -25,6 +25,8 @@
 
 #include "JoltUtil.h"
 #include "PhysicsEngine.h"
+#include <GLMHelpers.h>
+#include <PhysicsHelpers.h>
 #include "PhysicsWorld.h"
 #include "PhysicsHelpers.h"
 #include "PhysicsLogging.h"
@@ -48,6 +50,24 @@ void ObjectMotionState::setLeftoverTime(float seconds) {
 }
 
 // static
+bool _interpolatePresentation(true);
+
+void ObjectMotionState::setInterpolatePresentation(bool interpolate) {
+    _interpolatePresentation = interpolate;
+}
+
+bool ObjectMotionState::getInterpolatePresentation() {
+    return _interpolatePresentation;
+}
+
+float ObjectMotionState::getPresentationLag() {
+    return _interpolatePresentation ? PHYSICS_ENGINE_FIXED_SUBSTEP : 0.0f;
+}
+
+float ObjectMotionState::getPresentationAlpha() {
+    return _interpolatePresentation ? glm::clamp(_leftoverTime / PHYSICS_ENGINE_FIXED_SUBSTEP, 0.0f, 1.0f) : 1.0f;
+}
+
 float ObjectMotionState::getLeftoverTime() {
     return _leftoverTime;
 }
@@ -93,7 +113,7 @@ SpatiallyNestablePointer ObjectMotionState::findFrameAncestor(const SpatiallyNes
 // Walks from the object's parent up to its frame, composing local transforms and velocities (each local
 // velocity is in its parent's rotation; angular motion of the chain is left out, as SpatiallyNestable does).
 bool ObjectMotionState::getParentTransformInFrame(const SpatiallyNestablePointer& object, Transform& transform,
-                                                  glm::vec3& linearVelocity, glm::vec3& angularVelocity) {
+                                                  glm::vec3& linearVelocity, glm::vec3& angularVelocity, bool asSimulated) {
     transform = Transform();
     linearVelocity = glm::vec3(0.0f);
     angularVelocity = glm::vec3(0.0f);
@@ -116,9 +136,23 @@ bool ObjectMotionState::getParentTransformInFrame(const SpatiallyNestablePointer
                 glm::quat rotationSoFar = transform.getRotation();
                 linearVelocity += rotationSoFar * node->getLocalVelocity();
                 angularVelocity += rotationSoFar * node->getLocalAngularVelocity();
-                Transform composed;
-                Transform::mult(composed, transform, node->getLocalTransform());
-                transform = composed;
+                ObjectMotionState* nodeState = nullptr;
+                if (asSimulated && node->getNestableType() == NestableType::Entity) {
+                    nodeState = static_cast<ObjectMotionState*>(std::static_pointer_cast<EntityItem>(node)->getPhysicsInfo());
+                }
+                if (nodeState && nodeState->getBody() && !nodeState->getBody()->IsStatic()) {
+                    // inside the step the node is where its body is (its record presents a substep behind)
+                    glm::vec3 position;
+                    glm::quat rotation;
+                    nodeState->getBodyTransform(position, rotation);
+                    transform = Transform();
+                    transform.setTranslation(position);
+                    transform.setRotation(rotation);
+                } else {
+                    Transform composed;
+                    Transform::mult(composed, transform, node->getLocalTransform());
+                    transform = composed;
+                }
             }
             return true;
         }
@@ -283,7 +317,7 @@ void ObjectMotionState::updateCCDConfiguration() {
     bodyInterface()->SetMotionQuality(_body->GetID(), wantsCCD ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete);
 }
 
-bool ObjectMotionState::getFrameTransformInDomain(glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const {
+bool ObjectMotionState::getFrameTransformInDomain(glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity, bool asSimulated) const {
     if (!isFrame()) {
         return false;
     }
@@ -411,7 +445,28 @@ void ObjectMotionState::setBodyTransform(const glm::vec3& position, const glm::q
         }
         bodyInterface()->SetPositionAndRotation(_body->GetID(), glmToJoltR(position), glmToJolt(rotation),
                                                activate ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+        // placed: it is where it is, with no blend from where it was
+        _substepStartStep = 0;
     }
+}
+
+void ObjectMotionState::rememberSubstepStart() {
+    if (_body) {
+        _substepStartPosition = joltToGLM(_body->GetPosition());
+        _substepStartRotation = joltToGLM(_body->GetRotation());
+        _substepStartStep = getWorldSimulationStep();
+    }
+}
+
+void ObjectMotionState::getPresentedBodyTransform(glm::vec3& position, glm::quat& rotation) const {
+    getBodyTransform(position, rotation);
+    if (!_body || !_interpolatePresentation || _substepStartStep != getWorldSimulationStep()) {
+        // no substep moved it lately: it is where it is
+        return;
+    }
+    float alpha = getPresentationAlpha();
+    position = glm::mix(_substepStartPosition, position, alpha);
+    rotation = glm::normalize(safeMix(_substepStartRotation, rotation, alpha));
 }
 
 void ObjectMotionState::getBodyTransform(glm::vec3& position, glm::quat& rotation) const {
@@ -535,7 +590,6 @@ void ObjectMotionState::updateLastKinematicStep() {
     // one substep of motion on the first push. (Starting a step earlier gave two, and that doubled velocity
     // was then read back from the body into the entity.)
     _lastKinematicStep = ObjectMotionState::getWorldSimulationStep();
-    _extrapolatedTime = 0.0f;
 }
 
 void ObjectMotionState::updateBodyMassProperties() {

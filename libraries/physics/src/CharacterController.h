@@ -199,8 +199,9 @@ protected:
     float _followTimeRemaining { 0.0f };
     glm::vec3 _position { 0.0f };
     glm::quat _rotation;
-    mutable glm::vec3 _readAhead { 0.0f }; // how far the last pose handed out was read ahead of the body
-    mutable glm::vec3 _handedOutPosition { 0.0f };
+    mutable glm::vec3 _handedOutPosition { 0.0f }; // the pose last handed out (getPositionAndOrientation)
+    glm::vec3 _substepStartPosition { 0.0f };       // the character's position before its last substep, for the presentation
+    uint32_t _substepStartStep { 0 };
     glm::vec3 _shapeLocalOffset { 0.0f };
 
     glm::vec3 _boxScale { 1.0f }; // used to compute capsule shape

@@ -1264,25 +1264,26 @@ void EntityItem::simulate(const quint64& now) {
 
 bool EntityItem::stepKinematicMotion(float timeElapsed) {
     DETAILED_PROFILE_RANGE(simulation_physics, "StepKinematicMotion");
-    // get all the data
     Transform transform;
     glm::vec3 linearVelocity;
     glm::vec3 angularVelocity;
     getLocalTransformAndVelocities(transform, linearVelocity, angularVelocity);
+    bool moving = glm::length2(angularVelocity) > 0.0f || glm::length2(linearVelocity) > 0.0f;
+    if (!moving) {
+        return false;
+    }
+    integrateKinematicMotion(transform, linearVelocity, angularVelocity, timeElapsed);
+    setLocalTransformAndVelocities(transform, linearVelocity, angularVelocity);
+    return true;
+}
 
+void EntityItem::integrateKinematicMotion(Transform& transform, glm::vec3& linearVelocity, glm::vec3& angularVelocity, float timeElapsed) const {
     // find out if it is moving
     bool isSpinning = (glm::length2(angularVelocity) > 0.0f);
     float linearSpeedSquared = glm::length2(linearVelocity);
     bool isTranslating = linearSpeedSquared > 0.0f;
-    bool moving = isTranslating || isSpinning;
-    if (!moving) {
-        return false;
-    }
-
-    if (timeElapsed <= 0.0f) {
-        // someone gave us a useless time value so bail early
-        // but return 'true' because it is moving
-        return true;
+    if (!(isTranslating || isSpinning) || timeElapsed <= 0.0f) {
+        return;
     }
 
     const float MAX_TIME_ELAPSED = 1.0f;  // seconds
@@ -1364,9 +1365,6 @@ bool EntityItem::stepKinematicMotion(float timeElapsed) {
     }
 
     transform.setTranslation(position);
-    setLocalTransformAndVelocities(transform, linearVelocity, angularVelocity);
-
-    return true;
 }
 
 bool EntityItem::isMoving() const {

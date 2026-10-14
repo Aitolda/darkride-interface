@@ -100,6 +100,7 @@ void PhysicsServer::run() {
 
     // the physics: the same engine and simulation a client runs, with no character and no workload regions
     ObjectMotionState::setShapeManager(&_shapeManager);
+    ObjectMotionState::setInterpolatePresentation(false);   // nothing is drawn here: the records are the last substep itself
     _physicsEngine = std::make_shared<PhysicsEngine>(Vectors::ZERO);
     _physicsEngine->init();
     _entitySimulation = std::make_shared<PhysicalEntitySimulation>();

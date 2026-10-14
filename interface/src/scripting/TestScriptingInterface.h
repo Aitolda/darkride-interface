@@ -190,6 +190,20 @@ public slots:
      */
     Q_INVOKABLE bool isTextureLoadingComplete();
 
+    /**jsdoc
+     * The rate of the game loop (simulation and script updates), in frames per second, as the stats show it.
+     * @function Test.getGameLoopRate
+     * @returns {number}
+     */
+    Q_INVOKABLE float getGameLoopRate();
+
+    /**jsdoc
+     * The rate at which frames are presented, in frames per second.
+     * @function Test.getRenderLoopRate
+     * @returns {number}
+     */
+    Q_INVOKABLE float getRenderLoopRate();
+
 private:
     bool waitForCondition(qint64 maxWaitMs, std::function<bool()> condition);
     QString _testResultsLocation;

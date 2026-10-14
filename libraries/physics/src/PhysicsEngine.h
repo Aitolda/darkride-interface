@@ -157,7 +157,7 @@ public:
     // leaves at once, before it falls in a world where the platform does not exist
     QUuid frameContaining(const glm::vec3& position, const QUuid& currentFrame, bool supported = true) const;
     // the transform of a frame in the domain (its body's, or its entity's when it has no body yet)
-    bool getFrameTransform(const QUuid& frameID, glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const;
+    bool getFrameTransform(const QUuid& frameID, glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity, bool asSimulated = false) const;
 
     JPH::TempAllocator* getTempAllocator() const;
     static ObjectMotionState* motionStateOf(const JPH::Body& body) { return PhysicsWorld::motionStateOf(body); }

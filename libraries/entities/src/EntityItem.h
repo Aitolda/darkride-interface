@@ -170,6 +170,9 @@ public:
     // perform linear extrapolation for SimpleEntitySimulation
     void simulate(const quint64& now);
     bool stepKinematicMotion(float timeElapsed); // return 'true' if moving
+    // the same integration on a state the caller holds (a local transform and velocities in the parent's
+    // rotation), leaving the entity as it is: the physics integrates its keyframed bodies with this
+    void integrateKinematicMotion(Transform& transform, glm::vec3& linearVelocity, glm::vec3& angularVelocity, float timeElapsed) const;
 
     virtual bool needsToCallUpdate() const { return false; }
 

@@ -116,10 +116,17 @@ public:
     static uint32_t getWorldSimulationStep();
 
     // How far the present is past the last substep (less than one substep). The simulation runs in fixed
-    // substeps and is read once per rendered frame, so the results are read this much ahead, along each
-    // body's velocity; otherwise everything that moves would step by one or two substeps per frame.
+    // substeps and is read once per rendered frame; what is presented is each body's pose blended between
+    // the start and the end of its last substep by this fraction of a substep (getPresentedBodyTransform),
+    // so motion is even at any display rate and never ahead of what was simulated. The presented pose is
+    // thus one substep behind the present (getPresentationLag). A node that presents nothing (the physics
+    // server) turns the blend off and reads the last substep itself.
     static void setLeftoverTime(float seconds);
     static float getLeftoverTime();
+    static void setInterpolatePresentation(bool interpolate);
+    static bool getInterpolatePresentation();
+    static float getPresentationLag();      // seconds the presented pose is behind the present
+    static float getPresentationAlpha();    // where between the last substep's start and end the presentation falls
 
     // The wall-clock time (usec) of the substep being simulated, set by the engine before each substep: the paced
     // clock's estimate of when this substep's boundary falls. A state stamped with it (a train's, PHYSICS.md 4.7)
@@ -133,7 +140,7 @@ public:
     // The transform and velocities of the object's parent in the coordinates of the object's frame: the chain
     // from the parent up to (not including) the frame, composed. False when the object has no frame.
     static bool getParentTransformInFrame(const SpatiallyNestablePointer& object, Transform& transform,
-                                          glm::vec3& linearVelocity, glm::vec3& angularVelocity);
+                                          glm::vec3& linearVelocity, glm::vec3& angularVelocity, bool asSimulated = false);
     // The world transform of the object's frame, with unit scale, for taking world-space poses into the frame.
     // False when the object has no frame.
     static bool getFrameTransform(const SpatiallyNestablePointer& object, Transform& frameTransform);
@@ -208,7 +215,9 @@ public:
     virtual bool isFrame() const { return false; }
     // For a frame: its transform and velocities in the domain, composed through its frame ancestors when it is nested
     // (PHYSICS.md 4.10), from the objects' own records (the entities), which is what the renderer composes against too.
-    virtual bool getFrameTransformInDomain(glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const;
+    // asSimulated: the frame's body (where the substep left it) rather than its record (the presentation, a
+    // substep behind), for what runs inside the step
+    virtual bool getFrameTransformInDomain(glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity, bool asSimulated = false) const;
     // For a frame: how many frames it is nested in (0 in the domain itself). Membership prefers the deepest frame
     // whose volume holds a point: a car on a ship's deck over the ship.
     virtual int getFrameDepth() const { return 0; }
@@ -252,6 +261,11 @@ public:
     // places the body outright; actions that hold an object use this every substep.
     void setBodyTransform(const glm::vec3& position, const glm::quat& rotation, bool activate);
     void getBodyTransform(glm::vec3& position, glm::quat& rotation) const;
+    // the body's pose before its substep, kept for the presentation (PhysicsWorld::stepOnce takes it)
+    void rememberSubstepStart();
+    void forgetSubstepStart() { _substepStartStep = 0; }
+    // the body's pose as presented this frame: between the start and the end of its last substep (getLeftoverTime)
+    void getPresentedBodyTransform(glm::vec3& position, glm::quat& rotation) const;
 
     bool hasInternalKinematicChanges() const { return _hasInternalKinematicChanges; }
 
@@ -302,9 +316,10 @@ protected:
     float _density { 1.0f };
 
     mutable uint32_t _lastKinematicStep;
-    // how far a keyframed object's own record has been read ahead of its last substep (see getLeftoverTime)
-    mutable float _extrapolatedTime { 0.0f };
     mutable bool _hasInternalKinematicChanges { false };
+    glm::vec3 _substepStartPosition { 0.0f };
+    glm::quat _substepStartRotation;
+    uint32_t _substepStartStep { 0 };   // the substep that began from that pose; 0 when none applies
 };
 
 using SetOfMotionStates = QSet<ObjectMotionState*>;

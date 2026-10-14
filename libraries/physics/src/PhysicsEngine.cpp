@@ -126,12 +126,12 @@ PhysicsWorld* PhysicsEngine::worldFor(ObjectMotionState* motionState) {
     return getWorld(motionState->getFrameID());
 }
 
-bool PhysicsEngine::getFrameTransform(const QUuid& frameID, glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const {
+bool PhysicsEngine::getFrameTransform(const QUuid& frameID, glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity, bool asSimulated) const {
     auto itr = _frameStates.find(frameID);
     if (itr == _frameStates.end()) {
         return false;
     }
-    return itr->second->getFrameTransformInDomain(position, rotation, linearVelocity, angularVelocity);
+    return itr->second->getFrameTransformInDomain(position, rotation, linearVelocity, angularVelocity, asSimulated);
 }
 
 QUuid PhysicsEngine::frameContaining(const glm::vec3& position, const QUuid& currentFrame, bool supported) const {
@@ -439,7 +439,7 @@ void PhysicsEngine::feedFrameTransforms() {
     for (auto& entry : _frameWorlds) {
         glm::vec3 position, linearVelocity, angularVelocity;
         glm::quat rotation;
-        if (getFrameTransform(entry.first, position, rotation, linearVelocity, angularVelocity)) {
+        if (getFrameTransform(entry.first, position, rotation, linearVelocity, angularVelocity, true)) {
             entry.second->setFrameTransform(position, rotation, linearVelocity, angularVelocity);
         }
     }
@@ -531,9 +531,10 @@ void PhysicsEngine::stepSimulation() {
     }
     _lastStepDuration = 1.0e-3f * (float)(usecTimestampNow() - start);
 
-    // The results are read once per rendered frame, this much past the last substep, and every object reads
-    // itself that far ahead along its velocity (ObjectMotionState::pullTransformFromBody); so a frame with no
-    // substep of its own (a display faster than the simulation) still reads fresh positions.
+    // The results are read once per rendered frame, this much past the last substep: every object presents
+    // itself blended that far between the start and the end of its last substep (ObjectMotionState::
+    // getPresentedBodyTransform), so a frame with no substep of its own (a display faster than the simulation)
+    // still reads fresh positions, and nothing is ever shown ahead of what was simulated.
     ObjectMotionState::setLeftoverTime(_accumulatedTime);
     _hasOutgoingChanges = true;
 
