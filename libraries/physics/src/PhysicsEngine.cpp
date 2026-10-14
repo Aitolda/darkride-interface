@@ -236,6 +236,7 @@ void PhysicsEngine::refreshFrameInteriors() {
         if (!ownShape) {
             continue;
         }
+        bool hadCopy = frameState->getInteriorShape() != nullptr;
         std::vector<ObjectMotionState*> parts;
         for (ObjectMotionState* part : world->getMotionStates()) {
             const JPH::Body* body = part->getBody();
@@ -267,9 +268,11 @@ void PhysicsEngine::refreshFrameInteriors() {
             frameState->setInteriorShape(nullptr, {});
             continue;
         }
+        size_t numParts = parts.size();
         frameState->setInteriorShape(result.Get(), std::move(parts));
-        qCDebug(physics) << "PhysicsEngine: frame" << entry.first << "wears" << frameState->getInteriorShape()
-                         << "copies of" << (int)(settings.mSubShapes.size() - 1) << "interior parts";
+        if (!hadCopy) {
+            qCDebug(physics) << "PhysicsEngine: frame" << entry.first << "wears copies of" << (int)numParts << "interior parts";
+        }
     }
 }
 

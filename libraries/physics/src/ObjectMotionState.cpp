@@ -399,11 +399,18 @@ ObjectMotionState* ObjectMotionState::interiorPartAt(const JPH::SubShapeID& subS
 
 void ObjectMotionState::setBodyTransform(const glm::vec3& position, const glm::quat& rotation, bool activate) {
     if (_body && bodyInterface()) {
+        if (_body->IsStatic()) {
+            // a wall that moved makes the frame's copy of it (round 8) stale; a wall placed where it already is
+            // (a child's transform is pushed again whenever its parent moves) does not
+            glm::vec3 bodyPosition;
+            glm::quat bodyRotation;
+            getBodyTransform(bodyPosition, bodyRotation);
+            if (glm::distance2(bodyPosition, position) > 1.0e-10f || fabsf(glm::dot(bodyRotation, rotation)) < 1.0f - 1.0e-7f) {
+                _world->markInteriorChanged();
+            }
+        }
         bodyInterface()->SetPositionAndRotation(_body->GetID(), glmToJoltR(position), glmToJolt(rotation),
                                                activate ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
-        if (_body->IsStatic()) {
-            _world->markInteriorChanged();   // a wall moved: the frame's copy of it (round 8) is stale
-        }
     }
 }
 
