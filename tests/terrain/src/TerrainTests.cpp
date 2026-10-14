@@ -231,7 +231,7 @@ void TerrainTests::fileRoundTripKeepsEveryVoxel() {
 
     VoxelGrid loaded;
     std::string error;
-    QVERIFY2(loadTerrain(bytes, loaded, nullptr, &error), error.c_str());
+    QVERIFY2(loadTerrain(bytes, loaded, nullptr, nullptr, &error), error.c_str());
     QCOMPARE(loaded.getVoxelCount(), grid.getVoxelCount());
     QCOMPARE(loaded.countDenseChunks(), grid.countDenseChunks());
     for (int z = 0; z < 50; ++z) {
@@ -244,13 +244,13 @@ void TerrainTests::fileRoundTripKeepsEveryVoxel() {
     QCOMPARE((int)loaded.getDirtyChunks().size(), 12);
 
     Bytes cut(bytes.begin(), bytes.begin() + bytes.size() / 2);
-    QVERIFY(!loadTerrain(cut, loaded, nullptr, &error));
+    QVERIFY(!loadTerrain(cut, loaded, nullptr, nullptr, &error));
     QVERIFY(!error.empty());
     QVERIFY(loaded.isEmpty());
 
     Bytes wrong = bytes;
     wrong[0] = 'X';
-    QVERIFY(!loadTerrain(wrong, loaded, nullptr, &error));
+    QVERIFY(!loadTerrain(wrong, loaded, nullptr, nullptr, &error));
 }
 
 void TerrainTests::asyncMesherMatchesTheMesherAndRedoesChunksEditedMeanwhile() {
@@ -364,21 +364,20 @@ void TerrainTests::paintMapPaintsErasesTilesAndRoundTripsThroughTheFile() {
     QVERIFY(map.getDirtyColumns().count(glm::ivec2(0, 0)));
     map.clearDirtyColumns();
 
-    // half strength of another layer takes half of what is there; the weights never sum past 255
+    // half strength of another layer gives that layer half its coverage and takes nothing from the first: each
+    // layer's coverage is its own, drawn over the layers below it in the stack's order
     brush.layer = 5;
     brush.strength = 0.5f;
     QVERIFY(paint(map, brush, false) > 0);
-    QVERIFY(std::abs((int)centre[2] - 128) <= 1);
+    QCOMPARE((int)centre[2], 255);
     QVERIFY(std::abs((int)centre[5] - 128) <= 1);
-    int sum = 0;
-    for (int k = 0; k < PAINT_LAYERS; ++k) {
-        sum += centre[k];
-    }
-    QVERIFY(sum <= 255);
-    QVERIFY(sum >= 253);
 
-    // erasing at full strength leaves the voxel material alone again
+    // erasing at full strength takes a layer's coverage away on its own; both erased, the voxel material is alone again
     brush.strength = 1.0f;
+    QVERIFY(paint(map, brush, true) > 0);
+    QCOMPARE((int)centre[5], 0);
+    QCOMPARE((int)centre[2], 255);
+    brush.layer = 2;
     QVERIFY(paint(map, brush, true) > 0);
     for (int k = 0; k < PAINT_LAYERS; ++k) {
         QCOMPARE((int)centre[k], 0);
@@ -434,7 +433,7 @@ void TerrainTests::paintMapPaintsErasesTilesAndRoundTripsThroughTheFile() {
     VoxelGrid loadedGrid;
     PaintMap loadedMap;
     std::string error;
-    QVERIFY2(loadTerrain(withPaint, loadedGrid, &loadedMap, &error), error.c_str());
+    QVERIFY2(loadTerrain(withPaint, loadedGrid, &loadedMap, nullptr, &error), error.c_str());
     QCOMPARE(loadedGrid.getVoxelCount(), grid.getVoxelCount());
     QCOMPARE(loadedMap.getSize(), map.getSize());
     QCOMPARE(loadedMap.getTexelsPerVoxel(), 2);
@@ -445,7 +444,7 @@ void TerrainTests::paintMapPaintsErasesTilesAndRoundTripsThroughTheFile() {
     const Bytes withoutPaint = saveTerrain(grid, &blank);
     QVERIFY(withoutPaint.size() < withPaint.size());
     QVERIFY(withoutPaint == saveTerrain(grid));
-    QVERIFY2(loadTerrain(withoutPaint, loadedGrid, &loadedMap, &error), error.c_str());
+    QVERIFY2(loadTerrain(withoutPaint, loadedGrid, &loadedMap, nullptr, &error), error.c_str());
     QVERIFY(loadedMap.isEmpty());
 
     // a map over another footprint is not the grid's: left out of the file
@@ -455,7 +454,7 @@ void TerrainTests::paintMapPaintsErasesTilesAndRoundTripsThroughTheFile() {
 
     // a cut file fails cleanly
     Bytes cut(withPaint.begin(), withPaint.begin() + withPaint.size() - 10);
-    QVERIFY(!loadTerrain(cut, loadedGrid, &loadedMap, &error));
+    QVERIFY(!loadTerrain(cut, loadedGrid, &loadedMap, nullptr, &error));
     QVERIFY(loadedGrid.isEmpty());
     QVERIFY(loadedMap.isEmpty());
 }
@@ -1199,7 +1198,7 @@ void TerrainTests::fileRoundTripKeepsChunkLevels() {
     VoxelGrid loaded;
     PaintMap loadedPaint;
     std::string error;
-    QVERIFY2(loadTerrain(bytes, loaded, &loadedPaint, &error), error.c_str());
+    QVERIFY2(loadTerrain(bytes, loaded, &loadedPaint, nullptr, &error), error.c_str());
     QVERIFY(loadedPaint.isEmpty());   // none was written
     QCOMPARE(loaded.getVoxelCount(), grid.getVoxelCount());
     QCOMPARE(loaded.countChunks(), grid.countChunks());
@@ -1226,7 +1225,7 @@ void TerrainTests::fileRoundTripKeepsChunkLevels() {
     Bytes painted = saveTerrain(grid, &paint);
     QCOMPARE((int)painted[4], 3);
     QVERIFY(painted.size() > bytes.size());
-    QVERIFY2(loadTerrain(painted, loaded, &loadedPaint, &error), error.c_str());
+    QVERIFY2(loadTerrain(painted, loaded, &loadedPaint, nullptr, &error), error.c_str());
     QCOMPARE(loaded.countChunks(), grid.countChunks());
     QVERIFY(loadedPaint.getWeights() == paint.getWeights());
 
@@ -1235,13 +1234,13 @@ void TerrainTests::fileRoundTripKeepsChunkLevels() {
     flat.fillHeightField(hills, 1);
     QCOMPARE((int)saveTerrain(flat)[4], 1);
     Bytes cut(bytes.begin(), bytes.begin() + bytes.size() * 2 / 3);
-    QVERIFY(!loadTerrain(cut, loaded, &loadedPaint, &error));
+    QVERIFY(!loadTerrain(cut, loaded, &loadedPaint, nullptr, &error));
     QVERIFY(!error.empty());
     QVERIFY(loaded.isEmpty());
     // a level the reader does not know is refused
     Bytes tooFine = bytes;
     tooFine[4 + 4 + 12 + 4 + 4 + 12] = (uint8_t)(MAX_CHUNK_LEVEL + 1);   // the first record's level byte
-    QVERIFY(!loadTerrain(tooFine, loaded, &loadedPaint, &error));
+    QVERIFY(!loadTerrain(tooFine, loaded, &loadedPaint, nullptr, &error));
     QVERIFY(error.find("level") != std::string::npos);
 }
 
@@ -1821,4 +1820,273 @@ void TerrainTests::raiseMendsAirLeftTooNearTheGround() {
     sculpt(slope, touch, SculptMode::Raise);
     QVERIFY2(std::abs(slope.get(glm::ivec3(20, 24, 32)).getDistance() - (before - 0.1f)) < 0.1f,
              qPrintable(QString("%1 -> %2").arg(before).arg(slope.get(glm::ivec3(20, 24, 32)).getDistance())));
+}
+
+void TerrainTests::smoothLevelsAHillUnderAWideBrush() {
+    // Smooth blurs the field with a box a quarter of the brush's radius wide each way (a voxel at least), so a wide
+    // brush at full strength takes a hill down in a few passes rather than polishing voxel-sized dents for ever,
+    // while flat ground under it stays exactly where it is.
+    VoxelGrid grid(glm::ivec3(96, 96, 96));
+    grid.fillBelow(40.0f);
+    auto topGround = [&](int x, int z) {
+        for (int y = grid.getVoxelCount().y - 1; y >= 0; --y) {
+            if (grid.get(glm::ivec3(x, y, z)).isGround()) {
+                return y;
+            }
+        }
+        return -1;
+    };
+    Brush raise;
+    raise.radius = 10.0f;
+    raise.strength = 1.0f;
+    raise.hardness = 0.8f;
+    for (int pass = 0; pass < 12; ++pass) {
+        raise.center = glm::vec3(48.5f, (float)topGround(48, 48) + 0.5f, 48.5f);
+        QVERIFY(sculpt(grid, raise, SculptMode::Raise) > 0);
+    }
+    const int hill = topGround(48, 48);
+    QVERIFY2(hill >= 40 + 8, qPrintable(QString("the hill reached %1").arg(hill)));
+    const int flatTop = topGround(22, 48);
+    const float flatDistance = grid.get(glm::ivec3(22, flatTop + 1, 48)).getDistance();
+
+    Brush smooth;
+    smooth.radius = 24.0f;
+    smooth.strength = 1.0f;
+    smooth.hardness = 1.0f;
+    for (int pass = 0; pass < 6; ++pass) {
+        smooth.center = glm::vec3(48.5f, (float)topGround(48, 48) + 0.5f, 48.5f);
+        QVERIFY(sculpt(grid, smooth, SculptMode::Smooth) > 0);
+    }
+    const int after = topGround(48, 48);
+    QVERIFY2(after - 40 <= (hill - 40) / 2, qPrintable(QString("the hill went from %1 to %2").arg(hill).arg(after)));
+    // the hill's volume spreads under the brush (a blur keeps the field's sum), so the ground near the brush's edge
+    // comes up a little; outside the brush it is untouched
+    for (int x = 20; x <= 23; ++x) {
+        QCOMPARE(topGround(x, 48), flatTop);
+        QCOMPARE(grid.get(glm::ivec3(x, flatTop + 1, 48)).getDistance(), flatDistance);
+    }
+
+    // a small brush keeps a one-voxel blur: a dent a voxel wide and deep is softened, the ground around it kept
+    VoxelGrid flat(glm::ivec3(64, 64, 64));
+    flat.fillBelow(32.0f);
+    Brush small;
+    small.center = glm::vec3(32.5f, 32.5f, 32.5f);
+    small.radius = 2.0f;
+    small.strength = 1.0f;
+    const float surface = flat.get(glm::ivec3(32, 32, 32)).getDistance();
+    QVERIFY(sculpt(flat, small, SculptMode::Smooth) >= 0);
+    QCOMPARE(flat.get(glm::ivec3(32, 32, 32)).getDistance(), surface);
+}
+
+void TerrainTests::layersRoundTripThroughTheFile() {
+    // The default stack is eight well-formed layers in slot order. A stack goes into the file (version 4) and
+    // comes back equal, names, order and all; a file without layers leaves the stack empty, as does a stack that
+    // is not well formed, which is not written.
+    LayerStack stack = LayerStack::defaults();
+    QVERIFY(stack.isValid());
+    QCOMPARE((int)stack.layers.size(), 8);
+    QCOMPARE(stack.freeSlot(), -1);
+    stack.layers[2].name = "Granite \xc3\xa9";
+    stack.layers[2].blend = LayerBlend::Overlay;
+    stack.layers[2].opacity = 0.35f;
+    stack.layers[2].offset = glm::vec2(1.5f, -2.25f);
+    stack.layers[5].visible = false;
+    stack.layers[5].materialURL = "https://example.com/mud.jpg";
+    stack.layers[6].normalStrength = 0.0f;
+    stack.layers[4].tint = glm::vec3(0.8f, 0.9f, 1.0f);
+    std::swap(stack.layers[0], stack.layers[7]);    // snow at the bottom, grass on top
+    stack.layers.erase(stack.layers.begin() + 3);   // seven layers, slot 3 free
+    QVERIFY(stack.isValid());
+    QCOMPARE(stack.freeSlot(), 3);
+    QCOMPARE(stack.indexOf(7), 0);
+    QVERIFY(stack.find(3) == nullptr);
+    QCOMPARE(stack.order().size(), (size_t)7);
+
+    VoxelGrid grid(glm::ivec3(64, 64, 64));
+    grid.fillBelow(32.0f);
+    PaintMap map(glm::ivec2(64, 64), 2);
+    map.at(glm::ivec2(10, 10))[1] = 200;
+    map.markAllColumnsDirty();
+    const Bytes bytes = saveTerrain(grid, &map, &stack);
+    VoxelGrid loaded;
+    PaintMap loadedMap;
+    LayerStack loadedStack;
+    std::string error;
+    QVERIFY2(loadTerrain(bytes, loaded, &loadedMap, &loadedStack, &error), error.c_str());
+    QVERIFY(loadedStack == stack);
+    QCOMPARE((int)loadedMap.at(glm::ivec2(10, 10))[1], 200);   // version 4 keeps coverages as they are
+
+    const Bytes without = saveTerrain(grid, &map);
+    QVERIFY2(loadTerrain(without, loaded, &loadedMap, &loadedStack, &error), error.c_str());
+    QVERIFY(loadedStack.isEmpty());
+
+    LayerStack twice = LayerStack::defaults();
+    twice.layers[1].slot = 0;
+    QVERIFY(!twice.isValid());
+    const Bytes rejected = saveTerrain(grid, &map, &twice);
+    QVERIFY2(loadTerrain(rejected, loaded, &loadedMap, &loadedStack, &error), error.c_str());
+    QVERIFY(loadedStack.isEmpty());
+
+    // cut short in the layers: refused
+    Bytes cut(bytes.begin(), bytes.end() - 5);
+    QVERIFY(!loadTerrain(cut, loaded, &loadedMap, &loadedStack, &error));
+}
+
+void TerrainTests::sharesBecomeCoveragesThatDrawTheSame() {
+    // A map from a file before version 4 holds shares of each texel, summing to 255 at most with the voxel material
+    // taking the rest; converted to coverages drawn bottom to top in slot order, the stack composes the same colour.
+    PaintMap map(glm::ivec2(4, 4), 1);
+    uint8_t* shares = map.at(glm::ivec2(1, 1));
+    shares[0] = 64;    // grass
+    shares[1] = 128;   // dirt; the voxel material keeps 63
+    map.at(glm::ivec2(2, 2))[3] = 255;
+    std::vector<uint8_t> order;
+    for (int slot = 0; slot < PAINT_LAYERS; ++slot) {
+        order.push_back((uint8_t)slot);
+    }
+    map.sharesToCoverage(order);
+    const uint8_t* coverage = map.at(glm::ivec2(1, 1));
+    QCOMPARE((int)coverage[0], 129);   // 64 of the 127 drawn up to and including grass
+    QCOMPARE((int)coverage[1], 128);   // 128 of all 255
+    QCOMPARE((int)coverage[2], 0);
+    const float v = 0.2f, g = 0.6f, d = 0.9f;   // a channel of the voxel material, grass and dirt
+    const float composed = glm::mix(glm::mix(v, g, 129.0f / 255.0f), d, 128.0f / 255.0f);
+    const float shared = (63.0f * v + 64.0f * g + 128.0f * d) / 255.0f;
+    QVERIFY2(std::abs(composed - shared) < 0.01f, qPrintable(QString("%1 composed against %2 shared").arg(composed).arg(shared)));
+    QCOMPARE((int)map.at(glm::ivec2(2, 2))[3], 255);
+    QCOMPARE((int)map.at(glm::ivec2(0, 0))[0], 0);
+
+    // a file before version 4 converts as it is read
+    VoxelGrid grid(glm::ivec3(32, 32, 32));
+    grid.fillBelow(16.0f);
+    PaintMap old(glm::ivec2(32, 32), 1);
+    uint8_t* texel = old.at(glm::ivec2(5, 5));
+    texel[0] = 64;
+    texel[1] = 128;
+    old.markAllColumnsDirty();
+    const Bytes bytes = saveTerrain(grid, &old);
+    VoxelGrid loaded;
+    PaintMap loadedMap;
+    std::string error;
+    QVERIFY2(loadTerrain(bytes, loaded, &loadedMap, nullptr, &error), error.c_str());
+    QCOMPARE((int)loadedMap.at(glm::ivec2(5, 5))[0], 129);
+    QCOMPARE((int)loadedMap.at(glm::ivec2(5, 5))[1], 128);
+}
+
+void TerrainTests::paintCoversOneLayerAlone() {
+    // Painting a layer raises its own coverage and leaves the others as they are; erasing lowers its own alone.
+    PaintMap map(glm::ivec2(32, 32), 2);
+    for (int z = 0; z < 64; ++z) {
+        for (int x = 0; x < 64; ++x) {
+            map.at(glm::ivec2(x, z))[0] = 200;
+        }
+    }
+    PaintBrush brush;
+    brush.center = glm::vec2(16.0f, 16.0f);
+    brush.radius = 4.0f;
+    brush.strength = 1.0f;
+    brush.hardness = 1.0f;
+    brush.layer = 1;
+    QVERIFY(paint(map, brush, false) > 0);
+    const uint8_t* centre = map.at(glm::ivec2(32, 32));
+    QCOMPARE((int)centre[0], 200);
+    QCOMPARE((int)centre[1], 255);
+    brush.strength = 0.5f;
+    QVERIFY(paint(map, brush, true) > 0);
+    QCOMPARE((int)centre[0], 200);
+    QCOMPARE((int)centre[1], 128);   // half the way back toward none
+    QCOMPARE((int)map.at(glm::ivec2(2, 2))[1], 0);   // outside the brush
+}
+
+void TerrainTests::brushMaskShapesTheBrushAndItsOutline() {
+    // A square picture reaches the brush's corners, which a round brush does not; turned, it reaches further along
+    // the axes instead; a picture with a hole leaves the middle alone; hardness pushes the greys.
+    const int side = 16;
+    BrushMask square(side, side, std::vector<float>((size_t)side * side, 1.0f));
+    std::vector<float> ringValues((size_t)side * side, 1.0f);
+    for (int y = 6; y < 10; ++y) {
+        for (int x = 6; x < 10; ++x) {
+            ringValues[(size_t)y * side + x] = 0.0f;
+        }
+    }
+    BrushMask ring(side, side, ringValues);
+    QVERIFY(!square.isEmpty());
+    QCOMPARE(square.sample(0.0f, 0.0f), 1.0f);
+    QCOMPARE(square.sample(1.5f, 0.0f), 0.0f);
+    QCOMPARE(ring.sample(0.0f, 0.0f), 0.0f);
+    QVERIFY(ring.sample(0.9f, 0.9f) > 0.99f);
+    QCOMPARE(BrushMask(3, 3, std::vector<float>(4, 1.0f)).isEmpty(), true);   // the wrong number of values
+
+    VoxelGrid grid(glm::ivec3(64, 64, 64));
+    grid.fillBelow(40.5f, 1);
+    Brush brush;
+    brush.center = glm::vec3(32.0f, 40.5f, 32.0f);
+    brush.radius = 6.0f;
+    brush.strength = 1.0f;
+    QVERIFY(sculpt(grid, brush, SculptMode::Raise) > 0);
+    QVERIFY(grid.get(glm::ivec3(32, 41, 32)).isGround());    // under the middle
+    QVERIFY(!grid.get(glm::ivec3(37, 41, 37)).isGround());   // the corner, 7.1 voxels out: beyond the round brush
+
+    grid.fillBelow(40.5f, 1);
+    brush.mask = &square;
+    QVERIFY(sculpt(grid, brush, SculptMode::Raise) > 0);
+    QVERIFY(grid.get(glm::ivec3(32, 41, 32)).isGround());
+    QVERIFY(grid.get(glm::ivec3(37, 41, 37)).isGround());    // the square reaches the corner
+    QVERIFY(!grid.get(glm::ivec3(39, 41, 32)).isGround());   // but not past its side
+    QVERIFY(!grid.get(glm::ivec3(32, 44, 32)).isGround());   // the column's soft end: raised a voxel, not more
+
+    grid.fillBelow(40.5f, 1);
+    brush.angle = glm::radians(45.0f);
+    QVERIFY(sculpt(grid, brush, SculptMode::Raise) > 0);
+    QVERIFY(!grid.get(glm::ivec3(37, 41, 37)).isGround());   // the turned square's side has moved in from the corner
+    QVERIFY(grid.get(glm::ivec3(39, 41, 32)).isGround());    // and its corner out along the axis
+
+    grid.fillBelow(40.5f, 1);
+    brush.angle = 0.0f;
+    brush.mask = &ring;
+    QVERIFY(sculpt(grid, brush, SculptMode::Raise) > 0);
+    QVERIFY(!grid.get(glm::ivec3(32, 41, 32)).isGround());   // the hole
+    QVERIFY(grid.get(glm::ivec3(36, 41, 32)).isGround());
+    QVERIFY(grid.get(glm::ivec3(37, 41, 37)).isGround());
+
+    // the paint brush: the same picture over the map, and hardness as a curve on its greys
+    PaintMap map(glm::ivec2(64, 64), 1);
+    PaintBrush paintBrush;
+    paintBrush.center = glm::vec2(32.0f, 32.0f);
+    paintBrush.radius = 6.0f;
+    paintBrush.strength = 1.0f;
+    paintBrush.layer = 2;
+    QVERIFY(paint(map, paintBrush, false) > 0);
+    QCOMPARE((int)map.at(glm::ivec2(32, 32))[2], 255);
+    QCOMPARE((int)map.at(glm::ivec2(37, 37))[2], 0);         // the corner, outside the disc
+    paintBrush.mask = &square;
+    QVERIFY(paint(map, paintBrush, false) > 0);
+    QCOMPARE((int)map.at(glm::ivec2(37, 37))[2], 255);
+    QCOMPARE((int)map.at(glm::ivec2(39, 32))[2], 0);
+    BrushMask grey(side, side, std::vector<float>((size_t)side * side, 0.5f));
+    paintBrush.mask = &grey;
+    paintBrush.layer = 3;
+    paintBrush.center = glm::vec2(10.0f, 10.0f);
+    QVERIFY(paint(map, paintBrush, false) > 0);
+    QCOMPARE((int)map.at(glm::ivec2(10, 10))[3], 128);      // half hardness: the grey as it is
+    paintBrush.hardness = 1.0f;
+    paintBrush.center = glm::vec2(10.0f, 50.0f);
+    QVERIFY(paint(map, paintBrush, false) > 0);
+    QVERIFY(map.at(glm::ivec2(10, 50))[3] > 200);           // harder: toward white
+    paintBrush.hardness = 0.0f;
+    paintBrush.center = glm::vec2(50.0f, 10.0f);
+    QVERIFY(paint(map, paintBrush, false) > 0);
+    QVERIFY(map.at(glm::ivec2(50, 10))[3] < 30);            // softer: toward black
+
+    // the outline: one closed curve around the square, two for the ring (its edge and its hole)
+    const auto squareCurves = square.outline(0.5f, 16);
+    QCOMPARE((int)squareCurves.size(), 1);
+    QVERIFY(squareCurves[0].size() >= 4);
+    for (const glm::vec2& point : squareCurves[0]) {
+        QVERIFY(std::abs(point.x) <= 1.0f + 1.0e-4f && std::abs(point.y) <= 1.0f + 1.0e-4f);
+        QVERIFY(std::abs(point.x) >= 0.85f || std::abs(point.y) >= 0.85f);   // along the square's edge
+    }
+    const auto ringCurves = ring.outline(0.5f, 16);
+    QCOMPARE((int)ringCurves.size(), 2);
+    QVERIFY(BrushMask().outline(0.5f, 16).empty());
 }

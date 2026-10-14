@@ -45,6 +45,11 @@ private slots:
     void lodMeshesMeetWithoutACrack();
     void levelOfDetailShowsANewCutOnceItsMeshesAreIn();
     void paintTilesOfCoarserNodesAverageTheMap();
+    void smoothLevelsAHillUnderAWideBrush();
+    void layersRoundTripThroughTheFile();
+    void sharesBecomeCoveragesThatDrawTheSame();
+    void paintCoversOneLayerAlone();
+    void brushMaskShapesTheBrushAndItsOutline();
 };
 
 #endif // hifi_TerrainTests_h

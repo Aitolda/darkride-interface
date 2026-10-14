@@ -11,11 +11,23 @@
 #include <cmath>
 #include <memory>
 
+#include <QtCore/QDir>
+#include <QtCore/QFile>
+#include <QtCore/QFileInfo>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
+#include <QtGui/QIcon>
+#include <QtGui/QPixmap>
 #include <QtWidgets/QAction>
 #include <QtWidgets/QActionGroup>
+#include <QtWidgets/QComboBox>
 #include <QtWidgets/QDoubleSpinBox>
+#include <QtWidgets/QFileDialog>
 #include <QtWidgets/QLabel>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QSpinBox>
+#include <QtWidgets/QToolButton>
 
 #include <RenderableTerrainEntityItem.h>
 
@@ -24,6 +36,32 @@
 namespace {
     const float MIN_RADIUS = 0.1f;      // metres
     const float MAX_RADIUS = 100.0f;
+    const char* BRUSHES_FOLDER = ":/terrain/brushes/";
+    const char* BRUSHES_LIST = "brushes.json";
+    const char* ROUND_THUMBNAIL = "round.png";
+    const int THUMBNAIL_PIXELS = 18;
+    const int ERASE_FLAG = 0x100;   // in a mode action's data, above the mode: the Paint mode's eraser
+
+    // The Layer field: its list is filled afresh as it opens, so it names the layers of whatever terrain is
+    // selected or under the pointer now.
+    class LayerCombo : public QComboBox {
+    public:
+        explicit LayerCombo(std::function<void()> refresh, QWidget* parent) : QComboBox(parent), _refresh(std::move(refresh)) {}
+        void showPopup() override {
+            _refresh();
+            QComboBox::showPopup();
+        }
+    private:
+        std::function<void()> _refresh;
+    };
+
+    QIcon thumbnailIcon(const QString& path) {
+        QPixmap picture(path);
+        if (picture.isNull()) {
+            return QIcon();
+        }
+        return QIcon(picture.scaled(THUMBNAIL_PIXELS, THUMBNAIL_PIXELS, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    }
 }
 
 TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
@@ -32,6 +70,7 @@ TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
     setFloatable(false);
     setAllowedAreas(Qt::TopToolBarArea);
     setToolButtonStyle(Qt::ToolButtonTextOnly);
+    setIconSize(QSize(THUMBNAIL_PIXELS, THUMBNAIL_PIXELS));   // the Shape button's thumbnail
 
     _modes = new QActionGroup(this);
     _modes->setExclusive(true);
@@ -44,8 +83,10 @@ TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
     addMode("Fill", "Add the brush's sphere to the ground at the Strength pace, building on while held; hold Shift to dig instead",
             terrain::SculptMode::Fill);
     addSeparator();
-    addMode("Paint", "Paint the material onto the ground, where it faces up; hold Shift to erase back to the voxels' own material",
+    addMode("Paint", "Paint the layer onto the ground where it faces up, over the layers under it; hold Shift to erase it instead",
             terrain::SculptMode::Paint);
+    addMode("Erase", "Erase the layer's paint under the brush, showing the layers under it (the voxels' own material where "
+            "nothing is painted); hold Shift to paint instead", terrain::SculptMode::Paint, true);
     addMode("Paint Voxels", "Set the material of the ground voxels under the brush: what cliffs, caves and a dig show",
             terrain::SculptMode::PaintVoxels);
     addSeparator();
@@ -82,17 +123,65 @@ TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
     _hardness->setSingleStep(5.0);
     _hardness->setSuffix(" %");
     _hardness->setValue(50.0);
-    addField("Hardness", _hardness, 0.5, false, "The part of the brush with its full effect, before the soft edge");
+    addField("Hardness", _hardness, 0.5, false, "The part of the brush with its full effect, before the soft edge; with a shape "
+             "picture, pushes its greys toward white (harder) or black (softer), the picture as it is at 50 %");
 
-    _material = new QSpinBox(this);
-    _material->setRange(0, 7);
-    _material->setValue(0);
-    addField("Material", _material, 0.05, false, "The material Paint and Paint Voxels paint, and new ground gets");
+    // the brush's shape: round, or a picture from the client's brushes or a file, turned by the angle
+    auto shapeName = new QLabel("Shape", this);
+    shapeName->setObjectName("EditorFieldName");
+    addWidget(shapeName);
+    _shape = new QToolButton(this);
+    _shape->setPopupMode(QToolButton::InstantPopup);
+    _shape->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    _shape->setFocusPolicy(Qt::NoFocus);
+    _shape->setToolTip("The brush's shape: round, or a picture laid over the brush seen from above, white where the brush has its "
+                       "full effect and black where none; Dig and Fill keep their sphere. Load Picture… takes any picture from disk");
+    _shapeMenu = new QMenu(_shape);
+    const QString roundThumbnail = QString(BRUSHES_FOLDER) + ROUND_THUMBNAIL;
+    addShape("Round", QString(), roundThumbnail);
+    QFile list(QString(BRUSHES_FOLDER) + BRUSHES_LIST);
+    if (list.open(QIODevice::ReadOnly)) {
+        for (const QJsonValue& value : QJsonDocument::fromJson(list.readAll()).array()) {
+            const QJsonObject entry = value.toObject();
+            const QString name = entry.value("name").toString();
+            const QString file = entry.value("file").toString();
+            if (!name.isEmpty() && !file.isEmpty()) {
+                const QString path = QString(BRUSHES_FOLDER) + file;
+                addShape(name, path, path);
+            }
+        }
+    }
+    _shapeMenu->addSeparator();
+    _loadShape = _shapeMenu->addAction("Load Picture…");
+    connect(_loadShape, &QAction::triggered, this, &TerrainToolBar::loadShapePicture);
+    _shape->setMenu(_shapeMenu);
+    addWidget(_shape);
+    chooseShape("Round", QString(), roundThumbnail);
 
-    for (auto box : { _size, _strength, _hardness }) {
+    _angle = new QDoubleSpinBox(this);
+    _angle->setRange(0.0, 360.0);
+    _angle->setWrapping(true);
+    _angle->setDecimals(0);
+    _angle->setSingleStep(15.0);
+    _angle->setSuffix(QString::fromUtf8("°"));
+    _angle->setValue(0.0);
+    addField("Angle", _angle, 0.5, false, "Turns the shape picture about the brush's centre");
+
+    auto layerName = new QLabel("Layer", this);
+    layerName->setObjectName("EditorFieldName");
+    addWidget(layerName);
+    _layer = new LayerCombo([this] { refreshLayerNames(); }, this);
+    _layer->setFocusPolicy(Qt::ClickFocus);
+    _layer->setToolTip("The layer Paint and Erase work on, Paint Voxels paints, and new ground gets (its slot, 0 to 7, and its "
+                       "name on the selected terrain, or the one under the pointer); selecting a layer in the Inspector's Layers "
+                       "section sets it too");
+    addWidget(_layer);
+    refreshLayerNames();
+
+    for (auto box : { _size, _strength, _hardness, _angle }) {
         connect(box, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &TerrainToolBar::brushChanged);
     }
-    connect(_material, QOverload<int>::of(&QSpinBox::valueChanged), this, &TerrainToolBar::brushChanged);
+    connect(_layer, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &TerrainToolBar::brushChanged);
 
     addSeparator();
     auto resample = addAction("Resample");
@@ -150,36 +239,91 @@ void TerrainToolBar::attachScrub(ScrubLabel* label, QAbstractSpinBox* box, doubl
     });
 }
 
-QAction* TerrainToolBar::addMode(const QString& text, const QString& toolTip, terrain::SculptMode mode) {
+QAction* TerrainToolBar::addMode(const QString& text, const QString& toolTip, terrain::SculptMode mode, bool erase) {
     auto action = addAction(text);
     action->setCheckable(true);
     action->setToolTip(toolTip);
-    action->setData((int)mode);
+    action->setData((int)mode | (erase ? ERASE_FLAG : 0));
     _modes->addAction(action);
     connect(action, &QAction::triggered, this, &TerrainToolBar::brushChanged);
     return action;
 }
 
+void TerrainToolBar::setLayerNameSource(std::function<QStringList()> source) {
+    _layerNames = std::move(source);
+    refreshLayerNames();
+}
+
+void TerrainToolBar::refreshLayerNames() {
+    const QStringList names = _layerNames ? _layerNames() : QStringList();
+    const int slot = _layer->count() > 0 ? _layer->currentData().toInt() : 0;
+    const QSignalBlocker blocker(_layer);   // the slot does not change here: nothing to announce
+    _layer->clear();
+    for (int i = 0; i < terrain::MAX_LAYERS; ++i) {
+        const QString name = i < names.size() ? names[i] : QString();
+        _layer->addItem(QString("%1  %2").arg(i).arg(name.isEmpty() ? QStringLiteral("(unused)") : name), i);
+    }
+    _layer->setCurrentIndex(glm::clamp(slot, 0, terrain::MAX_LAYERS - 1));
+}
+
+QAction* TerrainToolBar::addShape(const QString& name, const QString& path, const QString& thumbnail) {
+    auto action = new QAction(thumbnailIcon(thumbnail), name, _shapeMenu);
+    connect(action, &QAction::triggered, this, [this, name, path, thumbnail] { chooseShape(name, path, thumbnail); });
+    if (_loadShape) {
+        _shapeMenu->insertAction(_loadShape, action);   // before the separator and Load Picture…
+    } else {
+        _shapeMenu->addAction(action);
+    }
+    return action;
+}
+
+void TerrainToolBar::chooseShape(const QString& name, const QString& path, const QString& thumbnail) {
+    _shapePath = path;
+    _shape->setText(name);
+    _shape->setIcon(thumbnailIcon(thumbnail));
+    emit brushChanged();
+}
+
+void TerrainToolBar::loadShapePicture() {
+    const QString path = QFileDialog::getOpenFileName(this, "Choose a brush picture", QDir::homePath(),
+        "Pictures (*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tga *.tif *.tiff)");
+    if (path.isEmpty()) {
+        return;
+    }
+    const QString name = QFileInfo(path).completeBaseName();
+    addShape(name, path, path);
+    chooseShape(name, path, path);
+}
+
 EditorTerrainBrush TerrainToolBar::brush() const {
     EditorTerrainBrush brush;
     if (auto checked = _modes->checkedAction()) {
-        brush.mode = (terrain::SculptMode)checked->data().toInt();
+        const int data = checked->data().toInt();
+        brush.mode = (terrain::SculptMode)(data & ~ERASE_FLAG);
+        brush.erase = (data & ERASE_FLAG) != 0;
     }
     brush.radius = (float)_size->value();
     brush.strength = (float)_strength->value() / 100.0f;
     brush.hardness = (float)_hardness->value() / 100.0f;
-    brush.material = _material->value();
+    brush.material = _layer->count() > 0 ? _layer->currentData().toInt() : 0;
+    brush.shape = _shapePath;
+    brush.angle = (float)_angle->value();
     return brush;
 }
 
 void TerrainToolBar::setMode(terrain::SculptMode mode) {
     for (auto action : _modes->actions()) {
-        if ((terrain::SculptMode)action->data().toInt() == mode) {
+        if (action->data().toInt() == (int)mode) {   // the mode itself, not its eraser
             action->setChecked(true);
             emit brushChanged();
             return;
         }
     }
+}
+
+void TerrainToolBar::setLayer(int slot) {
+    refreshLayerNames();   // the Inspector's list may just have renamed or reordered them
+    _layer->setCurrentIndex(glm::clamp(slot, 0, terrain::MAX_LAYERS - 1));   // currentIndexChanged announces it
 }
 
 void TerrainToolBar::setRadius(float metres) {

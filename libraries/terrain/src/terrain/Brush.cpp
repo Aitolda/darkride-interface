@@ -26,10 +26,44 @@ const float BRUSH_VOXELS_WANTED = 4.0f;
 const float MEND_BEYOND = 2.0f;
 const float MEND_SLACK = 0.7f;
 
+// Smooth blurs the field with a box reaching this much of the brush's radius each way, at least a voxel, so a wide
+// brush levels hills rather than polishing voxel-sized dents.
+const float SMOOTH_REACH_FRACTION = 0.25f;
+
+// Replaces every value of the block with the mean of the values within reach of it along each axis (a box, cut off
+// at the block's edges): a running sum along each axis in turn.
+void boxBlur(std::vector<float>& values, const glm::ivec3& size, int reach) {
+    const glm::ivec3 stride(1, size.x, size.x * size.y);
+    std::vector<float> sums;
+    for (int axis = 0; axis < 3; ++axis) {
+        const int n = size[axis];
+        const int step = stride[axis];
+        const int a = (axis + 1) % 3;
+        const int b = (axis + 2) % 3;
+        sums.resize((size_t)n + 1);
+        for (int j = 0; j < size[b]; ++j) {
+            for (int i = 0; i < size[a]; ++i) {
+                float* line = &values[(size_t)i * stride[a] + (size_t)j * stride[b]];
+                sums[0] = 0.0f;
+                for (int t = 0; t < n; ++t) {
+                    sums[t + 1] = sums[t] + line[(size_t)t * step];
+                }
+                for (int t = 0; t < n; ++t) {
+                    const int low = std::max(0, t - reach);
+                    const int high = std::min(n - 1, t + reach);
+                    line[(size_t)t * step] = (sums[high + 1] - sums[low]) / (float)(high - low + 1);
+                }
+            }
+        }
+    }
+}
+
 } // namespace
 
-float Brush::weightAt(const glm::vec3& point) const {
-    const float distance = glm::length(point - center);
+namespace {
+
+// 1 up to the flat part of the radius, falling smoothly to 0 at the radius.
+float falloff(float distance, float radius, float hardness) {
     if (distance >= radius) {
         return 0.0f;
     }
@@ -39,6 +73,28 @@ float Brush::weightAt(const glm::vec3& point) const {
     }
     const float t = (distance - flat) / (radius - flat);
     return 1.0f - t * t * (3.0f - 2.0f * t);
+}
+
+} // namespace
+
+float Brush::weightAt(const glm::vec3& point) const {
+    if (radius <= 0.0f) {
+        return 0.0f;
+    }
+    const glm::vec3 offset = point - center;
+    if (mask && !mask->isEmpty()) {
+        const float across = mask->weightAt(glm::vec2(offset.x, offset.z) / radius, angle, hardness);
+        return across <= 0.0f ? 0.0f : across * falloff(std::abs(offset.y), radius, hardness);
+    }
+    return falloff(glm::length(offset), radius, hardness);
+}
+
+glm::vec3 Brush::reach() const {
+    if (mask && !mask->isEmpty()) {
+        const float across = radius * BrushMask::reach(angle);
+        return glm::vec3(across, radius, across);
+    }
+    return glm::vec3(radius);
 }
 
 int terrain::brushLevel(const VoxelGrid& grid, const Brush& brush) {
@@ -55,8 +111,9 @@ bool terrain::brushBounds(const VoxelGrid& grid, const Brush& brush, glm::ivec3&
     }
     // the grid voxels the brush can touch, a voxel to spare: Dig and Fill reach a voxel past the radius, and finer
     // chunks have voxels between the grid's
-    low = glm::max(glm::ivec3(glm::floor(brush.center - brush.radius)) - 1, glm::ivec3(0));
-    high = glm::min(glm::ivec3(glm::ceil(brush.center + brush.radius)) + 1, grid.getVoxelCount() - 1);
+    const glm::vec3 reach = brush.reach();
+    low = glm::max(glm::ivec3(glm::floor(brush.center - reach)) - 1, glm::ivec3(0));
+    high = glm::min(glm::ivec3(glm::ceil(brush.center + reach)) + 1, grid.getVoxelCount() - 1);
     return glm::all(glm::lessThanEqual(low, high));
 }
 
@@ -82,7 +139,7 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
         glm::ivec3 low, high;          // the chunk's voxels under the brush, in the level's points
         glm::ivec3 size;
         glm::ivec3 beforeLow, beforeSize;
-        std::vector<float> before;     // Smooth reads neighbours: the distances around, before any voxel changes
+        std::vector<float> before;     // Smooth: the distances around, before any voxel changes, blurred
         std::vector<uint8_t> saturated;   // Raise and Lower: which voxels were at the byte's limit before the pass
         glm::ivec3 changedLow { CHUNK_SIZE }, changedHigh { -1 };
 
@@ -108,20 +165,23 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
         const float scale = (float)key.getScale();
         const glm::vec3 center = brush.center * scale;
         const float radius = brush.radius * scale;
+        const glm::vec3 extent = brush.reach() * scale;
         const glm::ivec3 origin = key.coords * CHUNK_SIZE;
         Region region;
         region.key = key;
         region.chunk = grid.findChunk(key);
-        region.low = glm::max(glm::ivec3(glm::floor(center - radius)) - reach, glm::max(origin, glm::ivec3(0)));
-        region.high = glm::min(glm::ivec3(glm::ceil(center + radius)) + reach,
+        region.low = glm::max(glm::ivec3(glm::floor(center - extent)) - reach, glm::max(origin, glm::ivec3(0)));
+        region.high = glm::min(glm::ivec3(glm::ceil(center + extent)) + reach,
                                glm::min(origin + CHUNK_SIZE - 1, (grid.getVoxelCount() << key.level) - 1));
         if (!region.chunk || glm::any(glm::greaterThan(region.low, region.high))) {
             continue;
         }
         region.size = region.high - region.low + 1;
         if (mode == SculptMode::Smooth) {
-            region.beforeLow = region.low - 1;
-            region.beforeSize = region.high - region.low + 3;
+            // the field around the region before any voxel changes, blurred as wide as the brush asks
+            const int blurReach = std::max(1, (int)std::lround(SMOOTH_REACH_FRACTION * radius));
+            region.beforeLow = region.low - blurReach;
+            region.beforeSize = region.size + 2 * blurReach;
             region.before.resize((size_t)region.beforeSize.x * region.beforeSize.y * region.beforeSize.z);
             for (int z = 0; z < region.beforeSize.z; ++z) {
                 for (int y = 0; y < region.beforeSize.y; ++y) {
@@ -131,6 +191,7 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
                     }
                 }
             }
+            boxBlur(region.before, region.beforeSize, blurReach);
         }
         regions.push_back(std::move(region));
     }
@@ -208,16 +269,10 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
                             case SculptMode::Flatten:
                                 next.setDistance(glm::mix(distance, (float)y - brush.flattenHeight * scale, strength * weight));
                                 break;
-                            case SculptMode::Smooth: {
-                                float sum = region.beforeAt(point);
-                                for (int axis = 0; axis < 3; ++axis) {
-                                    glm::ivec3 step(0);
-                                    step[axis] = 1;
-                                    sum += region.beforeAt(point - step) + region.beforeAt(point + step);
-                                }
-                                next.setDistance(glm::mix(distance, sum / 7.0f, strength * weight));
+                            case SculptMode::Smooth:
+                                // toward the blurred field: the mean of the box around the voxel before the pass
+                                next.setDistance(glm::mix(distance, region.beforeAt(point), strength * weight));
                                 break;
-                            }
                             case SculptMode::PaintVoxels:
                                 if (old.isGround()) {
                                     next.material = brush.material;
@@ -253,8 +308,9 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
                 Chunk* chunk = region.chunk;
                 const glm::ivec3 origin = region.key.coords * CHUNK_SIZE;
                 const float scale = (float)region.key.getScale();
-                const glm::vec3 center = brush.center * scale;
-                const float radiusSquared = brush.radius * scale * brush.radius * scale;
+                Brush scaled = brush;   // the brush in the chunk's voxels: what it reaches is mended
+                scaled.center = brush.center * scale;
+                scaled.radius = brush.radius * scale;
                 for (int k = 0; k < region.size.z; ++k) {
                     const int z = forward ? region.low.z + k : region.high.z - k;
                     for (int j = 0; j < region.size.y; ++j) {
@@ -265,8 +321,7 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
                             const glm::ivec3 local = point - origin;
                             const Voxel old = chunk->get(local.x, local.y, local.z);
                             const bool atLimit = region.saturated[region.indexOf(point)] != 0;
-                            if (!atLimit && (std::abs(old.getDistance()) < MEND_BEYOND ||
-                                             glm::length2(glm::vec3(point) - center) >= radiusSquared)) {
+                            if (!atLimit && (std::abs(old.getDistance()) < MEND_BEYOND || scaled.weightAt(glm::vec3(point)) <= 0.0f)) {
                                 continue;
                             }
                             float nearest = SATURATED_DISTANCE;

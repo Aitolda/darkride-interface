@@ -8,6 +8,9 @@
 
 #include "TerrainFile.h"
 
+#include <algorithm>
+#include <cstring>
+
 #include <zlib.h>
 
 using namespace terrain;
@@ -18,23 +21,39 @@ const char MAGIC[4] = { 'D', 'R', 'K', 'T' };
 const uint32_t VERSION_CHUNKS = 1;        // the chunks alone
 const uint32_t VERSION_PAINT = 2;         // the chunks, then the paint map
 const uint32_t VERSION_LEVELS = 3;        // chunks with levels, then the paint map
+const uint32_t VERSION_LAYERS = 4;        // as 3, the map's bytes now coverages, then the layer stack
 const uint8_t KIND_UNIFORM = 0;
 const uint8_t KIND_DENSE = 1;
 const int MAX_VOXELS_PER_AXIS = 1 << 14;
 const size_t MAX_CHUNKS = 1 << 24;
 const size_t DENSE_BYTES = 2 * CHUNK_VOXEL_COUNT;
 const int MAX_PAINT_TEXELS_PER_AXIS = 1 << 13;
+const size_t MAX_LAYER_TEXT = 4096;       // bytes of a layer's name or URL
 
 class Writer {
 public:
     void u8(uint8_t value) { _bytes.push_back(value); }
     void i8(int8_t value) { _bytes.push_back((uint8_t)value); }
+    void u16(uint16_t value) {
+        _bytes.push_back((uint8_t)value);
+        _bytes.push_back((uint8_t)(value >> 8));
+    }
     void u32(uint32_t value) {
         for (int i = 0; i < 4; ++i) {
             _bytes.push_back((uint8_t)(value >> (8 * i)));
         }
     }
     void i32(int32_t value) { u32((uint32_t)value); }
+    void f32(float value) {
+        uint32_t bits;
+        memcpy(&bits, &value, 4);
+        u32(bits);
+    }
+    void text(const std::string& value) {
+        const size_t length = std::min(value.size(), MAX_LAYER_TEXT);
+        u16((uint16_t)length);
+        raw((const uint8_t*)value.data(), length);
+    }
     void raw(const uint8_t* data, size_t size) { _bytes.insert(_bytes.end(), data, data + size); }
     Bytes take() { return std::move(_bytes); }
 
@@ -49,6 +68,25 @@ public:
     bool ok() const { return _ok; }
     uint8_t u8() { return need(1) ? _data[_at++] : 0; }
     int8_t i8() { return (int8_t)u8(); }
+    uint16_t u16() {
+        if (!need(2)) {
+            return 0;
+        }
+        const uint16_t value = (uint16_t)(_data[_at] | (_data[_at + 1] << 8));
+        _at += 2;
+        return value;
+    }
+    float f32() {
+        const uint32_t bits = u32();
+        float value;
+        memcpy(&value, &bits, 4);
+        return value;
+    }
+    std::string text() {
+        const size_t length = u16();
+        const uint8_t* bytes = raw(length);
+        return bytes ? std::string((const char*)bytes, length) : std::string();
+    }
     uint32_t u32() {
         if (!need(4)) {
             return 0;
@@ -121,11 +159,12 @@ std::vector<uint8_t> weightsOf(const std::vector<uint8_t>& planes) {
 
 } // namespace
 
-Bytes terrain::saveTerrain(const VoxelGrid& grid, const PaintMap* paint) {
+Bytes terrain::saveTerrain(const VoxelGrid& grid, const PaintMap* paint, const LayerStack* layers) {
     const glm::ivec2 footprint(grid.getVoxelCount().x, grid.getVoxelCount().z);
     const bool withPaint = paint && !paint->isEmpty() && paint->getVoxelFootprint() == footprint && paint->isPainted();
-    const bool withLevels = grid.getFinestLevel() > 0;
-    const uint32_t version = withLevels ? VERSION_LEVELS : (withPaint ? VERSION_PAINT : VERSION_CHUNKS);
+    const bool withLayers = layers && !layers->isEmpty() && layers->isValid();
+    const bool withLevels = withLayers || grid.getFinestLevel() > 0;
+    const uint32_t version = withLayers ? VERSION_LAYERS : (withLevels ? VERSION_LEVELS : (withPaint ? VERSION_PAINT : VERSION_CHUNKS));
     Writer out;
     out.raw((const uint8_t*)MAGIC, 4);
     out.u32(version);
@@ -188,12 +227,38 @@ Bytes terrain::saveTerrain(const VoxelGrid& grid, const PaintMap* paint) {
         out.u32(1);
         out.u32(0);
     }
+
+    if (withLayers) {
+        out.u8((uint8_t)layers->layers.size());
+        for (const Layer& layer : layers->layers) {
+            out.u8(layer.slot);
+            out.u8((uint8_t)layer.blend);
+            out.u8(layer.visible ? 1 : 0);
+            out.u8(0);
+            out.f32(layer.tiling);
+            out.f32(layer.offset.x);
+            out.f32(layer.offset.y);
+            out.f32(layer.opacity);
+            out.f32(layer.normalStrength);
+            out.f32(layer.color.r);
+            out.f32(layer.color.g);
+            out.f32(layer.color.b);
+            out.f32(layer.tint.r);
+            out.f32(layer.tint.g);
+            out.f32(layer.tint.b);
+            out.text(layer.name);
+            out.text(layer.materialURL);
+        }
+    }
     return out.take();
 }
 
-bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, PaintMap* paint, std::string* error) {
+bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, PaintMap* paint, LayerStack* layers, std::string* error) {
     if (paint) {
         *paint = PaintMap();
+    }
+    if (layers) {
+        *layers = LayerStack();
     }
     Reader in(data, size);
     const uint8_t* magic = in.raw(4);
@@ -201,7 +266,7 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, Pai
         return fail(error, "not a terrain file", grid, paint);
     }
     const uint32_t version = in.u32();
-    if (version != VERSION_CHUNKS && version != VERSION_PAINT && version != VERSION_LEVELS) {
+    if (version < VERSION_CHUNKS || version > VERSION_LAYERS) {
         return fail(error, "terrain file version " + std::to_string(version) + " is not supported", grid, paint);
     }
     glm::ivec3 voxelCount;
@@ -299,7 +364,51 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, Pai
                 }
                 paint->reset(glm::ivec2(voxelCount.x, voxelCount.z), (int)texelsPerVoxel);
                 paint->setWeights(weightsOf(planes));
+                if (version < VERSION_LAYERS) {
+                    // shares of the texel until version 4, drawn in slot order: the same look as coverages
+                    std::vector<uint8_t> slotOrder;
+                    for (int slot = 0; slot < PAINT_LAYERS; ++slot) {
+                        slotOrder.push_back((uint8_t)slot);
+                    }
+                    paint->sharesToCoverage(slotOrder);
+                }
             }
+        }
+    }
+
+    if (version >= VERSION_LAYERS) {
+        const uint8_t layerCount = in.u8();
+        LayerStack stack;
+        for (int i = 0; i < (int)layerCount; ++i) {
+            Layer layer;
+            layer.slot = in.u8();
+            const uint8_t blend = in.u8();
+            layer.visible = in.u8() != 0;
+            in.u8();
+            layer.tiling = in.f32();
+            layer.offset.x = in.f32();
+            layer.offset.y = in.f32();
+            layer.opacity = in.f32();
+            layer.normalStrength = in.f32();
+            layer.color.r = in.f32();
+            layer.color.g = in.f32();
+            layer.color.b = in.f32();
+            layer.tint.r = in.f32();
+            layer.tint.g = in.f32();
+            layer.tint.b = in.f32();
+            layer.name = in.text();
+            layer.materialURL = in.text();
+            layer.blend = blend < LAYER_BLEND_COUNT ? (LayerBlend)blend : LayerBlend::Normal;
+            stack.layers.push_back(layer);
+        }
+        if (!in.ok()) {
+            return fail(error, "terrain file is cut short at the layers", grid, paint);
+        }
+        if (!stack.isValid()) {
+            return fail(error, "terrain file's layers are not usable", grid, paint);
+        }
+        if (layers) {
+            *layers = std::move(stack);
         }
     }
     return true;

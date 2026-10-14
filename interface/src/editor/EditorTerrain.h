@@ -39,14 +39,19 @@
 class RenderableTerrainEntityItem;
 
 // The brush as the tool bar sets it. The radius is in metres and becomes voxels on each terrain; the strength is
-// how fast Raise, Lower, Smooth and Flatten work, and how much one pass of Paint lays down (Dig, Fill and Paint
-// Voxels always take the whole sphere).
+// how fast Raise, Lower, Smooth and Flatten work, how fast Dig and Fill go in, and how much one pass of Paint lays
+// down (Paint Voxels always takes the whole brush). The shape is the picture the brush takes its shape from
+// (terrain::BrushMask): a path in the client's resources (":/terrain/brushes/star.png") or a file on disk; empty
+// for the round brush. The angle (degrees) turns the picture about the brush's centre.
 struct EditorTerrainBrush {
     terrain::SculptMode mode { terrain::SculptMode::Raise };
     float radius { 3.0f };
     float strength { 0.5f };    // 0 to 1
     float hardness { 0.5f };    // 0 to 1: the part of the radius with the full effect
     int material { 0 };
+    bool erase { false };       // Paint: erase the layer's paint instead, showing what is under it
+    QString shape;
+    float angle { 0.0f };
 };
 
 class EditorTerrain : public QObject {
@@ -81,6 +86,19 @@ public:
     // are their Voxel Size again: one undo step each, then saved. The status line says what happened, or why not
     void resample(const QList<QUuid>& ids);
 
+    // A terrain's material layers (terrain::LayerStack), for the Inspector's Layers section: null when the id is
+    // not a terrain on this client; the version changes whenever the stack does. setLayers with an undo text
+    // applies the stack as one undo step (against `before` if given, else the stack as it is) and has the terrain
+    // saved; with none it only previews (a scrub in progress), the step coming with the commit. False when the
+    // id is not a terrain, the stack is not well formed, or the terrain is locked.
+    const terrain::LayerStack* layersOf(const QUuid& id) const;
+    uint64_t layersVersionOf(const QUuid& id) const;
+    bool setLayers(const QUuid& id, const terrain::LayerStack& layers, const QString& undoText,
+                   const terrain::LayerStack* before = nullptr);
+    // The names of the eight layer slots for the toolbar's Layer field (an unused slot's is empty): the first
+    // selected terrain's, else the terrain under the pointer's, else the defaults'.
+    QStringList layerNamesForTool(const QList<QUuid>& selected) const;
+
     // a terrain's voxels changed on this client (a stroke, an undo): its file is saved a moment later, once no
     // stroke is in progress; flushSaves() saves what is waiting now (build mode ending)
     void markChanged(const QUuid& id);
@@ -90,6 +108,8 @@ public:
 signals:
     // a note for the toolbar: saving, saved, or why not; clearAfterMs 0 keeps it until the next note
     void status(const QString& text, int clearAfterMs);
+    // the pointer moved onto another terrain, or off every terrain: the Layer field's names may change
+    void terrainUnderPointerChanged();
 
 private:
     struct Hit {
@@ -120,6 +140,8 @@ private:
 
     EditorUndo* _undo;
     EditorTerrainBrush _brush;
+    std::shared_ptr<const terrain::BrushMask> _mask;   // the brush's shape picture, read from _brush.shape; null for round
+    QString _maskShape;                                 // the shape _mask was read from
     EditorBrushOutline _outline;
     glm::vec3 _cameraPosition { 0.0f };
     float _pixelSize { 0.001f };

@@ -21,6 +21,7 @@
 #include <DependencyManager.h>
 #include <EntityTree.h>
 #include <GeometryUtil.h>
+#include <PathUtils.h>
 #include <ResourceManager.h>
 #include <ResourceRequest.h>
 #include <SimulationFlags.h>
@@ -48,18 +49,22 @@ struct TerrainVertex {
 // The layer parameters as terrain.slf reads them (std140: vec4s and a mat4 only).
 struct TerrainLayerParams {
     glm::vec4 color;    // rgb: the plain colour; a: 1 while a texture is bound
-    glm::vec4 tiling;   // x: repeats per metre
+    glm::vec4 tiling;   // x: repeats per metre; yz: the offset, in repeats; w: opacity
+    glm::vec4 tint;     // rgb: multiplies the texture
+    glm::ivec4 flags;   // x: visible; y: the blend mode (terrain::LayerBlend)
 };
 struct TerrainParams {
     glm::mat4 worldToTerrain;
-    TerrainLayerParams layers[TerrainLayerSet::LAYER_COUNT];
+    TerrainLayerParams layers[TerrainLayerSet::LAYER_COUNT];   // by slot
+    glm::ivec4 order[2];   // the slots drawn over the voxel material, bottom to top; -1 past the stack's end
 };
 // One chunk's own parameters (terrain.slf): where in its column's paint tile its voxels are read.
 struct TerrainChunkParams {
     glm::vec4 paint;    // x: tile texture coordinates per voxel of the chunk; yz: the tile coordinates of its voxel (0, 0)
 };
 
-// The plain colours of layers without a texture: grass, dirt, rock, sand, clay, snow, dark stone, moss.
+// The plain colours of slots the stack has no layer for, and of layers named by the entity's terrainLayers property
+// (which gives a texture and a tiling alone): grass, dirt, rock, sand, clay, snow, dark stone, moss.
 const glm::vec3 LAYER_PALETTE[TerrainLayerSet::LAYER_COUNT] = {
     glm::vec3(0.33f, 0.52f, 0.22f), glm::vec3(0.42f, 0.30f, 0.18f), glm::vec3(0.50f, 0.50f, 0.50f), glm::vec3(0.78f, 0.70f, 0.50f),
     glm::vec3(0.62f, 0.32f, 0.22f), glm::vec3(0.92f, 0.93f, 0.95f), glm::vec3(0.28f, 0.28f, 0.30f), glm::vec3(0.24f, 0.40f, 0.20f)
@@ -147,13 +152,19 @@ void RenderableTerrainEntityItem::makeDefaultGrid() {
     terrain::VoxelGrid grid(voxelCount);
     grid.fillBelow(0.5f * voxelCount.y);
     replaceGrid(std::move(grid), terrain::PaintMap());
+    if (_layers.isEmpty()) {
+        _layers = legacyOrDefaultLayers();
+        _layersFixed = false;
+        ++_layersVersion;
+    }
 }
 
 bool RenderableTerrainEntityItem::loadGrid(const QByteArray& file, QString& error) {
     terrain::VoxelGrid loaded;
     terrain::PaintMap paint;
+    terrain::LayerStack layers;
     std::string why;
-    if (!terrain::loadTerrain((const uint8_t*)file.constData(), (size_t)file.size(), loaded, &paint, &why)) {
+    if (!terrain::loadTerrain((const uint8_t*)file.constData(), (size_t)file.size(), loaded, &paint, &layers, &why)) {
         error = QString::fromStdString(why);
         return false;
     }
@@ -164,7 +175,40 @@ bool RenderableTerrainEntityItem::loadGrid(const QByteArray& file, QString& erro
                                     << expected.y << "x" << expected.z << "; drawing the file's";
     }
     replaceGrid(std::move(loaded), std::move(paint));
+    // the file's layers; a file without them (before version 4) draws what the property names, or the defaults
+    _layersFixed = !layers.isEmpty();
+    _layers = _layersFixed ? std::move(layers) : legacyOrDefaultLayers();
+    ++_layersVersion;
     return true;
+}
+
+void RenderableTerrainEntityItem::setLayers(const terrain::LayerStack& layers, bool fixed) {
+    _layers = layers;
+    _layersFixed = fixed;
+    ++_layersVersion;
+    somethingChangedNotification();
+}
+
+terrain::LayerStack RenderableTerrainEntityItem::legacyOrDefaultLayers() const {
+    QString error;
+    const std::vector<TerrainLayerSpec> specs = parseTerrainLayers(getTerrainLayers(), &error);
+    if (!error.isEmpty()) {
+        qCWarning(entitiesrenderer) << "Terrain" << getID() << "layers are not usable:" << error;
+    }
+    if (specs.empty()) {
+        return terrain::LayerStack::defaults();
+    }
+    terrain::LayerStack stack;
+    for (size_t i = 0; i < specs.size() && i < (size_t)terrain::MAX_LAYERS; ++i) {
+        terrain::Layer layer;
+        layer.slot = (uint8_t)i;
+        layer.name = "Layer " + std::to_string(i + 1);
+        layer.materialURL = specs[i].albedoURL.toStdString();
+        layer.tiling = specs[i].tiling;
+        layer.color = LAYER_PALETTE[i];
+        stack.layers.push_back(layer);
+    }
+    return stack;
 }
 
 void RenderableTerrainEntityItem::clearGrid() {
@@ -466,16 +510,23 @@ void RenderableTerrainEntityItem::computeShapeInfo(ShapeInfo& info) {
 
 // The layer set
 
-TerrainLayerSet::TerrainLayerSet(const std::vector<TerrainLayerSpec>& specs) {
+TerrainLayerSet::TerrainLayerSet(const terrain::LayerStack& stack) {
     auto textureCache = DependencyManager::get<TextureCache>();
-    for (int i = 0; i < LAYER_COUNT; ++i) {
-        Layer& layer = _layers[i];
-        if (i < (int)specs.size()) {
-            layer.spec = specs[i];
+    for (const terrain::Layer& spec : stack.layers) {
+        if (spec.slot >= LAYER_COUNT || _layers[spec.slot].present) {
+            continue;
         }
-        if (!layer.spec.albedoURL.isEmpty()) {
-            layer.texture = textureCache->getTexture(QUrl(layer.spec.albedoURL), image::TextureUsage::ALBEDO_TEXTURE);
+        Layer& layer = _layers[spec.slot];
+        layer.spec = spec;
+        layer.present = true;
+        if (!spec.materialURL.empty()) {
+            QUrl url(QString::fromStdString(spec.materialURL));
+            if (url.scheme() == QStringLiteral("qrc")) {
+                url = PathUtils::resourcesUrl(url.path().mid(1));   // the client's own textures, wherever its resources are
+            }
+            layer.texture = textureCache->getTexture(url, image::TextureUsage::ALBEDO_TEXTURE);
         }
+        _order.push_back(spec.slot);
     }
     _params = std::make_shared<gpu::Buffer>(sizeof(TerrainParams), nullptr);
 }
@@ -492,8 +543,15 @@ void TerrainLayerSet::updateParams() {
     params.worldToTerrain = _worldToTerrain;
     for (int i = 0; i < LAYER_COUNT; ++i) {
         const Layer& layer = _layers[i];
-        params.layers[i].color = glm::vec4(LAYER_PALETTE[i], layer.textured ? 1.0f : 0.0f);
-        params.layers[i].tiling = glm::vec4(1.0f / std::max(layer.spec.tiling, 0.01f), 0.0f, 0.0f, 0.0f);
+        const terrain::Layer& spec = layer.spec;
+        const float repeats = 1.0f / std::max(spec.tiling, 0.01f);
+        params.layers[i].color = glm::vec4(layer.present ? spec.color : LAYER_PALETTE[i], layer.textured ? 1.0f : 0.0f);
+        params.layers[i].tiling = glm::vec4(repeats, spec.offset.x * repeats, spec.offset.y * repeats, glm::clamp(spec.opacity, 0.0f, 1.0f));
+        params.layers[i].tint = glm::vec4(layer.present ? spec.tint : glm::vec3(1.0f), 1.0f);
+        params.layers[i].flags = glm::ivec4(spec.visible ? 1 : 0, (int)spec.blend, 0, 0);
+    }
+    for (int i = 0; i < 2 * 4; ++i) {
+        params.order[i / 4][i % 4] = i < (int)_order.size() ? (int)_order[i] : -1;
     }
     _params->setSubData(0, params);
     _paramsDirty = false;
@@ -703,7 +761,10 @@ bool TerrainEntityRenderer::needsRenderUpdateFromTypedEntity(const TypedEntityPo
     if (entity->getVoxelScale() != _lastVoxelScale) {
         return true;
     }
-    if (!_layerSetMade || entity->getTerrainLayers() != _lastLayersJSON) {
+    if (!_layerSetMade || entity->getLayersVersion() != _lastLayersVersion) {
+        return true;
+    }
+    if (!entity->layersAreFixed() && entity->getTerrainLayers() != _lastLegacyLayersJSON) {
         return true;
     }
     if ((_primitiveMode == PrimitiveMode::LINES) != _lastWireframe) {
@@ -742,18 +803,20 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
     }
     emit requestRenderUpdate();
 
-    // The layers: what the voxel materials look like. A changed list makes a new set; the textures come in on
-    // their own time and the set binds them as they do.
-    const QString layersJSON = entity->getTerrainLayers();
+    // The layers: what the voxel materials look like, and how the paint map draws over them. A terrain whose file
+    // holds no layers follows the entity's terrainLayers property. A changed stack makes a new set; the textures
+    // come in on their own time and the set binds them as they do.
     bool layersChanged = false;
-    if (!_layerSetMade || layersJSON != _lastLayersJSON) {
-        QString error;
-        const std::vector<TerrainLayerSpec> specs = TerrainEntityItem::parseTerrainLayers(layersJSON, &error);
-        if (!error.isEmpty()) {
-            qCWarning(entitiesrenderer) << "Terrain" << entity->getID() << "layers are not usable:" << error;
+    if (!entity->layersAreFixed()) {
+        const QString legacy = entity->getTerrainLayers();
+        if (!_layerSetMade || legacy != _lastLegacyLayersJSON) {
+            _lastLegacyLayersJSON = legacy;
+            entity->setLayers(entity->legacyOrDefaultLayers(), false);
         }
-        _layerSet = std::make_shared<TerrainLayerSet>(specs);
-        _lastLayersJSON = layersJSON;
+    }
+    if (!_layerSetMade || entity->getLayersVersion() != _lastLayersVersion) {
+        _layerSet = std::make_shared<TerrainLayerSet>(entity->getLayers());
+        _lastLayersVersion = entity->getLayersVersion();
         _layerSetMade = true;
         layersChanged = true;
     }

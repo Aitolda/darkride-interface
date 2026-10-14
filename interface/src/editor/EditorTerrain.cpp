@@ -13,6 +13,8 @@
 
 #include <QtCore/QByteArray>
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QHash>
+#include <QtGui/QImage>
 
 #include <EntityItemID.h>
 #include <EntityItemProperties.h>
@@ -41,6 +43,8 @@ namespace {
     const int TERRAIN_SEARCH_FRAMES = 30;   // how often the world's terrains are looked for
     const float TERRAIN_SEARCH_RADIUS = 4000.0f;
     const int OUTLINE_SEGMENTS = 48;
+    const int OUTLINE_MASK_SAMPLES = 32;    // a shape picture's outline is traced on this many samples a side
+    const float OUTLINE_MASK_LEVEL = 0.5f;  // along the grey where the picture crosses this
     const float OUTLINE_WIDTH_PIXELS = 2.0f;
     const glm::vec4 OUTLINE_COLOR(0.45f, 0.75f, 1.0f, 1.0f);
     const int SAVE_DELAY_MS = 2500;         // after the last change, before the file goes up
@@ -116,6 +120,36 @@ namespace {
         }
     }
 
+    // The brush's shape pictures, by path, kept once read: a picture's grey (its alpha counted in) as the mask's
+    // values; null when the path is not a readable picture.
+    std::shared_ptr<const terrain::BrushMask> loadBrushMask(const QString& path) {
+        static QHash<QString, std::shared_ptr<const terrain::BrushMask>> masks;
+        auto found = masks.find(path);
+        if (found != masks.end()) {
+            return found.value();
+        }
+        std::shared_ptr<const terrain::BrushMask> mask;
+        QImage image(path);
+        if (!image.isNull() && image.width() > 0 && image.height() > 0) {
+            image = image.convertToFormat(QImage::Format_ARGB32);
+            std::vector<float> values((size_t)image.width() * image.height());
+            for (int y = 0; y < image.height(); ++y) {
+                const QRgb* row = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+                for (int x = 0; x < image.width(); ++x) {
+                    const QRgb pixel = row[x];
+                    const float grey = (0.299f * qRed(pixel) + 0.587f * qGreen(pixel) + 0.114f * qBlue(pixel)) / 255.0f;
+                    values[(size_t)y * image.width() + x] = grey * (float)qAlpha(pixel) / 255.0f;
+                }
+            }
+            mask = std::make_shared<terrain::BrushMask>(image.width(), image.height(), std::move(values));
+            if (mask->isEmpty()) {
+                mask.reset();
+            }
+        }
+        masks.insert(path, mask);
+        return mask;
+    }
+
     QString modeName(terrain::SculptMode mode) {
         switch (mode) {
             case terrain::SculptMode::Raise: return QStringLiteral("Raise");
@@ -139,6 +173,13 @@ EditorTerrain::EditorTerrain(EditorUndo* undo, QObject* parent) : QObject(parent
 
 void EditorTerrain::setBrush(const EditorTerrainBrush& brush) {
     _brush = brush;
+    if (brush.shape != _maskShape) {
+        _maskShape = brush.shape;
+        _mask = brush.shape.isEmpty() ? nullptr : loadBrushMask(brush.shape);
+        if (!brush.shape.isEmpty() && !_mask) {
+            emit status(QStringLiteral("Brush shape not readable: ") + brush.shape, FAILED_NOTE_MS);
+        }
+    }
     if (_hasLastHit && !_stroking) {
         if (auto entity = terrainEntity(_lastHit.id)) {
             showOutline(*entity, _lastHit);
@@ -220,12 +261,42 @@ bool EditorTerrain::hover(const PickRay& ray) {
     Hit hit;
     auto entity = pick(ray, hit) ? terrainEntity(hit.id) : nullptr;
     if (!entity) {
+        const bool left = _hasLastHit;
         _hasLastHit = false;
         _outline.clear();
+        if (left) {
+            emit terrainUnderPointerChanged();
+        }
         return false;
     }
+    const bool another = !_hasLastHit || hit.id != _lastHit.id;
     showOutline(*entity, hit);
+    if (another) {
+        emit terrainUnderPointerChanged();
+    }
     return true;
+}
+
+QStringList EditorTerrain::layerNamesForTool(const QList<QUuid>& selected) const {
+    const terrain::LayerStack* stack = nullptr;
+    for (const QUuid& id : selected) {
+        if ((stack = layersOf(id))) {
+            break;
+        }
+    }
+    if (!stack && _hasLastHit) {
+        stack = layersOf(_lastHit.id);
+    }
+    const terrain::LayerStack defaults = stack ? terrain::LayerStack() : terrain::LayerStack::defaults();
+    if (!stack) {
+        stack = &defaults;
+    }
+    QStringList names;
+    for (int slot = 0; slot < terrain::MAX_LAYERS; ++slot) {
+        const terrain::Layer* layer = stack->find((uint8_t)slot);
+        names << (layer ? QString::fromStdString(layer->name) : QString());
+    }
+    return names;
 }
 
 // --- the brush ----------------------------------------------------------------------------------
@@ -239,6 +310,8 @@ terrain::Brush EditorTerrain::voxelBrush(const RenderableTerrainEntityItem& enti
     brush.hardness = glm::clamp(_brush.hardness, 0.0f, 1.0f);
     brush.material = (uint8_t)glm::clamp(_brush.material, 0, 255);
     brush.flattenHeight = _flattenHeight;
+    brush.mask = _mask.get();
+    brush.angle = glm::radians(_brush.angle);
     return brush;
 }
 
@@ -252,6 +325,8 @@ terrain::PaintBrush EditorTerrain::paintBrush(const RenderableTerrainEntityItem&
     brush.strength = glm::clamp(_brush.strength, 0.0f, 1.0f);
     brush.hardness = glm::clamp(_brush.hardness, 0.0f, 1.0f);
     brush.layer = (uint8_t)glm::clamp(_brush.material, 0, terrain::PAINT_LAYERS - 1);
+    brush.mask = _mask.get();
+    brush.angle = glm::radians(_brush.angle);
     return brush;
 }
 
@@ -339,7 +414,7 @@ bool EditorTerrain::beginStroke(const PickRay& ray, bool inverted, QString& refu
     _ray = ray;
     _hasRay = true;
     _strokeMode = inverted ? invert(_brush.mode) : _brush.mode;
-    _erasing = inverted && _brush.mode == terrain::SculptMode::Paint;
+    _erasing = _brush.mode == terrain::SculptMode::Paint && _brush.erase != inverted;   // Shift swaps Paint and Erase
     _flattenHeight = hit.voxelPoint.y;
     _accumulated = STEP_MIN;   // the first step lands at once: a click alone does something
     _steps = 0;
@@ -438,6 +513,7 @@ void EditorTerrain::update(float deltaTime) {
         }
         brush.center = _sphereCenter;
         brush.strength = 1.0f;
+        brush.mask = nullptr;   // the sphere, whatever the shape
         _spheres.emplace_back(_sphereCenter, brush.radius);
     } else {
         _accumulated += deltaTime * (isBlending(_strokeMode) ? BLEND_RATE : RAISE_RATE) * glm::clamp(_brush.strength, 0.0f, 1.0f);
@@ -653,12 +729,45 @@ void EditorTerrain::saveDirty() {
     }
 }
 
+// --- the layers --------------------------------------------------------------------------------
+
+const terrain::LayerStack* EditorTerrain::layersOf(const QUuid& id) const {
+    auto entity = terrainEntity(id);
+    return entity ? &entity->getLayers() : nullptr;
+}
+
+uint64_t EditorTerrain::layersVersionOf(const QUuid& id) const {
+    auto entity = terrainEntity(id);
+    return entity ? entity->getLayersVersion() : 0;
+}
+
+bool EditorTerrain::setLayers(const QUuid& id, const terrain::LayerStack& layers, const QString& undoText,
+                              const terrain::LayerStack* before) {
+    auto entity = terrainEntity(id);
+    if (!entity || !layers.isValid() || EditorUndo::isLocked(id)) {
+        return false;
+    }
+    if (undoText.isEmpty()) {
+        entity->setLayers(layers);   // a preview: the step comes with the commit
+        return true;
+    }
+    const terrain::LayerStack was = before ? *before : entity->getLayers();
+    entity->setLayers(layers);
+    if (was != layers) {
+        _undo->pushTerrainLayers(undoText, id, was, layers);
+        markChanged(id);
+    }
+    return true;
+}
+
+// --- saving ------------------------------------------------------------------------------------
+
 void EditorTerrain::save(const QUuid& id) {
     auto entity = terrainEntity(id);
     if (!entity || !entity->hasGrid()) {
         return;   // gone, or nothing to save
     }
-    const terrain::Bytes bytes = terrain::saveTerrain(entity->getGrid(), &entity->getPaint());
+    const terrain::Bytes bytes = terrain::saveTerrain(entity->getGrid(), &entity->getPaint(), &entity->getLayers());
     const QByteArray data((const char*)bytes.data(), (int)bytes.size());
     const QString fileName = QStringLiteral("terrain-") + id.toString(QUuid::WithoutBraces) + QStringLiteral(".drkt");
     const uint32_t version = std::max(entity->getTerrainVersion(), entity->getGridVersion()) + 1;
@@ -712,24 +821,45 @@ void EditorTerrain::showOutline(const RenderableTerrainEntityItem& entity, const
     const glm::vec3 forward = orientation * Vectors::UNIT_Z;
     const glm::mat4 worldToVoxel = entity.worldToVoxelMatrix();
     const glm::mat4 voxelToWorld = entity.voxelToWorldMatrix();
-    // each point of the ring is dropped onto the ground from above it, so the ring lies on hills and in hollows
+    // each point of the outline is dropped onto the ground from above it, so it lies on hills and in hollows
     const float lift = _brush.radius + 1.0f;
     const glm::vec3 voxelDown(worldToVoxel * glm::vec4(-up, 0.0f));
-    QVector<glm::vec3> ring;
-    ring.reserve(OUTLINE_SEGMENTS);
-    for (int i = 0; i < OUTLINE_SEGMENTS; ++i) {
-        const float angle = TWO_PI * (float)i / (float)OUTLINE_SEGMENTS;
-        glm::vec3 point = hit.worldPoint + _brush.radius * (std::cos(angle) * right + std::sin(angle) * forward);
+    auto onGround = [&](const glm::vec2& offset) {   // an offset from the pointer along x and z, in metres
+        glm::vec3 point = hit.worldPoint + offset.x * right + offset.y * forward;
         const glm::vec3 voxelOrigin(worldToVoxel * glm::vec4(point + up * lift, 1.0f));
         float t = 0.0f;
         glm::vec3 normal;
         if (entity.rayHitsGround(voxelOrigin, voxelDown, t, normal)) {
             point = glm::vec3(voxelToWorld * glm::vec4(voxelOrigin + voxelDown * t, 1.0f));
         }
-        ring << point;
+        return point;
+    };
+    QVector<QVector<glm::vec3>> rings;
+    if (_mask && !isSphere(_brush.mode)) {
+        // the shape picture's edges, turned as the brush is (the turn weightAt undoes, BrushMask.cpp)
+        const float angle = glm::radians(_brush.angle);
+        const float c = std::cos(angle);
+        const float s = std::sin(angle);
+        for (const std::vector<glm::vec2>& curve : _mask->outline(OUTLINE_MASK_LEVEL, OUTLINE_MASK_SAMPLES)) {
+            QVector<glm::vec3> ring;
+            ring.reserve((int)curve.size());
+            for (const glm::vec2& p : curve) {
+                const float w = -p.y;   // the picture's top is toward -z
+                ring << onGround(_brush.radius * glm::vec2(p.x * c + w * s, -p.x * s + w * c));
+            }
+            rings << ring;
+        }
+    } else {
+        QVector<glm::vec3> ring;
+        ring.reserve(OUTLINE_SEGMENTS);
+        for (int i = 0; i < OUTLINE_SEGMENTS; ++i) {
+            const float angle = TWO_PI * (float)i / (float)OUTLINE_SEGMENTS;
+            ring << onGround(_brush.radius * glm::vec2(std::cos(angle), std::sin(angle)));
+        }
+        rings << ring;
     }
     const glm::vec3 lineOfSight = _cameraPosition - hit.worldPoint;
     const float depth = std::max(0.01f, glm::length(lineOfSight));
     const glm::vec3 toCamera = depth > 1.0e-4f ? lineOfSight / depth : Vectors::UNIT_Z;
-    _outline.set(ring, OUTLINE_COLOR, _pixelSize * depth * OUTLINE_WIDTH_PIXELS, toCamera);
+    _outline.set(rings, OUTLINE_COLOR, _pixelSize * depth * OUTLINE_WIDTH_PIXELS, toCamera);
 }

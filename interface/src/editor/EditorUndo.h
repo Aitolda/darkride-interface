@@ -24,6 +24,7 @@
 #include <QtWidgets/QUndoStack>
 
 #include <EntityItemProperties.h>
+#include <terrain/Layers.h>
 #include <terrain/PaintMap.h>
 #include <terrain/VoxelGrid.h>
 
@@ -82,6 +83,10 @@ public:
     void pushTerrainPaint(const QString& text, const QUuid& id, const TerrainPaintBlocks& before, const TerrainPaintBlocks& after);
     // puts blocks into a terrain entity's paint map; false when the entity is not a terrain on this client
     bool applyTerrainPaint(const QUuid& id, const TerrainPaintBlocks& blocks);
+    // a change to a terrain's layer stack (the Inspector's Layers section), already applied: the stack before and after
+    void pushTerrainLayers(const QString& text, const QUuid& id, const terrain::LayerStack& before, const terrain::LayerStack& after);
+    // replaces a terrain entity's layer stack; false when the entity is not a terrain on this client
+    bool applyTerrainLayers(const QUuid& id, const terrain::LayerStack& layers);
     // a terrain resampled to another voxel count, already applied: the whole grid and paint map before and after
     // (a resample changes every chunk, so the step keeps both wholesale)
     void pushTerrainResample(const QString& text, const QUuid& id, const terrain::VoxelGrid& gridBefore,

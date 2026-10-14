@@ -43,15 +43,18 @@ layout(location=RENDER_UTILS_ATTR_NORMAL_WS) in vec3 _normalWS;
 layout(location=RENDER_UTILS_ATTR_TEXCOORD01) flat in ivec3 _materials;
 layout(location=RENDER_UTILS_ATTR_COLOR) in vec3 _weights;
 
-// One layer, as TerrainLayerSet packs it.
+// One layer, as TerrainLayerSet packs it, by slot (the voxel material index and the paint map plane).
 struct TerrainLayer {
     vec4 color;    // rgb: the plain colour; a: 1 while a texture is bound for the layer
-    vec4 tiling;   // x: repeats per metre
+    vec4 tiling;   // x: repeats per metre; yz: the offset, in repeats; w: opacity
+    vec4 tint;     // rgb: multiplies the texture
+    ivec4 flags;   // x: visible; y: the blend mode (0 normal, 1 multiply, 2 screen, 3 overlay)
 };
 
 struct TerrainParams {
     mat4 worldToTerrain;
     TerrainLayer layers[8];
+    ivec4 order[2];   // the slots drawn over the voxel material, bottom to top; -1 past the stack's end
 };
 
 // This chunk's own: its level's voxels are a fraction of its column's tile, and it starts part way across the tile.
@@ -118,10 +121,27 @@ vec3 layerColor(int layer, vec3 point, vec3 blend, Gradients g) {
         return l.color.rgb * (0.94 + 0.06 * mod(cell.x + cell.y, 2.0));
     }
     float repeats = l.tiling.x;
-    vec3 alongX = sampleLayer(layer, point.zy * repeats, g.dx.zy * repeats, g.dy.zy * repeats).rgb;
-    vec3 alongY = sampleLayer(layer, point.xz * repeats, g.dx.xz * repeats, g.dy.xz * repeats).rgb;
-    vec3 alongZ = sampleLayer(layer, point.xy * repeats, g.dx.xy * repeats, g.dy.xy * repeats).rgb;
-    return alongX * blend.x + alongY * blend.y + alongZ * blend.z;
+    vec2 offset = l.tiling.yz;   // along the terrain's x and z; nothing up the sides
+    vec3 alongX = sampleLayer(layer, point.zy * repeats + vec2(offset.y, 0.0), g.dx.zy * repeats, g.dy.zy * repeats).rgb;
+    vec3 alongY = sampleLayer(layer, point.xz * repeats + offset, g.dx.xz * repeats, g.dy.xz * repeats).rgb;
+    vec3 alongZ = sampleLayer(layer, point.xy * repeats + vec2(offset.x, 0.0), g.dx.xy * repeats, g.dy.xy * repeats).rgb;
+    return (alongX * blend.x + alongY * blend.y + alongZ * blend.z) * l.tint.rgb;
+}
+
+// A layer's colour laid over what is below it, by its blend mode.
+vec3 blendLayer(int mode, vec3 below, vec3 color) {
+    if (mode == 1) {
+        return below * color;
+    }
+    if (mode == 2) {
+        return 1.0 - (1.0 - below) * (1.0 - color);
+    }
+    if (mode == 3) {
+        vec3 dark = 2.0 * below * color;
+        vec3 light = 1.0 - 2.0 * (1.0 - below) * (1.0 - color);
+        return mix(dark, light, step(vec3(0.5), below));
+    }
+    return color;
 }
 
 void main(void) {
@@ -144,8 +164,8 @@ void main(void) {
         albedo = _weights.x * color0 + _weights.y * color1 + _weights.z * color2;
     }
 
-    // the paint map, where the ground faces up: its layers by their weights, over the voxel material by whatever
-    // the weights leave unpainted
+    // the paint map, where the ground faces up: the stack's layers bottom to top, each laid over what is below it
+    // by its coverage here times its opacity, as a painter would, starting from the voxel material
     float facingUp = smoothstep(PAINT_FACING_LOW, PAINT_FACING_HIGH, terrainNormal.y);
     if (facingUp > 0.0) {
         vec2 uv = _positionMS.xz * chunk.paint.x + chunk.paint.yz;
@@ -153,14 +173,20 @@ void main(void) {
         vec4 high = texture(paintMap1, uv);
         float painted = dot(low, vec4(1.0)) + dot(high, vec4(1.0));
         if (painted > PAINT_LEAST) {
-            float weights[8] = float[8](low.x, low.y, low.z, low.w, high.x, high.y, high.z, high.w);
-            vec3 paintColor = vec3(0.0);
-            for (int layer = 0; layer < 8; ++layer) {
-                if (weights[layer] > PAINT_LEAST) {
-                    paintColor += weights[layer] * layerColor(layer, point, blend, g);
+            float coverage[8] = float[8](low.x, low.y, low.z, low.w, high.x, high.y, high.z, high.w);
+            for (int i = 0; i < 8; ++i) {
+                int slot = params.order[i >> 2][i & 3];
+                if (slot < 0) {
+                    break;
                 }
+                TerrainLayer l = params.layers[slot];
+                float amount = coverage[slot] * l.tiling.w * facingUp;
+                if (l.flags.x == 0 || amount <= PAINT_LEAST) {
+                    continue;
+                }
+                vec3 color = layerColor(slot, point, blend, g);
+                albedo = mix(albedo, blendLayer(l.flags.y, albedo, color), amount);
             }
-            albedo = mix(albedo, paintColor / painted, facingUp * min(painted, 1.0));
         }
     }
 

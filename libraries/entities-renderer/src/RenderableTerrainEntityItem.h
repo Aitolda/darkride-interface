@@ -34,6 +34,7 @@
 
 #include <TextureCache.h>
 #include <terrain/AsyncMesher.h>
+#include <terrain/Layers.h>
 #include <terrain/LevelOfDetail.h>
 #include <terrain/PaintMap.h>
 #include <terrain/SurfaceNets.h>
@@ -76,6 +77,17 @@ public:
     static const int MAX_PAINT_TEXELS_PER_AXIS;
     // How many texels a voxel of voxelMetres gets, so a texel is about PAINT_TEXEL_METRES, within the map's size limit.
     static int paintTexelsPerVoxel(float voxelMetres, const glm::ivec2& voxelFootprint);
+
+    // The material layers (terrain::LayerStack): the file's, which the editor's Layers panel sets and the save
+    // writes back, or, for a terrain whose file holds none, what the entity's terrainLayers property names (the way
+    // layers were given before the file held them) or the defaults. The renderer makes a new layer set whenever
+    // the version changes.
+    const terrain::LayerStack& getLayers() const { return _layers; }
+    // fixed: the stack is the terrain's own (the file's, or the editor's) rather than derived from the property
+    void setLayers(const terrain::LayerStack& layers, bool fixed = true);
+    uint64_t getLayersVersion() const { return _layersVersion; }
+    bool layersAreFixed() const { return _layersFixed; }
+    terrain::LayerStack legacyOrDefaultLayers() const;
 
     // Which terrain file (URL and version) the grid holds, so the renderer knows when the entity points at another;
     // until the first source is set, the entity has no grid at all, whatever its properties say.
@@ -165,6 +177,9 @@ private:
     terrain::VoxelGrid _grid;
     terrain::PaintMap _paint;
     uint64_t _paintVersion { 0 };
+    terrain::LayerStack _layers;
+    uint64_t _layersVersion { 0 };
+    bool _layersFixed { false };
     bool _gridSourceSet { false };
     QString _gridURL;
     uint32_t _gridVersion { 0 };
@@ -190,7 +205,7 @@ public:
     using Pointer = std::shared_ptr<TerrainLayerSet>;
     static const int LAYER_COUNT = TerrainEntityItem::MAX_TERRAIN_LAYERS;
 
-    explicit TerrainLayerSet(const std::vector<TerrainLayerSpec>& specs);
+    explicit TerrainLayerSet(const terrain::LayerStack& stack);
 
     // World space to the terrain's own: its box's axes, in metres, from the box's centre. The textures are tiled
     // in that space, so they stay put on the ground when the entity moves or turns.
@@ -200,13 +215,15 @@ public:
 
 private:
     struct Layer {
-        TerrainLayerSpec spec;
+        terrain::Layer spec;
         NetworkTexturePointer texture;
         bool textured { false };
+        bool present { false };   // in the stack; a slot without a layer draws a plain colour of its own
     };
     void updateParams();
 
-    std::array<Layer, LAYER_COUNT> _layers;
+    std::array<Layer, LAYER_COUNT> _layers;   // by slot
+    std::vector<uint8_t> _order;              // the slots drawn, bottom to top
     glm::mat4 _worldToTerrain { 1.0f };
     gpu::BufferPointer _params;
     bool _paramsDirty { true };
@@ -310,7 +327,8 @@ private:
     bool _drawnOnce { false };
     std::vector<RenderableTerrainEntityItem::DrawnChunk> _drawn;
     TerrainLayerSet::Pointer _layerSet;
-    QString _lastLayersJSON;
+    uint64_t _lastLayersVersion { 0 };
+    QString _lastLegacyLayersJSON;
     bool _layerSetMade { false };
     std::map<glm::ivec3, TerrainPaintTile::Pointer, terrain::IVec3Less> _paintTiles;
     uint64_t _paintVersion { 0 };

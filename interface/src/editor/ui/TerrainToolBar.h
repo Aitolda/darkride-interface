@@ -4,7 +4,8 @@
 //
 //  The second row of the build toolbar while the Terrain tool is active: the sculpt modes (Raise, Lower, Smooth,
 //  Flatten, Dig, Fill), the two paint modes (Paint, for the paint map, and Paint Voxels, for the voxels' own
-//  materials) and the brush's size, strength, hardness and material, as Unity's terrain inspector has them;
+//  materials) and the brush's size, strength, hardness, shape (round, or a picture, turned by the angle) and
+//  layer, as Unity's terrain inspector has them;
 //  Resample, which remakes a terrain's voxels at its voxel size after it was scaled or its voxel size changed; and
 //  Detail, how far out every terrain is drawn at full detail (TERRAIN.md section 4, level of detail).
 //
@@ -15,6 +16,9 @@
 #ifndef hifi_TerrainToolBar_h
 #define hifi_TerrainToolBar_h
 
+#include <functional>
+
+#include <QtCore/QStringList>
 #include <QtWidgets/QToolBar>
 
 #include "../EditorTerrain.h"
@@ -22,8 +26,10 @@
 class QAbstractSpinBox;
 class QAction;
 class QActionGroup;
+class QComboBox;
 class QDoubleSpinBox;
-class QSpinBox;
+class QMenu;
+class QToolButton;
 class ScrubLabel;
 
 class TerrainToolBar : public QToolBar {
@@ -34,6 +40,14 @@ public:
     EditorTerrainBrush brush() const;
     void setMode(terrain::SculptMode mode);
     void setRadius(float metres);
+    // the layer (slot 0 to 7) Paint and Paint Voxels paint: the Inspector's Layers section sets it as a layer is selected
+    void setLayer(int slot);
+    // where the Layer field's names come from (eight, by slot; empty for an unused slot): asked whenever the field
+    // is refreshed, which refreshLayerNames() does and the field's own popup does
+    void setLayerNameSource(std::function<QStringList()> source);
+
+public slots:
+    void refreshLayerNames();
 
 signals:
     void brushChanged();
@@ -41,9 +55,19 @@ signals:
     void resampleRequested();
 
 private:
-    QAction* addMode(const QString& text, const QString& toolTip, terrain::SculptMode mode);
+    // erase: the Paint mode's eraser, a mode of its own on the bar
+    QAction* addMode(const QString& text, const QString& toolTip, terrain::SculptMode mode, bool erase = false);
+    // The brush's shape: the round brush (an empty path) or a picture (terrain::BrushMask) from the client's
+    // brushes (interface/resources/terrain/brushes) or a file; the thumbnail is the picture, or round.png.
+    QAction* addShape(const QString& name, const QString& path, const QString& thumbnail);
+    void chooseShape(const QString& name, const QString& path, const QString& thumbnail);
+    void loadShapePicture();
 
     QActionGroup* _modes { nullptr };
+    QToolButton* _shape { nullptr };
+    QMenu* _shapeMenu { nullptr };
+    QAction* _loadShape { nullptr };   // the menu's last entry: pictures loaded from disk go before it
+    QString _shapePath;
     // The field's label scrubs its value when dragged sideways, as the Inspector's do: step per pixel, Shift ten
     // times that, Alt a tenth; proportional makes the step a share of the current value, for a size.
     void attachScrub(ScrubLabel* label, QAbstractSpinBox* box, double step, bool proportional);
@@ -51,7 +75,9 @@ private:
     QDoubleSpinBox* _size { nullptr };
     QDoubleSpinBox* _strength { nullptr };
     QDoubleSpinBox* _hardness { nullptr };
-    QSpinBox* _material { nullptr };
+    QDoubleSpinBox* _angle { nullptr };
+    QComboBox* _layer { nullptr };
+    std::function<QStringList()> _layerNames;
     QDoubleSpinBox* _detail { nullptr };
 };
 

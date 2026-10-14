@@ -124,6 +124,33 @@ namespace {
         bool _skipFirstRedo { true };
     };
 
+    // A terrain's layer stack changed, with the stack as it was.
+    class TerrainLayersCommand : public QUndoCommand {
+    public:
+        TerrainLayersCommand(EditorUndo* undo, const QString& text, const QUuid& id, const terrain::LayerStack& before,
+            const terrain::LayerStack& after) :
+            QUndoCommand(text), _undo(undo), _id(id), _before(before), _after(after) {
+        }
+        void redo() override {
+            if (_skipFirstRedo) {
+                _skipFirstRedo = false;
+                return;
+            }
+            qCDebug(entities) << "editor redo" << text() << "on" << _after.layers.size() << "layers";
+            _undo->applyTerrainLayers(_id, _after);
+        }
+        void undo() override {
+            qCDebug(entities) << "editor undo" << text() << "on" << _before.layers.size() << "layers";
+            _undo->applyTerrainLayers(_id, _before);
+        }
+    private:
+        EditorUndo* _undo;
+        QUuid _id;
+        terrain::LayerStack _before;
+        terrain::LayerStack _after;
+        bool _skipFirstRedo { true };
+    };
+
     // A terrain resampled to another voxel count, with the whole grid and paint map as they were.
     class TerrainResampleCommand : public QUndoCommand {
     public:
@@ -480,6 +507,27 @@ void EditorUndo::pushTerrainPaint(const QString& text, const QUuid& id, const Te
         return;
     }
     _stack.push(new TerrainPaintCommand(this, text, id, before, after));
+}
+
+void EditorUndo::pushTerrainLayers(const QString& text, const QUuid& id, const terrain::LayerStack& before, const terrain::LayerStack& after) {
+    if (before == after) {
+        return;
+    }
+    _stack.push(new TerrainLayersCommand(this, text, id, before, after));
+}
+
+bool EditorUndo::applyTerrainLayers(const QUuid& id, const terrain::LayerStack& layers) {
+    auto tree = entityTree();
+    if (!tree) {
+        return false;
+    }
+    auto terrain = std::dynamic_pointer_cast<RenderableTerrainEntityItem>(tree->findEntityByID(resolve(id)));
+    if (!terrain) {
+        return false;
+    }
+    terrain->setLayers(layers);
+    emit terrainEdited(id);
+    return true;
 }
 
 void EditorUndo::pushTerrainResample(const QString& text, const QUuid& id, const terrain::VoxelGrid& gridBefore,

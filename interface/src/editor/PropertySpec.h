@@ -27,7 +27,8 @@
 // How a property is edited. The QVariant carried for each kind:
 //   Bool: bool  Int, Float, Slider: double  Degrees: double degrees (stored in radians)
 //   String, Url, Json, Image (the picture's URL), UserData (the whole text), Enum (the value name),
-//   CollisionMask (the comma list): QString
+//   CollisionMask (the comma list): QString   TerrainLayers: the property's text, unused (the layers live in the
+//   terrain file on this client, which the editor reads and sets directly)
 //   Color, FloatColor: QColor  Vec2, Polar (elevation and azimuth in degrees): QVector2D
 //   Vec3, Euler (degrees): QVector3D  Rect: QRect
 enum class PropertyKind {
@@ -49,7 +50,8 @@ enum class PropertyKind {
     Polar,
     Rect,
     Enum,
-    CollisionMask
+    CollisionMask,
+    TerrainLayers   // a Terrain's material layers: the list, with the selected layer's settings (TerrainLayersEditor)
 };
 
 struct PropertySpec {

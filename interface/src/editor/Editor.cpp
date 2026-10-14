@@ -555,6 +555,14 @@ void Editor::createPanels() {
         }
     });
     _terrain.setBrush(_terrainBar->brush());
+    // a Terrain's Layers section in the Inspector reads and sets the layers through the tool, and its selected
+    // layer is the one the Paint tools paint; the toolbar's Layer field names the slots after the selected
+    // terrain's layers (else the one under the pointer's)
+    _inspector->setTerrainEditor(&_terrain);
+    connect(_inspector, &InspectorPanel::terrainLayerChosen, this, [this](int slot) { _terrainBar->setLayer(slot); });
+    _terrainBar->setLayerNameSource([this] { return _terrain.layerNamesForTool(_selection.ids()); });
+    connect(_inspector, &InspectorPanel::terrainLayersShown, _terrainBar, &TerrainToolBar::refreshLayerNames);
+    connect(&_terrain, &EditorTerrain::terrainUnderPointerChanged, _terrainBar, &TerrainToolBar::refreshLayerNames);
 
     // notes ("Terrain saved", an upload's progress, a refusal) in a status bar along the bottom, where the
     // toolbars' buttons cannot crowd them out

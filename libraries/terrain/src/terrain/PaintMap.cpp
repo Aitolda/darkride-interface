@@ -51,6 +51,37 @@ bool PaintMap::isPainted() const {
     return std::any_of(_weights.begin(), _weights.end(), [](uint8_t weight) { return weight != 0; });
 }
 
+void PaintMap::sharesToCoverage(const std::vector<uint8_t>& order) {
+    if (isEmpty()) {
+        return;
+    }
+    const size_t texelCount = _weights.size() / PAINT_LAYERS;
+    uint8_t coverage[PAINT_LAYERS];
+    for (size_t texel = 0; texel < texelCount; ++texel) {
+        uint8_t* shares = &_weights[texel * PAINT_LAYERS];
+        int sum = 0;
+        for (int k = 0; k < PAINT_LAYERS; ++k) {
+            sum += shares[k];
+            coverage[k] = 0;
+        }
+        // drawn bottom to top, each layer covers its share of all that is drawn up to and including it, starting
+        // from the voxel material's share
+        int drawn = std::max(0, WEIGHT_MAX - sum);
+        for (uint8_t slot : order) {
+            if (slot >= PAINT_LAYERS) {
+                continue;
+            }
+            const int share = shares[slot];
+            drawn += share;
+            coverage[slot] = drawn > 0 ? (uint8_t)std::lround(share * (float)WEIGHT_MAX / (float)drawn) : 0;
+        }
+        for (int k = 0; k < PAINT_LAYERS; ++k) {
+            shares[k] = coverage[k];
+        }
+    }
+    markAllColumnsDirty();
+}
+
 PaintBlock PaintMap::copy(const glm::ivec2& low, const glm::ivec2& high) const {
     PaintBlock block;
     if (isEmpty()) {
@@ -196,6 +227,12 @@ void PaintMap::markTexelsDirty(const glm::ivec2& low, const glm::ivec2& high) {
 // The brush
 
 float PaintBrush::weightAt(const glm::vec2& point) const {
+    if (radius <= 0.0f) {
+        return 0.0f;
+    }
+    if (mask && !mask->isEmpty()) {
+        return mask->weightAt((point - center) / radius, angle, hardness);
+    }
     const float distance = glm::length(point - center);
     if (distance >= radius) {
         return 0.0f;
@@ -208,13 +245,18 @@ float PaintBrush::weightAt(const glm::vec2& point) const {
     return 1.0f - t * t * (3.0f - 2.0f * t);
 }
 
+glm::vec2 PaintBrush::reach() const {
+    return glm::vec2(radius * (mask && !mask->isEmpty() ? BrushMask::reach(angle) : 1.0f));
+}
+
 bool terrain::brushTexelBounds(const PaintMap& map, const PaintBrush& brush, glm::ivec2& low, glm::ivec2& high) {
     if (map.isEmpty() || brush.radius <= 0.0f) {
         return false;
     }
     const float texelsPerVoxel = (float)map.getTexelsPerVoxel();
-    low = glm::max(glm::ivec2(glm::floor((brush.center - brush.radius) * texelsPerVoxel)), glm::ivec2(0));
-    high = glm::min(glm::ivec2(glm::ceil((brush.center + brush.radius) * texelsPerVoxel)), map.getSize() - 1);
+    const glm::vec2 reach = brush.reach();
+    low = glm::max(glm::ivec2(glm::floor((brush.center - reach) * texelsPerVoxel)), glm::ivec2(0));
+    high = glm::min(glm::ivec2(glm::ceil((brush.center + reach) * texelsPerVoxel)), map.getSize() - 1);
     return !glm::any(glm::greaterThan(low, high));
 }
 
@@ -236,27 +278,12 @@ int terrain::paint(PaintMap& map, const PaintBrush& brush, bool erase) {
             if (amount <= 0.0f) {
                 continue;
             }
+            // the layer's own coverage alone: toward full, or (erasing) toward none; the other layers keep theirs
             uint8_t* weights = map.at(glm::ivec2(x, z));
-            const float keep = 1.0f - amount;
-            bool texelChanged = false;
-            int others = 0;
-            for (int k = 0; k < PAINT_LAYERS; ++k) {
-                if (k == layer && !erase) {
-                    continue;
-                }
-                const uint8_t next = (uint8_t)std::lround(weights[k] * keep);
-                texelChanged |= next != weights[k];
-                weights[k] = next;
-                others += next;
-            }
-            if (!erase) {
-                // toward full, but never past what the others leave: the eight weights sum to 255 at most
-                const int target = std::lround(weights[layer] + amount * (WEIGHT_MAX - weights[layer]));
-                const uint8_t next = (uint8_t)glm::clamp(target, 0, WEIGHT_MAX - others);
-                texelChanged |= next != weights[layer];
+            const float target = erase ? weights[layer] * (1.0f - amount) : weights[layer] + amount * (WEIGHT_MAX - weights[layer]);
+            const uint8_t next = (uint8_t)glm::clamp((int)std::lround(target), 0, WEIGHT_MAX);
+            if (next != weights[layer]) {
                 weights[layer] = next;
-            }
-            if (texelChanged) {
                 ++changed;
                 changedLow = glm::min(changedLow, glm::ivec2(x, z));
                 changedHigh = glm::max(changedHigh, glm::ivec2(x, z));

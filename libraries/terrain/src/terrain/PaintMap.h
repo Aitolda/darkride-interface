@@ -3,11 +3,12 @@
 //  libraries/terrain/src/terrain
 //
 //  The paint map of a Terrain entity (TERRAIN.md section 5): a picture laid over the ground's footprint, seen from
-//  above, that says how much of each of the terrain's eight layers shows at every point. It is what the Paint tool
+//  above, that says how much of each of the terrain's eight layers covers every point. It is what the Paint tool
 //  paints and what the shader reads wherever the ground faces up; where it faces sideways or down, and wherever the
-//  map holds nothing, the voxels' own materials show instead. A texel's eight weights are bytes that sum to at most
-//  255; the rest of the way to 255 is the voxel material, so a map that was never painted changes nothing, and
-//  erasing is painting back toward it.
+//  map holds nothing, the voxels' own materials show instead. A texel's eight weights are bytes, each a layer's own
+//  coverage, 0 to 255, on its own: the shader draws the layers in the stack's order (Layers.h), each over what is
+//  below it by its coverage, so a map that was never painted changes nothing, painting a layer covers without taking
+//  anything from the others, and erasing a layer lowers its own coverage and shows what is under it again.
 //
 //  The map has texelsPerVoxel texels along each voxel of the footprint (x and z of voxel space); texel (i, j) covers
 //  voxel x from i / texelsPerVoxel on, and its centre is where a brush is evaluated. The renderer draws each chunk
@@ -30,6 +31,7 @@
 
 #include <glm/glm.hpp>
 
+#include "BrushMask.h"
 #include "Chunk.h"
 
 namespace terrain {
@@ -80,6 +82,11 @@ public:
     bool setWeights(std::vector<uint8_t> weights);
     // Whether any texel holds any weight: an unpainted map need not be saved.
     bool isPainted() const;
+    // Turns a map whose weights were shares of the texel (summing to at most 255, the rest the voxel material, as
+    // terrain files before version 4 hold them) into coverages drawn in the given order of layers, bottom to top:
+    // each layer's coverage becomes its share of all that is drawn up to and including it, so the stack drawn
+    // in that order shows exactly what the shares did. Layers not in the order lose their weight.
+    void sharesToCoverage(const std::vector<uint8_t>& order);
 
     // The texels from low to high inclusive, clamped to the map; empty when none lie in it.
     PaintBlock copy(const glm::ivec2& low, const glm::ivec2& high) const;
@@ -120,24 +127,29 @@ private:
     ColumnSet _dirtyColumns;
 };
 
-// The Paint tool's brush: a disc on the footprint, in voxel units, with the sculpt brushes' falloff.
+// The Paint tool's brush: a disc on the footprint, in voxel units, with the sculpt brushes' falloff, or a picture
+// (BrushMask.h) laid over its square and turned about its centre.
 struct PaintBrush {
     glm::vec2 center { 0.0f };      // voxel coordinates (x, z)
     float radius { 4.0f };          // voxels
     float strength { 0.5f };        // 0 to 1: how far one application goes toward the full effect
     float hardness { 0.5f };        // 0 to 1: the part of the radius with the full effect before the falloff
     uint8_t layer { 0 };            // the layer painted
+    const BrushMask* mask { nullptr };   // the picture the brush takes its shape from, if any (not owned)
+    float angle { 0.0f };           // radians, the picture turned about the centre
 
-    // 1 at the centre, falling smoothly to 0 at the radius.
+    // Round: 1 at the centre, falling smoothly to 0 at the radius. With a picture: its value under the point.
     float weightAt(const glm::vec2& point) const;
+    // How far from the centre, in voxels, the brush can reach along x and z.
+    glm::vec2 reach() const;
 };
 
 // The texels (inclusive bounds) a brush can change; false when none lie in the map.
 bool brushTexelBounds(const PaintMap& map, const PaintBrush& brush, glm::ivec2& low, glm::ivec2& high);
 
-// One application of the brush: under it the layer's weight grows toward full and every other weight, the voxel
-// material's share included, shrinks by the same measure to make room; erasing shrinks them all, so the voxels'
-// own materials show again. Returns how many texels changed.
+// One application of the brush: under it the layer's own coverage grows toward full, the other layers keeping
+// theirs, so it covers what is below it in the stack; erasing shrinks it toward none, so what is below shows
+// again. Returns how many texels changed.
 int paint(PaintMap& map, const PaintBrush& brush, bool erase);
 
 } // namespace terrain
