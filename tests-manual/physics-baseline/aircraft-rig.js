@@ -3,7 +3,7 @@
 //  tests-manual/physics-baseline
 //
 //  The tilt-thrust aircraft as entities (PHYSICS.md round 8): a flat fuselage that is the body the physics flies (the
-//  vehicle group with type "aircraft": 20 kN of thrust tilting from level to vertical, a 16 m^2 wing of 10 m span, a
+//  vehicle group with type "aircraft": 20 kN of thrust tilting from level to vertical, a 24 m^2 wing of 11 m span, a
 //  tail 4.5 m aft) and a moving reference frame (frame true) whose top is the floor the pilot stands on at the stick;
 //  a wing, a fin and a tailplane for the look (collisionless children), a low rail round the floor in the craft's own
 //  world. The same interface as airship-rig.js's Airship: create, deleteAll, HELM, SPEC, PART_NAMES.

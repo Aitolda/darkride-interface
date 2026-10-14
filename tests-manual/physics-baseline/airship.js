@@ -76,10 +76,10 @@
         { name: "cruise", seconds: 8, auto: { flight: true, height: CRUISE_HEIGHT, heading: "hold" } },
         { name: "turn-right", seconds: 10, auto: { flight: true, height: CRUISE_HEIGHT, bank: 30 } },
         { name: "turn-left", seconds: 12, auto: { flight: true, height: CRUISE_HEIGHT, bank: -30 } },
-        { name: "return", seconds: 60, auto: { flight: true, height: CRUISE_HEIGHT, heading: "pad" }, until: function (s) { return s.padDistance < 150; } },
+        { name: "return", seconds: 60, auto: { flight: true, height: CRUISE_HEIGHT, heading: "pad" }, until: function (s) { return s.padDistance < 450; } },
         { name: "brake", seconds: 30, auto: { hover: true, tiltTo: 1, height: CRUISE_HEIGHT, stop: true }, until: function (s) { return s.horizontalSpeed < 3.0; } },
-        { name: "home", seconds: 60, auto: { hover: true, height: CRUISE_HEIGHT, toPad: true }, until: function (s) { return s.padDistance < 8; } },
-        { name: "descend", seconds: 60, auto: { hover: true, descend: true, toPad: true }, until: function (s) { return s.aboveGround < 1.0 && Math.abs(s.climbRate) < 0.1; } },
+        { name: "home", seconds: 60, auto: { hover: true, tiltTo: 1, height: CRUISE_HEIGHT, toPad: true }, until: function (s) { return s.padDistance < 8; } },
+        { name: "descend", seconds: 60, auto: { hover: true, tiltTo: 1, descend: true, toPad: true }, until: function (s) { return s.aboveGround < 0.4 && Math.abs(s.climbRate) < 0.5; } },
         { name: "landed", seconds: 5, controls: { throttle: 0 } },
         { name: "done", seconds: 2, controls: {} }
     ];
@@ -95,6 +95,7 @@
     var phase = "";
     var published = "";
     var holdHeading = null;
+    var helmChecked = false;
     var samples = [];
     var events = [];
     var crossings = [];
@@ -234,14 +235,16 @@
             pitchDeg: 180 / Math.PI * Math.asin(Math.max(-1, Math.min(1, Quat.getFront(c.rotation).y))),
             pitchRate: 180 / Math.PI * Vec3.dot(c.angularVelocity, Quat.getRight(c.rotation)),
             rollRate: -180 / Math.PI * Vec3.dot(c.angularVelocity, Quat.getFront(c.rotation)),
-            tilt: liveTilt(), airspeed: liveAirspeed(),
+            tilt: liveTilt(), airspeed: liveAirspeed(), wingLift: liveLift(),
             // the horizontal velocity: its speed and its compass heading, as the hull's heading is measured
             horizontalSpeed: Math.sqrt(c.velocity.x * c.velocity.x + c.velocity.z * c.velocity.z),
-            velocityHeading: 180 / Math.PI * Math.atan2(c.velocity.x, -c.velocity.z)
+            velocityHeading: 180 / Math.PI * Math.atan2(c.velocity.x, -c.velocity.z),
+            vx: c.velocity.x, vz: c.velocity.z
         };
     }
     function liveTilt() { var l = Entities.getVehicleStats().live; return l && l.tilt !== undefined ? l.tilt : 1; }
     function liveAirspeed() { var l = Entities.getVehicleStats().live; return l && l.airspeed !== undefined ? l.airspeed : 0; }
+    function liveLift() { var l = Entities.getVehicleStats().live; return l && l.wingLift !== undefined ? l.wingLift : 0; }
     function sample(dt) {
         var c = hullState();
         if (!c || !c.position) { return false; }
@@ -322,7 +325,17 @@
     // ---- the pilot's course and autopilot ----
     var controlsLogged = false;
     var HOVER_THROTTLE = 0.59;                  // the aircraft's thrust that carries its weight: 1,200 kg x 9.8 over 20 kN
+    var WEIGHT = 1200 * 9.8;                    // N, what the wing's lift is measured against
     var CRUISE_SPEED = 30;                      // m/s: the wing carries the weight at a lift coefficient of 0.9
+    var HOME_GAIN = 0.2;                        // /s: the homing speed per metre left to the pad (a 5 s approach constant)
+    var HOME_SPEED = 8;                         // m/s: the homing speed's cap
+    var HOME_DEAD = 0.5;                        // m: close enough; inside it the craft only kills its velocity
+    var HOVER_ATTITUDE = 24;                    // degrees of nose-down per unit of pitch input in hover, from the torque balance
+                                                // (pitch lever 0.5 x tail arm 4.5 over levelling lever 0.5 x span 11)
+    var HOVER_TRIM = 0.5 / (0.5 * 4.5);         // the pitch input that holds the nose level in hover: the thrust point is 0.5 m
+                                                // aft of the centre of mass, so the thrust pitches the nose down
+    var homeTrim = 0;                           // the rest of the trim, learned from the measured attitude
+    var autoT = null;
     // The aircraft's autopilot. Hover: the throttle holds height (divided by the vertical part of the tilted thrust),
     // the nacelles' tilt goes to its target, the nose pitches against the forward speed to stop (or toward the pad to
     // go), the heading by yaw. Flight: the throttle holds the airspeed, the elevator the height, the ailerons a bank
@@ -330,34 +343,57 @@
     function aircraftAutopilot(step, s, tt) {
         var c = { throttle: 0, steering: 0, pitch: 0, lift: 0, trim: 0 };
         var a = step.auto;
+        var dtA = autoT === null ? 0 : Math.max(0, Math.min(0.1, now() - autoT));
+        autoT = now();
         if (a.tiltTo !== undefined) {
             var d = a.tiltTo - s.tilt;
-            c.lift = Math.abs(d) < 0.02 ? 0 : (d > 0 ? 1 : -1);
+            c.lift = Math.abs(d) < 0.005 ? 0 : (d > 0 ? 1 : -1);
         }
         if (a.hover) {
             var climbWanted = a.climb !== undefined ? a.climb : a.descend ? (s.aboveGround > 15 ? -3.0 : s.aboveGround > 6 ? -1.5 : -0.4) : clamp1(0.15 * (a.height - s.height));
-            if (a.descend && s.aboveGround < 0.6) { climbWanted = -1.0; }
+            if (a.descend && s.aboveGround < 0.6) { climbWanted = -0.5; }
             var vertical = Math.max(0.35, Math.sin(s.tilt * Math.PI / 2));
-            c.throttle = Math.max(0.0, Math.min(1.0, (HOVER_THROTTLE + 0.08 * (climbWanted - s.climbRate)) / vertical));
+            // braking from forward flight, the wing still carries part of the weight: the thrust carries the rest
+            var wingShare = a.stop ? Math.max(0, Math.min(1, s.wingLift / WEIGHT)) : 0;
+            c.throttle = Math.max(0.0, Math.min(1.0, (HOVER_THROTTLE * (1 - wingShare) + 0.08 * (climbWanted - s.climbRate)) / vertical));
             if (a.tiltTo === 1 && s.tilt < 0.7) { c.throttle = 0; }   // no forward blast while the nacelles come up
             var along = s.speedAlong;
             // the nose against the speed: gently while the wing still flies (a brake from forward flight), fully in hover
             var pitchMax = s.airspeed > 15 ? 0.5 : 1.0;
             if (a.stop || a.toPad) {
-                // a hover has no sideways control: it turns to face its velocity and pitches against it; going to the pad
-                // it does the same until the velocity points at the pad, then faces the pad and holds a speed by the
-                // distance left
-                var velocityOff = wrap(s.velocityHeading - s.heading);
-                var toPadOff = a.toPad ? wrap(s.padBearing - s.velocityHeading) : 180;
-                var wanted = a.toPad ? Math.min(10.0, 0.3 * s.padDistance) : 0;
-                if (s.horizontalSpeed > (a.stop ? 3.0 : 6.0) && (a.stop || Math.abs(toPadOff) > 30)) {
-                    c.steering = clamp1(velocityOff / 60);
-                    c.pitch = Math.abs(velocityOff) < 60 ? Math.max(-pitchMax, Math.min(pitchMax, 0.4 * s.horizontalSpeed)) : 0;
-                } else {
-                    var bearingError = a.toPad ? wrap(s.padBearing - s.heading) : 0;
-                    c.steering = clamp1(bearingError / 90);
-                    c.pitch = Math.max(-pitchMax, Math.min(pitchMax, 0.4 * (along - (Math.abs(bearingError) < 30 ? wanted : 0))));
+                // The hover's horizontal law, designed on a replica of the hover (hover-replica.py, beside this file) after five flights
+                // circled the pad. The horizontal velocity wanted is toward the pad at a speed by the distance left (none
+                // when stopping, or inside the last half metre); the error from it is taken in the craft's frame. A hover
+                // has no sideways thrust, so the nose is turned along the correction (or the tail, when the correction is
+                // small or a stop and the tail is nearer: the craft backs up rather than turning round over the pad), and
+                // the nose-down attitude is set by the error along the nose, but only once the nose is within 15 degrees
+                // of the correction: thrust while the nose still turns swings the velocity as fast as the heading, and the
+                // two chase each other round. The yaw is throttled while the craft is pitched: a turn about a tilted axis
+                // banks it, and the bank pushes it sideways into a circle (8 degrees of bank at full yaw and 15 degrees
+                // of pitch, the flights showed). The attitude is commanded through the hover's torque balance, with the
+                // thrust point's trim fed forward and the rest learned from the measured attitude, so "no thrust" is
+                // exact: a residual of a third of a degree swings a creeping craft round. Braking from forward flight,
+                // the nose-up is held back by any climb, so the wing's extra lift does not carry the craft up.
+                var wantedSpeed = a.toPad ? Math.min(HOME_SPEED, HOME_GAIN * Math.max(0, s.padDistance - HOME_DEAD)) : 0;
+                var b = s.padBearing * Math.PI / 180, h = s.heading * Math.PI / 180;
+                var ex = wantedSpeed * Math.sin(b) - s.vx, ez = -wantedSpeed * Math.cos(b) - s.vz;
+                var eAlong = ex * Math.sin(h) - ez * Math.cos(h), eSide = ex * Math.cos(h) + ez * Math.sin(h);
+                var eMag = Math.sqrt(eAlong * eAlong + eSide * eSide);
+                var off = 180 / Math.PI * Math.atan2(eSide, eAlong);
+                if (a.stop || eMag < 4) {
+                    if (off > 90) { off -= 180; } else if (off < -90) { off += 180; }
                 }
+                c.steering = clamp1(off / 30) * Math.min(1, Math.max(0, (eMag - 0.05) / 0.15));
+                c.steering *= 3.0 / Math.max(3.0, Math.abs(s.pitchDeg));
+                var nose;
+                if (s.airspeed > 15) {
+                    nose = Math.min(pitchMax, 0.25 * s.speedAlong) - 0.2 * s.climbRate - (a.height !== undefined ? 0.05 * (s.height - a.height) : 0);
+                } else {
+                    var attitude = Math.abs(off) < 15 ? Math.max(-20, Math.min(20, 4.0 * eAlong)) : 0;   // degrees nose-down wanted
+                    homeTrim = Math.max(-0.3, Math.min(0.3, homeTrim + 0.05 * (-attitude - s.pitchDeg) * dtA));
+                    nose = HOVER_TRIM + homeTrim - attitude / HOVER_ATTITUDE;
+                }
+                c.pitch = Math.max(-pitchMax, Math.min(pitchMax, nose));
             } else {
                 // in the transition the speed is wanted; otherwise the nose comes up against it
                 c.pitch = a.tiltTo !== undefined && a.tiltTo < 1 ? 0 : Math.max(-pitchMax, Math.min(pitchMax, 0.4 * along));
@@ -508,6 +544,15 @@
                 setMode("helm");
             }
         } else if (mode === "helm") {
+            if (tt > 1 && !helmChecked) {
+                helmChecked = true;
+                var hp = Entities.getEntityProperties(hull, ["position", "rotation"]);
+                var seatAt = Vec3.sum(Vec3.sum(hp.position, Vec3.multiplyQbyV(hp.rotation, vec3Of(Rig.HELM.position))), { x: 0, y: 1.0, z: 0 });
+                if (Vec3.distance(MyAvatar.position, seatAt) > 1.5) {
+                    log("not at the helm after 1 s (at " + fmtV(MyAvatar.position) + ", the seat at " + fmtV(seatAt) + "): placed again");
+                    takeHelm();
+                }
+            }
             if (tt > 3) { setMode("course"); nextPhase(); }
         } else if (mode === "course") {
             if (tt >= COURSE[phaseIndex].seconds) {
