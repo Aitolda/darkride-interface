@@ -2059,6 +2059,67 @@ void Avatar::removeMaterial(graphics::MaterialPointer material, const std::strin
     }
 }
 
+void Avatar::updateAvatarMenu(float deltaTime) {
+    if (!_skeletonModel || !_skeletonModel->isLoaded() || !_skeletonModel->getRig().getAnimSkeleton()) {
+        return;
+    }
+    const QString url = _skeletonModel->getURL().toString();
+    if (url != _avatarMenuModelURL) {
+        // a newly loaded avatar: set its menu up, or clear the last one's
+        _avatarMenuModelURL = url;
+        if (!_avatarMenuHiddenParts.empty()) {
+            removeMaterial(_avatarMenuHideMaterial, _avatarMenuHiddenParts);
+            _avatarMenuHiddenParts.clear();
+        }
+        const HFMModel& model = _skeletonModel->getHFMModel();
+        _avatarMenu.setup(model.humanoid.avatarMenu, model, *_skeletonModel->getRig().getAnimSkeleton());
+        _skeletonModel->setOwnBlendshapeOverrides(QHash<int, float>());
+        _skeletonModel->getRig().setAvatarMenuPoses({});
+        emit avatarMenuChanged();
+    }
+    if (!_avatarMenu.isActive() || !_avatarMenu.update(deltaTime)) {
+        return;
+    }
+    QList<int> hidden = _avatarMenu.getHiddenParts().values();
+    std::sort(hidden.begin(), hidden.end());
+    std::string parts;
+    for (int part : hidden) {
+        parts += (parts.empty() ? "[" : ",") + std::to_string(part);
+    }
+    if (!parts.empty()) {
+        parts += "]";
+    }
+    if (parts != _avatarMenuHiddenParts) {
+        if (!_avatarMenuHiddenParts.empty()) {
+            removeMaterial(_avatarMenuHideMaterial, _avatarMenuHiddenParts);
+        }
+        if (!parts.empty()) {
+            if (!_avatarMenuHideMaterial) {
+                _avatarMenuHideMaterial = std::make_shared<graphics::Material>();
+                _avatarMenuHideMaterial->setOpacity(0.0f);
+                _avatarMenuHideMaterial->setOpacityMapMode(graphics::MaterialKey::OPACITY_MAP_BLEND);
+            }
+            const quint16 AVATAR_MENU_MATERIAL_PRIORITY = 1000;  // above the model's own and the usual material entities
+            addMaterial(graphics::MaterialLayer(_avatarMenuHideMaterial, AVATAR_MENU_MATERIAL_PRIORITY), parts);
+        }
+        _avatarMenuHiddenParts = parts;
+    }
+    _skeletonModel->setOwnBlendshapeOverrides(_avatarMenu.getOwnBlendshapes());
+    std::vector<std::pair<int, Rig::AvatarMenuPose>> poses;
+    const QHash<int, AvatarMenu::JointPose> joints = _avatarMenu.getJointPoses();
+    for (auto it = joints.begin(); it != joints.end(); ++it) {
+        Rig::AvatarMenuPose pose;
+        pose.hasTranslation = it.value().hasTranslation;
+        pose.hasRotation = it.value().hasRotation;
+        pose.hasScale = it.value().hasScale;
+        pose.translation = it.value().translation;
+        pose.rotation = it.value().rotation;
+        pose.scale = it.value().scale;
+        poses.emplace_back(it.key(), pose);
+    }
+    _skeletonModel->getRig().setAvatarMenuPoses(poses);
+}
+
 void Avatar::processMaterials() {
     assert(_skeletonModel);
     std::lock_guard<std::mutex> lock(_materialsLock);

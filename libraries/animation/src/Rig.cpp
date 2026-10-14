@@ -626,6 +626,7 @@ void Rig::initJointStates(const HFMModel& hfmModel, const glm::mat4& modelOffset
     setModelOffset(modelOffset);
 
     _animSkeleton = std::make_shared<AnimSkeleton>(hfmModel);
+    _rotationConstraints.setup(*_animSkeleton, _animSkeleton->getRotationConstraints());
 
     _internalPoseSet._relativePoses.clear();
     _internalPoseSet._relativePoses = _animSkeleton->getRelativeDefaultPoses();
@@ -670,6 +671,7 @@ void Rig::reset(const HFMModel& hfmModel) {
     _invGeometryOffset = _geometryOffset.inverse();
 
     _animSkeleton = std::make_shared<AnimSkeleton>(hfmModel);
+    _rotationConstraints.setup(*_animSkeleton, _animSkeleton->getRotationConstraints());
 
     _internalPoseSet._relativePoses.clear();
     _internalPoseSet._relativePoses = _animSkeleton->getRelativeDefaultPoses();
@@ -1686,6 +1688,20 @@ void Rig::updateAnimations(float deltaTime, const glm::mat4& rootTransform, cons
         ++_evaluationCount;
 
         updateAnimationStateHandlers();
+
+        // A hand's animation override (overrideHandAnimation) fades in over whatever else moves that hand's fingers,
+        // and out again when the hand is restored.
+        const float HAND_ANIM_FADE_RATE = 8.0f;  // per second
+        auto fadeHandAnim = [&](float& alpha, const HandAnimState& state) {
+            const float target = state.clipNodeEnum == HandAnimState::None ? 0.0f : 1.0f;
+            const float step = HAND_ANIM_FADE_RATE * deltaTime;
+            alpha = alpha < target ? std::min(target, alpha + step) : std::max(target, alpha - step);
+        };
+        fadeHandAnim(_leftHandAnimAlpha, _leftHandAnimState);
+        fadeHandAnim(_rightHandAnimAlpha, _rightHandAnimState);
+        _animVars.set("leftHandAnimAlpha", _leftHandAnimAlpha);
+        _animVars.set("rightHandAnimAlpha", _rightHandAnimAlpha);
+
         _animVars.setRigToGeometryTransform(_rigToGeometryTransform);
         if (_networkNode) {
             _networkVars.setRigToGeometryTransform(_rigToGeometryTransform);
@@ -1730,6 +1746,16 @@ void Rig::updateAnimations(float deltaTime, const glm::mat4& rootTransform, cons
     }
     
     applyOverridePoses();
+    applyAvatarMenuPoses(_internalPoseSet._relativePoses, false);
+    if (_sendNetworkNode) {
+        applyAvatarMenuPoses(_networkPoseSet._relativePoses, false);
+    }
+    if (!_rotationConstraints.isEmpty() && _animSkeleton) {
+        _rotationConstraints.apply(*_animSkeleton, _internalPoseSet._relativePoses);
+        if (_sendNetworkNode) {
+            _rotationConstraints.apply(*_animSkeleton, _networkPoseSet._relativePoses);
+        }
+    }
 
     buildAbsoluteRigPoses(_internalPoseSet._relativePoses, _internalPoseSet._absolutePoses);    
     _internalFlow.update(deltaTime, _internalPoseSet._relativePoses, _internalPoseSet._absolutePoses, _internalPoseSet._overrideFlags);
@@ -2142,13 +2168,25 @@ void Rig::updateEyeJoint(int index, const glm::vec3& modelTranslation, const glm
             headQuat = _internalPoseSet._absolutePoses[headIndex].rot();
         }
 
-        glm::vec3 headUp = headQuat * Vectors::UNIT_Y;
+        // With humanoid retargeting (Humanoid.h) the bones may point any way, so the head and the eye are taken
+        // relative to their default pose, in which the avatar looks along +Z with its head up along +Y. Otherwise
+        // the eye's frame is the head's, as on Mixamo's rig.
+        const bool humanoid = _animSkeleton && _animSkeleton->getHumanoidRetarget();
+        glm::quat headFrame = headQuat;
+        glm::quat eyeRest;
+        if (humanoid) {
+            const glm::quat headRest = headIndex >= 0 ? _animSkeleton->getAbsoluteDefaultPose(headIndex).rot() : glm::quat();
+            headFrame = headQuat * glm::inverse(headRest);
+            eyeRest = _animSkeleton->getAbsoluteDefaultPose(index).rot();
+        }
+
+        glm::vec3 headUp = headFrame * Vectors::UNIT_Y;
         glm::vec3 z, y, zCrossY;
         generateBasisVectors(lookAtVector, headUp, z, y, zCrossY);
         glm::mat3 m(-zCrossY, y, z);
         glm::quat desiredQuat = glm::normalize(glm::quat_cast(m));
 
-        glm::quat deltaQuat = desiredQuat * glm::inverse(headQuat);
+        glm::quat deltaQuat = desiredQuat * glm::inverse(headFrame);
 
         // limit swing rotation of the deltaQuat by a 25 degree cone.
         // TODO: use swing twist decomposition constraint instead, for off axis rotation clamping.
@@ -2158,7 +2196,7 @@ void Rig::updateEyeJoint(int index, const glm::vec3& modelTranslation, const glm
         }
 
         // directly set absolutePose rotation
-        _internalPoseSet._absolutePoses[index].rot() = deltaQuat * headQuat;
+        _internalPoseSet._absolutePoses[index].rot() = humanoid ? deltaQuat * headFrame * eyeRest : deltaQuat * headQuat;
 
         // Update eye joint's children.
         auto children = index == _leftEyeJointIndex ? _leftEyeJointChildren : _rightEyeJointChildren;
@@ -2664,6 +2702,28 @@ void Rig::copyJointsFromJointData(const QVector<JointData>& jointDataVec) {
         } else {
             // JointData translations are in relative-frame
             _internalPoseSet._relativePoses[i].trans() = data.translation;
+        }
+    }
+    applyAvatarMenuPoses(_internalPoseSet._relativePoses, true);
+}
+
+void Rig::applyAvatarMenuPoses(AnimPoseVec& relativePoses, bool scaleOnly) const {
+    for (const auto& entry : _avatarMenuPoses) {
+        if (entry.first < 0 || entry.first >= (int)relativePoses.size()) {
+            continue;
+        }
+        AnimPose& pose = relativePoses[entry.first];
+        const AvatarMenuPose& set = entry.second;
+        if (set.hasScale) {
+            pose.scale() = set.scale;
+        }
+        if (!scaleOnly) {
+            if (set.hasTranslation) {
+                pose.trans() = set.translation;
+            }
+            if (set.hasRotation) {
+                pose.rot() = set.rotation;
+            }
         }
     }
 }

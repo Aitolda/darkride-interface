@@ -759,6 +759,33 @@ public:
     Q_INVOKABLE void restoreHandAnimation(bool isLeft);
 
     /**jsdoc
+     * Gets the avatar's menu: an imported avatar's menu, and the parameters its menu and its animator
+     * use, each with its type, value and default. Both are empty when the avatar has none.
+     * @function MyAvatar.getAvatarMenu
+     * @returns {object} <code>{menu: {controls: [...]}, parameters: [{name, type, value, default, saved, synced,
+     *     builtin}]}</code>
+     */
+    Q_INVOKABLE QVariantMap getAvatarMenu() const;
+
+    /**jsdoc
+     * Sets one of the avatar's parameters (as the menu does), and the avatar follows: clothes shown or
+     * hidden, shape keys and bones set by its effects layer.
+     * @function MyAvatar.setAvatarParameter
+     * @param {string} name - The parameter's name.
+     * @param {number} value - Its value; a bool takes 0 or 1.
+     * @returns {boolean} <code>true</code> if the avatar has the parameter.
+     */
+    Q_INVOKABLE bool setAvatarParameter(const QString& name, float value);
+
+    /**jsdoc
+     * Gets one of the avatar's parameters.
+     * @function MyAvatar.getAvatarParameter
+     * @param {string} name - The parameter's name.
+     * @returns {number} Its value, 0 if the avatar has no such parameter.
+     */
+    Q_INVOKABLE float getAvatarParameter(const QString& name) const;
+
+    /**jsdoc
      * Gets the current animation roles.
      * <p>Each avatar has an avatar-animation.json file that defines which animations are used and how they are blended together 
      * with procedural data (such as look at vectors, hand sensors etc.). Each animation specified in the avatar-animation.json 

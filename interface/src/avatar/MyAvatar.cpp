@@ -900,6 +900,10 @@ void MyAvatar::simulate(float deltaTime, bool inView) {
         updateViewBoom();
     }
 
+    // The avatar's menu (an imported avatar's menu and effects layer) sets clothes, shape keys and joint poses
+    // before the rig animates.
+    updateAvatarMenu(deltaTime);
+
     // Head's look at blending needs updating
     // before we perform rig animations and IK.
     {
@@ -1218,6 +1222,18 @@ void MyAvatar::restoreAnimation() {
         return;
     }
     _skeletonModel->getRig().restoreAnimation();
+}
+
+QVariantMap MyAvatar::getAvatarMenu() const {
+    return QVariantMap { { "menu", _avatarMenu.getMenu().toVariantMap() }, { "parameters", _avatarMenu.getParameters() } };
+}
+
+bool MyAvatar::setAvatarParameter(const QString& name, float value) {
+    return _avatarMenu.setParameter(name, value);
+}
+
+float MyAvatar::getAvatarParameter(const QString& name) const {
+    return _avatarMenu.getParameter(name);
 }
 
 void MyAvatar::restoreHandAnimation(bool isLeft) {
