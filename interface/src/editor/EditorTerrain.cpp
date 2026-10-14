@@ -308,7 +308,7 @@ terrain::Brush EditorTerrain::voxelBrush(const RenderableTerrainEntityItem& enti
     brush.center = hit.voxelPoint;
     brush.radius = std::max(MIN_VOXEL_RADIUS, _brush.radius / metresPerVoxel);
     brush.hardness = glm::clamp(_brush.hardness, 0.0f, 1.0f);
-    brush.material = (uint8_t)glm::clamp(_brush.material, 0, 255);
+    brush.material = _stroking ? _strokeMaterial : (uint8_t)glm::clamp(_brush.material, 0, 255);
     brush.flattenHeight = _flattenHeight;
     brush.mask = _mask.get();
     brush.angle = glm::radians(_brush.angle);
@@ -414,7 +414,18 @@ bool EditorTerrain::beginStroke(const PickRay& ray, bool inverted, QString& refu
     _ray = ray;
     _hasRay = true;
     _strokeMode = inverted ? invert(_brush.mode) : _brush.mode;
-    _erasing = _brush.mode == terrain::SculptMode::Paint && _brush.erase != inverted;   // Shift swaps Paint and Erase
+    // Shift swaps Paint and Erase; with Paint Voxels (as its Erase box does) it writes the bottom layer's material
+    _erasing = (_brush.mode == terrain::SculptMode::Paint || _brush.mode == terrain::SculptMode::PaintVoxels) &&
+               _brush.erase != inverted;
+    _strokeMaterial = (uint8_t)glm::clamp(_brush.material, 0, 255);
+    if (_strokeMode == terrain::SculptMode::PaintVoxels && _erasing) {
+        if (auto entity = terrainEntity(_strokeId)) {
+            const std::vector<uint8_t> order = entity->getLayers().order();
+            if (!order.empty()) {
+                _strokeMaterial = order.front();
+            }
+        }
+    }
     _flattenHeight = hit.voxelPoint.y;
     _accumulated = STEP_MIN;   // the first step lands at once: a click alone does something
     _steps = 0;
@@ -572,7 +583,9 @@ void EditorTerrain::endStroke(bool cancel) {
                 }
             }
             if (!_before.empty() || !after.empty()) {
-                _undo->pushTerrainEdit(modeName(_strokeMode) + QStringLiteral(" Terrain"), _strokeId, _before, after);
+                const QString name = _strokeMode == terrain::SculptMode::PaintVoxels && _erasing ? QStringLiteral("Erase Voxels")
+                                                                                              : modeName(_strokeMode);
+                _undo->pushTerrainEdit(name + QStringLiteral(" Terrain"), _strokeId, _before, after);
                 entity->markCollisionShapeStale();
                 entity->gridEdited();
                 markChanged(_strokeId);

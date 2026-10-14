@@ -49,7 +49,8 @@ struct EditorTerrainBrush {
     float strength { 0.5f };    // 0 to 1
     float hardness { 0.5f };    // 0 to 1: the part of the radius with the full effect
     int material { 0 };
-    bool erase { false };       // Paint: erase the layer's paint instead, showing what is under it
+    bool erase { false };       // Paint: erase the layer's paint instead, showing what is under it; Paint Voxels: set the
+                                // bottom layer's material (the ground's own) instead of the chosen layer's
     QString shape;
     float angle { 0.0f };
 };
@@ -157,7 +158,9 @@ private:
     PickRay _ray;
     bool _hasRay { false };
     terrain::SculptMode _strokeMode { terrain::SculptMode::Raise };
-    bool _erasing { false };        // a Paint stroke with Shift: back toward the voxels' own material
+    bool _erasing { false };        // Paint with Shift (or the Erase mode): back toward the voxels' own material; Paint
+                                    // Voxels with Shift (or its Erase box): the bottom layer's material
+    uint8_t _strokeMaterial { 0 };  // the material this stroke's Raise, Fill or Paint Voxels writes
     float _flattenHeight { 0.0f };  // voxel units: where the stroke began
     float _accumulated { 0.0f };    // the brush's effect waiting to be applied as one step
     int _steps { 0 };

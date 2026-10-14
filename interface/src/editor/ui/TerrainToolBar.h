@@ -26,6 +26,7 @@
 class QAbstractSpinBox;
 class QAction;
 class QActionGroup;
+class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QMenu;
@@ -57,6 +58,8 @@ signals:
 private:
     // erase: the Paint mode's eraser, a mode of its own on the bar
     QAction* addMode(const QString& text, const QString& toolTip, terrain::SculptMode mode, bool erase = false);
+    // the Erase box serves Paint Voxels alone (Paint has its own Erase mode): enabled with that mode
+    void updateEraseVoxels();
     // The brush's shape: the round brush (an empty path) or a picture (terrain::BrushMask) from the client's
     // brushes (interface/resources/terrain/brushes) or a file; the thumbnail is the picture, or round.png.
     QAction* addShape(const QString& name, const QString& path, const QString& thumbnail);
@@ -64,6 +67,7 @@ private:
     void loadShapePicture();
 
     QActionGroup* _modes { nullptr };
+    QCheckBox* _eraseVoxels { nullptr };
     QToolButton* _shape { nullptr };
     QMenu* _shapeMenu { nullptr };
     QAction* _loadShape { nullptr };   // the menu's last entry: pictures loaded from disk go before it

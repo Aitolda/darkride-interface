@@ -21,6 +21,7 @@
 #include <QtGui/QPixmap>
 #include <QtWidgets/QAction>
 #include <QtWidgets/QActionGroup>
+#include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QFileDialog>
@@ -87,8 +88,8 @@ TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
             terrain::SculptMode::Paint);
     addMode("Erase", "Erase the layer's paint under the brush, showing the layers under it (the voxels' own material where "
             "nothing is painted); hold Shift to paint instead", terrain::SculptMode::Paint, true);
-    addMode("Paint Voxels", "Set the material of the ground voxels under the brush: what cliffs, caves and a dig show",
-            terrain::SculptMode::PaintVoxels);
+    addMode("Paint Voxels", "Set the material of the ground voxels under the brush: what cliffs, caves and a dig show; hold Shift, "
+            "or tick Erase, to set the bottom layer's material instead, the ground's own", terrain::SculptMode::PaintVoxels);
     addSeparator();
 
     auto addField = [this](const QString& label, QAbstractSpinBox* box, double scrubStep, bool proportional, const QString& toolTip) {
@@ -177,6 +178,14 @@ TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
                        "section sets it too");
     addWidget(_layer);
     refreshLayerNames();
+    _eraseVoxels = new QCheckBox("Erase", this);
+    _eraseVoxels->setFocusPolicy(Qt::NoFocus);
+    _eraseVoxels->setToolTip("Paint Voxels: set the bottom layer's material, the ground's own, instead of the chosen layer's, taking "
+                             "painted voxels back; Shift does the same while held");
+    addWidget(_eraseVoxels);
+    connect(_eraseVoxels, &QCheckBox::toggled, this, &TerrainToolBar::brushChanged);
+    connect(_modes, &QActionGroup::triggered, this, [this] { updateEraseVoxels(); });
+    updateEraseVoxels();
 
     for (auto box : { _size, _strength, _hardness, _angle }) {
         connect(box, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &TerrainToolBar::brushChanged);
@@ -300,7 +309,8 @@ EditorTerrainBrush TerrainToolBar::brush() const {
     if (auto checked = _modes->checkedAction()) {
         const int data = checked->data().toInt();
         brush.mode = (terrain::SculptMode)(data & ~ERASE_FLAG);
-        brush.erase = (data & ERASE_FLAG) != 0;
+        brush.erase = (data & ERASE_FLAG) != 0 ||
+                      (brush.mode == terrain::SculptMode::PaintVoxels && _eraseVoxels && _eraseVoxels->isChecked());
     }
     brush.radius = (float)_size->value();
     brush.strength = (float)_strength->value() / 100.0f;
@@ -315,10 +325,17 @@ void TerrainToolBar::setMode(terrain::SculptMode mode) {
     for (auto action : _modes->actions()) {
         if (action->data().toInt() == (int)mode) {   // the mode itself, not its eraser
             action->setChecked(true);
+            updateEraseVoxels();
             emit brushChanged();
             return;
         }
     }
+}
+
+void TerrainToolBar::updateEraseVoxels() {
+    auto checked = _modes->checkedAction();
+    const bool voxels = checked && (terrain::SculptMode)(checked->data().toInt() & ~ERASE_FLAG) == terrain::SculptMode::PaintVoxels;
+    _eraseVoxels->setEnabled(voxels);
 }
 
 void TerrainToolBar::setLayer(int slot) {
