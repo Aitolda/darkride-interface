@@ -6531,7 +6531,9 @@ void MyAvatar::addAvatarHandsToFlow(const std::shared_ptr<Avatar>& otherAvatar) 
  * @property {number} [damping=0.85] - The fraction of velocity kept per 60 Hz step (<code>1 - drag</code>).
  * @property {number} [stiffness=0.0] - How hard each joint springs back to its modelled rest direction.
  * @property {number} [delta=0.55] - Legacy scale on gravity and stiffness; leave at the default.
- * @property {number} [maxAngle=75] - The most, in degrees, a bone may swing away from its rest direction.
+ * @property {number} [maxAngle=45] - The most, in degrees, a bone may swing away from its rest direction.
+ * @property {number} [lift=0] - Degrees each bone's rest direction is curled up from the model's pose, for a tail or
+ *     hair modelled hanging limper than wanted.
  */
 /**jsdoc
  * Collision options to use in the flow simulation of a joint.
@@ -6589,6 +6591,9 @@ void MyAvatar::useFlow(bool isActive, bool isCollidable, const QVariantMap& phys
                 }
                 if (settings.contains("maxAngle")) {
                     physicsSettings._maxAngle = settings["maxAngle"].toFloat();
+                }
+                if (settings.contains("lift")) {
+                    physicsSettings._lift = settings["lift"].toFloat();
                 }
                 flow.setPhysicsSettingsForGroup(groupName, physicsSettings);
             }
@@ -6704,6 +6709,7 @@ QVariantMap MyAvatar::getFlowData() {
             settingsObject.insert("radius", groupSettings._radius);
             settingsObject.insert("stiffness", groupSettings._stiffness);
             settingsObject.insert("maxAngle", groupSettings._maxAngle);
+            settingsObject.insert("lift", groupSettings._lift);
             settingsObject.insert("jointIndices", groupJointsMap[groupName]);
             physicsData.insert(groupName, settingsObject);
         }

@@ -17,6 +17,7 @@
 #ifndef hifi_Flow_h
 #define hifi_Flow_h
 
+#include <cmath>
 #include <memory>
 #include <qstring.h>
 #include <glm/glm.hpp>
@@ -45,9 +46,13 @@ const float DEFAULT_DAMPING = 0.85f;
 const float DEFAULT_INERTIA = 0.8f;
 const float DEFAULT_DELTA = 0.55f;
 const float DEFAULT_RADIUS = 0.01f;
-const float DEFAULT_MAX_ANGLE = 75.0f;  // degrees a bone may swing away from its rest direction
+const float DEFAULT_MAX_ANGLE = 45.0f;  // degrees a bone may swing away from its rest direction
+const float DEFAULT_LIFT = 0.0f;        // degrees each bone's rest direction is curled up from the model's pose
 
-// The fixed simulation step. A frame slower than FLOW_MAX_STEPS_PER_FRAME steps drops the remainder.
+// The reference step: the settings are expressed per 1/60 s. Each frame is simulated in one step of the
+// frame's own length, or in up to FLOW_MAX_STEPS_PER_FRAME equal steps when it is longer than a step and a
+// half; a frame longer than the steps cover is cut to them. (A fixed step at the display's own rate skipped
+// and doubled frames whenever the two drifted against each other.)
 const float FLOW_STEP_HZ = 60.0f;
 const float FLOW_STEP = 1.0f / FLOW_STEP_HZ;
 const int FLOW_MAX_STEPS_PER_FRAME = 4;
@@ -60,7 +65,7 @@ const float FLOW_MAX_BODY_ACCELERATION = 30.0f; // m/s^2
 
 struct FlowPhysicsSettings {
     FlowPhysicsSettings() {};
-    FlowPhysicsSettings(bool active, float stiffness, float gravity, float damping, float inertia, float delta, float radius, float maxAngle = DEFAULT_MAX_ANGLE) {
+    FlowPhysicsSettings(bool active, float stiffness, float gravity, float damping, float inertia, float delta, float radius, float maxAngle = DEFAULT_MAX_ANGLE, float lift = DEFAULT_LIFT) {
         _active = active;
         _stiffness = stiffness;
         _gravity = gravity;
@@ -69,6 +74,7 @@ struct FlowPhysicsSettings {
         _delta = delta;
         _radius = radius;
         _maxAngle = maxAngle;
+        _lift = lift;
     }
     bool _active{ true };
     float _stiffness{ DEFAULT_STIFFNESS };
@@ -78,12 +84,26 @@ struct FlowPhysicsSettings {
     float _delta{ DEFAULT_DELTA };
     float _radius{ DEFAULT_RADIUS };
     float _maxAngle{ DEFAULT_MAX_ANGLE };
+    float _lift{ DEFAULT_LIFT };
 
-    // Physical meanings. The old step moved a node by stiffness^3 * delta^2 * (rest - pos) and by
-    // gravity * delta^2 per frame^2 at 60 Hz; expressed per second^2 that is a factor of 3600.
-    float springRate() const { return _stiffness * _stiffness * _stiffness * _delta * _delta * FLOW_STEP_HZ * FLOW_STEP_HZ; }  // 1/s^2
+    // Physical meanings. Gravity keeps what the old step produced at 60 Hz (gravity * delta^2 per frame^2,
+    // a factor of 3600 per second^2: -0.0096 is about -10.5 m/s^2). Stiffness is a spring toward the rest
+    // position: at 1 it closes the whole gap in one step; under default gravity a bone droops about 3/stiffness
+    // millimetres (the old cubic law left anything under 0.7 hanging limp).
+    float springRate() const { return glm::clamp(_stiffness, 0.0f, 1.0f) * FLOW_STEP_HZ * FLOW_STEP_HZ; }  // 1/s^2
     float gravityAcceleration() const { return _gravity * _delta * _delta * FLOW_STEP_HZ * FLOW_STEP_HZ; }  // m/s^2
     float drag() const { return glm::clamp(1.0f - _damping, 0.0f, 1.0f); }  // velocity lost per step
+    // How much of the gap to the rest position a step closes: springRate * dt^2, never more than all of it.
+    float springStep(float dt) const { return glm::clamp(springRate() * dt * dt, 0.0f, 1.0f); }
+    // The fraction of its velocity a node keeps over a step: the FST damping (given per 1/60 s) scaled to the
+    // step, or less when the spring needs it. The stepped spring x' = x + c(x - x_prev) + K(rest - x) is
+    // critically damped (no ringing, fastest return) at c = (1 - sqrt(K))^2; anything above that rings.
+    float velocityKept(float dt) const {
+        float kept = powf(1.0f - drag(), dt * FLOW_STEP_HZ);
+        float K = springStep(dt);
+        float critical = (1.0f - sqrtf(K)) * (1.0f - sqrtf(K));
+        return glm::min(kept, critical);
+    }
     // How much of the avatar's acceleration the chain feels: 1 is all of it, 0 makes the chain ignore the
     // avatar's movement (it still swings with the joints it hangs from).
     float inertiaBlend() const { return glm::clamp(_inertia, 0.0f, 1.0f); }
@@ -287,7 +307,6 @@ private:
 
     float _scale { 1.0f };
     float _lastScale{ 1.0f };
-    float _timeAccumulator { 0.0f };
     glm::vec3 _entityPosition;
     glm::quat _entityRotation;
     glm::vec3 _lastEntityPosition;

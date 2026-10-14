@@ -155,6 +155,11 @@
     var SPIN_RATE = 180;           // degrees per second
     var CHANNEL = "flow-metrics";
     var LIFETIME = 600;            // s; on a domain the ground the test makes expires on its own
+    // Group settings to try instead of the avatar's own (what a changed FST would give), applied once flow is up.
+    // Give every key of a group you override: MyAvatar.useFlow starts each listed group from the defaults.
+    var FLOW_OVERRIDES = {
+        Tail: { active: true, stiffness: 0.6, radius: 0.01, gravity: -0.0096, damping: 0.85, inertia: 0.8, delta: 0.55, maxAngle: 25, lift: 12 }
+    };
 
     var previousAvatar = MyAvatar.skeletonModelURL;
     var t0 = Date.now() / 1000;
@@ -203,6 +208,15 @@
         }
         if (count > 0) {
             log("flow ready: " + count + " chains, groups " + JSON.stringify(Object.keys(data.physics)));
+            // the modelled (bind pose) shape of each chain, in the avatar's frame: where the chain rests with no gravity
+            for (var chainName in threads) {
+                var root = MyAvatar.getAbsoluteDefaultJointTranslationInObjectFrame(threads[chainName][0]);
+                var tipIndex = threads[chainName][threads[chainName].length - 1];
+                var tip = MyAvatar.getAbsoluteDefaultJointTranslationInObjectFrame(tipIndex);
+                var rel = Vec3.subtract(tip, root);
+                log("bind pose " + chainName + " tip-root=" + JSON.stringify({ x: +rel.x.toFixed(3), y: +rel.y.toFixed(3), z: +rel.z.toFixed(3) }) +
+                    " root=" + JSON.stringify({ x: +root.x.toFixed(2), y: +root.y.toFixed(2), z: +root.z.toFixed(2) }));
+            }
             for (var group in data.physics) {
                 var p = data.physics[group];
                 log("group " + group + " stiffness=" + p.stiffness + " damping=" + p.damping + " inertia=" + p.inertia +
@@ -225,6 +239,20 @@
             log("ground created");
         }
         MyAvatar.position = { x: 0, y: 1.5, z: 0 };
+    }
+
+    function applyOverrides() {
+        if (Object.keys(FLOW_OVERRIDES).length === 0) {
+            return;
+        }
+        MyAvatar.useFlow(true, true, FLOW_OVERRIDES, {});
+        var data = MyAvatar.getFlowData();
+        for (var group in FLOW_OVERRIDES) {
+            var p = data.physics[group];
+            if (p) {
+                log("override " + group + " stiffness=" + p.stiffness + " maxAngle=" + p.maxAngle + " lift=" + p.lift + " inertia=" + p.inertia);
+            }
+        }
     }
 
     var republished = false;
@@ -256,7 +284,7 @@
 
     var phases = [
         { name: "boot", dur: 60, until: flowReady },
-        { name: "ready", dur: 3, enter: function () { ensureGround(); publishThreads(); }, update: republishThreads },
+        { name: "ready", dur: 3, enter: function () { ensureGround(); applyOverrides(); publishThreads(); }, update: republishThreads },
         { name: "stand", dur: 3 },
         { name: "walk", dur: 6, enter: startWalk },
         { name: "stop", dur: 4, enter: stopWalk },
@@ -279,7 +307,9 @@
     }
 
     function record(t) {
-        var sample = { t: t, phase: phase.name, pos: [MyAvatar.position.x, MyAvatar.position.y, MyAvatar.position.z], threads: {} };
+        var ori = MyAvatar.orientation;
+        var sample = { t: t, phase: phase.name, pos: [MyAvatar.position.x, MyAvatar.position.y, MyAvatar.position.z],
+            ori: [ori.x, ori.y, ori.z, ori.w], threads: {} };
         for (var name in threads) {
             var indices = threads[name];
             var positions = [];

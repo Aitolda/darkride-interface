@@ -17,8 +17,8 @@
 #include "AnimSkeleton.h"
 
 const std::map<QString, FlowPhysicsSettings> PRESET_FLOW_DATA = { { "hair", FlowPhysicsSettings() },
-{ "skirt", FlowPhysicsSettings(true, 1.0f, DEFAULT_GRAVITY, 0.65f, 0.8f, 0.45f, 0.01f, 45.0f) },
-{ "breast", FlowPhysicsSettings(true, 1.0f, DEFAULT_GRAVITY, 0.65f, 0.8f, 0.45f, 0.01f, 30.0f) } };
+{ "skirt", FlowPhysicsSettings(true, 0.3f, DEFAULT_GRAVITY, 0.65f, 0.8f, 0.45f, 0.01f, 45.0f) },
+{ "breast", FlowPhysicsSettings(true, 0.5f, DEFAULT_GRAVITY, 0.65f, 0.8f, 0.45f, 0.01f, 30.0f) } };
 
 const std::map<QString, FlowCollisionSettings> PRESET_COLLISION_DATA = {
     { "Spine2", FlowCollisionSettings(QUuid(), FlowCollisionType::CollisionSphere, glm::vec3(0.0f, 0.2f, 0.0f), 0.14f) },
@@ -29,6 +29,19 @@ const std::map<QString, FlowCollisionSettings> PRESET_COLLISION_DATA = {
 
 // A chain root that moves further than this in one frame has teleported; the chain restarts at rest.
 const float FLOW_TELEPORT_DISTANCE = 1.0f;
+
+// The rest direction curled up (toward world up) by `degrees`, for a group whose model hangs limper than wanted.
+static glm::vec3 liftDirection(const glm::vec3& direction, float degrees) {
+    if (degrees == 0.0f) {
+        return direction;
+    }
+    glm::vec3 axis = glm::cross(direction, Vectors::UP);
+    float axisLength = glm::length(axis);
+    if (axisLength < EPSILON) {
+        return direction;   // already straight up or down: no sideways to curl from
+    }
+    return glm::angleAxis(glm::radians(degrees), axis / axisLength) * direction;
+}
 
 static glm::vec3 closestPointOnSegment(const glm::vec3& a, const glm::vec3& b, const glm::vec3& point) {
     glm::vec3 ab = b - a;
@@ -270,12 +283,12 @@ void FlowThread::reset() {
     for (size_t i = 1; i < _joints.size(); i++) {
         FlowJoint& parent = joints[_joints[i - 1]];
         FlowJoint& node = joints[_joints[i]];
-        glm::vec3 restDirection = glm::normalize(worldRotation * parent._restDirection);
+        glm::vec3 restDirection = liftDirection(glm::normalize(worldRotation * parent._restDirection), node._settings._lift);
         node._currentPosition = node._previousPosition = parent._currentPosition + restDirection * node._length;
+        parent._worldRotation = rotationBetween(glm::normalize(worldRotation * parent._restDirection), restDirection) * worldRotation;
         node._colliding = false;
-        parent._worldRotation = worldRotation;
-        parent._currentRotation = parent._animRotation;
-        worldRotation = worldRotation * node._animRotation;
+        parent._currentRotation = glm::inverse(worldRotation * glm::inverse(parent._animRotation)) * parent._worldRotation;
+        worldRotation = parent._worldRotation * node._animRotation;
     }
     FlowJoint& tip = joints[_joints.back()];
     tip._worldRotation = worldRotation;
@@ -303,7 +316,11 @@ void FlowThread::step(float dt, const glm::vec3& rootPosition, const glm::quat& 
 
         // where the bone would point if the parent kept its animated rotation under the fitted chain above it
         glm::quat parentRestRotation = grandparentRotation * parent._animRotation;
-        glm::vec3 restDirection = glm::normalize(parentRestRotation * parent._restDirection);
+        glm::vec3 restDirection = liftDirection(glm::normalize(parentRestRotation * parent._restDirection), settings._lift);
+        if (settings._lift != 0.0f) {
+            // the lifted rest is the pose the rotation fit measures from
+            parentRestRotation = rotationBetween(glm::normalize(parentRestRotation * parent._restDirection), restDirection) * parentRestRotation;
+        }
         float length = node._length;
         glm::vec3 restPosition = parent._currentPosition + restDirection * length;
         glm::vec3 direction = restDirection;
@@ -311,12 +328,12 @@ void FlowThread::step(float dt, const glm::vec3& rootPosition, const glm::quat& 
         if (settings._active) {
             glm::vec3 velocity = node._currentPosition - node._previousPosition;
             glm::vec3 gravity(0.0f, settings.gravityAcceleration(), 0.0f);
-            glm::vec3 spring = (restPosition - node._currentPosition) * settings.springRate();
             // in the avatar's frame its acceleration is felt as a force the other way
             glm::vec3 inertia = -bodyAcceleration * settings.inertiaBlend();
             glm::vec3 next = node._currentPosition
-                + velocity * (1.0f - settings.drag())
-                + (gravity + spring + inertia) * dt2;
+                + velocity * settings.velocityKept(dt)
+                + (restPosition - node._currentPosition) * settings.springStep(dt)
+                + (gravity + inertia) * dt2;
             node._previousPosition = node._currentPosition;
 
             // the bone keeps its length
@@ -498,7 +515,6 @@ void Flow::calculateConstraints(const std::shared_ptr<AnimSkeleton>& skeleton,
             _collisionSystem.addCollisionSphere(handsIndices[i], handSettings, glm::vec3(), true, true);
         }
     }
-    _timeAccumulator = 0.0f;
     _hasBodyMotion = false;
     _initialized = _jointThreads.size() > 0;
 }
@@ -508,7 +524,6 @@ void Flow::cleanUp() {
     _jointThreads.clear();
     _flowJointKeywords.clear();
     _collisionSystem.resetCollisions();
-    _timeAccumulator = 0.0f;
     _hasBodyMotion = false;
     _initialized = false;
     onCleanup();
@@ -554,14 +569,14 @@ void Flow::update(float deltaTime, AnimPoseVec& relativePoses, AnimPoseVec& abso
     }
     _lastEntityPosition = _entityPosition;
 
-    // fixed steps; a long frame gets at most FLOW_MAX_STEPS_PER_FRAME and the rest of its time is dropped
-    _timeAccumulator += glm::max(deltaTime, 0.0f);
-    int steps = (int)(_timeAccumulator / FLOW_STEP);
-    if (steps > FLOW_MAX_STEPS_PER_FRAME) {
-        steps = FLOW_MAX_STEPS_PER_FRAME;
-        _timeAccumulator = 0.0f;
-    } else {
-        _timeAccumulator -= steps * FLOW_STEP;
+    // one step of the frame's length, or several equal ones for a long frame; a very long frame is cut short
+    float frameTime = glm::clamp(deltaTime, 0.0f, FLOW_MAX_STEPS_PER_FRAME * FLOW_STEP);
+    int steps = glm::clamp((int)(frameTime / FLOW_STEP + 0.5f), 1, FLOW_MAX_STEPS_PER_FRAME);
+    float stepTime = frameTime / (float)steps;
+    if (stepTime <= 0.0f) {
+        setJoints(relativePoses, overrideFlags);
+        updateAbsolutePoses(relativePoses, absolutePoses);
+        return;
     }
 
     for (auto& thread : _jointThreads) {
@@ -589,16 +604,12 @@ void Flow::update(float deltaTime, AnimPoseVec& relativePoses, AnimPoseVec& abso
             thread._lastRootParentRotation = rootParentRotation;
             thread._hasLastRoot = true;
         }
-        if (steps == 0) {
-            // faster than the step: the chain rides along rigidly until the next step catches up
-            continue;
-        }
         // the root glides from where it was to where it is across the steps of this frame
         for (int s = 1; s <= steps; s++) {
             float alpha = (float)s / (float)steps;
             glm::vec3 stepPosition = glm::mix(thread._lastRootPosition, rootPosition, alpha);
             glm::quat stepRotation = safeMix(thread._lastRootParentRotation, rootParentRotation, alpha);
-            thread.step(FLOW_STEP, stepPosition, stepRotation, _bodyAcceleration, _scale, _collisionSystem);
+            thread.step(stepTime, stepPosition, stepRotation, _bodyAcceleration, _scale, _collisionSystem);
         }
         thread._lastRootPosition = rootPosition;
         thread._lastRootParentRotation = rootParentRotation;
