@@ -171,6 +171,9 @@ const TestPose TEST_POSES[] = {
     { "LeftUpLeg", { 1.0f, 0.0f, 0.0f }, -60.0f, "left hip forward 60" },
     { "Spine1", { 1.0f, 0.0f, 0.0f }, 30.0f, "spine bent forward 30" },
     { "Neck", { 0.0f, 1.0f, 0.0f }, 60.0f, "head turned 60" },
+    // at the head joint itself, so the jaw line between neck and head bends (a nod opened Chloe's mouth, 10-13)
+    { "Head", { 1.0f, 0.0f, 0.0f }, 25.0f, "head nodded forward 25" },
+    { "Head", { 1.0f, 0.0f, 0.0f }, -25.0f, "head tilted back 25" },
 };
 
 // Every joint at or below a joint, given each joint's parent.

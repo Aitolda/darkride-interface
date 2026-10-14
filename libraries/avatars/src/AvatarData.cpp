@@ -13,6 +13,7 @@
 #include "AvatarData.h"
 
 #include <cstdio>
+#include <map>
 #include <cstring>
 #include <stdint.h>
 
@@ -2002,11 +2003,28 @@ int AvatarData::getFauxJointIndex(const QString& name) const {
 
 int AvatarData::getJointIndex(const QString& name) const {
     int result = getFauxJointIndex(name);
+    if (result == -1) {
+        // an avatar this process does not draw: its joints are named by the skeleton its client sent
+        _avatarSkeletonDataLock.withReadLock([&] {
+            for (const auto& joint : _avatarSkeletonData) {
+                if (joint.jointName == name) {
+                    result = joint.jointIndex;
+                    break;
+                }
+            }
+        });
+    }
     return result;
 }
 
 QStringList AvatarData::getJointNames() const {
-    return QStringList();
+    QStringList names;
+    _avatarSkeletonDataLock.withReadLock([&] {
+        for (const auto& joint : _avatarSkeletonData) {
+            names << joint.jointName;
+        }
+    });
+    return names;
 }
 
 glm::quat AvatarData::getOrientationOutbound() const {
@@ -2047,7 +2065,10 @@ void AvatarData::processAvatarIdentity(
         // set the store identity sequence number to match the incoming identity
         _identitySequenceNumber = incomingSequenceNumber;
 
-        if (identity.skeletonModelURL != _skeletonModelURL) {
+        // An identity carries the wire-safe address, blank for an avatar on this machine (file:, qrc:). The mixer sends
+        // our own identity back once when we join, and that blank must not swap a local avatar for the default one.
+        if (identity.skeletonModelURL != _skeletonModelURL &&
+            identity.skeletonModelURL != getWireSafeSkeletonModelURL()) {
             setSkeletonModelURL(identity.skeletonModelURL);
             identityChanged = true;
             skeletonModelURLChanged = true;
@@ -2946,13 +2967,90 @@ void AvatarData::setOrientationViaScript(const glm::quat& orientation) {
     SpatiallyNestable::setWorldOrientation(orientation);
 }
 
+// An avatar this process does not draw (every other avatar, in an assignment-client agent) has no rig, so its joints'
+// poses come from the skeleton its client sent (names, parents, rest pose) and its latest joint data, built the way the
+// client's rig builds them (Rig::buildAbsoluteRigPoses):
+// - a joint's rotation arrives in the rig frame, and so does the skeleton's rest rotation (Rig::copyJointsIntoJointData);
+// - its translation from its parent arrives in the model's own units (centimetres for most files), and is scaled into the
+//   rig frame by the model-to-rig scale, which is not sent as such: the skeleton gives each joint's own scale over it
+//   (Avatar::getSkeletonDefaultData), and a joint's own scale is 1, so the most common value is its inverse;
+// - the client places the model so the root's rest position is the rig frame's origin (Rig::getModelRegistrationPoint).
+// A joint the client left at its rest pose takes the skeleton's. Measured against the drawing client: see body language.
+bool AvatarData::getSkeletonPosesInRigFrame(std::vector<glm::quat>& rotations, std::vector<glm::vec3>& translations) const {
+    const std::vector<AvatarSkeletonTrait::UnpackedJointData> skeleton = getSkeletonData();
+    if (skeleton.empty()) {
+        return false;
+    }
+    QVector<JointData> joints;
+    {
+        QReadLocker readLock(&_jointDataLock);
+        joints = _jointData;
+    }
+    const int count = (int)skeleton.size();
+    rotations.assign(count, glm::quat());
+    translations.assign(count, glm::vec3(0.0f));
+    std::vector<int> slot(count, -1);  // a joint index's place in the skeleton
+    for (int i = 0; i < count; i++) {
+        if (skeleton[i].jointIndex >= 0 && skeleton[i].jointIndex < count) {
+            slot[skeleton[i].jointIndex] = i;
+        }
+    }
+    std::map<float, int> scaleVotes;
+    for (const auto& joint : skeleton) {
+        if (joint.defaultScale > 0.0f) {
+            scaleVotes[joint.defaultScale]++;
+        }
+    }
+    float modelToRig = 1.0f;
+    int votes = 0;
+    for (const auto& vote : scaleVotes) {
+        if (vote.second > votes) {
+            votes = vote.second;
+            modelToRig = 1.0f / vote.first;
+        }
+    }
+    // parents usually come before children; a pass solves every joint whose parent is solved
+    std::vector<bool> solved(count, false);
+    int solvedCount = 0;
+    for (int pass = 0; pass < count && solvedCount < count; pass++) {
+        for (int j = 0; j < count; j++) {
+            if (solved[j] || slot[j] < 0) {
+                continue;
+            }
+            const auto& joint = skeleton[slot[j]];
+            const int parent = joint.parentIndex;
+            const bool hasParent = parent >= 0 && parent < count;
+            if (hasParent && !solved[parent]) {
+                continue;
+            }
+            const bool sentRotation = j < joints.size() && !joints[j].rotationIsDefaultPose;
+            const bool sentTranslation = j < joints.size() && !joints[j].translationIsDefaultPose;
+            rotations[j] = sentRotation ? joints[j].rotation : joint.defaultRotation;
+            const glm::vec3 fromParent = sentTranslation ? joints[j].translation : joint.defaultTranslation;
+            translations[j] = hasParent ? translations[parent] + rotations[parent] * (modelToRig * fromParent)
+                                        : modelToRig * (fromParent - joint.defaultTranslation);
+            solved[j] = true;
+            solvedCount++;
+        }
+    }
+    return true;
+}
+
 glm::quat AvatarData::getAbsoluteJointRotationInObjectFrame(int index) const {
-    assert(false);
+    std::vector<glm::quat> rotations;
+    std::vector<glm::vec3> translations;
+    if (index >= 0 && getSkeletonPosesInRigFrame(rotations, translations) && index < (int)rotations.size()) {
+        return Quaternions::Y_180 * rotations[index];
+    }
     return glm::quat();
 }
 
 glm::vec3 AvatarData::getAbsoluteJointTranslationInObjectFrame(int index) const {
-    assert(false);
+    std::vector<glm::quat> rotations;
+    std::vector<glm::vec3> translations;
+    if (index >= 0 && getSkeletonPosesInRigFrame(rotations, translations) && index < (int)translations.size()) {
+        return Quaternions::Y_180 * translations[index];
+    }
     return glm::vec3();
 }
 

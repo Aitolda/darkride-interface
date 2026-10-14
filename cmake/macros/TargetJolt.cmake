@@ -60,7 +60,9 @@ macro(TARGET_JOLT)
         set(JPH_USE_MTL OFF)
         set(JPH_USE_CPU_COMPUTE OFF)
         include("${joltphysics_SOURCE_DIR}/Jolt/Jolt.cmake")
-        set_target_properties(Jolt PROPERTIES FOLDER "hidden/externals")
+        # Jolt is a static library linked into the physics shared library, so its code must be position
+        # independent: macOS makes all code so, Linux does not, and the link fails there without it.
+        set_target_properties(Jolt PROPERTIES FOLDER "hidden/externals" POSITION_INDEPENDENT_CODE ON)
     endif()
     target_link_libraries(${TARGET_NAME} Jolt)
 endmacro()

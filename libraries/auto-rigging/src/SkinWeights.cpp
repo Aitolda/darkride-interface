@@ -230,6 +230,8 @@ void autorig::computeSkinWeights(const Body& body, const VoxelBody& voxels, cons
         // do, and only where the point is near that bone at all
         std::vector<int> parentOf(influenceCount, -1);
         std::vector<glm::vec3> direction(influenceCount, glm::vec3(0.0f, 1.0f, 0.0f));
+        std::vector<glm::vec3> face(influenceCount, glm::vec3(0.0f));     // the head's: toward the face
+        std::vector<glm::vec3> leaning(influenceCount, glm::vec3(0.0f));  // the head's plane in front of it
         const StandardSkeleton& standard = StandardSkeleton::get();
         for (int i = 0; i < influenceCount; i++) {
             const int j = influences[i];
@@ -245,6 +247,20 @@ void autorig::computeSkinWeights(const Body& body, const VoxelBody& voxels, cons
             const glm::vec3 along = joints[bone].position - joints[j].position;
             if (glm::length(along) > 0.0f) {
                 direction[i] = glm::normalize(along);
+            }
+            // the head hands over to the neck along the jaw line, as hand-painted rigs do: in front of the head joint
+            // its plane leans 30 degrees down toward the face, so the chin and lower lip, below the head joint, are
+            // the head's and the throat stays the neck's; behind, it stays level, where the neck meets the skull. A
+            // level plane all round gave the chin to the neck, and a talking animation's nod opened the mouth (Chloe,
+            // 10-13).
+            if (joints[j].name == "Head") {
+                const glm::vec3 up = direction[i];
+                const glm::vec3 forward = glm::vec3(0.0f, 0.0f, 1.0f) - up * up.z;
+                if (glm::length(forward) > 0.0f) {
+                    const float lean = glm::radians(30.0f);
+                    face[i] = glm::normalize(forward);
+                    leaning[i] = glm::normalize(std::cos(lean) * up + std::sin(lean) * face[i]);
+                }
             }
         }
         const float sharpness = std::max(options.sharpness, 0.1f);
@@ -283,10 +299,15 @@ void autorig::computeSkinWeights(const Body& body, const VoxelBody& voxels, cons
                 if (pair <= 0.0f) {
                     continue;
                 }
-                // the hip joint hands over across a wider band: hand-painted rigs share the buttock between hips and leg
-                const float width = joints[influences[i]].name.endsWith("UpLeg") ? 2.0f * options.blend : options.blend;
+                // the hip joint hands over across a wider band: hand-painted rigs share the buttock between hips and leg;
+                // the head across a narrow one, a crisp jaw line
+                const QString& name = joints[influences[i]].name;
+                const float width = name.endsWith("UpLeg") ? 2.0f * options.blend
+                                    : name == "Head"      ? 0.4f * options.blend
+                                                          : options.blend;
                 const float halfBand = std::max(width * radius[i], size);
-                const float along = glm::dot(welded[w] - joints[influences[i]].position, direction[i]);
+                const glm::vec3 offset = welded[w] - joints[influences[i]].position;
+                const float along = glm::dot(offset, glm::dot(offset, face[i]) > 0.0f ? leaning[i] : direction[i]);
                 const float t = glm::clamp((along + halfBand) / (2.0f * halfBand), 0.0f, 1.0f);
                 const float f = t * t * (3.0f - 2.0f * t);
                 out[i] = pair * f;

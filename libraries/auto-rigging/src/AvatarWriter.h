@@ -30,8 +30,13 @@ struct WrittenAvatar {
 // +Z, the standard skeleton under one root with Mixamo's joint axes, the meshes with their materials, skin clusters and
 // a bind pose), the textures the model uses copied beside it, and <name>.fst. sourcePath is the file the model was
 // read from, for finding its textures. The body must be the one gathered from the model and rigged.
+// Whether the writer flips texture V, so a model whose textures the engine draws upside down comes out the right way
+// up. Detect decides from the textures' seams (a note says what it measured); Always and Never decide by hand. A model
+// read right, as Chloe's rip is, is kept: her upside-down textures (10-13) came from the writer, now fixed.
+enum class FlipV { Detect, Always, Never };
+
 WrittenAvatar writeAvatar(const hfm::Model& model, const Body& body, const Result& rig, const QString& sourcePath,
-                          const QString& folder, const QString& name);
+                          const QString& folder, const QString& name, FlipV flipV = FlipV::Detect);
 
 // Writes an .fst: the avatar's name, its model file (a path beside the .fst, or a URL) at a scale of one, and the
 // joints the engine treats specially, by their standard names. False if it cannot be written.

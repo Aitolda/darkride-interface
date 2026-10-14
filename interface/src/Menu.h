@@ -166,6 +166,7 @@ namespace MenuOption {
     const QString PhysicsShowBulletConstraintLimits = "Show Bullet Constraint Limits";
     const QString PipelineWarnings = "Log Render Pipeline Warnings";
     const QString Preferences = "General...";
+    const QString PutAvatarInMyFiles = "Put Avatar in My Files";
     const QString Quit =  "Quit";
     const QString ReloadAllScripts = "Reload All Scripts";
     const QString ReloadContent = "Clear Cache && Reload (very slow)";
