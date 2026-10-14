@@ -6,7 +6,8 @@ if (WIN32)
   include(ExternalProject)
   ExternalProject_Add(
     ${EXTERNAL_NAME}
-    URL https://cdn.tivolicloud.com/dependencies/qtaudio_wasapi13.zip
+    # Tivoli's CDN is gone; Overte hosts the same file (its MD5 checked against this one on 2026-10-14)
+    URL https://build-deps.overte.org/dependencies/qtaudio_wasapi13.zip
     URL_MD5 aa56a45f19c18caee13d29a40d1d7d28
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ""
