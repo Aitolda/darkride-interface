@@ -90,6 +90,8 @@ public:
     QUuid getFrameID() const override;
     bool isFrame() const override;
     bool getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorner) const override;
+    bool getFrameTransformInDomain(glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const override;
+    int getFrameDepth() const override;
     virtual glm::vec3 getObjectLinearVelocityChange() const override;
 
     virtual const QUuid getObjectID() const override { return _entity->getID(); }
@@ -178,6 +180,7 @@ protected:
     uint8_t _loopsWithoutOwner;
     mutable uint8_t _accelerationNearlyGravityCount;
     uint8_t _numInactiveUpdates { 1 };
+    bool _parentChanged { false };   // the physics moved the entity to another frame: the next update says so
     uint8_t _bumpedPriority { 0 }; // the target simulation priority according to collision history
     uint8_t _region { workload::Region::INVALID };
 
@@ -196,6 +199,8 @@ protected:
     bool hasLocalVehicleControls() const;
 
     bool isServerlessMode();
+    // the simulation changed the entity's parent (a frame crossing, round 8): the next update carries the parent too
+    void setParentChanged() { _parentChanged = true; }
 };
 
 #endif // hifi_EntityMotionState_h

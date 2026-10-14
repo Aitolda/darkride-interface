@@ -87,6 +87,17 @@ private:
         if (!a && !b) {
             return;
         }
+        // a contact with a frame's copy of its interior (round 8) is a contact with that part
+        if (a) {
+            if (ObjectMotionState* part = a->interiorPartAt(manifold.mSubShapeID1)) {
+                a = part;
+            }
+        }
+        if (b) {
+            if (ObjectMotionState* part = b->interiorPartAt(manifold.mSubShapeID2)) {
+                b = part;
+            }
+        }
         // A body without a motion state is MyAvatar's inner body; it always takes the A side of a contact.
         bool swap = (b == nullptr);
         const JPH::Body& bodyA = swap ? body2 : body1;
@@ -198,7 +209,7 @@ uint32_t PhysicsWorld::getNumActiveBodies() const {
 // private
 void PhysicsWorld::createBody(ObjectMotionState* motionState) {
     assert(motionState);
-    const JPH::Shape* shape = motionState->getShape();
+    const JPH::Shape* shape = motionState->getBodyShape();
     assert(shape);
     if (!shape) {
         return;
@@ -232,8 +243,11 @@ void PhysicsWorld::createBody(ObjectMotionState* motionState) {
             if (mass != mass || mass < MIN_DYNAMIC_MASS) {
                 mass = MIN_DYNAMIC_MASS;
             }
-            settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
-            settings.mMassPropertiesOverride.mMass = mass;
+            // the mass and inertia of the object's own shape (a frame's interior copies add collision, not mass)
+            settings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
+            settings.mMassPropertiesOverride = motionState->getOwnMassProperties();
+            settings.mMassPropertiesOverride.ScaleToMass(mass);
+            settings.mMassPropertiesOverride.mInertia(3, 3) = 1.0f;
             // an object that is not moving starts asleep, so a world full of resting things costs nothing; but one with
             // gravity must start awake, because gravity here is a force applied to active bodies (applyGravityForces)
             // and Jolt ignores forces on a sleeping body: a ball placed in the air would hang there. Once it lands and
@@ -274,6 +288,7 @@ void PhysicsWorld::createBody(ObjectMotionState* motionState) {
         if (motionState->isLocallyOwned()) {
             _activeStaticObjects.insert(motionState);
         }
+        _interiorChanged = true;
     }
     motionState->updateBodyMaterialProperties();
 }
@@ -285,6 +300,9 @@ void PhysicsWorld::destroyBody(ObjectMotionState* motionState) {
         return;
     }
     JPH::BodyID bodyID = body->GetID();
+    if (body->IsStatic()) {
+        _interiorChanged = true;
+    }
     JPH::BodyInterface& bodies = getBodyInterface();
     bodies.RemoveBody(bodyID);
     motionState->setBody(nullptr, nullptr);

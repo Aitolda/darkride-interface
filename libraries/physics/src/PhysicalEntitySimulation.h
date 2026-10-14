@@ -107,6 +107,10 @@ public:
     void sendOwnedUpdates(uint32_t numSubsteps);
 
 private:
+    // A dynamic entity this process simulates crosses between frames by where it is (PHYSICS.md 4.1, round 8): out of
+    // a frame's volume into the frame that holds it, or the domain; its pose and velocities are handed over exactly
+    // and its body is reinserted in the other world by the next transaction.
+    void updateFrameMembership(const VectorOfMotionStates& motionStates);
     void buildMotionStatesForEntitiesThatNeedThem();
     // the workload region an entity is in; without a workload space (the physics server has none) everything is R1
     uint8_t regionOf(const EntityItemPointer& entity) const;

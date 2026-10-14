@@ -180,6 +180,10 @@ void CharacterController::recordContacts() {
         }
         ObjectMotionState* other = PhysicsEngine::motionStateOf(lock.GetBody());
         if (other) {
+            // a frame's copy of its interior (round 8): the contact is with the part the sub-shape copies
+            if (ObjectMotionState* part = other->interiorPartAt(contact.mSubShapeIDB)) {
+                other = part;
+            }
             _world->recordCharacterContact(other, joltToGLM(contact.mPosition), joltToGLM(contact.mContactNormal), contact.mDistance);
         }
     }

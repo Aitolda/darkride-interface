@@ -53,8 +53,9 @@ public:
     static constexpr quint64 MAX_RESUME_AGE = 60 * USECS_PER_SECOND;     // the server resumes a persisted state this old
     static constexpr int MAX_CATCHUP_STEPS = 90 * 20;                    // 20 s of substeps when adopting a state
 
-    // the pose and velocities a car should have at this substep, in its parent's coordinates (the world: a car is
-    // unparented this round); the train is advanced to the step on the first call for it. `mayDrive` is the round 4
+    // the pose and velocities a car should have at this substep, in its parent's coordinates (the world for an
+    // unparented car; a car on a track that rides a frame is the track's child, round 8, and gets the pose relative
+    // to its parent); the train is advanced to the step on the first call for it. `mayDrive` is the round 4
     // rule: this client owns the car, or the world is serverless. The car is driven when this process is the physics
     // server, when the track carries a fresh server state, or when mayDrive; false otherwise, and when the car's track
     // is missing or has no curve, and the caller moves the car by its stored velocities.

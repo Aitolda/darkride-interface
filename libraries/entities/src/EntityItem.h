@@ -604,6 +604,7 @@ public:
     bool isVehicle() const { return _vehicleProperties.isVehicle(); }
     bool isWheel() const { return _vehicleProperties.isWheel(); }
     bool isAirship() const { return _vehicleProperties.isAirship(); }
+    bool isAircraft() const { return _vehicleProperties.isAircraft(); }
     // a vehicle's definition changed (the version the simulation built from is stale)
     uint32_t getVehicleDefinitionVersion() const { return _vehicleDefinitionVersion; }
 

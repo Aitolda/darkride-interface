@@ -84,15 +84,17 @@
                 return null;
             }
         }
-        if (!properties.vehicle || (properties.vehicle.type !== "wheeled" && properties.vehicle.type !== "airship")) {
+        if (!properties.vehicle || (properties.vehicle.type !== "wheeled" && properties.vehicle.type !== "airship" && properties.vehicle.type !== "aircraft")) {
             return null;
         }
         properties.id = entityID;
         return properties;
     }
 
-    // the helm of an airship: the crew stands on the deck in the ship's own world (the physics makes the avatar a member
-    // of the frame by where it stands), so taking the helm is walking to it and taking the keys, no parenting
+    // the helm of an airship, or the stick of an aircraft (round 8, the same keys: Space and C tilt its nacelles up toward
+    // hover and down toward forward flight while held): the crew stands on the deck in the ship's own world (the physics
+    // makes the avatar a member of the frame by where it stands), so taking the helm is walking to it and taking the
+    // keys, no parenting
     function takeHelm(vehicle, seat) {
         seated = { vehicleID: vehicle.id, seat: seat, driver: true, airship: true };
         throttleSetting = 0;
@@ -282,7 +284,7 @@
             }
         }
         if (chosen) {
-            if (vehicle.vehicle.type === "airship") {
+            if (vehicle.vehicle.type === "airship" || vehicle.vehicle.type === "aircraft") {
                 if (chosen.driver) {
                     takeHelm(vehicle, chosen);
                 }

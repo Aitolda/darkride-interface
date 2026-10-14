@@ -317,6 +317,23 @@ QVariantMap PhysicalEntitySimulation::getVehicleStats() const {
             telemetry["lift"] = live.lift;
             telemetry["trim"] = live.trim;
         }
+        if (live.aircraft) {
+            telemetry["aircraft"] = true;
+            telemetry["altitude"] = live.altitude;
+            telemetry["airDensity"] = live.airDensity;
+            telemetry["thrust"] = live.thrust;
+            telemetry["tilt"] = live.tilt;
+            telemetry["airspeed"] = live.airspeed;
+            telemetry["angleOfAttack"] = live.angleOfAttack;
+            telemetry["sideslip"] = live.sideslip;
+            telemetry["climbRate"] = live.climbRate;
+            telemetry["wingLift"] = live.wingLift;
+            telemetry["wingDrag"] = live.wingDrag;
+            telemetry["liftCoefficient"] = live.liftCoefficient;
+            telemetry["pitch"] = live.pitch;
+            telemetry["lift"] = live.lift;
+            telemetry["trim"] = live.trim;
+        }
         QVariantList wheelRPM, wheelSlip, suspension, contact;
         for (size_t i = 0; i < live.wheelRPM.size(); ++i) {
             wheelRPM << live.wheelRPM[i];
@@ -614,6 +631,76 @@ void PhysicalEntitySimulation::buildPhysicsTransaction(PhysicsEngine::Transactio
     _incomingChanges.clear();
 }
 
+// A ball rolling off a trolley's edge on a ship's deck (the trolley a frame on the ship, a frame) has nothing under it
+// in the trolley's world: it belongs to the ship now, where the deck is. The frame that holds the entity's position
+// wins (the deepest of them, PhysicsEngine::frameContaining), and the entity leaves a frame at its volume's face, with
+// no margin, so a ball dropping off a floor's edge lands on the floor below at the right height. Only the owner moves
+// an entity between frames (serverless: everyone is); the move travels as the parent and the local pose in its next
+// update. A frame's own hull, a car on a track and anything static or kinematic stay where their parent puts them.
+void PhysicalEntitySimulation::updateFrameMembership(const VectorOfMotionStates& motionStates) {
+    if (!_physicsEngine) {
+        return;
+    }
+    bool serverless = getEntityTree() && getEntityTree()->isServerlessMode();
+    for (auto stateItr : motionStates) {
+        ObjectMotionState* state = &(*stateItr);
+        if (!state || state->getType() != MOTIONSTATE_TYPE_ENTITY || !state->getBody() || !state->getBody()->IsDynamic()) {
+            continue;
+        }
+        EntityMotionState* entityState = static_cast<EntityMotionState*>(state);
+        EntityItemPointer entity = entityState->getEntity();
+        if (!entity || entity->isFrame() || entityState->isTrackDriven() || !entity->getTrackID().isNull()
+                || !(serverless || entityState->isLocallyOwned())) {
+            continue;
+        }
+        QUuid currentFrame = entityState->getFrameID();
+        if (currentFrame.isNull() && !entity->getParentID().isNull()) {
+            continue;   // a child of something that is not a frame (a hand, a seat): a script's business
+        }
+        glm::vec3 worldPosition = entity->getWorldPosition();
+        QUuid targetFrame = _physicsEngine->frameContaining(worldPosition, currentFrame, false);
+        if (targetFrame == currentFrame) {
+            continue;
+        }
+        // the entity's motion in the domain, from the frame it is leaving
+        glm::quat worldRotation = entity->getWorldOrientation();
+        glm::vec3 worldVelocity = entity->getWorldVelocity();
+        glm::vec3 worldAngularVelocity = entity->getWorldAngularVelocity();
+        glm::vec3 framePosition, frameLinearVelocity, frameAngularVelocity;
+        glm::quat frameRotation;
+        if (!currentFrame.isNull() &&
+                _physicsEngine->getFrameTransform(currentFrame, framePosition, frameRotation, frameLinearVelocity, frameAngularVelocity)) {
+            worldVelocity = frameLinearVelocity + glm::cross(frameAngularVelocity, worldPosition - framePosition) +
+                frameRotation * entity->getLocalVelocity();
+            worldAngularVelocity = frameAngularVelocity + frameRotation * entity->getLocalAngularVelocity();
+        }
+        Transform local = entity->getLocalTransform();
+        if (targetFrame.isNull()) {
+            entity->setParentID(QUuid());
+            local.setTranslation(worldPosition);
+            local.setRotation(worldRotation);
+            entity->setLocalTransformAndVelocities(local, worldVelocity, worldAngularVelocity);
+        } else {
+            if (!_physicsEngine->getFrameTransform(targetFrame, framePosition, frameRotation, frameLinearVelocity, frameAngularVelocity)) {
+                continue;
+            }
+            glm::quat toFrame = glm::inverse(frameRotation);
+            glm::vec3 offset = worldPosition - framePosition;
+            entity->setParentID(targetFrame);
+            local.setTranslation(toFrame * offset);
+            local.setRotation(glm::normalize(toFrame * worldRotation));
+            entity->setLocalTransformAndVelocities(local, toFrame * (worldVelocity - frameLinearVelocity - glm::cross(frameAngularVelocity, offset)),
+                                                   toFrame * (worldAngularVelocity - frameAngularVelocity));
+        }
+        qCDebug(physics) << "entity" << entity->getName() << entity->getID() << "crossed from frame" << currentFrame << "to" << targetFrame;
+        // the body goes to the other world with the next transaction (buildPhysicsTransaction: the frame changed)
+        entity->markDirtyFlags(Simulation::DIRTY_TRANSFORM | Simulation::DIRTY_VELOCITIES);
+        _incomingChanges.insert(entityState);
+        _entitiesToSort.insert(entity);
+        entityState->setParentChanged();
+    }
+}
+
 void PhysicalEntitySimulation::handleProcessedPhysicsTransaction(PhysicsEngine::Transaction& transaction) {
     // things on objectsToRemove are ready for delete
     for (auto object : transaction.objectsToRemove) {
@@ -700,6 +787,8 @@ void PhysicalEntitySimulation::handleChangedMotionStates(const VectorOfMotionSta
             }
         }
     }
+
+    updateFrameMembership(motionStates);
 
     // the vehicles' wheels follow the wheels, and a driver's inputs go to the physics server (PHYSICS.md round 6)
     _vehicleSimulation->setServerless(getEntityTree()->isServerlessMode());

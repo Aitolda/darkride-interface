@@ -1,6 +1,8 @@
 #!/bin/zsh
 # PHYSICS.md round 7: the airship over the terrain, flown through a scripted course (airship.js, airship-rig.js).
-#   tests-manual/physics-baseline/run-airship.sh [path/to/interface.app] [results dir] [udp port|serverless] [loss] [delay_ms]
+#   tests-manual/physics-baseline/run-airship.sh [path/to/interface.app] [results dir] [udp port|serverless] [loss] [delay_ms] [car]
+# With "car" as the sixth argument the ship carries a track along its deck with a trolley on it (round 8, nesting): the
+# crew rides the trolley, on and off at its stations, instead of walking the deck.
 # make-terrain.py writes the terrain file into the results dir, which is served over HTTP on <port>+78 (the physics server
 # and the clients fetch it from there); landrover.js (the terrain), airship-rig.js and airship.js are copied beside it
 # with a one-line wrapper per role that names the role and the terrain URL. Serverless: one client, the pilot, in
@@ -17,6 +19,9 @@ R=${2:-"${TMPDIR:-/tmp}/physics-airship"}
 PORT=${3:-42102}
 LOSS=${4:-0}
 DELAY=${5:-0}
+CAR=${6:-}
+DECK_CAR=false
+[ "$CAR" = "car" ] && DECK_CAR=true
 SANDBOX=/Users/thistlequell/tivoli-sandboxes/physics
 BIN="$APP/Contents/MacOS/interface"
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
@@ -29,7 +34,7 @@ TERRAIN_URL="http://127.0.0.1:$HTTP_PORT/rover.drkt"
 
 [ -f "$R/rover.drkt" ] || python3 "$D/make-terrain.py" "$R/rover.drkt" "$SIZE" "$HEIGHT" "$VOXEL"
 for ROLE in pilot crew; do
-    { echo "var AIRSHIP_CONFIG = { role: \"$ROLE\", terrainURL: \"$TERRAIN_URL\" };"; cat "$D/landrover.js" "$D/airship-rig.js" "$D/airship.js"; } > "$R/airship-$ROLE.js"
+    { echo "var AIRSHIP_CONFIG = { role: \"$ROLE\", terrainURL: \"$TERRAIN_URL\", deckCar: $DECK_CAR };"; cat "$D/landrover.js" "$D/airship-rig.js" "$D/airship.js"; } > "$R/airship-$ROLE.js"
 done
 if ! lsof -nP -iTCP:$HTTP_PORT -sTCP:LISTEN > /dev/null 2>&1; then
     (cd "$R" && python3 -m http.server "$HTTP_PORT" --bind 127.0.0.1 > "$R/http.log" 2>&1) &

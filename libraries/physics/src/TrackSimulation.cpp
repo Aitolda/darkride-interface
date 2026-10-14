@@ -289,6 +289,22 @@ bool TrackSimulation::drive(const EntityItemPointer& car, uint32_t step, bool ma
         localLinear += train.residualRate * train.curve.poseAt(train.curve.normalize(train.follower.state().s
             + car->getTrackOffset() + train.residual)).tangent;
     }
+    // into the car's parent's coordinates: the world for a car without a parent; for a car under a parent (a track
+    // on a ship's deck, 4.10) the track's transform relative to that parent, which is constant while both ride the
+    // ship, so the ship's motion never enters the car's local pose
+    bool hasParent = false;
+    Transform parentTransform = car->getParentTransform(hasParent);
+    hasParent = hasParent && !car->getParentID().isNull();
+    if (hasParent) {
+        glm::quat fromParent = glm::inverse(parentTransform.getRotation());
+        glm::vec3 trackInParent = fromParent * (trackPosition - parentTransform.getTranslation());
+        glm::quat trackRotationInParent = fromParent * trackRotation;
+        position = trackInParent + trackRotationInParent * localPosition;
+        rotation = glm::normalize(trackRotationInParent * localRotation);
+        linearVelocity = trackRotationInParent * localLinear;
+        angularVelocity = trackRotationInParent * localAngular;
+        return true;
+    }
     position = trackPosition + trackRotation * localPosition;
     rotation = glm::normalize(trackRotation * localRotation);
     linearVelocity = trackRotation * localLinear;

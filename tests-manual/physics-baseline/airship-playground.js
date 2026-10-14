@@ -2,7 +2,9 @@
 //  airship-playground.js
 //  tests-manual/physics-baseline
 //
-//  Fly the airship yourself (PHYSICS.md round 7). Makes the terrain and the ship on its pad (or finds the ones already
+//  Fly the airship yourself (PHYSICS.md round 7), or the tilt-thrust aircraft (round 8) when AIRSHIP_CONFIG.vehicle is
+//  "aircraft" (fly-aircraft.sh): then W/S set the throttle, A/D roll and yaw, up/down the elevator, Space tilts the
+//  nacelles up toward hover while held and C tilts them down toward forward flight, F leaves the stick. Makes the terrain and the ship on its pad (or finds the ones already
 //  there), stands you beside it, and leaves the rest to scripts/system/vehicles.js: walk aboard (the deck is a step up
 //  from the pad at the stern; its top is 0.4 m above the ground) and click the ship to take the helm: W/S set the throttle
 //  (X cuts it), A/D or left/right the rudder, up/down the elevator, Space and C the vertical thruster, B drops ballast, V
@@ -16,11 +18,14 @@
     var config = (typeof AIRSHIP_CONFIG !== "undefined" && AIRSHIP_CONFIG) ? AIRSHIP_CONFIG : {};
     var TERRAIN_URL = config.terrainURL || "";
     var LIFETIME = config.lifetime || 3600;
+    var KIND = config.vehicle || "airship";
+    var Rig = KIND === "aircraft" ? Aircraft : Airship;
+    var HULL_NAME = Rig.HULL_NAME || "airship-hull";
     var terrain = null;
     var ship = null;
     var tries = 0;
 
-    function log(s) { print("AIRSHIP-PLAYGROUND " + s); }
+    function log(s) { print((KIND === "aircraft" ? "AIRCRAFT-PLAYGROUND " : "AIRSHIP-PLAYGROUND ") + s); }
 
     function toPad() {
         var c = LandRover.TERRAIN_CENTER;
@@ -29,15 +34,20 @@
     }
 
     function existingShip() {
-        var found = Entities.findEntitiesByName("airship-hull", LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE, false);
+        var found = Entities.findEntitiesByName(HULL_NAME, LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE, false);
         return found.length ? found[0] : null;
     }
 
     function newShip() {
-        Airship.deleteAll(LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE);
+        Rig.deleteAll(LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE);
         var c = LandRover.TERRAIN_CENTER;
-        ship = Airship.create(c.x, c.z, 0, LIFETIME).hull;
-        log("a fresh airship on the pad: " + ship);
+        ship = Rig.create(c.x, c.z, 0, LIFETIME).hull;
+        if (KIND === "airship") {
+            var deck = Airship.createDeckTrack(ship, LIFETIME);
+            log("a fresh airship on the pad: " + ship + ", with a trolley " + deck.car + " on a track along its deck");
+        } else {
+            log("a fresh aircraft on the pad: " + ship);
+        }
     }
 
     function setUp() {
@@ -50,8 +60,12 @@
         toPad();
         Script.setTimeout(function () {
             ship = existingShip();
-            if (ship) { log("the airship is already here: " + ship); } else { newShip(); }
-            log("walk aboard and click the ship for the helm; W/S throttle, X cut, A/D rudder, up/down elevator, Space/C up and down, B ballast, V vent, F leave; R fresh ship; T to the pad");
+            if (ship) { log("the " + KIND + " is already here: " + ship); } else { newShip(); }
+            if (KIND === "aircraft") {
+                log("climb aboard and click the craft for the stick; W/S throttle, X cut, A/D roll and yaw, up/down elevator, Space tilts to hover, C tilts to forward flight, F leave; R fresh craft; T to the pad");
+            } else {
+                log("walk aboard and click the ship for the helm; W/S throttle, X cut, A/D rudder, up/down elevator, Space/C up and down, B ballast, V vent, F leave; R fresh ship; T to the pad");
+            }
         }, 3000);
     }
 

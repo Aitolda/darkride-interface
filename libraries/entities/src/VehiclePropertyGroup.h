@@ -34,6 +34,7 @@ namespace VehicleType {
     const QString WHEELED = "wheeled";
     const QString WHEEL = "wheel";
     const QString AIRSHIP = "airship";
+    const QString AIRCRAFT = "aircraft";
 }
 
 /**jsdoc
@@ -131,6 +132,18 @@ namespace VehicleType {
  *     simulator lowers it as the pilot drops ballast.
  * @property {number} fill=1 - <em>State.</em> The fraction of the envelope that is gas: the simulator lowers it as the
  *     pilot vents.
+ * @property {number} wingArea=0 - An aircraft's wing, m<sup>2</sup>, both halves (<code>type</code> <code>"aircraft"</code>,
+ *     PHYSICS.md round 8: a tilt-thrust craft). The wing lifts with its angle of attack up to the stall at 15 degrees;
+ *     <code>maxThrust</code> is its engines' at full throttle, along forward with the nacelles level and along up with
+ *     them vertical (<code>tilt</code>), <code>elevatorArea</code>, <code>rudderArea</code> and <code>finPoint</code>
+ *     its tail, <code>maxFinAngle</code> its control deflection (the ailerons move 0.4 of it, the rudder 0.5).
+ * @property {number} wingSpan=0 - The wing's span, m, tip to tip: with the area it gives the aspect ratio, and the
+ *     ailerons act at a quarter of it either side.
+ * @property {Vec3} wingPoint=0,0,0 - The wing's aerodynamic centre, local metres (a quarter chord behind the leading
+ *     edge; a little aft of <code>centerOfMass</code> for stability).
+ * @property {number} tilt=0 - <em>State.</em> The nacelles' tilt, 0 level (forward flight) to 1 vertical (hover):
+ *     the pilot's <code>lift</code> input moves it, up while positive and down while negative, at 0.35 a second; set
+ *     it to 1 when the craft is made to start in hover.
  */
 class VehiclePropertyGroup : public PropertyGroup {
 public:
@@ -179,9 +192,10 @@ public:
                                                  bool& somethingChanged) override;
 
     // true for a chassis or a hull: a vehicle the physics simulates (not a wheel, not "none")
-    bool isVehicle() const { return _type == VehicleType::WHEELED || _type == VehicleType::AIRSHIP; }
+    bool isVehicle() const { return _type == VehicleType::WHEELED || _type == VehicleType::AIRSHIP || _type == VehicleType::AIRCRAFT; }
     bool isWheel() const { return _type == VehicleType::WHEEL; }
     bool isAirship() const { return _type == VehicleType::AIRSHIP; }
+    bool isAircraft() const { return _type == VehicleType::AIRCRAFT; }
     // the definition (everything but the state) as a version: the simulation rebuilds its vehicle when it changes
     uint64_t definitionHash() const;
 
@@ -232,6 +246,10 @@ public:
     DEFINE_PROPERTY(PROP_VEHICLE_TRIM, Trim, trim, float, 0.0f);
     DEFINE_PROPERTY(PROP_VEHICLE_BALLAST, Ballast, ballast, float, 0.0f);
     DEFINE_PROPERTY(PROP_VEHICLE_FILL, Fill, fill, float, 1.0f);
+    DEFINE_PROPERTY(PROP_VEHICLE_WING_AREA, WingArea, wingArea, float, 0.0f);
+    DEFINE_PROPERTY(PROP_VEHICLE_WING_SPAN, WingSpan, wingSpan, float, 0.0f);
+    DEFINE_PROPERTY_REF(PROP_VEHICLE_WING_POINT, WingPoint, wingPoint, glm::vec3, glm::vec3(0.0f));
+    DEFINE_PROPERTY(PROP_VEHICLE_TILT, Tilt, tilt, float, 0.0f);
 };
 
 #endif // hifi_VehiclePropertyGroup_h

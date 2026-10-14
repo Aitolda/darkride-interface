@@ -170,6 +170,7 @@ private:
     void rehomeObjects();
     void registerFrame(ObjectMotionState* frameState);
     void unregisterFrame(const QUuid& frameID);
+    void refreshFrameInteriors();
     PhysicsWorld* characterWorld() const;
 
     SubstepListener* _substepListener { nullptr };

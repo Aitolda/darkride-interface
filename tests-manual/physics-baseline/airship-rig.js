@@ -50,7 +50,18 @@ var Airship = (function () {
         fill: 1
     };
 
-    var PART_NAMES = ["airship-hull", "airship-envelope", "airship-fin", "airship-rail", "airship-helm", "airship-ball"];
+    var PART_NAMES = ["airship-hull", "airship-envelope", "airship-fin", "airship-rail", "airship-helm", "airship-ball",
+                      "airship-track", "airship-car", "airship-car-rail"];
+    // The deck trolley (round 8, nesting): a straight Track along the starboard half of the deck, a child of the hull,
+    // with two stations, and a flat car on it that is a frame of its own and the track's child: its pose is the
+    // track's, the track's is the ship's. A rider steps on from the deck at a station, rides along the deck and steps
+    // off again while the ship flies.
+    var CAR = {
+        x: 1.0,                                  // the track's line, starboard of the centre line
+        stations: [-2.0, 5.0],                   // z of the bow and stern stations on the deck
+        dimensions: { x: 1.6, y: 0.3, z: 2.2 },
+        speed: 1.5, acceleration: 1.0, dwell: 4.0
+    };
 
     function part(hull, name, properties, lifetime) {
         var p = {
@@ -120,6 +131,44 @@ var Airship = (function () {
         return { hull: hull, parts: parts };
     }
 
+    function createDeckTrack(hull, lifetime) {
+        var mid = 0.5 * (CAR.stations[0] + CAR.stations[1]);
+        var half = 0.5 * (CAR.stations[1] - CAR.stations[0]);
+        var trackY = 0.5 * DECK.y + 0.5 * CAR.dimensions.y;   // the car's centre: its underside on the deck's top
+        var track = Entities.addEntity({
+            type: "Track", name: "airship-track", parentID: hull, lifetime: lifetime || -1,
+            localPosition: { x: CAR.x, y: trackY, z: mid }, localRotation: Quat.IDENTITY,
+            dimensions: { x: 2, y: 1, z: 2 * half + 2 },
+            trackPoints: [{ x: 0, y: 0, z: -half }, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: half }],
+            trackBank: [0, 0, 0], trackDwell: [CAR.dwell, 0, CAR.dwell], trackClosed: false,
+            trackSpeed: CAR.speed, trackAcceleration: CAR.acceleration
+        });
+        var car = Entities.addEntity({
+            type: "Box", name: "airship-car", shapeType: "box", parentID: track, lifetime: lifetime || -1,
+            localPosition: { x: 0, y: 0, z: half }, localRotation: Quat.IDENTITY,   // at the stern station
+            dimensions: CAR.dimensions, color: { red: 200, green: 160, blue: 60 },
+            dynamic: false, collisionless: false, damping: 0, angularDamping: 0, friction: 0.6, restitution: 0,
+            grab: { grabbable: false },
+            frame: true, trackID: track, trackOffset: 0
+        });
+        // A rail across each end, both sides open to the deck for boarding (the car turns round at each end of its open
+        // track, so a side rail would face the deck half the time: run 6 of 10-14). The car's children stand in the
+        // car's own world; the car's body in the ship's world wears a copy of them (round 8, PHYSICS.md 4.1), so a
+        // rider walking in from the deck meets an end rail as a wall and boards by the side. (Without the copy, runs 3
+        // and 4 of 10-13: the rider stood in a rail's space and was shoved out when the car's world received them.)
+        var railY = 0.5 * CAR.dimensions.y + 0.3, railH = 0.6, railT = 0.1;
+        var halfZ = 0.5 * CAR.dimensions.z;
+        var rails = [
+            { pos: { x: 0, y: railY, z: halfZ - 0.5 * railT }, dim: { x: CAR.dimensions.x, y: railH, z: railT } },
+            { pos: { x: 0, y: railY, z: -(halfZ - 0.5 * railT) }, dim: { x: CAR.dimensions.x, y: railH, z: railT } }
+        ];
+        var parts = [];
+        rails.forEach(function (r) {
+            parts.push(part(car, "airship-car-rail", { localPosition: r.pos, dimensions: r.dim, color: { red: 120, green: 90, blue: 30 }, collisionless: false }, lifetime));
+        });
+        return { track: track, car: car, parts: parts };
+    }
+
     function deleteAll(center, radius) {
         var removed = 0;
         PART_NAMES.forEach(function (name) {
@@ -134,7 +183,9 @@ var Airship = (function () {
         HELM: HELM,
         SPEC: SPEC,
         PART_NAMES: PART_NAMES,
+        CAR: CAR,
         create: create,
+        createDeckTrack: createDeckTrack,
         deleteAll: deleteAll
     };
 }());

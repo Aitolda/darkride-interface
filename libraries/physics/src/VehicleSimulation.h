@@ -53,6 +53,7 @@
 #include <Jolt/Physics/Body/BodyID.h>
 
 #include <AirshipModel.h>
+#include <AircraftModel.h>
 #include <EntityItem.h>
 #include <VehicleInput.h>
 #include <WheeledVehicleSpec.h>
@@ -148,6 +149,13 @@ public:
         float airspeed { 0.0f };        // m/s
         float sideslip { 0.0f };        // degrees
         float incidence { 0.0f };       // degrees
+        // an aircraft's (round 8)
+        bool aircraft { false };
+        float tilt { 0.0f };            // 0 level to 1 vertical
+        float angleOfAttack { 0.0f };   // degrees
+        float wingLift { 0.0f };        // N
+        float wingDrag { 0.0f };        // N
+        float liftCoefficient { 0.0f };
         float climbRate { 0.0f };       // m/s
         float ballast { 0.0f };         // kg
         float fill { 0.0f };
@@ -183,7 +191,6 @@ private:
         JPH::BodyID bodyID;
         JPH::Ref<JPH::VehicleConstraint> constraint;
         JPH::Ref<JPH::VehicleCollisionTester> tester;
-        JPH::RefConst<JPH::Shape> offsetShape;
         uint32_t definitionVersion { 0 };
         uint64_t definitionHash { 0 };
         WheeledVehicleSpec spec;
@@ -193,6 +200,12 @@ private:
         AirshipSpec airshipSpec;
         AirshipState airshipState;
         AirshipForces airshipForces;
+        // an aircraft (round 8): the same, for the tilt-thrust model
+        bool aircraft { false };
+        bool aircraftBuilt { false };
+        AircraftSpec aircraftSpec;
+        AircraftState aircraftState;
+        AircraftForces aircraftForces;
         // inputs
         VehicleInput applied;                 // the last input applied, with its sequence
         uint32_t nextSequence { 1 };          // the driver's next
@@ -238,8 +251,11 @@ private:
     bool rebuild(Vehicle& vehicle);
     bool rebuildWheeled(Vehicle& vehicle, JPH::Body* body, PhysicsWorld* world);
     bool rebuildAirship(Vehicle& vehicle, JPH::Body* body, PhysicsWorld* world);
-    void wearCenterOfMass(Vehicle& vehicle, JPH::Body* body, PhysicsWorld* world, const glm::vec3& centerOfMass);
-    bool isBuilt(const Vehicle& vehicle) const { return vehicle.airship ? vehicle.airshipBuilt : (bool)vehicle.constraint; }
+    void wearCenterOfMass(Vehicle& vehicle, const glm::vec3& centerOfMass);
+    bool isBuilt(const Vehicle& vehicle) const {
+        return vehicle.airship ? vehicle.airshipBuilt : vehicle.aircraft ? vehicle.aircraftBuilt : (bool)vehicle.constraint;
+    }
+    bool rebuildAircraft(Vehicle& vehicle, JPH::Body* body, PhysicsWorld* world);
     void tearDown(Vehicle& vehicle);
     bool isAuthority(const Vehicle& vehicle) const;
     bool localControls(const Vehicle& vehicle, VehicleInput& input) const;

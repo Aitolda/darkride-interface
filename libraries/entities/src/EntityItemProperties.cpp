@@ -2946,6 +2946,10 @@ bool EntityItemProperties::getPropertyInfo(const QString& propertyName, EntityPr
             ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_TRIM, Vehicle, vehicle, Trim, trim);
             ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_BALLAST, Vehicle, vehicle, Ballast, ballast);
             ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_FILL, Vehicle, vehicle, Fill, fill);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_WING_AREA, Vehicle, vehicle, WingArea, wingArea);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_WING_SPAN, Vehicle, vehicle, WingSpan, wingSpan);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_WING_POINT, Vehicle, vehicle, WingPoint, wingPoint);
+            ADD_GROUP_PROPERTY_TO_MAP(PROP_VEHICLE_TILT, Vehicle, vehicle, Tilt, tilt);
         }
 
         // Physics

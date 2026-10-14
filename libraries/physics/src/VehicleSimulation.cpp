@@ -128,24 +128,16 @@ void VehicleSimulation::tearDown(Vehicle& vehicle) {
     }
     vehicle.constraint = nullptr;
     vehicle.tester = nullptr;
-    vehicle.offsetShape = nullptr;
     vehicle.bodyID = JPH::BodyID();
     vehicle.visuals.clear();
     vehicle.airshipBuilt = false;
+    vehicle.aircraftBuilt = false;
 }
 
-// The body wears its shape inside an offset-centre-of-mass shape when the spec moves the centre.
-void VehicleSimulation::wearCenterOfMass(Vehicle& vehicle, JPH::Body* body, PhysicsWorld* world, const glm::vec3& centerOfMass) {
-    JPH::BodyInterface& bodies = world->getBodyInterface();
-    const JPH::Shape* plainShape = vehicle.state->getShape();
-    if (glm::length2(centerOfMass) > 1.0e-8f && plainShape) {
-        vehicle.offsetShape = new JPH::OffsetCenterOfMassShape(plainShape, glmToJolt(centerOfMass));
-        bodies.SetShape(body->GetID(), vehicle.offsetShape, false, JPH::EActivation::Activate);
-        vehicle.state->updateBodyMassProperties();
-    } else if (plainShape && body->GetShape() != plainShape) {
-        bodies.SetShape(body->GetID(), plainShape, false, JPH::EActivation::Activate);
-        vehicle.state->updateBodyMassProperties();
-    }
+// The body wears its shape inside an offset-centre-of-mass shape when the spec moves the centre (the motion state
+// composes it with a frame's interior copy, round 8).
+void VehicleSimulation::wearCenterOfMass(Vehicle& vehicle, const glm::vec3& centerOfMass) {
+    vehicle.state->setCenterOfMassOffset(centerOfMass);
 }
 
 // An airship from its spec (PHYSICS.md round 7): the hull's body with the centre of mass where the spec puts it, the
@@ -180,7 +172,7 @@ bool VehicleSimulation::rebuildAirship(Vehicle& vehicle, JPH::Body* body, Physic
         }
         return false;
     }
-    wearCenterOfMass(vehicle, body, world, spec.centerOfMass);
+    wearCenterOfMass(vehicle, spec.centerOfMass);
     world->getBodyInterface().ActivateBody(body->GetID());
     vehicle.airshipState.ballast = glm::max(0.0f, group.getBallast());
     vehicle.airshipState.fill = glm::clamp(group.getFill(), 0.0f, 1.0f);
@@ -189,6 +181,47 @@ bool VehicleSimulation::rebuildAirship(Vehicle& vehicle, JPH::Body* body, Physic
         << "m3, mass" << vehicle.state->getMass() << "kg, ballast" << vehicle.airshipState.ballast << "kg, thrust" << spec.maxThrust
         << "N, fins" << spec.rudderArea << spec.elevatorArea << "m2 at" << spec.finPoint.x << spec.finPoint.y << spec.finPoint.z
         << (Physics::isServerAuthority() ? "(physics server)" : "");
+    return true;
+}
+
+// An aircraft from its spec (PHYSICS.md round 8): the body with the centre of mass where the spec puts it, the wing, the
+// tail and the engines parsed, the drag areas derived from the body's dimensions when the spec gives none, and the
+// nacelles' tilt from the state (the author's the first time, the authority's after).
+bool VehicleSimulation::rebuildAircraft(Vehicle& vehicle, JPH::Body* body, PhysicsWorld* world) {
+    const VehiclePropertyGroup& group = vehicle.entity->getVehicleProperties();
+    AircraftSpec& spec = vehicle.aircraftSpec;
+    spec = AircraftSpec();
+    spec.mass = group.getMass();
+    spec.centerOfMass = group.getCenterOfMass();
+    spec.maxThrust = glm::max(0.0f, group.getMaxThrust());
+    spec.thrustPoint = group.getThrustPoint();
+    spec.wingArea = glm::max(0.0f, group.getWingArea());
+    spec.wingSpan = glm::max(0.0f, group.getWingSpan());
+    spec.wingPoint = group.getWingPoint();
+    spec.elevatorArea = glm::max(0.0f, group.getElevatorArea());
+    spec.rudderArea = glm::max(0.0f, group.getRudderArea());
+    spec.finPoint = group.getFinPoint();
+    spec.maxFinAngle = glm::clamp(group.getMaxFinAngle(), 0.0f, 80.0f);
+    glm::vec3 dimensions = vehicle.entity->getScaledDimensions();
+    spec.dragArea = glm::length2(group.getDragArea()) > 0.0f ? glm::max(group.getDragArea(), glm::vec3(0.0f)) : AirshipModel::defaultDragArea(dimensions);
+    spec.angularDragArea = glm::length2(group.getAngularDragArea()) > 0.0f ? glm::max(group.getAngularDragArea(), glm::vec3(0.0f))
+        : AirshipModel::defaultAngularDragArea(dimensions);
+    if (!spec.isValid()) {
+        if (!vehicle.logged) {
+            qCWarning(physics) << "aircraft" << vehicle.entity->getName() << vehicle.entity->getID()
+                << "needs a wing and engines: set vehicle.wingArea, wingSpan and maxThrust";
+            vehicle.logged = true;
+        }
+        return false;
+    }
+    wearCenterOfMass(vehicle, spec.centerOfMass);
+    world->getBodyInterface().ActivateBody(body->GetID());
+    vehicle.aircraftState.tilt = glm::clamp(group.getTilt(), 0.0f, 1.0f);
+    vehicle.aircraftBuilt = true;
+    qCDebug(physics) << "aircraft" << vehicle.entity->getName() << vehicle.entity->getID() << "built: wing" << spec.wingArea << "m2 span"
+        << spec.wingSpan << "m (aspect ratio" << spec.aspectRatio() << "), mass" << vehicle.state->getMass() << "kg, thrust" << spec.maxThrust
+        << "N, tail" << spec.elevatorArea << spec.rudderArea << "m2 at" << spec.finPoint.x << spec.finPoint.y << spec.finPoint.z
+        << ", tilt" << vehicle.aircraftState.tilt << (Physics::isServerAuthority() ? "(physics server)" : "");
     return true;
 }
 
@@ -211,7 +244,9 @@ bool VehicleSimulation::rebuild(Vehicle& vehicle) {
         return false;
     }
     vehicle.airship = vehicle.entity->isAirship();
-    bool built = vehicle.airship ? rebuildAirship(vehicle, body, world) : rebuildWheeled(vehicle, body, world);
+    vehicle.aircraft = vehicle.entity->isAircraft();
+    bool built = vehicle.airship ? rebuildAirship(vehicle, body, world)
+        : vehicle.aircraft ? rebuildAircraft(vehicle, body, world) : rebuildWheeled(vehicle, body, world);
     if (!built) {
         return false;
     }
@@ -255,7 +290,7 @@ bool VehicleSimulation::rebuildWheeled(Vehicle& vehicle, JPH::Body* body, Physic
     spec.suspensionDamping = glm::max(0.0f, group.getSuspensionDamping());
 
     JPH::BodyInterface& bodies = world->getBodyInterface();
-    wearCenterOfMass(vehicle, body, world, spec.centerOfMass);
+    wearCenterOfMass(vehicle, spec.centerOfMass);
 
     float gravity = glm::length(vehicle.state->getBodyGravity());
     if (gravity <= 0.0f) {
@@ -441,6 +476,33 @@ void VehicleSimulation::recordTelemetry() {
     Telemetry t;
     for (auto& entry : _vehicles) {
         Vehicle& vehicle = entry.second;
+        if (vehicle.aircraft && vehicle.aircraftBuilt) {
+            const AircraftForces& f = vehicle.aircraftForces;
+            t.valid = true;
+            t.aircraft = true;
+            glm::quat rotation;
+            glm::vec3 position;
+            vehicle.state->getBodyTransform(position, rotation);
+            glm::vec3 velocity = vehicle.state->getBodyLinearVelocity();
+            t.speed = glm::dot(velocity, rotation * FORWARD);
+            t.climbRate = velocity.y;
+            t.altitude = position.y;
+            t.airDensity = f.airDensity;
+            t.thrust = f.thrust;
+            t.tilt = f.tilt;
+            t.airspeed = f.airspeed;
+            t.angleOfAttack = glm::degrees(f.angleOfAttack);
+            t.sideslip = glm::degrees(f.sideslip);
+            t.wingLift = f.lift;
+            t.wingDrag = f.drag;
+            t.liftCoefficient = f.liftCoefficient;
+            t.forward = vehicle.applied.throttle;
+            t.right = vehicle.applied.steering;
+            t.pitch = vehicle.applied.pitch;
+            t.lift = vehicle.applied.lift;
+            t.trim = vehicle.applied.trim;
+            break;
+        }
         if (vehicle.airship && vehicle.airshipBuilt) {
             const AirshipForces& f = vehicle.airshipForces;
             t.valid = true;
@@ -594,6 +656,33 @@ void VehicleSimulation::applyModelInput(Vehicle& vehicle, const VehicleInput& in
         return;
     }
     JPH::BodyInterface& bodies = world->getBodyInterface();
+    if (vehicle.aircraft) {
+        if (!vehicle.aircraftBuilt) {
+            return;
+        }
+        AircraftModel::integrateTilt(vehicle.aircraftSpec, vehicle.aircraftState, input, dt);
+        JPH::Body* body = vehicle.state->getBody();
+        if (!body) {
+            return;
+        }
+        glm::vec3 position = joltToGLM(body->GetCenterOfMassPosition());
+        glm::quat rotation = glm::normalize(joltToGLM(body->GetRotation()));
+        glm::vec3 velocity = joltToGLM(body->GetLinearVelocity());
+        glm::vec3 angularVelocity = joltToGLM(body->GetAngularVelocity());
+        float gravity = glm::length(vehicle.state->getBodyGravity());
+        if (gravity <= 0.0f) {
+            gravity = GRAVITY;
+        }
+        vehicle.aircraftForces = AircraftModel::forces(vehicle.aircraftSpec, vehicle.aircraftState, input, position, rotation, velocity,
+                                                       angularVelocity, gravity);
+        for (const AirshipForce& f : vehicle.aircraftForces.forces) {
+            bodies.AddForce(vehicle.bodyID, glmToJolt(f.force), glmToJoltR(f.point), JPH::EActivation::Activate);
+        }
+        if (glm::length2(vehicle.aircraftForces.torque) > 0.0f) {
+            bodies.AddTorque(vehicle.bodyID, glmToJolt(vehicle.aircraftForces.torque), JPH::EActivation::Activate);
+        }
+        return;
+    }
     if (vehicle.airship) {
         if (!vehicle.airshipBuilt) {
             return;
@@ -726,6 +815,10 @@ void VehicleSimulation::setBodyState(Vehicle& vehicle, const glm::vec3& position
 
 void VehicleSimulation::setInternalState(Vehicle& vehicle) {
     const VehiclePropertyGroup& group = vehicle.entity->getVehicleProperties();
+    if (vehicle.aircraft) {
+        vehicle.aircraftState.tilt = glm::clamp(group.getTilt(), 0.0f, 1.0f);
+        return;
+    }
     if (vehicle.airship) {
         // the author's ballast and fill the first time, the authority's after
         vehicle.airshipState.ballast = glm::max(0.0f, group.getBallast());
@@ -1091,6 +1184,12 @@ void VehicleSimulation::fillState(EntityMotionState* state, EntityItemProperties
         group.setTrim(vehicle.applied.trim);
         group.setBallast(vehicle.airshipState.ballast);
         group.setFill(vehicle.airshipState.fill);
+    }
+    if (vehicle.aircraft) {
+        group.setPitch(vehicle.applied.pitch);
+        group.setLift(vehicle.applied.lift);
+        group.setTrim(vehicle.applied.trim);
+        group.setTilt(vehicle.aircraftState.tilt);
     }
     group.setStateTime(TrackSimulation::domainTime(usecTimestampNow()));
 }

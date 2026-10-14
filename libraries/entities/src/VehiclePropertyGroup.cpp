@@ -66,6 +66,10 @@ void VehiclePropertyGroup::copyToScriptValue(const EntityPropertyFlags& desiredP
     COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_TRIM, Vehicle, vehicle, Trim, trim);
     COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_BALLAST, Vehicle, vehicle, Ballast, ballast);
     COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_FILL, Vehicle, vehicle, Fill, fill);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_WING_AREA, Vehicle, vehicle, WingArea, wingArea);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_WING_SPAN, Vehicle, vehicle, WingSpan, wingSpan);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_WING_POINT, Vehicle, vehicle, WingPoint, wingPoint);
+    COPY_GROUP_PROPERTY_TO_QSCRIPTVALUE(PROP_VEHICLE_TILT, Vehicle, vehicle, Tilt, tilt);
 }
 
 void VehiclePropertyGroup::copyFromScriptValue(const QScriptValue& object, bool& _defaultSettings) {
@@ -116,6 +120,10 @@ void VehiclePropertyGroup::copyFromScriptValue(const QScriptValue& object, bool&
     COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, trim, float, setTrim);
     COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, ballast, float, setBallast);
     COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, fill, float, setFill);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, wingArea, float, setWingArea);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, wingSpan, float, setWingSpan);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, wingPoint, vec3, setWingPoint);
+    COPY_GROUP_PROPERTY_FROM_QSCRIPTVALUE(vehicle, tilt, float, setTilt);
 }
 
 void VehiclePropertyGroup::merge(const VehiclePropertyGroup& other) {
@@ -166,6 +174,10 @@ void VehiclePropertyGroup::merge(const VehiclePropertyGroup& other) {
     COPY_PROPERTY_IF_CHANGED(trim);
     COPY_PROPERTY_IF_CHANGED(ballast);
     COPY_PROPERTY_IF_CHANGED(fill);
+    COPY_PROPERTY_IF_CHANGED(wingArea);
+    COPY_PROPERTY_IF_CHANGED(wingSpan);
+    COPY_PROPERTY_IF_CHANGED(wingPoint);
+    COPY_PROPERTY_IF_CHANGED(tilt);
 }
 
 void VehiclePropertyGroup::debugDump() const {
@@ -217,6 +229,10 @@ void VehiclePropertyGroup::debugDump() const {
     qCDebug(entities) << "            _trim:" << _trim;
     qCDebug(entities) << "            _ballast:" << _ballast;
     qCDebug(entities) << "            _fill:" << _fill;
+    qCDebug(entities) << "            _wingArea:" << _wingArea;
+    qCDebug(entities) << "            _wingSpan:" << _wingSpan;
+    qCDebug(entities) << "            _wingPoint:" << _wingPoint;
+    qCDebug(entities) << "            _tilt:" << _tilt;
 }
 
 void VehiclePropertyGroup::listChangedProperties(QList<QString>& out) {
@@ -361,6 +377,18 @@ void VehiclePropertyGroup::listChangedProperties(QList<QString>& out) {
     if (fillChanged()) {
         out << "vehicle-fill";
     }
+    if (wingAreaChanged()) {
+        out << "vehicle-wingArea";
+    }
+    if (wingSpanChanged()) {
+        out << "vehicle-wingSpan";
+    }
+    if (wingPointChanged()) {
+        out << "vehicle-wingPoint";
+    }
+    if (tiltChanged()) {
+        out << "vehicle-tilt";
+    }
 }
 
 bool VehiclePropertyGroup::appendToEditPacket(OctreePacketData* packetData,
@@ -419,6 +447,10 @@ bool VehiclePropertyGroup::appendToEditPacket(OctreePacketData* packetData,
     APPEND_ENTITY_PROPERTY(PROP_VEHICLE_TRIM, getTrim());
     APPEND_ENTITY_PROPERTY(PROP_VEHICLE_BALLAST, getBallast());
     APPEND_ENTITY_PROPERTY(PROP_VEHICLE_FILL, getFill());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_WING_AREA, getWingArea());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_WING_SPAN, getWingSpan());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_WING_POINT, getWingPoint());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_TILT, getTilt());
 
     return true;
 }
@@ -477,6 +509,10 @@ bool VehiclePropertyGroup::decodeFromEditPacket(EntityPropertyFlags& propertyFla
     READ_ENTITY_PROPERTY(PROP_VEHICLE_TRIM, float, setTrim);
     READ_ENTITY_PROPERTY(PROP_VEHICLE_BALLAST, float, setBallast);
     READ_ENTITY_PROPERTY(PROP_VEHICLE_FILL, float, setFill);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_WING_AREA, float, setWingArea);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_WING_SPAN, float, setWingSpan);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_WING_POINT, glm::vec3, setWingPoint);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_TILT, float, setTilt);
 
     DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_TYPE, Type);
     DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_MASS, Mass);
@@ -525,6 +561,10 @@ bool VehiclePropertyGroup::decodeFromEditPacket(EntityPropertyFlags& propertyFla
     DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_TRIM, Trim);
     DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_BALLAST, Ballast);
     DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_FILL, Fill);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_WING_AREA, WingArea);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_WING_SPAN, WingSpan);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_WING_POINT, WingPoint);
+    DECODE_GROUP_PROPERTY_HAS_CHANGED(PROP_VEHICLE_TILT, Tilt);
 
     processedBytes += bytesRead;
 
@@ -581,6 +621,10 @@ void VehiclePropertyGroup::markAllChanged() {
     _trimChanged = true;
     _ballastChanged = true;
     _fillChanged = true;
+    _wingAreaChanged = true;
+    _wingSpanChanged = true;
+    _wingPointChanged = true;
+    _tiltChanged = true;
 }
 
 EntityPropertyFlags VehiclePropertyGroup::getChangedProperties() const {
@@ -633,6 +677,10 @@ EntityPropertyFlags VehiclePropertyGroup::getChangedProperties() const {
     CHECK_PROPERTY_CHANGE(PROP_VEHICLE_TRIM, trim);
     CHECK_PROPERTY_CHANGE(PROP_VEHICLE_BALLAST, ballast);
     CHECK_PROPERTY_CHANGE(PROP_VEHICLE_FILL, fill);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_WING_AREA, wingArea);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_WING_SPAN, wingSpan);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_WING_POINT, wingPoint);
+    CHECK_PROPERTY_CHANGE(PROP_VEHICLE_TILT, tilt);
 
     return changedProperties;
 }
@@ -685,6 +733,10 @@ void VehiclePropertyGroup::getProperties(EntityItemProperties& properties) const
     COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, Trim, getTrim);
     COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, Ballast, getBallast);
     COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, Fill, getFill);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, WingArea, getWingArea);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, WingSpan, getWingSpan);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, WingPoint, getWingPoint);
+    COPY_ENTITY_GROUP_PROPERTY_TO_PROPERTIES(Vehicle, Tilt, getTilt);
 }
 
 bool VehiclePropertyGroup::setProperties(const EntityItemProperties& properties) {
@@ -737,6 +789,10 @@ bool VehiclePropertyGroup::setProperties(const EntityItemProperties& properties)
     SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, Trim, trim, setTrim);
     SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, Ballast, ballast, setBallast);
     SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, Fill, fill, setFill);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, WingArea, wingArea, setWingArea);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, WingSpan, wingSpan, setWingSpan);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, WingPoint, wingPoint, setWingPoint);
+    SET_ENTITY_GROUP_PROPERTY_FROM_PROPERTIES(Vehicle, Tilt, tilt, setTilt);
 
     return somethingChanged;
 }
@@ -791,6 +847,10 @@ EntityPropertyFlags VehiclePropertyGroup::getEntityProperties(EncodeBitstreamPar
     requestedProperties += PROP_VEHICLE_TRIM;
     requestedProperties += PROP_VEHICLE_BALLAST;
     requestedProperties += PROP_VEHICLE_FILL;
+    requestedProperties += PROP_VEHICLE_WING_AREA;
+    requestedProperties += PROP_VEHICLE_WING_SPAN;
+    requestedProperties += PROP_VEHICLE_WING_POINT;
+    requestedProperties += PROP_VEHICLE_TILT;
 
     return requestedProperties;
 }
@@ -852,6 +912,10 @@ void VehiclePropertyGroup::appendSubclassData(OctreePacketData* packetData, Enco
     APPEND_ENTITY_PROPERTY(PROP_VEHICLE_TRIM, getTrim());
     APPEND_ENTITY_PROPERTY(PROP_VEHICLE_BALLAST, getBallast());
     APPEND_ENTITY_PROPERTY(PROP_VEHICLE_FILL, getFill());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_WING_AREA, getWingArea());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_WING_SPAN, getWingSpan());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_WING_POINT, getWingPoint());
+    APPEND_ENTITY_PROPERTY(PROP_VEHICLE_TILT, getTilt());
 }
 
 int VehiclePropertyGroup::readEntitySubclassDataFromBuffer(const unsigned char* data, int bytesLeftToRead,
@@ -909,6 +973,10 @@ int VehiclePropertyGroup::readEntitySubclassDataFromBuffer(const unsigned char* 
     READ_ENTITY_PROPERTY(PROP_VEHICLE_TRIM, float, setTrim);
     READ_ENTITY_PROPERTY(PROP_VEHICLE_BALLAST, float, setBallast);
     READ_ENTITY_PROPERTY(PROP_VEHICLE_FILL, float, setFill);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_WING_AREA, float, setWingArea);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_WING_SPAN, float, setWingSpan);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_WING_POINT, glm::vec3, setWingPoint);
+    READ_ENTITY_PROPERTY(PROP_VEHICLE_TILT, float, setTilt);
 
     return bytesRead;
 }
@@ -927,7 +995,8 @@ uint64_t VehiclePropertyGroup::definitionHash() const {
            << _maxThrust << _maxVerticalThrust << _thrustPoint.x << _thrustPoint.y << _thrustPoint.z
            << _dragArea.x << _dragArea.y << _dragArea.z << _angularDragArea.x << _angularDragArea.y << _angularDragArea.z
            << _rudderArea << _elevatorArea << _finPoint.x << _finPoint.y << _finPoint.z << _maxFinAngle
-           << _ballastRate << _ventRate;
+           << _ballastRate << _ventRate
+           << _wingArea << _wingSpan << _wingPoint.x << _wingPoint.y << _wingPoint.z;
     QByteArray digest = QCryptographicHash::hash(bytes, QCryptographicHash::Md5);
     uint64_t hash = 0;
     memcpy(&hash, digest.constData(), sizeof(hash));

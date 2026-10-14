@@ -17,6 +17,9 @@
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Body/MotionProperties.h>
 #include <Jolt/Physics/Collision/Shape/Shape.h>
+#include <Jolt/Physics/Collision/Shape/CompoundShape.h>
+#include <Jolt/Physics/Collision/Shape/DecoratedShape.h>
+#include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 
 #include <EntityItem.h>
 
@@ -305,7 +308,7 @@ void ObjectMotionState::setBody(JPH::Body* body, PhysicsWorld* world) {
         _world = body ? world : nullptr;
         if (_body) {
             _body->SetUserData((JPH::uint64)(uintptr_t)this);
-            assert(_body->GetShape() == _shape);
+            assert(_body->GetShape() == getBodyShape());
             updateCCDConfiguration();
         }
     }
@@ -317,21 +320,90 @@ void ObjectMotionState::setShape(const JPH::Shape* shape) {
             getShapeManager()->releaseShape(_shape);
         }
         _shape = shape;
-        if (_body) {
-            assert(_shape);
-            bodyInterface()->SetShape(_body->GetID(), _shape, false, JPH::EActivation::DontActivate);
-            updateCCDConfiguration();
-        }
+        // an interior copy was built on the old shape; the engine rebuilds it when the body is reinserted
+        _interiorShape = nullptr;
+        _interiorParts.clear();
+        refreshBodyShape(false);
     } else if (shape) {
         // we need to release unused reference to shape
         getShapeManager()->releaseShape(shape);
     }
 }
 
+void ObjectMotionState::setInteriorShape(const JPH::Shape* compound, std::vector<ObjectMotionState*>&& parts) {
+    if (_interiorShape.GetPtr() == compound) {
+        _interiorParts = std::move(parts);
+        return;
+    }
+    _interiorShape = compound;
+    _interiorParts = compound ? std::move(parts) : std::vector<ObjectMotionState*>();
+    refreshBodyShape(false);
+}
+
+void ObjectMotionState::setCenterOfMassOffset(const glm::vec3& offset) {
+    if (offset == _centerOfMassOffset) {
+        return;
+    }
+    _centerOfMassOffset = offset;
+    refreshBodyShape(true);
+}
+
+// private
+void ObjectMotionState::refreshBodyShape(bool activate) {
+    JPH::RefConst<JPH::Shape> worn = _interiorShape ? _interiorShape : JPH::RefConst<JPH::Shape>(_shape);
+    if (worn && glm::length2(_centerOfMassOffset) > 1.0e-8f) {
+        worn = new JPH::OffsetCenterOfMassShape(worn, glmToJolt(_centerOfMassOffset));
+    }
+    _bodyShape = (worn.GetPtr() == _shape) ? nullptr : worn;
+    if (_body) {
+        assert(getBodyShape());
+        bodyInterface()->SetShape(_body->GetID(), getBodyShape(), false, activate ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+        updateCCDConfiguration();
+        updateBodyMassProperties();
+    }
+}
+
+JPH::MassProperties ObjectMotionState::getOwnMassProperties() const {
+    JPH::MassProperties massProperties;
+    if (_shape) {
+        massProperties = _shape->GetMassProperties();
+        if (glm::length2(_centerOfMassOffset) > 1.0e-8f) {
+            massProperties.Translate(glmToJolt(_centerOfMassOffset));   // as OffsetCenterOfMassShape computes it
+        }
+    }
+    return massProperties;
+}
+
+// The compound's sub-shape user data numbers the parts from 1 (0 is the own shape); a decorated shape (the centre
+// offset) passes sub-shape IDs through to the compound unchanged.
+ObjectMotionState* ObjectMotionState::interiorPartAt(const JPH::SubShapeID& subShapeID) const {
+    if (!_interiorShape || !_body || _interiorParts.empty()) {
+        return nullptr;
+    }
+    const JPH::Shape* shape = _body->GetShape();
+    while (shape && shape->GetType() == JPH::EShapeType::Decorated) {
+        shape = static_cast<const JPH::DecoratedShape*>(shape)->GetInnerShape();
+    }
+    if (shape != _interiorShape.GetPtr() || shape->GetType() != JPH::EShapeType::Compound) {
+        return nullptr;
+    }
+    const JPH::CompoundShape* compound = static_cast<const JPH::CompoundShape*>(shape);
+    JPH::SubShapeID remainder;
+    uint32_t index = compound->GetSubShapeIndexFromID(subShapeID, remainder);
+    if (index >= compound->GetNumSubShapes()) {
+        return nullptr;
+    }
+    uint32_t partNumber = compound->GetCompoundUserData(index);
+    return (partNumber > 0 && partNumber <= _interiorParts.size()) ? _interiorParts[partNumber - 1] : nullptr;
+}
+
 void ObjectMotionState::setBodyTransform(const glm::vec3& position, const glm::quat& rotation, bool activate) {
     if (_body && bodyInterface()) {
         bodyInterface()->SetPositionAndRotation(_body->GetID(), glmToJoltR(position), glmToJolt(rotation),
                                                activate ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+        if (_body->IsStatic()) {
+            _world->markInteriorChanged();   // a wall moved: the frame's copy of it (round 8) is stale
+        }
     }
 }
 
@@ -472,8 +544,7 @@ void ObjectMotionState::updateBodyMassProperties() {
     if (mass != mass || mass < MIN_DYNAMIC_MASS) {
         mass = MIN_DYNAMIC_MASS;
     }
-    // the body's shape, not _shape: a vehicle's body wears its shape inside an offset-centre-of-mass shape (round 6)
-    JPH::MassProperties massProperties = _body->GetShape()->GetMassProperties();
+    JPH::MassProperties massProperties = getOwnMassProperties();
     massProperties.ScaleToMass(mass);
     motion->SetMassProperties(motion->GetAllowedDOFs(), massProperties);
 }

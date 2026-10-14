@@ -150,6 +150,10 @@ public:
     // removes it. Contacts with it are reported against the frame's motion state.
     void setFrameHull(ObjectMotionState* frameState);
     bool hasFrameHull() const { return !_frameHullID.IsInvalid(); }
+    // The interior changed (a static body came, went or moved): the frame's copy of it in the parent world
+    // (ObjectMotionState::setInteriorShape) is rebuilt by the engine, which takes the flag.
+    void markInteriorChanged() { _interiorChanged = true; }
+    bool takeInteriorChanged() { bool changed = _interiorChanged; _interiorChanged = false; return changed; }
 
     // one substep: kinematics pushed (parents before children), the character moved, gravity applied, the
     // world stepped, contacts harvested
@@ -216,6 +220,7 @@ private:
     std::set<ObjectMotionState*> _activeStaticObjects;
     JPH::BodyID _frameHullID;
     const JPH::Shape* _frameHullShape { nullptr };
+    bool _interiorChanged { false };
     uint32_t _numContactFrames { 0 };
 };
 

@@ -27,10 +27,15 @@
 (function () {
     var config = (typeof AIRSHIP_CONFIG !== "undefined" && AIRSHIP_CONFIG) ? AIRSHIP_CONFIG : {};
     var ROLE = config.role || "pilot";
+    var KIND = config.vehicle || "airship";                         // "airship" (round 7) or "aircraft" (round 8)
+    var Rig = KIND === "aircraft" ? Aircraft : Airship;             // the rig that makes it (airship-rig.js, aircraft-rig.js)
+    var HULL_NAME = Rig.HULL_NAME || "airship-hull";
+    var TAG = KIND === "aircraft" ? "PHYSICS-AIRCRAFT" : "PHYSICS-AIRSHIP";
     var TERRAIN_URL = config.terrainURL || "";
     var LIFETIME = config.lifetime || 600;
     var TIMEOUT = config.timeout || 260;
     var BOOT = (config.boot !== undefined) ? config.boot : 8;
+    var DECK_CAR = !!config.deckCar;         // round 8: the trolley on the deck; the crew rides it instead of walking the deck
     var CRUISE_HEIGHT = 35;                  // m above the pad's ground
     var RETURN_RADIUS = 60;                  // m from the pad: close enough to brake and come down (the braking takes about 50 m)
     var GUARD_RADIUS = 80;                   // m from the pad: beyond it the autopilot heads home whatever the phase (the terrain ends at 96 m)
@@ -58,6 +63,28 @@
         { name: "done", seconds: 2, controls: {} }
     ];
 
+    // the aircraft's course (round 8): a hover lift-off on vertical thrust, a climb, the nacelles tilted level into
+    // forward flight, a cruise, a turn each way on the ailerons, the way back, the nacelles tilted up again to hover
+    // and brake, a descent and a landing. The autopilot holds height with the throttle in hover and with the elevator
+    // in flight, heads by yaw in hover and by bank in flight, and in hover pitches against the forward speed to stop.
+    var AIRCRAFT_COURSE = [
+        { name: "moored", seconds: 3, controls: {} },
+        { name: "lift-off", seconds: 6, auto: { hover: true, climb: 1.5 } },
+        { name: "climb", seconds: 30, auto: { hover: true, height: CRUISE_HEIGHT, heading: "hold" }, until: function (s) { return s.height > CRUISE_HEIGHT - 3; } },
+        { name: "transition", seconds: 15, auto: { hover: true, tiltTo: 0.5, height: CRUISE_HEIGHT, heading: "hold" }, until: function (s) { return s.airspeed > 25; } },
+        { name: "level", seconds: 8, auto: { flight: true, tiltTo: 0, height: CRUISE_HEIGHT, heading: "hold" } },
+        { name: "cruise", seconds: 8, auto: { flight: true, height: CRUISE_HEIGHT, heading: "hold" } },
+        { name: "turn-right", seconds: 10, auto: { flight: true, height: CRUISE_HEIGHT, bank: 30 } },
+        { name: "turn-left", seconds: 12, auto: { flight: true, height: CRUISE_HEIGHT, bank: -30 } },
+        { name: "return", seconds: 60, auto: { flight: true, height: CRUISE_HEIGHT, heading: "pad" }, until: function (s) { return s.padDistance < 150; } },
+        { name: "brake", seconds: 30, auto: { hover: true, tiltTo: 1, height: CRUISE_HEIGHT, stop: true }, until: function (s) { return s.horizontalSpeed < 3.0; } },
+        { name: "home", seconds: 60, auto: { hover: true, height: CRUISE_HEIGHT, toPad: true }, until: function (s) { return s.padDistance < 8; } },
+        { name: "descend", seconds: 60, auto: { hover: true, descend: true, toPad: true }, until: function (s) { return s.aboveGround < 1.0 && Math.abs(s.climbRate) < 0.1; } },
+        { name: "landed", seconds: 5, controls: { throttle: 0 } },
+        { name: "done", seconds: 2, controls: {} }
+    ];
+    if (KIND === "aircraft") { COURSE = AIRCRAFT_COURSE; }
+
     var terrain = null;
     var hull = null;
     var ball = null;
@@ -79,9 +106,15 @@
     var teleportDone = false;
     var padGround = 0;
     var crewLeg = { t: 0, walking: false, direction: -1 };
+    var track = null;
+    var car = null;
+    // the crew's ride on the trolley: on at a station, off at every second stop, on again when it is back
+    var carRide = { state: "none", t: 0, stops: 0, lastStation: -1, seenMoving: false, offAtStation: -1, boardings: 0, failures: 0,
+                    probed: false, probeHold: false, probe: null };
+    var probes = [];   // the rail pushes (round 8): walking from the deck into the car's end rail, which is a copy in the ship's world
 
     function now() { return Date.now() / 1000 - t0; }
-    function log(s) { print("PHYSICS-AIRSHIP " + s); }
+    function log(s) { print(TAG + " " + s); }
     function setMode(m) { mode = m; modeT0 = now(); events.push({ t: now(), mode: m }); log("mode " + m + " at " + now().toFixed(2) + " s"); }
     function setPhase(p) {
         if (p === phase) { return; }
@@ -106,6 +139,21 @@
         return min === null ? null : { min: min, max: max };
     }
     function fmtV(v) { return v ? "(" + v.x.toFixed(2) + ", " + v.y.toFixed(2) + ", " + v.z.toFixed(2) + ")" : "none"; }
+    function parentNameOf(id) {
+        if (Uuid.isNull(id)) { return "none"; }
+        if (hull && Uuid.isEqual(id, hull)) { return "ship"; }
+        if (car && Uuid.isEqual(id, car)) { return "car"; }
+        return "other";
+    }
+    // the trolley's pose relative to its track (on the line: x and y near 0, z between the stations) and the train
+    function carPose() {
+        if (!car || !track) { return null; }
+        var cp = Entities.getEntityProperties(car, ["localPosition", "parentID"]);
+        var tp = Entities.getEntityProperties(track, ["trainSpeed", "trainStation", "trainDistance"]);
+        if (!cp || !cp.localPosition) { return null; }
+        return { x: cp.localPosition.x, y: cp.localPosition.y, z: cp.localPosition.z, parentIsTrack: cp.parentID == track,
+                 speed: tp ? tp.trainSpeed : null, station: tp ? tp.trainStation : null, distance: tp ? tp.trainDistance : null };
+    }
     function pad() { return { x: LandRover.TERRAIN_CENTER.x, z: LandRover.TERRAIN_CENTER.z }; }
     function wrap(d) { while (d > 180) { d -= 360; } while (d < -180) { d += 360; } return d; }
     function headingOf(rotation) { var f = Quat.getFront(rotation); return 180 / Math.PI * Math.atan2(f.x, -f.z); }
@@ -114,7 +162,7 @@
     // ---- the pilot at the helm, as vehicles.js puts them there ----
     function takeHelm() {
         var p = Entities.getEntityProperties(hull, ["position", "rotation"]);
-        var seat = Airship.HELM;
+        var seat = Rig.HELM;
         var helm = Vec3.sum(p.position, Vec3.multiplyQbyV(p.rotation, vec3Of(seat.position)));
         DRIVE_KEYS.forEach(function (key) { MyAvatar.disableDriveKey(key); });
         MyAvatar.position = Vec3.sum(helm, { x: 0, y: 1.0, z: 0 });
@@ -150,8 +198,15 @@
     function hullState() {
         return Entities.getEntityProperties(hull, ["position", "rotation", "velocity", "angularVelocity", "vehicle", "description", "simulationOwner"]);
     }
+    function findCar() {
+        var found = Entities.findEntitiesByName("airship-car", LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE, false);
+        if (!found.length) { return false; }
+        car = found[0];
+        track = Entities.getEntityProperties(car, ["parentID"]).parentID;
+        return true;
+    }
     function findShip() {
-        var found = Entities.findEntitiesByName("airship-hull", LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE, false);
+        var found = Entities.findEntitiesByName(HULL_NAME, LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE, false);
         var best = null, bestAge = Infinity;
         found.forEach(function (id) {
             var age = Entities.getEntityProperties(id, ["age"]).age;
@@ -172,9 +227,21 @@
             height: c.position.y - padGround, aboveGround: c.position.y - ground, climbRate: c.velocity.y,
             heading: headingOf(c.rotation), padDistance: Math.sqrt(dx * dx + dz * dz),
             padBearing: 180 / Math.PI * Math.atan2(-dx, dz),   // the compass direction from the ship to the pad
-            speed: Vec3.length(c.velocity), speedAlong: Vec3.dot(c.velocity, Quat.getFront(c.rotation))
+            speed: Vec3.length(c.velocity), speedAlong: Vec3.dot(c.velocity, Quat.getFront(c.rotation)),
+            // the bank, positive with the right wing down, the pitch, positive nose up, and their rates; the live tilt and
+            // airspeed from the model
+            bank: -180 / Math.PI * Math.asin(Math.max(-1, Math.min(1, Quat.getRight(c.rotation).y))),
+            pitchDeg: 180 / Math.PI * Math.asin(Math.max(-1, Math.min(1, Quat.getFront(c.rotation).y))),
+            pitchRate: 180 / Math.PI * Vec3.dot(c.angularVelocity, Quat.getRight(c.rotation)),
+            rollRate: -180 / Math.PI * Vec3.dot(c.angularVelocity, Quat.getFront(c.rotation)),
+            tilt: liveTilt(), airspeed: liveAirspeed(),
+            // the horizontal velocity: its speed and its compass heading, as the hull's heading is measured
+            horizontalSpeed: Math.sqrt(c.velocity.x * c.velocity.x + c.velocity.z * c.velocity.z),
+            velocityHeading: 180 / Math.PI * Math.atan2(c.velocity.x, -c.velocity.z)
         };
     }
+    function liveTilt() { var l = Entities.getVehicleStats().live; return l && l.tilt !== undefined ? l.tilt : 1; }
+    function liveAirspeed() { var l = Entities.getVehicleStats().live; return l && l.airspeed !== undefined ? l.airspeed : 0; }
     function sample(dt) {
         var c = hullState();
         if (!c || !c.position) { return false; }
@@ -184,12 +251,15 @@
         var stats = Entities.getVehicleStats();
         var v = c.vehicle || {};
         var f = flight(c);
-        var parented = MyAvatar.parentID == hull;
-        if (lastParent !== null && parented !== lastParent) {
-            crossings.push({ t: now(), phase: phase, aboard: parented, world: MyAvatar.position });
-            log((parented ? "boarded" : "left") + " the ship at " + now().toFixed(2) + " s, world " + fmtV(MyAvatar.position));
+        var parentName = parentNameOf(MyAvatar.parentID);
+        var parented = parentName === "ship" || parentName === "car";
+        if (lastParent !== null && parentName !== lastParent) {
+            crossings.push({ t: now(), index: samples.length, phase: phase, from: lastParent, to: parentName, aboard: parented, world: MyAvatar.position,
+                             local: parented ? MyAvatar.localPosition : null });
+            log("crossed from the " + lastParent + " to the " + parentName + " at " + now().toFixed(2) + " s, world " + fmtV(MyAvatar.position) +
+                (parented ? ", local " + fmtV(MyAvatar.localPosition) : ""));
         }
-        lastParent = parented;
+        lastParent = parentName;
         var row = {
             index: samples.length, t: now(), dt: dt, mode: mode, phase: ROLE === "pilot" ? phase : (c.description || ""),
             pos: c.position, rot: c.rotation, vel: c.velocity, angVel: c.angularVelocity,
@@ -197,14 +267,16 @@
             speed: f.speed, speedAlong: f.speedAlong, pitch: euler.x, roll: euler.z, upY: Quat.getUp(c.rotation).y,
             controls: lastControls,
             state: { sequence: v.inputSequence, throttle: v.throttle, steering: v.steering, pitch: v.pitch, lift: v.lift, trim: v.trim,
-                     ballast: v.ballast, fill: v.fill, stateTime: v.stateTime, driver: v.driver },
+                     ballast: v.ballast, fill: v.fill, tilt: v.tilt, stateTime: v.stateTime, driver: v.driver },
             stats: { corrections: stats.corrections, replaySteps: stats.replaySteps, maxError: stats.maxError, inputsSent: stats.inputsSent,
                      inputsReceived: stats.inputsReceived, inputsDropped: stats.inputsDropped, inputsStarved: stats.inputsStarved, vehicles: stats.vehicles },
-            live: stats.live && stats.live.airship ? { altitude: stats.live.altitude, airDensity: stats.live.airDensity, buoyancy: stats.live.buoyancy,
+            live: stats.live && (stats.live.airship || stats.live.aircraft) ? { altitude: stats.live.altitude, airDensity: stats.live.airDensity, buoyancy: stats.live.buoyancy,
                     ballastWeight: stats.live.ballastWeight, thrust: stats.live.thrust, verticalThrust: stats.live.verticalThrust,
                     airspeed: stats.live.airspeed, sideslip: stats.live.sideslip, incidence: stats.live.incidence, ballast: stats.live.ballast,
-                    fill: stats.live.fill } : null,
-            parented: parented, myPos: MyAvatar.position, myLocal: parented ? MyAvatar.localPosition : null,
+                    fill: stats.live.fill, tilt: stats.live.tilt, angleOfAttack: stats.live.angleOfAttack, wingLift: stats.live.wingLift,
+                    wingDrag: stats.live.wingDrag, liftCoefficient: stats.live.liftCoefficient } : null,
+            parented: parented, parentName: parentName, myPos: MyAvatar.position, myLocal: parented ? MyAvatar.localPosition : null,
+            carLocal: carPose(),
             myLocalVel: parented ? MyAvatar.localVelocity : null,
             myLocalYaw: parented ? Quat.safeEulerAngles(MyAvatar.localOrientation).y : null,   // the facing on the deck, degrees
             atHelm: atHelm, walking: crewLeg.walking
@@ -212,7 +284,8 @@
         if (ROLE === "crew") {
             if (ball) {
                 var b = Entities.getEntityProperties(ball, ["localPosition", "parentID"]);
-                row.ballLocal = (b && b.parentID == hull) ? b.localPosition : null;
+                row.ballLocal = (b && (b.parentID == hull || (car && b.parentID == car))) ? b.localPosition : null;
+                row.ballParent = b ? parentNameOf(b.parentID) : "none";
             }
             // the driver as the state names it (a property comes to a script as a UUID, not a string: Uuid.isNull, not
             // a comparison with Uuid.NULL; and AvatarList.getAvatar of the null UUID is this client's own avatar)
@@ -248,12 +321,76 @@
 
     // ---- the pilot's course and autopilot ----
     var controlsLogged = false;
+    var HOVER_THROTTLE = 0.59;                  // the aircraft's thrust that carries its weight: 1,200 kg x 9.8 over 20 kN
+    var CRUISE_SPEED = 30;                      // m/s: the wing carries the weight at a lift coefficient of 0.9
+    // The aircraft's autopilot. Hover: the throttle holds height (divided by the vertical part of the tilted thrust),
+    // the nacelles' tilt goes to its target, the nose pitches against the forward speed to stop (or toward the pad to
+    // go), the heading by yaw. Flight: the throttle holds the airspeed, the elevator the height, the ailerons a bank
+    // (a turn's, or the one that brings the heading round), the rudder along with them.
+    function aircraftAutopilot(step, s, tt) {
+        var c = { throttle: 0, steering: 0, pitch: 0, lift: 0, trim: 0 };
+        var a = step.auto;
+        if (a.tiltTo !== undefined) {
+            var d = a.tiltTo - s.tilt;
+            c.lift = Math.abs(d) < 0.02 ? 0 : (d > 0 ? 1 : -1);
+        }
+        if (a.hover) {
+            var climbWanted = a.climb !== undefined ? a.climb : a.descend ? (s.aboveGround > 15 ? -3.0 : s.aboveGround > 6 ? -1.5 : -0.4) : clamp1(0.15 * (a.height - s.height));
+            if (a.descend && s.aboveGround < 0.6) { climbWanted = -1.0; }
+            var vertical = Math.max(0.35, Math.sin(s.tilt * Math.PI / 2));
+            c.throttle = Math.max(0.0, Math.min(1.0, (HOVER_THROTTLE + 0.08 * (climbWanted - s.climbRate)) / vertical));
+            if (a.tiltTo === 1 && s.tilt < 0.7) { c.throttle = 0; }   // no forward blast while the nacelles come up
+            var along = s.speedAlong;
+            // the nose against the speed: gently while the wing still flies (a brake from forward flight), fully in hover
+            var pitchMax = s.airspeed > 15 ? 0.5 : 1.0;
+            if (a.stop || a.toPad) {
+                // a hover has no sideways control: it turns to face its velocity and pitches against it; going to the pad
+                // it does the same until the velocity points at the pad, then faces the pad and holds a speed by the
+                // distance left
+                var velocityOff = wrap(s.velocityHeading - s.heading);
+                var toPadOff = a.toPad ? wrap(s.padBearing - s.velocityHeading) : 180;
+                var wanted = a.toPad ? Math.min(10.0, 0.3 * s.padDistance) : 0;
+                if (s.horizontalSpeed > (a.stop ? 3.0 : 6.0) && (a.stop || Math.abs(toPadOff) > 30)) {
+                    c.steering = clamp1(velocityOff / 60);
+                    c.pitch = Math.abs(velocityOff) < 60 ? Math.max(-pitchMax, Math.min(pitchMax, 0.4 * s.horizontalSpeed)) : 0;
+                } else {
+                    var bearingError = a.toPad ? wrap(s.padBearing - s.heading) : 0;
+                    c.steering = clamp1(bearingError / 90);
+                    c.pitch = Math.max(-pitchMax, Math.min(pitchMax, 0.4 * (along - (Math.abs(bearingError) < 30 ? wanted : 0))));
+                }
+            } else {
+                // in the transition the speed is wanted; otherwise the nose comes up against it
+                c.pitch = a.tiltTo !== undefined && a.tiltTo < 1 ? 0 : Math.max(-pitchMax, Math.min(pitchMax, 0.4 * along));
+                if (a.heading === "hold" && holdHeading !== null) { c.steering = clamp1(wrap(holdHeading - s.heading) / 90); }
+                if (a.heading === "pad") { c.steering = clamp1(wrap(s.padBearing - s.heading) / 90); }
+            }
+        } else if (a.flight) {
+            // the classic pairing: the throttle holds the height, the elevator holds the airspeed, the latter through an
+            // attitude loop (a pitch angle wanted, the elevator for the angle with the pitch rate damped): level flight
+            // at the cruising speed is the nose 10 degrees up, and the nose comes up to slow and down to speed up
+            var speedWanted = a.speed || CRUISE_SPEED;
+            c.throttle = Math.max(0.05, Math.min(0.8, 0.1 + 0.03 * (a.height - s.height) - 0.05 * s.climbRate));
+            var pitchWanted = Math.max(-8, Math.min(16, 10 + 0.5 * (s.airspeed - speedWanted)));
+            c.pitch = clamp1(0.08 * (pitchWanted - s.pitchDeg) - 0.01 * s.pitchRate);
+            var bankWanted = 0;
+            if (a.bank !== undefined) {
+                bankWanted = a.bank;
+            } else if (a.heading === "hold" && holdHeading !== null) {
+                bankWanted = Math.max(-30, Math.min(30, 0.6 * wrap(holdHeading - s.heading)));
+            } else if (a.heading === "pad") {
+                bankWanted = Math.max(-30, Math.min(30, 0.6 * wrap(s.padBearing - s.heading)));
+            }
+            c.steering = Math.max(-0.5, Math.min(0.5, 0.03 * (bankWanted - s.bank) - 0.005 * s.rollRate));
+        }
+        return c;
+    }
     function autopilot(step, s, tt) {
         var c = { throttle: 0, steering: 0, pitch: 0, lift: 0, trim: 0 };
         if (step.controls) {
             Object.keys(step.controls).forEach(function (k) { c[k] = step.controls[k]; });
             return c;
         }
+        if (KIND === "aircraft") { return aircraftAutopilot(step, s, tt); }
         var a = step.auto;
         c.throttle = a.throttle || 0;
         if (a.throttle === "home") {
@@ -320,7 +457,7 @@
         if (mode === "boot") {
             if (tt > BOOT && tt > bootTried + 1) {
                 bootTried = tt;
-                var removed = Airship.deleteAll(LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE);
+                var removed = Rig.deleteAll(LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE);
                 if (removed > 0) { log("deleted " + removed + " leftover airship entities of an earlier run"); }
                 terrain = LandRover.createTerrain(TERRAIN_URL, LIFETIME);
                 if (!terrain || terrain === Uuid.NULL) {
@@ -342,12 +479,21 @@
         } else if (mode === "ground-settle") {
             if (tt > 2) {
                 var c = pad();
-                var made = Airship.create(c.x, c.z, 0, LIFETIME);
+                var made = Rig.create(c.x, c.z, 0, LIFETIME);
                 hull = made.hull;
+                if (DECK_CAR && KIND === "airship") {
+                    var deck = Airship.createDeckTrack(hull, LIFETIME);
+                    track = deck.track; car = deck.car;
+                    var cp = Entities.getEntityProperties(car, ["parentID", "trackID", "frame", "localPosition"]);
+                    log("deck track " + track + ", car " + car + ": parent is the track " + (cp.parentID == track) + ", trackID is the track " +
+                        (cp.trackID == track) + ", frame " + cp.frame + ", local " + fmtV(cp.localPosition));
+                }
                 var hp = Entities.getEntityProperties(hull, ["position", "vehicle", "dynamic", "frame"]);
-                log("airship " + hull + " at " + fmtV(hp.position) + ", dynamic " + hp.dynamic + ", frame " + hp.frame + ", type " +
-                    (hp.vehicle && hp.vehicle.type) + ", mass " + (hp.vehicle && hp.vehicle.mass) + " kg, ballast " + (hp.vehicle && hp.vehicle.ballast) +
-                    " kg, envelope " + (hp.vehicle && hp.vehicle.envelopeVolume) + " m3, " + made.parts.length + " parts");
+                log(KIND + " " + hull + " at " + fmtV(hp.position) + ", dynamic " + hp.dynamic + ", frame " + hp.frame + ", type " +
+                    (hp.vehicle && hp.vehicle.type) + ", mass " + (hp.vehicle && hp.vehicle.mass) + " kg" +
+                    (KIND === "airship" ? ", ballast " + (hp.vehicle && hp.vehicle.ballast) + " kg, envelope " + (hp.vehicle && hp.vehicle.envelopeVolume) + " m3"
+                        : ", wing " + (hp.vehicle && hp.vehicle.wingArea) + " m2, span " + (hp.vehicle && hp.vehicle.wingSpan) + " m, tilt " + (hp.vehicle && hp.vehicle.tilt)) +
+                    ", " + made.parts.length + " parts");
                 setMode("settle");
             }
         } else if (mode === "settle") {
@@ -355,7 +501,7 @@
                 var s = Entities.getEntityProperties(hull, ["position", "velocity"]);
                 var ground = LandRover.groundHeight(s.position.x, s.position.z);
                 log("settled: hull y " + s.position.y.toFixed(3) + " = ground + " + (s.position.y - ground).toFixed(3) + " (expected about " +
-                    Airship.DECK_CENTER_ABOVE_GROUND.toFixed(2) + "), speed " + Vec3.length(s.velocity).toFixed(3));
+                    Rig.DECK_CENTER_ABOVE_GROUND.toFixed(2) + "), speed " + Vec3.length(s.velocity).toFixed(3));
                 if (s.position.y < ground - 1) { finish("fell through"); return; }
                 if (s.position.y > ground + 5) { log("the ship is already airborne: too light on the ground"); }
                 takeHelm();
@@ -394,15 +540,197 @@
         crewLeg.walking = false;
         MyAvatar.motorVelocity = Vec3.ZERO;
     }
+    // walk toward a point on the deck (x, z in the ship's coordinates), facing the bow: the "avatar" motor frame is the
+    // avatar's turned by 180 degrees, so the ship's +x and +z are the motor's -x and -z. Returns true when there.
+    function walkToward(x, z) {
+        var me = MyAvatar.localPosition;
+        var dx = x - me.x, dz = z - me.z;
+        var d = Math.sqrt(dx * dx + dz * dz);
+        if (d < 0.2) { if (crewLeg.walking) { stopWalking(); } return true; }
+        if (!crewLeg.walking) {
+            var hp = Entities.getEntityProperties(hull, ["rotation"]);
+            if (hp && hp.rotation) { MyAvatar.orientation = hp.rotation; }
+            crewLeg.walking = true;
+            crewLeg.direction = 0;
+            MyAvatar.motorReferenceFrame = "avatar";
+            MyAvatar.motorTimescale = 0.2;
+        }
+        MyAvatar.motorVelocity = { x: -WALK_SPEED * dx / d, y: 0, z: -WALK_SPEED * dz / d };
+        return false;
+    }
+    // where the car's centre is on the deck, in the ship's coordinates (the track's middle plus the car's place on it)
+    function carDeckZ(cp) { return 0.5 * (Airship.CAR.stations[0] + Airship.CAR.stations[1]) + cp.z; }
+    function setRide(state) {
+        carRide.state = state; carRide.t = now();
+        events.push({ t: now(), ride: state });
+        log("ride: " + state + " at " + now().toFixed(2) + " s, parent the " + parentNameOf(MyAvatar.parentID) + ", local " + fmtV(MyAvatar.localPosition));
+    }
+    // The crew's ride on the trolley: walk across the deck onto it at a station, ride standing still, step off onto
+    // the deck at every second stop, wait for it to come back to that station, step on again.
+    function driveCar() {
+        var tt = now() - carRide.t;
+        var pn = parentNameOf(MyAvatar.parentID);
+        var cp = carPose();
+        var standing = cp && cp.speed !== null && Math.abs(cp.speed) < 0.01 && cp.station >= 0;
+        if (cp && cp.speed !== null && Math.abs(cp.speed) > 0.1) { carRide.seenMoving = true; }
+        if (carRide.state.indexOf("probe") === 0 || carRide.state === "probing") {
+            driveProbe(tt, pn, cp, standing);
+        } else if (carRide.state === "toCar") {
+            if (pn === "car") {
+                stopWalking();
+                carRide.boardings++;
+                carRide.lastStation = standing ? cp.station : -1;
+                carRide.seenMoving = false;
+                if (!ball) { dropBall(); }
+                setRide("riding");
+            } else if (tt > 8 || !cp) {
+                stopWalking();
+                carRide.failures++;
+                log("could not board the car in " + tt.toFixed(1) + " s: parent the " + pn + ", local " + fmtV(MyAvatar.localPosition) +
+                    (cp ? ", the car at deck z " + carDeckZ(cp).toFixed(2) + " speed " + cp.speed.toFixed(2) : ""));
+                setRide("waiting");
+            } else if (Math.abs(carDeckZ(cp) - MyAvatar.localPosition.z) > 0.5 * Airship.CAR.dimensions.z - 0.3) {
+                // not abreast of the car (its ends are railed, round 8): to port of its line first, then along it
+                var sideX = Airship.CAR.x - 0.5 * Airship.CAR.dimensions.x - 0.5;
+                if (MyAvatar.localPosition.x > sideX + 0.2) {
+                    walkToward(sideX, MyAvatar.localPosition.z);
+                } else {
+                    walkToward(sideX, carDeckZ(cp));
+                }
+            } else {
+                // to the car's centre, up onto its floor (a 0.3 m step)
+                walkToward(Airship.CAR.x, carDeckZ(cp));
+            }
+        } else if (carRide.state === "riding") {
+            // a stop: the train standing at a station other than the one it last stood at
+            if (standing && carRide.seenMoving && cp.station !== carRide.lastStation) {
+                carRide.stops++;
+                carRide.lastStation = cp.station;
+                carRide.seenMoving = false;
+                log("the car stopped at station " + cp.station + " (stop " + carRide.stops + "), my local in the car " + fmtV(MyAvatar.localPosition));
+                if (carRide.stops % 2 === 0) {
+                    carRide.offAtStation = cp.station;
+                    setRide("stepOff");
+                }
+            }
+        } else if (carRide.state === "stepOff") {
+            // off the port side onto the deck, beside the station: a metre to port of wherever I am (the car's axes are
+            // the ship's), until the ship has me and I am clear of the car
+            var offX = Airship.CAR.x - 0.5 * Airship.CAR.dimensions.x - 0.5;
+            if (pn === "ship" && MyAvatar.localPosition.x < offX + 0.1) {
+                stopWalking();
+                carRide.seenMoving = false;
+                carRide.probed = false;
+                setRide("waiting");
+            } else if (pn === "ship" || pn === "car") {
+                walkToward(MyAvatar.localPosition.x - 1.0, MyAvatar.localPosition.z);
+            } else if (tt > 8) {
+                stopWalking();
+                carRide.failures++;
+                log("could not step off the car in " + tt.toFixed(1) + " s: parent the " + pn + ", local " + fmtV(MyAvatar.localPosition));
+                setRide("waiting");
+            }
+        } else if (carRide.state === "waiting") {
+            // the car standing within reach (its floor spans a metre each way of its centre): walk to it; once per
+            // wait, first push into its end rail from the deck (the rail probe)
+            var near = cp && Math.abs(carDeckZ(cp) - MyAvatar.localPosition.z) < 0.5 * Airship.CAR.dimensions.z + 1.5;
+            if (!carRide.probed && pn === "ship" && cp) {
+                // the probe first, once the car has left the bow station (it stands there when I step off)
+                if (tt > 1 && !(standing && Math.abs(carDeckZ(cp) - Airship.CAR.stations[0]) < 0.3)) {
+                    carRide.probed = true;
+                    setRide("probeOut");
+                }
+            } else if (standing && near && tt > 1) {
+                setRide("toCar");
+            } else if (tt > 60) {
+                log("waited " + tt.toFixed(0) + " s for the car; boarding wherever it is");
+                carRide.offAtStation = -1;
+                carRide.seenMoving = true;
+            }
+        }
+    }
+    // The rail probe (round 8): stand on the track's line 1.2 m beyond the bow station, where the car never passes,
+    // wait for it to arrive and stand, then push toward its centre for 2.5 s. The end rail is a child of the car, in
+    // the car's world; its copy on the car's body in the ship's world is what stops the crew, at the rail's face plus
+    // the capsule's radius, with the ship still their parent. Without the copy the crew walks onto the floor and the
+    // car's world takes them. Then back to the side, to board at the car's next stop.
+    function probeLeg(x, z, next, tt) {
+        if (walkToward(x, z)) {
+            setRide(next);
+        } else if (tt > 15) {
+            stopWalking();
+            log("rail probe: could not reach (" + x.toFixed(2) + ", " + z.toFixed(2) + ") in " + tt.toFixed(1) + " s, at " + fmtV(MyAvatar.localPosition));
+            setRide("waiting");
+        }
+    }
+    function driveProbe(tt, pn, cp, standing) {
+        var offX = Airship.CAR.x - 0.5 * Airship.CAR.dimensions.x - 0.5;
+        var stationZ = Airship.CAR.stations[0];
+        var probeZ = stationZ - (0.5 * Airship.CAR.dimensions.z + 1.2);
+        var atBow = standing && cp && Math.abs(carDeckZ(cp) - stationZ) < 0.3;
+        if (pn === "car") {
+            // through the rail: no copy, or a hole in it
+            stopWalking();
+            if (carRide.probe) { carRide.probe.boardedThroughRail = true; probes.push(carRide.probe); carRide.probe = null; }
+            log("rail probe: the car's world took me at local " + fmtV(MyAvatar.localPosition) + " (parent the car) in " + carRide.state);
+            carRide.boardings++;
+            carRide.lastStation = -1;
+            carRide.seenMoving = false;
+            setRide("riding");
+            return;
+        }
+        if (carRide.state === "probeOut") {
+            probeLeg(offX, probeZ, "probeIn", tt);
+        } else if (carRide.state === "probeIn") {
+            probeLeg(Airship.CAR.x, probeZ, "probeWait", tt);
+            if (carRide.state === "probeWait") { carRide.probeHold = atBow; }   // standing there already: its next stop
+        } else if (carRide.state === "probeWait") {
+            if (!atBow) { carRide.probeHold = false; }
+            if (atBow && !carRide.probeHold) {
+                carRide.probe = { t: now(), stationZ: stationZ, fromZ: probeZ, minDz: 1.0e9, maxDy: -1.0e9, minDy: 1.0e9,
+                                  minX: 1.0e9, maxX: -1.0e9, samples: 0, parents: {}, boardedThroughRail: false };
+                setRide("probing");
+            } else if (tt > 40) {
+                log("rail probe: the car did not come to the bow station in " + tt.toFixed(0) + " s");
+                setRide("probeBack");
+            }
+        } else if (carRide.state === "probing") {
+            var me = MyAvatar.localPosition;
+            var pr = carRide.probe;
+            pr.samples++;
+            pr.minDz = Math.min(pr.minDz, Math.abs(me.z - stationZ));
+            pr.maxDy = Math.max(pr.maxDy, me.y); pr.minDy = Math.min(pr.minDy, me.y);
+            pr.minX = Math.min(pr.minX, me.x); pr.maxX = Math.max(pr.maxX, me.x);
+            pr.parents[pn] = (pr.parents[pn] || 0) + 1;
+            walkToward(Airship.CAR.x, stationZ);
+            if (tt > 2.5 || !atBow) {
+                stopWalking();
+                pr.duration = tt;
+                pr.carLeft = !atBow;
+                probes.push(pr);
+                carRide.probe = null;
+                log("rail probe at the bow station: pushed " + tt.toFixed(1) + " s" + (atBow ? "" : " (the car left)") + ", closest to the car's centre " +
+                    pr.minDz.toFixed(3) + " m (the rail's far face at " + (0.5 * Airship.CAR.dimensions.z).toFixed(2) + "), local y " +
+                    pr.minDy.toFixed(3) + " to " + pr.maxDy.toFixed(3) + ", x " + pr.minX.toFixed(2) + " to " + pr.maxX.toFixed(2) + ", parent " + JSON.stringify(pr.parents));
+                setRide("probeBack");
+            }
+        } else if (carRide.state === "probeBack") {
+            probeLeg(offX, probeZ, "probeSide", tt);
+        } else if (carRide.state === "probeSide") {
+            probeLeg(offX, stationZ, "waiting", tt);
+        }
+    }
     function dropBall() {
+        // on the deck beside the crew, or in the car when the crew rides it (its parent is then the car, a frame in a frame)
+        var inCar = car && parentNameOf(MyAvatar.parentID) === "car";
         ball = Entities.addEntity({
-            type: "Sphere", name: "airship-ball", parentID: hull, lifetime: LIFETIME,
-            localPosition: { x: 0.8, y: 1.2, z: 2.5 }, dimensions: { x: 0.3, y: 0.3, z: 0.3 },
+            type: "Sphere", name: "airship-ball", parentID: inCar ? car : hull, lifetime: LIFETIME,
+            localPosition: inCar ? { x: 0, y: 0.6, z: 0.5 } : { x: 0.8, y: 1.2, z: 2.5 }, dimensions: { x: 0.3, y: 0.3, z: 0.3 },
             color: { red: 220, green: 40, blue: 40 }, dynamic: true, collisionless: false,
             gravity: { x: 0, y: -9.8, z: 0 }, damping: 0.1, angularDamping: 0.1, friction: 0.5, restitution: 0.2,
             grab: { grabbable: false }
         });
-        log("dropped a ball on the deck: " + ball);
+        log("dropped a ball " + (inCar ? "in the car: " : "on the deck: ") + ball);
     }
     function teleportShip() {
         var p = Entities.getEntityProperties(hull, ["position"]);
@@ -435,6 +763,9 @@
                 var side = Vec3.sum(hp.position, Vec3.multiplyQbyV(hp.rotation, { x: 3.2, y: 0, z: 3.0 }));
                 MyAvatar.position = { x: side.x, y: LandRover.groundHeight(side.x, side.z) + 1.0, z: side.z };
                 MyAvatar.orientation = Quat.multiply(hp.rotation, Quat.fromPitchYawRollDegrees(0, 90, 0));   // facing -x of the ship: across the deck
+                // the crew's facing is the script's: a look-at camera (the default) turns the avatar toward where the
+                // camera looks, and a bot has nobody at the mouse to turn the camera with it
+                Camera.mode = "third person";
                 setMode("board");
             } else if (tt > 90) { finish("no airship"); }
         } else if (mode === "board") {
@@ -447,7 +778,17 @@
                 MyAvatar.orientation = hp2.rotation;
             } else if (tt > 2 && MyAvatar.parentID == hull) {
                 log("aboard: local " + fmtV(MyAvatar.localPosition) + " (stored), world " + fmtV(MyAvatar.position));
-                dropBall();
+                if (DECK_CAR) {
+                    if (findCar()) {
+                        log("the deck car " + car + " on track " + track);
+                        setRide("toCar");
+                    } else {
+                        log("no deck car found; riding the deck instead");
+                        dropBall();
+                    }
+                } else {
+                    dropBall();
+                }
                 setMode("ride");
                 crewLeg.t = now();
             } else if (tt > 10) {
@@ -461,16 +802,20 @@
                 setPhase(p);
                 if (p === "teleport" && !teleportDone) { stopWalking(); Script.setTimeout(teleportShip, 1500); }
             }
-            // by turns: 5 s standing, 5 s walking forward, 5 s standing, 5 s walking back, while the ship flies
-            var flying = ["climb", "cruise", "turn-right", "turn-left", "nose-up", "nose-down", "return", "descend"].indexOf(p) >= 0;
-            var leg = Math.floor((now() - crewLeg.t) / 5) % 4;
-            if (flying && leg === 1 && !crewLeg.walking) { walk(-1); }
-            else if (flying && leg === 3 && !crewLeg.walking) { walk(1); }
-            else if ((!flying || leg === 0 || leg === 2) && crewLeg.walking) { stopWalking(); }
-            // the rails keep the crew aboard; should it be walking into a rail, turn back early
-            if (crewLeg.walking && MyAvatar.parentID == hull) {
-                var lz = MyAvatar.localPosition.z;
-                if ((crewLeg.direction < 0 && lz < -4.0) || (crewLeg.direction > 0 && lz > 4.5)) { stopWalking(); }
+            if (car && carRide.state !== "none") {
+                driveCar();
+            } else {
+                // by turns: 5 s standing, 5 s walking forward, 5 s standing, 5 s walking back, while the ship flies
+                var flying = ["climb", "cruise", "turn-right", "turn-left", "nose-up", "nose-down", "return", "descend"].indexOf(p) >= 0;
+                var leg = Math.floor((now() - crewLeg.t) / 5) % 4;
+                if (flying && leg === 1 && !crewLeg.walking) { walk(-1); }
+                else if (flying && leg === 3 && !crewLeg.walking) { walk(1); }
+                else if ((!flying || leg === 0 || leg === 2) && crewLeg.walking) { stopWalking(); }
+                // the rails keep the crew aboard; should it be walking into a rail, turn back early
+                if (crewLeg.walking && MyAvatar.parentID == hull) {
+                    var lz = MyAvatar.localPosition.z;
+                    if ((crewLeg.direction < 0 && lz < -4.0) || (crewLeg.direction > 0 && lz > 4.5)) { stopWalking(); }
+                }
             }
             if (p === "done" || tt > 240) { stopWalking(); setMode("leave"); }
         } else if (mode === "leave") {
@@ -496,7 +841,7 @@
         var out = { n: 0, rmsMm: 0, maxMm: 0, driftMm: 0 };
         var first = null, last = null, sum = 0;
         for (var i = 1; i < rows.length; i++) {
-            if (rows[i].index === rows[i - 1].index + 1 && rows[i][key] && rows[i - 1][key]) {
+            if (rows[i].index === rows[i - 1].index + 1 && rows[i][key] && rows[i - 1][key] && rows[i].parentName === rows[i - 1].parentName) {
                 var d = Vec3.length(Vec3.subtract(rows[i][key], rows[i - 1][key]));
                 sum += d * d; out.n++; if (d > out.maxMm) { out.maxMm = d; }
             }
@@ -512,7 +857,9 @@
         var first = rows[0], last = rows[rows.length - 1];
         var hMin = Infinity, hMax = -Infinity, climbMax = -Infinity, climbMin = Infinity, speedMax = 0, heading = 0, distance = 0;
         var pitchMax = 0, rollMax = 0, airspeedMax = 0, aboard = 0, ballOn = 0, ballN = 0, ballX = 0, ballZ = 0, ballYMin = Infinity, ballYMax = -Infinity;
+        var tiltMin = Infinity, tiltMax = -Infinity, aoaMin = Infinity, aoaMax = -Infinity, liftMax = 0, thrustMax = 0;
         var standing = [], walking = [], pilotAboard = 0, pilotN = 0;
+        var inCar = [], carOn = 0, carN = 0, carX = 0, carY = 0, carZMin = Infinity, carZMax = -Infinity, carParentTrack = 0, carStops = 0;
         for (var i = 0; i < rows.length; i++) {
             var r = rows[i];
             if (r.height < hMin) { hMin = r.height; } if (r.height > hMax) { hMax = r.height; }
@@ -521,12 +868,28 @@
             if (Math.abs(r.pitch) > pitchMax) { pitchMax = Math.abs(r.pitch); }
             if (Math.abs(r.roll) > rollMax) { rollMax = Math.abs(r.roll); }
             if (r.live && r.live.airspeed > airspeedMax) { airspeedMax = r.live.airspeed; }
+            if (r.live && r.live.tilt !== undefined) {
+                tiltMin = Math.min(tiltMin, r.live.tilt); tiltMax = Math.max(tiltMax, r.live.tilt);
+                aoaMin = Math.min(aoaMin, r.live.angleOfAttack || 0); aoaMax = Math.max(aoaMax, r.live.angleOfAttack || 0);
+                liftMax = Math.max(liftMax, r.live.wingLift || 0); thrustMax = Math.max(thrustMax, r.live.thrust || 0);
+            }
             if (i > 0 && r.index === rows[i - 1].index + 1) { heading += wrap(r.heading - rows[i - 1].heading); distance += Vec3.distance(rows[i - 1].pos, r.pos); }
             if (r.parented) { aboard++; }
+            if (r.parentName === "car") { inCar.push(r); }
+            if (r.parentName === "car" && !r.walking) { carOn++; }
             (r.walking ? walking : standing).push(r);
+            if (r.carLocal) {
+                carN++;
+                carX = Math.max(carX, Math.abs(r.carLocal.x)); carY = Math.max(carY, Math.abs(r.carLocal.y));
+                carZMin = Math.min(carZMin, r.carLocal.z); carZMax = Math.max(carZMax, r.carLocal.z);
+                if (r.carLocal.parentIsTrack) { carParentTrack++; }
+                if (i > 0 && rows[i - 1].carLocal && Math.abs(r.carLocal.speed) < 0.01 && Math.abs(rows[i - 1].carLocal.speed) >= 0.01) { carStops++; }
+            }
             if (r.ballLocal) {
                 ballN++;
-                var on = Math.abs(r.ballLocal.x) < 2.0 && Math.abs(r.ballLocal.z) < 7.0 && r.ballLocal.y > 0.1 && r.ballLocal.y < 1.5;
+                var on = r.ballParent === "car"
+                    ? (Math.abs(r.ballLocal.x) < 0.9 && Math.abs(r.ballLocal.z) < 1.2 && r.ballLocal.y > 0.05 && r.ballLocal.y < 1.2)
+                    : (Math.abs(r.ballLocal.x) < 2.0 && Math.abs(r.ballLocal.z) < 7.0 && r.ballLocal.y > 0.1 && r.ballLocal.y < 1.5);
                 if (on) { ballOn++; }
                 ballX = Math.max(ballX, Math.abs(r.ballLocal.x)); ballZ = Math.max(ballZ, Math.abs(r.ballLocal.z));
                 ballYMin = Math.min(ballYMin, r.ballLocal.y); ballYMax = Math.max(ballYMax, r.ballLocal.y);
@@ -542,7 +905,10 @@
             padDistanceEnd: last.padDistance,
             buoyancy: l1.buoyancy, ballast: l1.ballast, fill: l1.fill, airDensity: l1.airDensity,
             stateBallast: last.state.ballast, stateFill: last.state.fill,
+            aircraft: KIND === "aircraft" ? { tiltMin: tiltMin, tiltMax: tiltMax, aoaMin: aoaMin, aoaMax: aoaMax, liftMax: liftMax, thrustMax: thrustMax, stateTilt: last.state.tilt } : null,
             myLocalStanding: jitter(standing, "myLocal"), myLocalWalking: jitter(walking, "myLocal"), walkingFrames: walking.length,
+            inCarFrames: inCar.length, carStandingFrames: carOn, myLocalInCar: jitter(inCar.filter(function (r) { return !r.walking; }), "myLocal"),
+            car: carN ? { frames: carN, parentIsTrack: carParentTrack, maxX: carX, maxY: carY, zMin: carZMin, zMax: carZMax, stops: carStops } : null,
             facing: facingRange(rows),   // the crew's heading on the deck: a camera that stays in the world turns it as the ship turns
             pilotLocal: jitter(rows, "pilotLocal"), pilotAboardFrames: pilotAboard, pilotFrames: pilotN,
             ball: ballN ? { frames: ballN, onDeck: ballOn, maxX: ballX, maxZ: ballZ, yMin: ballYMin, yMax: ballYMax } : null,
@@ -583,10 +949,16 @@
                 "; climb " + s.climbMin.toFixed(2) + " to " + s.climbMax.toFixed(2) + " m/s; speed up to " + s.speedMax.toFixed(2) + " m/s (airspeed " + s.airspeedMax.toFixed(1) + ")" +
                 "; " + s.distanceM.toFixed(0) + " m; heading " + s.headingDeg.toFixed(0) + " deg; pitch up to " + s.pitchMaxDeg.toFixed(1) + " deg, roll " + s.rollMaxDeg.toFixed(1) +
                 "; " + s.padDistanceEnd.toFixed(0) + " m from the pad at the end" +
-                "; buoyancy " + (s.buoyancy || 0).toFixed(0) + " N, ballast " + (s.ballast || 0).toFixed(1) + " kg, fill " + (s.fill || 0).toFixed(3) +
-                " (state " + (s.stateBallast || 0).toFixed(1) + " kg, " + (s.stateFill || 0).toFixed(3) + ")" +
+                (s.aircraft ? "; tilt " + s.aircraft.tiltMin.toFixed(2) + " to " + s.aircraft.tiltMax.toFixed(2) + " (state " + (s.aircraft.stateTilt || 0).toFixed(2) +
+                    "), angle of attack " + s.aircraft.aoaMin.toFixed(1) + " to " + s.aircraft.aoaMax.toFixed(1) + " deg, wing lift up to " + s.aircraft.liftMax.toFixed(0) +
+                    " N, thrust up to " + s.aircraft.thrustMax.toFixed(0) + " N"
+                    : "; buoyancy " + (s.buoyancy || 0).toFixed(0) + " N, ballast " + (s.ballast || 0).toFixed(1) + " kg, fill " + (s.fill || 0).toFixed(3) +
+                    " (state " + (s.stateBallast || 0).toFixed(1) + " kg, " + (s.stateFill || 0).toFixed(3) + ")") +
                 "; my stored local standing " + fmtJitter(s.myLocalStanding) + (s.walkingFrames ? ", walking " + fmtJitter(s.myLocalWalking) : "") +
                 (s.facing ? "; facing on the deck " + s.facing.min.toFixed(1) + " to " + s.facing.max.toFixed(1) + " deg" : "") +
+                (s.car ? "; the car on its track " + s.car.parentIsTrack + "/" + s.car.frames + " (|x| to " + (1000 * s.car.maxX).toFixed(1) + " mm, |y| to " +
+                    (1000 * s.car.maxY).toFixed(1) + " mm, z " + s.car.zMin.toFixed(2) + " to " + s.car.zMax.toFixed(2) + ", " + s.car.stops + " stops)" : "") +
+                (s.inCarFrames ? "; in the car " + s.inCarFrames + "/" + s.frames + ", standing there " + fmtJitter(s.myLocalInCar) : "") +
                 (ROLE === "crew" ? "; the pilot's stored local " + fmtJitter(s.pilotLocal) + ", aboard " + s.pilotAboardFrames + "/" + s.pilotFrames +
                     (s.ball ? "; the ball on the deck " + s.ball.onDeck + "/" + s.ball.frames + " (|x| to " + s.ball.maxX.toFixed(2) + ", |z| to " + s.ball.maxZ.toFixed(2) +
                         ", y " + s.ball.yMin.toFixed(2) + " to " + s.ball.yMax.toFixed(2) + ")" : "") : "") +
@@ -594,15 +966,45 @@
                 "; corrections " + s.corrections + " (" + s.replaySteps + " substeps replayed), inputs sent " + s.inputsSent +
                 ", state sequence " + s.sequenceFrom + " to " + s.sequenceTo + ", " + s.stateUpdates + " state updates");
         });
+        // each crossing between the deck and the car: the world step at the parent change against the step before it
+        crossings.forEach(function (c) {
+            var i = c.index;
+            if (i >= 2 && i < samples.length && samples[i].parentName === c.to) {
+                // my world step at the crossing against the hull's own at the same frame, split into the horizontal and
+                // the vertical (a step up onto a floor is a climb, not a pop)
+                var d = Vec3.subtract(samples[i].myPos, samples[i - 1].myPos);
+                var h = Vec3.subtract(samples[i].pos, samples[i - 1].pos);
+                var rel = Vec3.subtract(d, h);
+                var before = 1000 * Vec3.distance(samples[i - 1].myPos, samples[i - 2].myPos);
+                var after = i + 1 < samples.length ? 1000 * Vec3.distance(samples[i + 1].myPos, samples[i].myPos) : -1;
+                c.stepMm = 1000 * Vec3.length(d); c.hullStepMm = 1000 * Vec3.length(h); c.relativeHorizontalMm = 1000 * Math.sqrt(rel.x * rel.x + rel.z * rel.z);
+                c.relativeVerticalMm = 1000 * rel.y; c.stepBeforeMm = before; c.stepAfterMm = after;
+                log("crossing " + c.from + " to " + c.to + " in " + c.phase + " at " + c.t.toFixed(2) + " s: world step " + c.stepMm.toFixed(1) +
+                    " mm (the hull's " + c.hullStepMm.toFixed(1) + "); relative to the hull " + c.relativeHorizontalMm.toFixed(1) + " mm across and " +
+                    c.relativeVerticalMm.toFixed(1) + " mm up; " + before.toFixed(1) + " mm before and " + (after >= 0 ? after.toFixed(1) : "n/a") + " mm after");
+            }
+        });
+        if (car) {
+            log("the ride: " + carRide.boardings + " boardings, " + carRide.stops + " stops seen, " + carRide.failures + " failures");
+            if (probes.length) {
+                var dzs = probes.map(function (p) { return p.minDz; }), ys = [], through = 0, onShip = 0, total = 0;
+                probes.forEach(function (p) { ys.push(p.minDy, p.maxDy); if (p.boardedThroughRail) { through++; } onShip += p.parents.ship || 0;
+                                              Object.keys(p.parents).forEach(function (k) { total += p.parents[k]; }); });
+                log("rail probe: " + probes.length + " pushes into the car's end rail from the deck at the bow station; closest to the car's centre " +
+                    Math.min.apply(null, dzs).toFixed(3) + " to " + Math.max.apply(null, dzs).toFixed(3) + " m (the rail's far face at " +
+                    (0.5 * Airship.CAR.dimensions.z).toFixed(2) + " m); the ship my parent in " + onShip + " of " + total + " frames; local y " +
+                    Math.min.apply(null, ys).toFixed(3) + " to " + Math.max.apply(null, ys).toFixed(3) + "; through the rail " + through);
+            }
+        }
         var last = samples.length ? samples[samples.length - 1].stats : {};
         log("totals: " + samples.length + " samples; corrections " + (last.corrections || 0) + ", replay substeps " + (last.replaySteps || 0) +
             ", max error " + (1000 * (last.maxError || 0)).toFixed(0) + " mm, inputs sent " + (last.inputsSent || 0) + ", received " + (last.inputsReceived || 0) +
             ", dropped " + (last.inputsDropped || 0) + ", starved " + (last.inputsStarved || 0) + ", vehicles " + (last.vehicles || 0) +
             "; crossings " + crossings.length);
-        Test.saveObject({ role: ROLE, summary: summary, events: events, crossings: crossings, samples: samples }, "physics-airship.json");
+        Test.saveObject({ role: ROLE, summary: summary, events: events, crossings: crossings, probes: probes, samples: samples }, "physics-airship.json");
         log("done (" + reason + "), " + samples.length + " samples");
         if (ROLE === "pilot" && hull) {
-            Airship.deleteAll(LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE);
+            Rig.deleteAll(LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE);
         }
         Script.setTimeout(function () { Test.quit(); }, 1500);
     }

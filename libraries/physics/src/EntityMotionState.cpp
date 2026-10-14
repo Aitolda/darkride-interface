@@ -304,6 +304,49 @@ bool EntityMotionState::getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorne
     return true;
 }
 
+// A nested frame's own record is in its frame ancestor's coordinates (getObject*); the domain transform composes
+// that with the ancestor's, which composes with its own, up to the domain. An ancestor without a motion state here
+// (not yet in the physics) leaves the entity's world transform as the best there is.
+bool EntityMotionState::getFrameTransformInDomain(glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const {
+    if (!_entity || !_entity->isFrame()) {
+        return false;
+    }
+    position = getObjectPosition();
+    rotation = getObjectRotation();
+    linearVelocity = getObjectLinearVelocity();
+    angularVelocity = getObjectAngularVelocity();
+    SpatiallyNestablePointer ancestor = ObjectMotionState::findFrameAncestor(_entity);
+    if (!ancestor) {
+        return true;
+    }
+    EntityMotionState* ancestorState = static_cast<EntityMotionState*>(std::static_pointer_cast<EntityItem>(ancestor)->getPhysicsInfo());
+    glm::vec3 ancestorPosition, ancestorLinear, ancestorAngular;
+    glm::quat ancestorRotation;
+    if (ancestorState && ancestorState->getFrameTransformInDomain(ancestorPosition, ancestorRotation, ancestorLinear, ancestorAngular)) {
+        glm::vec3 offset = ancestorRotation * position;
+        linearVelocity = ancestorLinear + glm::cross(ancestorAngular, offset) + ancestorRotation * linearVelocity;
+        angularVelocity = ancestorAngular + ancestorRotation * angularVelocity;
+        position = ancestorPosition + offset;
+        rotation = glm::normalize(ancestorRotation * rotation);
+        return true;
+    }
+    position = _entity->getWorldPosition() - ObjectMotionState::getWorldOffset();
+    rotation = _entity->getWorldOrientation();
+    linearVelocity = _entity->getWorldVelocity();
+    angularVelocity = _entity->getWorldAngularVelocity();
+    return true;
+}
+
+int EntityMotionState::getFrameDepth() const {
+    int depth = 0;
+    SpatiallyNestablePointer ancestor = ObjectMotionState::findFrameAncestor(_entity);
+    while (ancestor && depth < 16) {
+        ++depth;
+        ancestor = ObjectMotionState::findFrameAncestor(ancestor);
+    }
+    return depth;
+}
+
 bool EntityMotionState::getParentTransformInFrame(Transform& transform, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const {
     return ObjectMotionState::getParentTransformInFrame(_entity, transform, linearVelocity, angularVelocity);
 }
@@ -915,6 +958,12 @@ void EntityMotionState::sendUpdate(OctreeEditPacketSender* packetSender, uint32_
     if (_vehicle && _vehicles) {
         // the applied input, its sequence, the engine and the gear travel with every update (PHYSICS.md round 6)
         _vehicles->fillState(this, properties);
+    }
+    if (_parentChanged) {
+        // a frame crossing (round 8): the position and rotation above are already in the new parent's coordinates
+        properties.setParentID(_entity->getParentID());
+        properties.setParentJointIndex(_entity->getParentJointIndex());
+        _parentChanged = false;
     }
 
     if (_entity->updateQueryAACube()) {
