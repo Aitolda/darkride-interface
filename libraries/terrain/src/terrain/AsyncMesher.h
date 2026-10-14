@@ -31,7 +31,8 @@ class AsyncMesher {
 public:
     struct Result {
         ChunkKey key;
-        ChunkMesh mesh;   // empty when no surface crosses the chunk
+        ChunkMesh mesh;      // empty when no surface crosses the chunk
+        uint64_t tag { 0 };  // submitSamples()' tag; 0 for the grid's chunks
     };
 
     // The pool to run on; by default one of this library's own, so meshing neither waits behind nor holds up the
@@ -48,6 +49,10 @@ public:
     // mesh. Chunks with a job out stay dirty until collect() has taken their mesh. A dirty key with no chunk at it
     // any more (split, or merged) is only taken off the set.
     int submit(VoxelGrid& grid);
+    // Meshes samples made elsewhere (a node of the level of detail's, LevelOfDetail.h) on the pool, ahead of the
+    // grid's chunks when the priority is higher; the mesh comes back from collect() with the samples' key and this
+    // tag. Nothing is counted as in flight for it: the caller keeps track, with a mesher of its own.
+    void submitSamples(std::shared_ptr<const ChunkSamples> samples, uint64_t tag, int priority = 0);
     // The meshes finished since the last call, in no particular order; their chunks have no job out afterwards.
     std::vector<Result> collect();
     // Forgets every job out: their meshes are dropped when they finish. For a grid that was replaced.

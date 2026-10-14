@@ -124,6 +124,45 @@ void PaintMap::fillTile(const glm::ivec2& column, std::vector<uint8_t>& layers0t
     }
 }
 
+void PaintMap::fillTile(int level, const glm::ivec2& column, std::vector<uint8_t>& layers0to3, std::vector<uint8_t>& layers4to7) const {
+    if (level >= 0) {
+        fillTile(column, layers0to3, layers4to7);
+        return;
+    }
+    const int tileSize = getTileSize();
+    const size_t texelCount = (size_t)tileSize * tileSize;
+    layers0to3.assign(texelCount * 4, 0);
+    layers4to7.assign(texelCount * 4, 0);
+    if (isEmpty()) {
+        return;
+    }
+    const int factor = 1 << -level;               // the map's texels a side under one of the tile's
+    const int step = std::max(1, factor / 4);     // at most four a side of them are read
+    const glm::ivec2 origin = (column * CHUNK_SIZE - PAINT_TILE_APRON) * _texelsPerVoxel * factor;
+    uint32_t sums[PAINT_LAYERS];
+    for (int j = 0; j < tileSize; ++j) {
+        for (int i = 0; i < tileSize; ++i) {
+            std::fill(std::begin(sums), std::end(sums), 0u);
+            uint32_t count = 0;
+            for (int dz = 0; dz < factor; dz += step) {
+                const int z = glm::clamp(origin.y + j * factor + dz, 0, _size.y - 1);
+                for (int dx = 0; dx < factor; dx += step) {
+                    const uint8_t* weights = at(glm::ivec2(glm::clamp(origin.x + i * factor + dx, 0, _size.x - 1), z));
+                    for (int k = 0; k < PAINT_LAYERS; ++k) {
+                        sums[k] += weights[k];
+                    }
+                    ++count;
+                }
+            }
+            const size_t out = ((size_t)j * tileSize + i) * 4;
+            for (int k = 0; k < 4; ++k) {
+                layers0to3[out + k] = (uint8_t)((sums[k] + count / 2) / count);
+                layers4to7[out + k] = (uint8_t)((sums[k + 4] + count / 2) / count);
+            }
+        }
+    }
+}
+
 void PaintMap::markAllColumnsDirty() {
     _dirtyColumns.clear();
     const glm::ivec2 columns = getColumnCount();

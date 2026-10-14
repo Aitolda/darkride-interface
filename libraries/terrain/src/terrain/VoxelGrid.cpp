@@ -13,6 +13,8 @@
 
 using namespace terrain;
 
+const size_t VoxelGrid::MAX_CHANGE_BOXES;
+
 namespace {
 
 // Finest-level voxels per grid voxel: the unit in which every level's points are integers.
@@ -58,11 +60,11 @@ bool samplesRead(const ChunkKey& reader, int changedLevel, const glm::ivec3& cha
 // --- ChunkKey -----------------------------------------------------------------------------------
 
 glm::ivec3 ChunkKey::getSlot() const {
-    return floorDivide(coords, 1 << level);
+    return level >= 0 ? floorDivide(coords, 1 << level) : coords * (1 << -level);
 }
 
 ChunkKey ChunkKey::getParent() const {
-    return ChunkKey(std::max(level - 1, 0), level > 0 ? floorDivide(coords, 2) : coords);
+    return ChunkKey(level - 1, floorDivide(coords, 2));
 }
 
 bool ChunkKey::intersects(const glm::ivec3& low, const glm::ivec3& high) const {
@@ -214,6 +216,13 @@ ChunkKey VoxelGrid::chunkCoveringPoint(int level, const glm::ivec3& point) const
     return locate(clamped << (MAX_CHUNK_LEVEL - level)).key;
 }
 
+ChunkKey VoxelGrid::chunkCoveringFine(const glm::ivec3& fine) const {
+    if (_slots.empty()) {
+        return ChunkKey();
+    }
+    return locate(glm::clamp(fine, glm::ivec3(0), (_voxelCount - 1) * FINEST)).key;
+}
+
 void VoxelGrid::collectLeaves(const ChunkNode& node, const ChunkKey& key, const glm::ivec3& low, const glm::ivec3& high,
                               std::vector<ChunkKey>& keys) const {
     if (!key.intersects(low, high)) {
@@ -256,6 +265,11 @@ std::vector<ChunkKey> VoxelGrid::chunksCovering(const glm::ivec3& low, const glm
 bool VoxelGrid::hasChunk(const ChunkKey& key) const {
     const ChunkNode* node = nodeAt(key);
     return node && !node->isSplit();
+}
+
+bool VoxelGrid::isSplit(const ChunkKey& key) const {
+    const ChunkNode* node = nodeAt(key);
+    return node && node->isSplit();
 }
 
 const Chunk& VoxelGrid::getChunk(const ChunkKey& key) const {
@@ -306,7 +320,12 @@ Voxel VoxelGrid::sampleAt(int level, const glm::ivec3& point) const {
     if (_slots.empty()) {
         return Voxel();
     }
-    level = glm::clamp(level, 0, MAX_CHUNK_LEVEL);
+    if (level < 0) {
+        // a coarser level's point is a grid voxel, or beyond the grid the nearest one in it
+        level = std::max(level, MIN_LOD_LEVEL);
+        return voxelAtFine(glm::clamp(point * (FINEST << -level), glm::ivec3(0), (_voxelCount - 1) * FINEST), level);
+    }
+    level = std::min(level, MAX_CHUNK_LEVEL);
     const glm::ivec3 clamped = glm::clamp(point, glm::ivec3(0), (_voxelCount - 1) << level);
     const glm::ivec3 fine = clamped << (MAX_CHUNK_LEVEL - level);
     const Found found = locate(fine);
@@ -347,6 +366,82 @@ Voxel VoxelGrid::interpolateAt(const Found& found, const glm::ivec3& fine, int l
     const float distance = trilinear(d, f);
     const glm::ivec3 nearest = (fine + (1 << (shift - 1))) >> shift;
     return Voxel(rescaleDistance(distance, (float)(1 << (level - coarse))), voxelAt(nearest).material);
+}
+
+Voxel VoxelGrid::voxelAtFine(const glm::ivec3& fine, int level) const {
+    if (_slots.empty()) {
+        return Voxel();
+    }
+    const Found found = locate(fine);
+    assert(found.key.level >= level);
+    const glm::ivec3 local = (fine >> (MAX_CHUNK_LEVEL - found.key.level)) - found.key.coords * CHUNK_SIZE;
+    const Voxel& voxel = found.node->getChunk().get(local.x, local.y, local.z);
+    if (found.key.level == level) {
+        return voxel;
+    }
+    return Voxel(rescaleDistance(voxel.getDistance(), std::ldexp(1.0f, level - found.key.level)), voxel.material);
+}
+
+bool VoxelGrid::leavesAreOneSided(const ChunkNode& node, const ChunkKey& key, const glm::ivec3& low, const glm::ivec3& high,
+                                  int& side) const {
+    if (!key.intersects(low, high)) {
+        return true;
+    }
+    if (node.isSplit()) {
+        for (int i = 0; i < 8; ++i) {
+            if (!leavesAreOneSided(node.getChild(i), key.getChild(i), low, high, side)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    const Chunk& chunk = node.getChunk();
+    if (!chunk.isUniform()) {
+        return false;   // it may well be, but finding out costs as much as sampling it
+    }
+    const int chunkSide = chunk.getUniformValue().isGround() ? -1 : 1;
+    if (side == 0) {
+        side = chunkSide;
+    }
+    return side == chunkSide;
+}
+
+bool VoxelGrid::isOneSided(const glm::ivec3& low, const glm::ivec3& high) const {
+    if (_slots.empty()) {
+        return true;
+    }
+    const glm::ivec3 lo = glm::max(low, glm::ivec3(0));
+    const glm::ivec3 hi = glm::min(high, _chunkCount * CHUNK_SIZE - 1);
+    if (glm::any(glm::greaterThan(lo, hi))) {
+        return true;
+    }
+    const glm::ivec3 slotLow = lo >> CHUNK_SHIFT;
+    const glm::ivec3 slotHigh = hi >> CHUNK_SHIFT;
+    int side = 0;
+    for (int z = slotLow.z; z <= slotHigh.z; ++z) {
+        for (int y = slotLow.y; y <= slotHigh.y; ++y) {
+            for (int x = slotLow.x; x <= slotHigh.x; ++x) {
+                const glm::ivec3 slot(x, y, z);
+                if (!leavesAreOneSided(_slots[chunkIndexOf(slot)], ChunkKey(0, slot), lo, hi, side)) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+glm::ivec3 VoxelGrid::limitOf(int level, const glm::ivec3& origin, int most) const {
+    glm::ivec3 limit;
+    for (int axis = 0; axis < 3; ++axis) {
+        const int end = _voxelCount[axis] - origin[axis];   // grid voxels from the node's corner to the grid's end
+        int voxels = 0;
+        if (end > 0) {
+            voxels = level >= 0 ? end << level : (end + (1 << -level) - 1) >> -level;
+        }
+        limit[axis] = std::min(voxels, most);
+    }
+    return limit;
 }
 
 VoxelGrid::FieldSample VoxelGrid::fieldAt(const glm::vec3& position) const {
@@ -393,6 +488,7 @@ void VoxelGrid::voxelsChanged(const ChunkKey& key, const glm::ivec3& localLow, c
     const glm::ivec3 changedLow = (key.coords * CHUNK_SIZE + glm::clamp(localLow, glm::ivec3(0), glm::ivec3(CHUNK_SIZE - 1))) << shift;
     const glm::ivec3 changedHigh = (key.coords * CHUNK_SIZE + glm::clamp(localHigh, glm::ivec3(0), glm::ivec3(CHUNK_SIZE - 1))) << shift;
     // every chunk whose samples can reach the voxels lies within a grid voxel of them
+    noteChange(changedLow, changedHigh);
     const glm::ivec3 gridLow = (changedLow >> MAX_CHUNK_LEVEL) - 1;
     const glm::ivec3 gridHigh = ((changedHigh + FINEST - 1) >> MAX_CHUNK_LEVEL) + 1;
     for (const ChunkKey& reader : chunksCovering(gridLow, gridHigh)) {
@@ -554,11 +650,37 @@ void VoxelGrid::markChunkDirty(const ChunkKey& key) {
 void VoxelGrid::markAllChunksDirty() {
     _dirtyChunks.clear();
     forEachChunk([&](const ChunkKey& key, const Chunk&) { _dirtyChunks.insert(key); });
+    _changes.clear();
+    _everythingChanged = true;
+}
+
+void VoxelGrid::noteChange(const glm::ivec3& fineLow, const glm::ivec3& fineHigh) {
+    if (_everythingChanged) {
+        return;
+    }
+    if (_changes.size() >= MAX_CHANGE_BOXES) {
+        _changes.clear();
+        _everythingChanged = true;
+        return;
+    }
+    _changes.emplace_back(fineLow, fineHigh);
+}
+
+bool VoxelGrid::takeChanges(std::vector<std::pair<glm::ivec3, glm::ivec3>>& boxes) {
+    boxes.clear();
+    const bool told = !_everythingChanged;
+    if (told) {
+        boxes.swap(_changes);
+    }
+    _changes.clear();
+    _everythingChanged = false;
+    return told;
 }
 
 void VoxelGrid::sampleChunk(const ChunkKey& key, ChunkSamples& samples, bool forMeshing) const {
     samples.setKey(key);
     samples.clearBlocks();
+    samples.setLimits(limitOf(key.level, key.getOrigin(), CHUNK_SIZE), limitOf(key.level + 1, key.getOrigin(), 2 * CHUNK_SIZE));
     const Chunk* chunk = findChunk(key);
     const glm::ivec3 origin = key.coords * CHUNK_SIZE;
     for (int z = -1; z <= CHUNK_SIZE; ++z) {

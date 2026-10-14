@@ -17,6 +17,8 @@
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QSpinBox>
 
+#include <RenderableTerrainEntityItem.h>
+
 #include "PropertyEditors.h"
 
 namespace {
@@ -95,6 +97,21 @@ TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
     resample->setToolTip("Remake the selected terrain's voxels at the Inspector's Voxel Size over its current size: after the terrain "
                          "was scaled, or its Voxel Size changed (the shape stays, the voxels get finer or coarser)");
     connect(resample, &QAction::triggered, this, &TerrainToolBar::resampleRequested);
+
+    addSeparator();
+    _detail = new QDoubleSpinBox(this);
+    _detail->setRange(0.0, 16.0);
+    _detail->setDecimals(1);
+    _detail->setSingleStep(0.5);
+    _detail->setSpecialValueText("Full");
+    _detail->setValue(RenderableTerrainEntityItem::getLevelOfDetail());
+    addField("Detail", _detail, 0.02, false,
+             "How far out the ground is drawn at full detail: each part of a terrain while the camera is within this many times "
+             "its own size of it, coarser further away (every 2nd, 4th... voxel). Full: full detail everywhere. For every "
+             "terrain on this client; walking and picking always use full detail");
+    connect(_detail, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [](double detail) {
+        RenderableTerrainEntityItem::setLevelOfDetail((float)detail);
+    });
 
     auto hint = new QLabel("Drag on the ground to sculpt it  ·  Shift inverts  ·  Esc cancels the stroke", this);
     hint->setObjectName("EditorHint");

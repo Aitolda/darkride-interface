@@ -4,8 +4,9 @@
 //
 //  The second row of the build toolbar while the Terrain tool is active: the sculpt modes (Raise, Lower, Smooth,
 //  Flatten, Dig, Fill), the two paint modes (Paint, for the paint map, and Paint Voxels, for the voxels' own
-//  materials) and the brush's size, strength, hardness and material, as Unity's terrain inspector has them, and
-//  Resample, which remakes a terrain's voxels at its voxel size after it was scaled or its voxel size changed.
+//  materials) and the brush's size, strength, hardness and material, as Unity's terrain inspector has them;
+//  Resample, which remakes a terrain's voxels at its voxel size after it was scaled or its voxel size changed; and
+//  Detail, how far out every terrain is drawn at full detail (TERRAIN.md section 4, level of detail).
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -51,6 +52,7 @@ private:
     QDoubleSpinBox* _strength { nullptr };
     QDoubleSpinBox* _hardness { nullptr };
     QSpinBox* _material { nullptr };
+    QDoubleSpinBox* _detail { nullptr };
 };
 
 #endif // hifi_TerrainToolBar_h

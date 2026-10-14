@@ -28,6 +28,7 @@
 #define hifi_terrain_VoxelGrid_h
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -42,6 +43,12 @@ namespace terrain {
 
 // The finest level a chunk can be split to: its voxels are 1 / 2^MAX_CHUNK_LEVEL of a grid voxel.
 const int MAX_CHUNK_LEVEL = 2;
+// Finest-level voxels per grid voxel: the unit in which a point of any level is a whole number.
+const int FINEST_PER_GRID_VOXEL = 1 << MAX_CHUNK_LEVEL;
+// The coarsest level a node of the level of detail (LevelOfDetail.h) can be at. Nodes coarser than the grid's own
+// chunks have negative levels: a level-k node covers 2^-k level-0 places a side, CHUNK_SIZE voxels of 2^-k grid
+// voxels each.
+const int MIN_LOD_LEVEL = -8;
 const int CHUNK_SHIFT = 5;   // CHUNK_SIZE as a power of two
 static_assert(CHUNK_SIZE == 1 << CHUNK_SHIFT, "chunks are a power of two voxels a side");
 
@@ -60,6 +67,8 @@ struct IVec3Less {
 // Which chunk: its level, and its chunk coordinates at that level. A level-k chunk at coords covers the grid voxels
 // from coords * (CHUNK_SIZE / 2^k) on, CHUNK_SIZE / 2^k a side, with CHUNK_SIZE voxels a side of its own; its voxel
 // (x, y, z) sits at the level's point coords * CHUNK_SIZE + (x, y, z), which is the grid position divided by 2^k.
+// The grid's own chunks are at levels 0 to MAX_CHUNK_LEVEL; a key at a negative level names a coarser node of the
+// level of detail, whose voxels are 2^-k grid voxels.
 struct ChunkKey {
     int level { 0 };
     glm::ivec3 coords { 0 };
@@ -70,12 +79,15 @@ struct ChunkKey {
     // A level-0 chunk's key is its chunk coordinates.
     ChunkKey(const glm::ivec3& coords) : coords(coords) {}
 
-    int getScale() const { return 1 << level; }                   // its voxels per grid voxel
-    int getSpan() const { return CHUNK_SIZE >> level; }           // grid voxels a side
+    int getScale() const { return 1 << level; }   // its voxels per grid voxel, at level 0 and finer
+    // Grid voxels per voxel of its own, at any level: 1 / 2^level.
+    float getVoxelSize() const { return std::ldexp(1.0f, -level); }
+    int getSpan() const { return level >= 0 ? CHUNK_SIZE >> level : CHUNK_SIZE << -level; }   // grid voxels a side
     glm::ivec3 getOrigin() const { return coords * getSpan(); }   // the grid voxel at its low corner
-    // The level-0 chunk it lies in.
+    // The level-0 chunk it lies in; for a coarser node, the first of those it covers.
     glm::ivec3 getSlot() const;
-    // The chunk's child i at the next level (bit 0 along x, 1 along y, 2 along z), and the chunk it is a child of.
+    // The chunk's child i at the next level (bit 0 along x, 1 along y, 2 along z), and the node it is a child of
+    // (a level-0 chunk's is a node of the level of detail, at level -1).
     ChunkKey getChild(int i) const { return ChunkKey(level + 1, coords * 2 + glm::ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1)); }
     ChunkKey getParent() const;
     // Whether any of its grid voxels lies in the box from low to high (inclusive).
@@ -88,6 +100,15 @@ struct ChunkKey {
     }
 };
 using ChunkKeySet = std::set<ChunkKey>;
+
+struct ChunkKeyHash {
+    size_t operator()(const ChunkKey& key) const {
+        const size_t x = (size_t)(uint32_t)key.coords.x;
+        const size_t y = (size_t)(uint32_t)key.coords.y;
+        const size_t z = (size_t)(uint32_t)key.coords.z;
+        return ((x * 73856093u) ^ (y * 19349663u) ^ (z * 83492791u)) * 31u + (size_t)(key.level - MIN_LOD_LEVEL);
+    }
+};
 
 // One place in the octree under a level-0 chunk: a chunk, or eight nodes at the next level in its stead.
 class ChunkNode {
@@ -174,11 +195,21 @@ public:
     // Every neighbour at the chunk's level again, and no blocks.
     void clearBlocks();
 
+    // How many of the chunk's voxels along each axis lie before the grid's end, in its own voxels and in those of a
+    // finer neighbour's: the mesher draws no surface from voxels at or past the end, so the ground stops where the
+    // grid does even where a chunk reaches past it (a coarse node of the level of detail can reach a long way).
+    // The whole chunk unless set.
+    const glm::ivec3& getLimit() const { return _limit; }
+    const glm::ivec3& getFinerLimit() const { return _finerLimit; }
+    void setLimits(const glm::ivec3& own, const glm::ivec3& finer) { _limit = own; _finerLimit = finer; }
+
 private:
     ChunkKey _key;
     std::vector<Voxel> _voxels;
     int _neighbourLevels[8] { 0, 0, 0, 0, 0, 0, 0, 0 };
     std::vector<SampleBlock> _blocks;
+    glm::ivec3 _limit { CHUNK_SIZE };
+    glm::ivec3 _finerLimit { 2 * CHUNK_SIZE };
 };
 
 class VoxelGrid {
@@ -215,10 +246,14 @@ public:
     ChunkKey chunkCovering(const glm::ivec3& voxel) const;
     // The chunk covering one of a level's points (grid position point / 2^level, clamped into the grid).
     ChunkKey chunkCoveringPoint(int level, const glm::ivec3& point) const;
+    // The chunk covering a point in finest units (grid position times FINEST_PER_GRID_VOXEL, clamped into the grid).
+    ChunkKey chunkCoveringFine(const glm::ivec3& fine) const;
     // Every chunk covering any grid voxel from low to high (inclusive), at their own levels, in key order.
     std::vector<ChunkKey> chunksCovering(const glm::ivec3& low, const glm::ivec3& high) const;
     // Whether a chunk sits at exactly this key: not one coarser over it, nor finer ones under it.
     bool hasChunk(const ChunkKey& key) const;
+    // Whether the grid has finer chunks under the key: a place split into eight.
+    bool isSplit(const ChunkKey& key) const;
     const Chunk& getChunk(const ChunkKey& key) const;
     // The chunk at a key, to edit in place; null when none is there. voxelsChanged() afterwards says what to re-mesh.
     Chunk* findChunk(const ChunkKey& key);
@@ -236,8 +271,20 @@ public:
     bool set(const glm::ivec3& voxel, const Voxel& value);
     // The voxel at one of a level's points (grid position point / 2^level), from whatever chunk covers it: that
     // chunk's own voxel when it is at the level or finer, interpolated between a coarser chunk's voxels otherwise,
-    // the distance in the level's voxels either way. Points beyond the grid read its edge, as get() does.
+    // the distance in the level's voxels either way. Points beyond the grid read its edge, as get() does. A level
+    // coarser than the grid's (MIN_LOD_LEVEL to -1) reads the voxel at the grid voxel its point is, or at the
+    // nearest in the grid.
     Voxel sampleAt(int level, const glm::ivec3& point) const;
+    // The voxel of the chunk covering a point in finest units, which must lie within the grid's chunks (its sides
+    // rounded up to whole level-0 chunks), the distance in the voxels of a level that chunk is at or finer than,
+    // the point being one of that level's: the chunk's own voxel there, rescaled.
+    Voxel voxelAtFine(const glm::ivec3& fine, int level) const;
+    // Whether no surface crosses the grid voxels from low to high (inclusive): every chunk covering them is of one
+    // value, and all of those are ground or all air.
+    bool isOneSided(const glm::ivec3& low, const glm::ivec3& high) const;
+    // How many voxels of a node at a level, its low corner at the grid voxel origin, lie before the grid's end
+    // along each axis, at most `most` (ChunkSamples::setLimits).
+    glm::ivec3 limitOf(int level, const glm::ivec3& origin, int most) const;
     // The field at any grid position: the distance interpolated between the covering chunk's voxels, in grid
     // voxels, and the material of the voxel nearest.
     FieldSample fieldAt(const glm::vec3& position) const;
@@ -268,6 +315,13 @@ public:
     void clearDirtyChunk(const ChunkKey& key) { _dirtyChunks.erase(key); }
     void markChunkDirty(const ChunkKey& key);
     void markAllChunksDirty();
+
+    // Where voxels have changed since the last call: boxes in finest units (inclusive), for a holder of what is
+    // built from the voxels besides the chunks' own meshes (the level of detail's coarser meshes), which takes them
+    // each frame. False when the boxes would not say: the whole grid changed, or more than MAX_CHANGE_BOXES of them
+    // piled up with nobody taking them; everything is to be taken as changed then.
+    bool takeChanges(std::vector<std::pair<glm::ivec3, glm::ivec3>>& boxes);
+    static const size_t MAX_CHANGE_BOXES = 4096;
 
     // The chunk's voxels and one layer of its neighbours' around them, at the chunk's level; and, for the
     // mesher, the neighbours' levels across the low faces and edges with their voxels at those levels where they
@@ -338,6 +392,9 @@ private:
     void installChunk(const ChunkKey& key, Chunk value, bool resample);
     void collectLeaves(const ChunkNode& node, const ChunkKey& key, const glm::ivec3& low, const glm::ivec3& high,
                        std::vector<ChunkKey>& keys) const;
+    bool leavesAreOneSided(const ChunkNode& node, const ChunkKey& key, const glm::ivec3& low, const glm::ivec3& high,
+                           int& side) const;
+    void noteChange(const glm::ivec3& fineLow, const glm::ivec3& fineHigh);
 
     glm::ivec3 _voxelCount { 0 };
     glm::ivec3 _chunkCount { 0 };
@@ -345,6 +402,8 @@ private:
     std::vector<ChunkNode> _slots;
     ChunkKeySet _dirtyChunks;
     uint64_t _structureVersion { 0 };
+    std::vector<std::pair<glm::ivec3, glm::ivec3>> _changes;
+    bool _everythingChanged { true };
 };
 
 } // namespace terrain

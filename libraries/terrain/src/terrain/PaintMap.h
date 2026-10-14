@@ -12,8 +12,10 @@
 //  The map has texelsPerVoxel texels along each voxel of the footprint (x and z of voxel space); texel (i, j) covers
 //  voxel x from i / texelsPerVoxel on, and its centre is where a brush is evaluated. The renderer draws each chunk
 //  column of the ground with a tile of its own cut from the map, the column's texels and an apron of the
-//  neighbours' around them, since a chunk's mesh reaches one voxel past its low faces (SurfaceNets.h); the map
-//  tracks which columns' tiles are out of date, as the grid tracks its dirty chunks.
+//  neighbours' around them, since a chunk's mesh reaches up to two of its voxels past its low faces
+//  (SurfaceNets.h); the map tracks which columns' tiles are out of date, as the grid tracks its dirty chunks. A
+//  coarser node of the level of detail (LevelOfDetail.h) gets a tile of the same size over its own wider footprint,
+//  each texel the mean of the map's texels under it.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -33,7 +35,7 @@
 namespace terrain {
 
 const int PAINT_LAYERS = 8;        // weights per texel, one for each of the terrain's layers
-const int PAINT_TILE_APRON = 1;    // voxels of the neighbours' texels around a column's own in its tile
+const int PAINT_TILE_APRON = 2;    // voxels of the neighbours' texels around a column's own in its tile
 const int MAX_PAINT_TEXELS_PER_VOXEL = 16;
 
 struct IVec2Less {
@@ -95,6 +97,11 @@ public:
     // bytes a texel, layers 0 to 3 and 4 to 7, x fastest.
     int getTileSize() const { return (CHUNK_SIZE + 2 * PAINT_TILE_APRON) * _texelsPerVoxel; }
     void fillTile(const glm::ivec2& column, std::vector<uint8_t>& layers0to3, std::vector<uint8_t>& layers4to7) const;
+    // The tile of a coarser node's column (a level below 0: 2^-level level-0 columns a side, column in that level's
+    // columns), the same size as a level-0 column's and laid out alike in the node's own voxels: each texel the mean
+    // of the map's texels it covers, of a sample of them four a side at the coarsest levels. Level 0 is the
+    // column's own tile.
+    void fillTile(int level, const glm::ivec2& column, std::vector<uint8_t>& layers0to3, std::vector<uint8_t>& layers4to7) const;
 
     // The columns whose tiles are out of date: a changed texel dirties its column and any neighbour whose apron
     // holds it. The renderer clears the set once it has remade the tiles.

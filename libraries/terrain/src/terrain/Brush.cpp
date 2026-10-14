@@ -8,6 +8,8 @@
 
 #include "Brush.h"
 
+#include <glm/gtx/norm.hpp>
+
 #include <cmath>
 #include <vector>
 
@@ -18,6 +20,11 @@ namespace {
 // How many of a chunk's voxels a brush's radius should span at least: a chunk whose voxels are coarser than that
 // under the brush is split first, so a small brush carves finely and a big one stays coarse.
 const float BRUSH_VOXELS_WANTED = 4.0f;
+
+// Raise and Lower mend the distances under the brush from this many voxels off the surface outward (the mesher reads
+// nearer ones), where a voxel falls short of its nearest neighbour's distance plus one by more than this slack.
+const float MEND_BEYOND = 2.0f;
+const float MEND_SLACK = 0.7f;
 
 } // namespace
 
@@ -129,9 +136,13 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
     }
 
     // Raise and Lower shift the field, which a byte can follow only within its band of a few voxels: a voxel at the
-    // byte's limit shifted by much would land where it should not. So they shift by at most a voxel of the finest
-    // chunk's at a time and, after each pass, give the voxels that were at the limit a distance read off their
-    // neighbours, every chunk shifted before any is read.
+    // byte's limit says only "far on this side", so shifting it would put it a few voxels short of the limit, a
+    // distance it never had. So they shift by at most a voxel of the finest chunk's at a time, leave the voxels at
+    // the limit as they are and, after each pass, give those a distance read off their neighbours, every chunk
+    // shifted before any is read. (Shifting them and reading them back meanwhile is what a chunk at a finer level
+    // next to a coarser one did: the coarser chunk read the finer one's shifted limit in its own voxels, a short
+    // distance, and its air above the ground was given that distance all the way up; the next passes then moved
+    // the ground up through it at once, a wall as tall as the brush along the chunks' join.)
     const bool shifting = mode == SculptMode::Raise || mode == SculptMode::Lower;
     int finestScale = 1;
     for (const Region& region : regions) {
@@ -169,6 +180,10 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
                         }
                         const glm::ivec3 local = point - origin;
                         const Voxel old = chunk->get(local.x, local.y, local.z);
+                        if (shifting && std::abs((int)old.distance) == DISTANCE_MAX) {
+                            region.saturated[region.indexOf(point)] = 1;   // the sweeps below give it its distance
+                            continue;
+                        }
                         const float distance = old.getDistance();
                         Voxel next = old;
                         switch (mode) {
@@ -214,9 +229,6 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
                         if ((mode == SculptMode::Raise || mode == SculptMode::Fill) && next.isGround() && !old.isGround()) {
                             next.material = brush.material;
                         }
-                        if (shifting && std::abs((int)old.distance) == DISTANCE_MAX) {
-                            region.saturated[region.indexOf(point)] = 1;
-                        }
                         if (next != old && chunk->set(local.x, local.y, local.z, next)) {
                             record(region, local);
                         }
@@ -227,13 +239,22 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
         if (!shifting) {
             break;
         }
-        // The voxels that were at the limit: each is a voxel further from the surface than its nearest neighbour,
-        // on the side the shift left it. Two sweeps, one each way, carry the distances outward through them.
+        // The voxels at the limit: each is a voxel further from the surface than its nearest neighbour, on its own
+        // side. Two sweeps, one each way, carry the distances outward through them; one still at the limit when a
+        // neighbour reads it is read as far, whatever the neighbour's voxel size. The sweeps also mend the field
+        // under the brush beyond the band the mesher reads: a voxel clearly nearer the surface than its nearest
+        // neighbour less a voxel cannot be (a true distance field never falls short of that by more than the
+        // sweep's own overestimate on a slope, 1 - 1/sqrt(3)), so it gets the neighbour's distance plus one. Fields
+        // sculpted before the limit voxels were left unshifted have such air above the ground along the joins of
+        // chunk levels, and shifting it unmended put the ground up through it in a few passes.
         for (int sweep = 0; sweep < 2; ++sweep) {
             const bool forward = sweep == 0;
             for (Region& region : regions) {
                 Chunk* chunk = region.chunk;
                 const glm::ivec3 origin = region.key.coords * CHUNK_SIZE;
+                const float scale = (float)region.key.getScale();
+                const glm::vec3 center = brush.center * scale;
+                const float radiusSquared = brush.radius * scale * brush.radius * scale;
                 for (int k = 0; k < region.size.z; ++k) {
                     const int z = forward ? region.low.z + k : region.high.z - k;
                     for (int j = 0; j < region.size.y; ++j) {
@@ -241,11 +262,13 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
                         for (int i = 0; i < region.size.x; ++i) {
                             const int x = forward ? region.low.x + i : region.high.x - i;
                             const glm::ivec3 point(x, y, z);
-                            if (!region.saturated[region.indexOf(point)]) {
-                                continue;
-                            }
                             const glm::ivec3 local = point - origin;
                             const Voxel old = chunk->get(local.x, local.y, local.z);
+                            const bool atLimit = region.saturated[region.indexOf(point)] != 0;
+                            if (!atLimit && (std::abs(old.getDistance()) < MEND_BEYOND ||
+                                             glm::length2(glm::vec3(point) - center) >= radiusSquared)) {
+                                continue;
+                            }
                             float nearest = SATURATED_DISTANCE;
                             bool surface = false;
                             for (int axis = 0; axis < 3 && !surface; ++axis) {
@@ -260,7 +283,7 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
                                     nearest = std::min(nearest, std::abs(d));
                                 }
                             }
-                            if (surface) {
+                            if (surface || (!atLimit && std::abs(old.getDistance()) + MEND_SLACK >= nearest + 1.0f)) {
                                 continue;
                             }
                             Voxel next = old;

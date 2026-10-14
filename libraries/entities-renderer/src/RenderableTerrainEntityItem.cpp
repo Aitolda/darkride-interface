@@ -10,12 +10,14 @@
 
 #include <cfloat>
 #include <mutex>
+#include <set>
 
 #include <glm/gtx/transform.hpp>
 #include <QUrl>
 #include <QUrlQuery>
 
 #include <AABox.h>
+#include <AbstractViewStateInterface.h>
 #include <DependencyManager.h>
 #include <EntityTree.h>
 #include <GeometryUtil.h>
@@ -23,6 +25,7 @@
 #include <ResourceRequest.h>
 #include <SimulationFlags.h>
 #include <StencilMaskPass.h>
+#include <ViewFrustum.h>
 #include <render/ShapePipeline.h>
 #include <shaders/Shaders.h>
 #include <terrain/TerrainFile.h>
@@ -61,6 +64,9 @@ const glm::vec3 LAYER_PALETTE[TerrainLayerSet::LAYER_COUNT] = {
     glm::vec3(0.33f, 0.52f, 0.22f), glm::vec3(0.42f, 0.30f, 0.18f), glm::vec3(0.50f, 0.50f, 0.50f), glm::vec3(0.78f, 0.70f, 0.50f),
     glm::vec3(0.62f, 0.32f, 0.22f), glm::vec3(0.92f, 0.93f, 0.95f), glm::vec3(0.28f, 0.28f, 0.30f), glm::vec3(0.24f, 0.40f, 0.20f)
 };
+
+// How far out every terrain draws full detail (RenderableTerrainEntityItem::setLevelOfDetail): main thread only.
+float levelOfDetail = terrain::LodSettings().detail;
 
 uint8_t CUSTOM_PIPELINE_NUMBER = 0;
 std::map<std::pair<bool, bool>, ShapePipelinePointer> _pipelines;   // (forward, wireframe)
@@ -170,8 +176,22 @@ void RenderableTerrainEntityItem::setGridAndPaint(terrain::VoxelGrid grid, terra
     somethingChangedNotification();
 }
 
+void RenderableTerrainEntityItem::setLevelOfDetail(float detail) {
+    levelOfDetail = std::max(detail, 0.0f);
+}
+
+float RenderableTerrainEntityItem::getLevelOfDetail() {
+    return levelOfDetail;
+}
+
 void RenderableTerrainEntityItem::replaceGrid(terrain::VoxelGrid grid, terrain::PaintMap paint) {
     _grid = std::move(grid);
+    // what is drawn stays up until the meshes of the new grid are in
+    if (_grid.isEmpty()) {
+        _levelOfDetail.clear();
+    } else {
+        _levelOfDetail.gridReplaced();
+    }
     // the map: the given one when it covers the grid, a fresh one at the texel size otherwise, none without a grid
     const glm::ivec2 footprint(_grid.getVoxelCount().x, _grid.getVoxelCount().z);
     if (_grid.isEmpty()) {
@@ -254,6 +274,34 @@ bool RenderableTerrainEntityItem::updateMeshes() {
     }
     _mesher.submit(_grid);
     return changed;
+}
+
+bool RenderableTerrainEntityItem::updateLevelOfDetail(const glm::vec3& cameraWorld) {
+    terrain::LodSettings settings = _levelOfDetail.getSettings();
+    if (settings.detail != levelOfDetail) {
+        settings.detail = levelOfDetail;
+        _levelOfDetail.setSettings(settings);
+    }
+    const glm::vec3 camera(worldToVoxelMatrix() * glm::vec4(cameraWorld, 1.0f));
+    // a chunk of the grid is drawn with its own mesh once that is there, or known to have no surface
+    return _levelOfDetail.update(_grid, camera, getVoxelScale(), [this](const terrain::ChunkKey& key) {
+        return _chunkMeshes.count(key) > 0 || (!_grid.getDirtyChunks().count(key) && !_mesher.isInFlight(key));
+    });
+}
+
+void RenderableTerrainEntityItem::getDrawnChunks(std::vector<DrawnChunk>& drawn) const {
+    // versions of the chunks' own meshes and of the level of detail's are counted apart: even and odd keep them apart
+    drawn.clear();
+    for (const terrain::LevelOfDetail::Drawn& node : _levelOfDetail.getDrawn()) {
+        if (node.isGridChunk) {
+            auto found = _chunkMeshes.find(node.key);
+            if (found != _chunkMeshes.end()) {
+                drawn.push_back({ node.key, &found->second.mesh, found->second.version * 2 });
+            }
+        } else if (node.mesh) {
+            drawn.push_back({ node.key, node.mesh, node.version * 2 + 1 });
+        }
+    }
 }
 
 void RenderableTerrainEntityItem::updateCollisionShape() {
@@ -471,12 +519,12 @@ void TerrainLayerSet::bind(gpu::Batch& batch) {
 
 // The paint tile
 
-TerrainPaintTile::Pointer TerrainPaintTile::make(const terrain::PaintMap& paint, const glm::ivec2& column) {
+TerrainPaintTile::Pointer TerrainPaintTile::make(const terrain::PaintMap& paint, int level, const glm::ivec2& column) {
     if (paint.isEmpty()) {
         return nullptr;
     }
     std::vector<uint8_t> layers0to3, layers4to7;
-    paint.fillTile(column, layers0to3, layers4to7);
+    paint.fillTile(level, column, layers0to3, layers4to7);
     auto tile = std::make_shared<TerrainPaintTile>();
     tile->layers0to3 = makeTileTexture(paint.getTileSize(), layers0to3, "terrain paint 0-3");
     tile->layers4to7 = makeTileTexture(paint.getTileSize(), layers4to7, "terrain paint 4-7");
@@ -523,14 +571,15 @@ void TerrainChunkPayload::setPlacement(const Transform& chunkToWorld) {
 }
 
 void TerrainChunkPayload::setChunk(const terrain::ChunkKey& chunk) {
-    // The tile is the level-0 column's: CHUNK_SIZE grid voxels with the apron around them (PaintMap::fillTile),
-    // tile coordinates 0 to 1 across. This chunk's voxels are a fraction of a grid voxel and start part way in.
-    const float perGridVoxel = 1.0f / (float)(terrain::CHUNK_SIZE + 2 * terrain::PAINT_TILE_APRON);
-    const glm::ivec3 inColumn = terrain::VoxelGrid::localOf(chunk.getOrigin());
+    // A tile is CHUNK_SIZE voxels of its level with the apron around them (PaintMap::fillTile), tile coordinates 0
+    // to 1 across. A node at level 0 or coarser has a tile of its own column; a finer chunk's voxels are a fraction
+    // of its level-0 column's and start part way in.
+    const float perTileVoxel = 1.0f / (float)(terrain::CHUNK_SIZE + 2 * terrain::PAINT_TILE_APRON);
+    const glm::ivec3 inColumn = chunk.level > 0 ? terrain::VoxelGrid::localOf(chunk.getOrigin()) : glm::ivec3(0);
     TerrainChunkParams params;
-    params.paint = glm::vec4(perGridVoxel / (float)chunk.getScale(),
-                             (float)(terrain::PAINT_TILE_APRON + inColumn.x) * perGridVoxel,
-                             (float)(terrain::PAINT_TILE_APRON + inColumn.z) * perGridVoxel, 0.0f);
+    params.paint = glm::vec4(perTileVoxel * std::min(chunk.getVoxelSize(), 1.0f),
+                             (float)(terrain::PAINT_TILE_APRON + inColumn.x) * perTileVoxel,
+                             (float)(terrain::PAINT_TILE_APRON + inColumn.z) * perTileVoxel, 0.0f);
     if (!_chunkParams) {
         _chunkParams = std::make_shared<gpu::Buffer>(sizeof(TerrainChunkParams), (const gpu::Byte*)&params);
     } else {
@@ -598,10 +647,30 @@ ItemKey TerrainEntityRenderer::getKey() {
 }
 
 uint32_t TerrainEntityRenderer::metaFetchMetaSubItems(ItemIDs& subItems) const {
+    std::lock_guard<std::mutex> lock(_subItemsMutex);
+    subItems.insert(subItems.end(), _subItems.begin(), _subItems.end());
+    return (uint32_t)_subItems.size();
+}
+
+void TerrainEntityRenderer::handOverSubItems() {
+    ItemIDs ids;
+    ids.reserve(_chunkItems.size());
     for (const auto& pair : _chunkItems) {
-        subItems.push_back(pair.second.id);
+        ids.push_back(pair.second.id);
     }
-    return (uint32_t)_chunkItems.size();
+    std::lock_guard<std::mutex> lock(_subItemsMutex);
+    _pendingSubItems = std::move(ids);
+    _subItemsPending = true;
+}
+
+void TerrainEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPointer& entity) {
+    // On the render thread, as this frame's transaction goes through: its new chunk items are in the scene by now
+    // (a transaction's resets come before its updates).
+    std::lock_guard<std::mutex> lock(_subItemsMutex);
+    if (_subItemsPending) {
+        _subItems.swap(_pendingSubItems);
+        _subItemsPending = false;
+    }
 }
 
 void TerrainEntityRenderer::removeFromScene(const ScenePointer& scene, Transaction& transaction) {
@@ -609,6 +678,12 @@ void TerrainEntityRenderer::removeFromScene(const ScenePointer& scene, Transacti
         transaction.removeItem(pair.second.id);
     }
     _chunkItems.clear();
+    {
+        std::lock_guard<std::mutex> lock(_subItemsMutex);
+        _pendingSubItems.clear();
+        _subItems.clear();
+        _subItemsPending = false;
+    }
     Parent::removeFromScene(scene, transaction);
 }
 
@@ -619,7 +694,7 @@ bool TerrainEntityRenderer::needsRenderUpdateFromTypedEntity(const TypedEntityPo
     if (!entity->meshesAreSettled() || entity->collisionShapeIsStale()) {
         return true;
     }
-    if (entity->getMeshVersion() != _meshVersion) {
+    if (entity->getDrawnVersion() != _drawnVersion) {
         return true;
     }
     if (entity->getPaintVersion() != _paintVersion) {
@@ -657,9 +732,15 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
     if (entity->collisionShapeIsStale() && entity->meshesAreSettled()) {
         entity->updateCollisionShape();
     }
-    if (!entity->meshesAreSettled()) {
-        emit requestRenderUpdate();   // the tree renderer only comes back when asked: next frame, for the rest
+
+    // What to draw for the camera: the chunks' own meshes near it, coarser nodes' further away. The camera moves
+    // without a word to the entity, so the tree renderer, which only comes back when asked, is asked every frame.
+    if (auto viewState = AbstractViewStateInterface::instance()) {
+        ViewFrustum view;
+        viewState->copyCurrentViewFrustum(view);
+        entity->updateLevelOfDetail(view.getPosition());
     }
+    emit requestRenderUpdate();
 
     // The layers: what the voxel materials look like. A changed list makes a new set; the textures come in on
     // their own time and the set binds them as they do.
@@ -677,21 +758,47 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         layersChanged = true;
     }
 
-    // The paint map: the columns it marks dirty lose their tiles, which the chunk items below get anew.
+    // The paint map: the columns it marks dirty lose their tiles, and so do the coarser nodes' tiles over them; the
+    // items below get anew the tiles they lost.
     terrain::PaintMap& paint = entity->getPaint();
     const terrain::ColumnSet dirtyColumns = paint.getDirtyColumns();
     paint.clearDirtyColumns();
     _paintVersion = entity->getPaintVersion();
     const glm::ivec2 columnCount = paint.getColumnCount();
-    if (paint.isEmpty() || (int)dirtyColumns.size() >= columnCount.x * columnCount.y) {
+    std::set<glm::ivec3, terrain::IVec3Less> lostTiles;
+    bool allTilesLost = false;
+    if (paint.isEmpty() || (!dirtyColumns.empty() && (int)dirtyColumns.size() >= columnCount.x * columnCount.y)) {
         _paintTiles.clear();   // a new map (a resample may have changed its columns): every tile is remade
-    } else {
-        for (const glm::ivec2& column : dirtyColumns) {
-            _paintTiles.erase(column);
+        allTilesLost = true;
+    } else if (!dirtyColumns.empty()) {
+        for (auto it = _paintTiles.begin(); it != _paintTiles.end();) {
+            const glm::ivec3& tile = it->first;
+            bool lost = false;
+            if (tile.z == 0) {
+                lost = dirtyColumns.count(glm::ivec2(tile.x, tile.y)) > 0;
+            } else {
+                // a coarser node's tile covers 2^-level level-0 columns a side, and its apron reaches past them
+                const int columns = 1 << -tile.z;
+                const int margin = (terrain::PAINT_TILE_APRON * columns + terrain::CHUNK_SIZE - 1) / terrain::CHUNK_SIZE;
+                const glm::ivec2 low = glm::ivec2(tile.x, tile.y) * columns - margin;
+                const glm::ivec2 high = (glm::ivec2(tile.x, tile.y) + 1) * columns - 1 + margin;
+                for (const glm::ivec2& column : dirtyColumns) {
+                    if (glm::all(glm::greaterThanEqual(column, low)) && glm::all(glm::lessThanEqual(column, high))) {
+                        lost = true;
+                        break;
+                    }
+                }
+            }
+            if (lost) {
+                lostTiles.insert(tile);
+                it = _paintTiles.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
 
-    // The chunk items.
+    // The chunk items, one for each mesh drawn: nothing to do on most frames.
     const Transform& model = getModelTransform();
     const glm::vec3 dimensions = entity->getScaledDimensions();
     const glm::vec3 voxelScale = entity->getVoxelScale();
@@ -699,37 +806,45 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
     const ItemKey key = chunkKey();
     const bool placementChanged = model != _lastTransform || dimensions != _lastDimensions || voxelScale != _lastVoxelScale;
     const bool keyChanged = key != _lastChunkKey || wireframe != _lastWireframe;
+    const uint64_t drawnVersion = entity->getDrawnVersion();
+    if (_drawnOnce && drawnVersion == _drawnVersion && !placementChanged && !keyChanged && !layersChanged && lostTiles.empty() &&
+            !allTilesLost) {
+        return;
+    }
+    _drawnOnce = true;
+    _drawnVersion = drawnVersion;
     _lastTransform = model;
     _lastDimensions = dimensions;
     _lastVoxelScale = voxelScale;
     _lastWireframe = wireframe;
     _lastChunkKey = key;
-    _meshVersion = entity->getMeshVersion();
     const glm::mat4 worldToTerrain = glm::inverse(model.getMatrix());
     const TerrainLayerSet::Pointer layerSet = _layerSet;
 
-    const auto& meshes = entity->getChunkMeshes();
+    std::vector<RenderableTerrainEntityItem::DrawnChunk> drawn;
+    entity->getDrawnChunks(drawn);
+    std::set<terrain::ChunkKey> drawnKeys;
+    for (const RenderableTerrainEntityItem::DrawnChunk& chunk : drawn) {
+        drawnKeys.insert(chunk.key);
+    }
     for (auto it = _chunkItems.begin(); it != _chunkItems.end();) {
-        if (meshes.find(it->first) == meshes.end()) {
+        if (drawnKeys.count(it->first)) {
+            ++it;
+        } else {
             transaction.removeItem(it->second.id);
             it = _chunkItems.erase(it);
-        } else {
-            ++it;
         }
     }
-    for (const auto& pair : meshes) {
-        const terrain::ChunkKey& chunk = pair.first;
-        const RenderableTerrainEntityItem::ChunkMeshEntry& entry = pair.second;
-        const Transform placement = chunkToWorld(model, dimensions, voxelScale, chunk);
-        const glm::ivec3 slot = chunk.getSlot();
-        const glm::ivec2 column(slot.x, slot.z);
-        const TerrainPaintTile::Pointer paintTile = paintTileFor(paint, column);
-        auto found = _chunkItems.find(chunk);
+    for (const RenderableTerrainEntityItem::DrawnChunk& chunk : drawn) {
+        const Transform placement = chunkToWorld(model, dimensions, voxelScale, chunk.key);
+        const glm::ivec3 tileKey = paintTileKey(chunk.key);
+        const TerrainPaintTile::Pointer paintTile = paintTileFor(paint, tileKey);
+        auto found = _chunkItems.find(chunk.key);
         if (found == _chunkItems.end()) {
             auto payload = std::make_shared<TerrainChunkPayload>();
-            payload->setBuffers(TerrainChunkPayload::makeVertexBuffer(entry.mesh), TerrainChunkPayload::getVertexCount(entry.mesh));
+            payload->setBuffers(TerrainChunkPayload::makeVertexBuffer(*chunk.mesh), TerrainChunkPayload::getVertexCount(*chunk.mesh));
             payload->setPlacement(placement);
-            payload->setChunk(chunk);
+            payload->setChunk(chunk.key);
             payload->setKey(key);
             payload->setWireframe(wireframe);
             payload->setLayers(layerSet);
@@ -737,20 +852,20 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
             payload->setPaintTile(paintTile);
             ChunkItem item;
             item.id = scene->allocateID();
-            item.meshVersion = entry.version;
+            item.meshVersion = chunk.version;
             transaction.resetItem(item.id, std::make_shared<Payload<TerrainChunkPayload>>(payload));
-            _chunkItems[chunk] = item;
+            _chunkItems[chunk.key] = item;
             continue;
         }
-        const bool meshChanged = found->second.meshVersion != entry.version;
-        const bool paintChanged = dirtyColumns.count(column) > 0;
+        const bool meshChanged = found->second.meshVersion != chunk.version;
+        const bool paintChanged = allTilesLost || lostTiles.count(tileKey) > 0;
         if (!meshChanged && !placementChanged && !keyChanged && !layersChanged && !paintChanged) {
             continue;
         }
-        found->second.meshVersion = entry.version;
+        found->second.meshVersion = chunk.version;
         // The buffers are built here, on the main thread, and handed over: the update runs later on the render thread.
-        gpu::BufferPointer vertices = meshChanged ? TerrainChunkPayload::makeVertexBuffer(entry.mesh) : nullptr;
-        const uint32_t vertexCount = TerrainChunkPayload::getVertexCount(entry.mesh);
+        gpu::BufferPointer vertices = meshChanged ? TerrainChunkPayload::makeVertexBuffer(*chunk.mesh) : nullptr;
+        const uint32_t vertexCount = TerrainChunkPayload::getVertexCount(*chunk.mesh);
         transaction.updateItem<TerrainChunkPayload>(found->second.id,
                 [vertices, vertexCount, placement, key, wireframe, layerSet, worldToTerrain, paintTile](TerrainChunkPayload& payload) {
             if (vertices) {
@@ -764,18 +879,25 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
             payload.setPaintTile(paintTile);
         });
     }
+    handOverSubItems();
 }
 
-TerrainPaintTile::Pointer TerrainEntityRenderer::paintTileFor(const terrain::PaintMap& paint, const glm::ivec2& column) {
+glm::ivec3 TerrainEntityRenderer::paintTileKey(const terrain::ChunkKey& chunk) {
+    // a coarser node's own column at its level; a chunk of the grid's, its level-0 column
+    const glm::ivec3 column = chunk.level < 0 ? chunk.coords : chunk.getSlot();
+    return glm::ivec3(column.x, column.z, std::min(chunk.level, 0));
+}
+
+TerrainPaintTile::Pointer TerrainEntityRenderer::paintTileFor(const terrain::PaintMap& paint, const glm::ivec3& tileKey) {
     if (paint.isEmpty()) {
         return nullptr;
     }
-    auto found = _paintTiles.find(column);
+    auto found = _paintTiles.find(tileKey);
     if (found != _paintTiles.end()) {
         return found->second;
     }
-    TerrainPaintTile::Pointer tile = TerrainPaintTile::make(paint, column);
-    _paintTiles[column] = tile;
+    TerrainPaintTile::Pointer tile = TerrainPaintTile::make(paint, tileKey.z, glm::ivec2(tileKey.x, tileKey.y));
+    _paintTiles[tileKey] = tile;
     return tile;
 }
 
@@ -850,11 +972,11 @@ ItemKey TerrainEntityRenderer::chunkKey() const {
 
 Transform TerrainEntityRenderer::chunkToWorld(const Transform& model, const glm::vec3& dimensions, const glm::vec3& voxelScale, const terrain::ChunkKey& chunk) {
     // The entity's model transform is its box's centre; grid voxel (0, 0, 0) is the box's low corner. The mesh is
-    // in the chunk's own voxels, 1 / 2^level of a grid voxel, from the chunk's origin.
+    // in the chunk's (or coarser node's) own voxels, 1 / 2^level of a grid voxel, from its origin.
     Transform transform = model;
     transform.postTranslate(-0.5f * dimensions);
     transform.postScale(voxelScale);
     transform.postTranslate(glm::vec3(chunk.getOrigin()));
-    transform.postScale(glm::vec3(1.0f / (float)chunk.getScale()));
+    transform.postScale(glm::vec3(chunk.getVoxelSize()));
     return transform;
 }

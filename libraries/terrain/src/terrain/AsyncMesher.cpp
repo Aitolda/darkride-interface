@@ -83,6 +83,21 @@ int AsyncMesher::submit(VoxelGrid& grid) {
     return started;
 }
 
+void AsyncMesher::submitSamples(std::shared_ptr<const ChunkSamples> samples, uint64_t tag, int priority) {
+    std::shared_ptr<Shared> shared = _shared;
+    const uint32_t generation = _generation;
+    _pool->start([shared, samples, generation, tag] {
+        Result result;
+        result.key = samples->getKey();
+        result.tag = tag;
+        result.mesh = meshChunk(*samples);
+        std::lock_guard<std::mutex> lock(shared->mutex);
+        if (shared->generation == generation) {
+            shared->results.push_back(std::move(result));
+        }
+    }, priority);
+}
+
 std::vector<AsyncMesher::Result> AsyncMesher::collect() {
     std::vector<Result> results;
     {
@@ -90,7 +105,9 @@ std::vector<AsyncMesher::Result> AsyncMesher::collect() {
         results.swap(_shared->results);
     }
     for (const Result& result : results) {
-        _inFlight.erase(result.key);
+        if (result.tag == 0) {
+            _inFlight.erase(result.key);
+        }
     }
     return results;
 }

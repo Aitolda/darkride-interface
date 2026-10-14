@@ -16,6 +16,7 @@
 
 #include <terrain/AsyncMesher.h>
 #include <terrain/Brush.h>
+#include <terrain/LevelOfDetail.h>
 #include <terrain/PaintMap.h>
 #include <terrain/Resample.h>
 #include <terrain/SurfaceNets.h>
@@ -395,20 +396,20 @@ void TerrainTests::paintMapPaintsErasesTilesAndRoundTripsThroughTheFile() {
     QVERIFY(map.getDirtyColumns().count(glm::ivec2(0, 0)));
     QVERIFY(map.getDirtyColumns().count(glm::ivec2(1, 0)));
 
-    // the tile of column (1, 0): 34 voxels a side at two texels each, its texel (0, 0) at the map's (62, -2)
-    QCOMPARE(map.getTileSize(), 68);
+    // the tile of column (1, 0): 36 voxels a side at two texels each, its texel (0, 0) at the map's (60, -4)
+    QCOMPARE(map.getTileSize(), 72);
     std::vector<uint8_t> low, high;
     map.fillTile(glm::ivec2(1, 0), low, high);
-    QCOMPARE((int)low.size(), 68 * 68 * 4);
-    QCOMPARE((int)high.size(), 68 * 68 * 4);
-    QCOMPARE((int)low[((20 + 2) * 68 + (63 - 62)) * 4 + 0], 255);   // the painted texel, through the apron
-    QCOMPARE((int)low[((20 + 2) * 68 + (63 - 62)) * 4 + 1], 0);
+    QCOMPARE((int)low.size(), 72 * 72 * 4);
+    QCOMPARE((int)high.size(), 72 * 72 * 4);
+    QCOMPARE((int)low[((20 + 4) * 72 + (63 - 60)) * 4 + 0], 255);   // the painted texel, through the apron
+    QCOMPARE((int)low[((20 + 4) * 72 + (63 - 60)) * 4 + 1], 0);
     // and the tile of column (0, 0) repeats the map's edge beyond it
     map.at(glm::ivec2(0, 5))[7] = 99;
     map.fillTile(glm::ivec2(0, 0), low, high);
-    QCOMPARE((int)high[((5 + 2) * 68 + 0) * 4 + 3], 99);   // tile texel x 0 is map texel -2, clamped to 0
-    QCOMPARE((int)high[((5 + 2) * 68 + 2) * 4 + 3], 99);   // tile texel x 2 is map texel 0 itself
-    QCOMPARE((int)high[((5 + 2) * 68 + 3) * 4 + 3], 0);
+    QCOMPARE((int)high[((5 + 4) * 72 + 0) * 4 + 3], 99);   // tile texel x 0 is map texel -4, clamped to 0
+    QCOMPARE((int)high[((5 + 4) * 72 + 4) * 4 + 3], 99);   // tile texel x 4 is map texel 0 itself
+    QCOMPARE((int)high[((5 + 4) * 72 + 5) * 4 + 3], 0);
     map.at(glm::ivec2(0, 5))[7] = 0;
 
     // a block copied out comes back as it was
@@ -657,18 +658,22 @@ private:
     int _next { 0 };
 };
 
-// Meshes every chunk and counts the edges of the surface they make together that lie on an odd number of
-// triangles: an open edge, a crack between chunks, or a hole. Edges along the grid's sides are left out: the
-// surface runs out of the grid open there.
-int countOpenEdges(const VoxelGrid& grid, int* triangles = nullptr) {
+using KeyedMeshes = std::vector<std::pair<ChunkKey, ChunkMesh>>;
+
+// Counts the edges of the surface some meshes make together that lie on an odd number of triangles: an open edge,
+// a crack between chunks, or a hole. Each mesh is in its chunk's (or node's) own voxels. Edges along the grid's
+// sides are left out, within `side` grid voxels of them: the surface runs out of the grid open there (a coarse
+// node's ends up to a voxel of its own short of the grid's last voxel).
+int countOpenEdges(const VoxelGrid& grid, const KeyedMeshes& meshes, int* triangles = nullptr, float side = 0.0f) {
     VertexMerger merger;
     std::map<std::pair<int, int>, int> edgeCounts;
     int triangleCount = 0;
-    grid.forEachChunk([&](const ChunkKey& key, const Chunk&) {
-        const ChunkMesh mesh = meshChunk(grid, key);
+    for (const auto& pair : meshes) {
+        const ChunkKey& key = pair.first;
+        const ChunkMesh& mesh = pair.second;
         std::vector<int> ids;
         for (const glm::vec3& p : mesh.positions) {
-            ids.push_back(merger.idOf(glm::vec3(key.getOrigin()) + p / (float)key.getScale()));
+            ids.push_back(merger.idOf(glm::vec3(key.getOrigin()) + p * key.getVoxelSize()));
         }
         for (size_t t = 0; t < mesh.getTriangleCount(); ++t) {
             ++triangleCount;
@@ -680,11 +685,11 @@ int countOpenEdges(const VoxelGrid& grid, int* triangles = nullptr) {
                 }
             }
         }
-    });
+    }
     if (triangles) {
         *triangles = triangleCount;
     }
-    const glm::vec3 high(grid.getVoxelCount() - 1);
+    const glm::vec3 high = glm::vec3(grid.getVoxelCount() - 1) - side;
     int open = 0;
     for (const auto& entry : edgeCounts) {
         if (entry.second % 2 == 0) {
@@ -694,7 +699,7 @@ int countOpenEdges(const VoxelGrid& grid, int* triangles = nullptr) {
         const glm::vec3& b = merger.positionOf(entry.first.second);
         bool onSide = false;
         for (int axis = 0; axis < 3; ++axis) {
-            if ((a[axis] <= 0.0f && b[axis] <= 0.0f) || (a[axis] >= high[axis] && b[axis] >= high[axis])) {
+            if ((a[axis] <= side && b[axis] <= side) || (a[axis] >= high[axis] && b[axis] >= high[axis])) {
                 onSide = true;
             }
         }
@@ -703,6 +708,13 @@ int countOpenEdges(const VoxelGrid& grid, int* triangles = nullptr) {
         }
     }
     return open;
+}
+
+// Meshes every chunk of the grid and counts the open edges of the surface they make together.
+int countOpenEdges(const VoxelGrid& grid, int* triangles = nullptr) {
+    KeyedMeshes meshes;
+    grid.forEachChunk([&](const ChunkKey& key, const Chunk&) { meshes.emplace_back(key, meshChunk(grid, key)); });
+    return countOpenEdges(grid, meshes, triangles);
 }
 
 } // namespace
@@ -1263,4 +1275,550 @@ void TerrainTests::resampleReadsTheFineChunks() {
     const VoxelGrid coarse = resampleGrid(source, glm::ivec3(32, 32, 32));
     QCOMPARE(coarse.countChunks(), 1);
     QVERIFY(std::abs(surfaceHeight(coarse, 5.0f, 5.0f, 15.0f, 25.0f) - 20.25f) < 0.1f);
+}
+
+namespace {
+
+// The meshes of a cut's nodes: the grid's own chunks' for the nodes drawn with those, the nodes' own for the rest.
+KeyedMeshes meshCut(const VoxelGrid& grid, const LodCut& cut) {
+    KeyedMeshes meshes;
+    ChunkSamples samples;
+    for (const LodCut::Node& node : cut.getNodes()) {
+        if (node.isGridChunk) {
+            meshes.emplace_back(node.key, meshChunk(grid, node.key));
+        } else {
+            sampleNode(grid, node.key, node.context, samples);
+            meshes.emplace_back(node.key, meshChunk(samples));
+        }
+    }
+    return meshes;
+}
+
+// Whether two nodes' boxes share any grid voxel, and whether they touch at all (faces, edges or corners).
+bool boxesOverlap(const ChunkKey& a, const ChunkKey& b) {
+    const glm::ivec3 aLow = a.getOrigin();
+    const glm::ivec3 bLow = b.getOrigin();
+    return glm::all(glm::lessThan(aLow, bLow + b.getSpan())) && glm::all(glm::lessThan(bLow, aLow + a.getSpan()));
+}
+
+bool boxesTouch(const ChunkKey& a, const ChunkKey& b) {
+    const glm::ivec3 aLow = a.getOrigin();
+    const glm::ivec3 bLow = b.getOrigin();
+    return glm::all(glm::lessThanEqual(aLow, bLow + b.getSpan())) && glm::all(glm::lessThanEqual(bLow, aLow + a.getSpan()));
+}
+
+QString describe(const ChunkKey& key) {
+    return QString("%1 (%2, %3, %4)").arg(key.level).arg(key.coords.x).arg(key.coords.y).arg(key.coords.z);
+}
+
+bool samplesEqual(const ChunkSamples& a, const ChunkSamples& b, QString& why) {
+    for (int z = -1; z <= CHUNK_SIZE; ++z) {
+        for (int y = -1; y <= CHUNK_SIZE; ++y) {
+            for (int x = -1; x <= CHUNK_SIZE; ++x) {
+                if (a.at(x, y, z) != b.at(x, y, z)) {
+                    why = QString("sample (%1, %2, %3): %4/%5 against %6/%7").arg(x).arg(y).arg(z)
+                        .arg(a.at(x, y, z).distance).arg(a.at(x, y, z).material).arg(b.at(x, y, z).distance).arg(b.at(x, y, z).material);
+                    return false;
+                }
+            }
+        }
+    }
+    for (int region = 0; region < 8; ++region) {
+        if (a.getNeighbourLevel(region) != b.getNeighbourLevel(region)) {
+            why = QString("neighbour level %1: %2 against %3").arg(region).arg(a.getNeighbourLevel(region)).arg(b.getNeighbourLevel(region));
+            return false;
+        }
+    }
+    if (a.getBlocks().size() != b.getBlocks().size()) {
+        why = QString("%1 blocks against %2").arg(a.getBlocks().size()).arg(b.getBlocks().size());
+        return false;
+    }
+    for (size_t i = 0; i < a.getBlocks().size(); ++i) {
+        const SampleBlock& blockA = a.getBlocks()[i];
+        const SampleBlock& blockB = b.getBlocks()[i];
+        if (blockA.levelDelta != blockB.levelDelta || blockA.origin != blockB.origin || blockA.size != blockB.size) {
+            why = QString("block %1 differs in its place").arg(i);
+            return false;
+        }
+        for (size_t v = 0; v < blockA.voxels.size(); ++v) {
+            if (blockA.voxels[v] != blockB.voxels[v]) {
+                why = QString("block %1 voxel %2: %3 against %4").arg(i).arg(v).arg(blockA.voxels[v].distance).arg(blockB.voxels[v].distance);
+                return false;
+            }
+        }
+    }
+    if (a.getLimit() != b.getLimit() || a.getFinerLimit() != b.getFinerLimit()) {
+        why = "limits differ";
+        return false;
+    }
+    return true;
+}
+
+glm::ivec3 fineOf(const glm::vec3& voxel) {
+    return glm::ivec3(glm::floor(voxel * (float)FINEST_PER_GRID_VOXEL));
+}
+
+} // namespace
+
+void TerrainTests::chunkKeysNameCoarserNodes() {
+    const ChunkKey coarse(-2, 1, 0, 3);
+    QCOMPARE(coarse.getSpan(), 128);
+    QCOMPARE(coarse.getOrigin(), glm::ivec3(128, 0, 384));
+    QCOMPARE(coarse.getVoxelSize(), 4.0f);
+    QCOMPARE(coarse.getSlot(), glm::ivec3(4, 0, 12));
+    QVERIFY(coarse.getChild(7) == ChunkKey(-1, 3, 1, 7));
+    QVERIFY(coarse.getChild(7).getParent() == coarse);
+    QVERIFY(ChunkKey(0, 5, 2, 3).getParent() == ChunkKey(-1, 2, 1, 1));
+    QCOMPARE(ChunkKey(2, 1, 1, 1).getVoxelSize(), 0.25f);
+    QVERIFY(coarse.intersects(glm::ivec3(255, 0, 400), glm::ivec3(300, 10, 410)));
+    QVERIFY(!coarse.intersects(glm::ivec3(256, 0, 400), glm::ivec3(300, 10, 410)));
+
+    // A coarser level's point is a grid voxel, read in that level's voxels; beyond the grid, the nearest in it.
+    VoxelGrid grid(glm::ivec3(96, 64, 96));
+    grid.fillBelow(20.5f, 3);
+    const Voxel half = grid.sampleAt(-1, glm::ivec3(5, 10, 7));   // grid voxel (10, 20, 14), half a voxel under
+    QCOMPARE((int)half.distance, (int)encodeDistance(-0.25f));
+    QCOMPARE((int)half.material, 3);
+    const Voxel& edge = grid.get(glm::ivec3(95, 8, 95));
+    QVERIFY(grid.sampleAt(-2, glm::ivec3(100, 2, 100)) == Voxel(rescaleDistance(edge.getDistance(), 0.25f), edge.material));
+
+    // How far a node's voxels reach before the grid ends, on a grid of odd sides.
+    VoxelGrid odd(glm::ivec3(80, 40, 72));
+    QCOMPARE(odd.limitOf(0, glm::ivec3(64, 32, 64), CHUNK_SIZE), glm::ivec3(16, 8, 8));
+    QCOMPARE(odd.limitOf(1, glm::ivec3(64, 32, 64), 2 * CHUNK_SIZE), glm::ivec3(32, 16, 16));
+    QCOMPARE(odd.limitOf(-1, glm::ivec3(0), CHUNK_SIZE), glm::ivec3(32, 20, 32));
+    QCOMPARE(odd.limitOf(-2, glm::ivec3(0), CHUNK_SIZE), glm::ivec3(20, 10, 18));
+    QCOMPARE(odd.limitOf(0, glm::ivec3(96, 0, 0), CHUNK_SIZE), glm::ivec3(0, 32, 32));
+}
+
+void TerrainTests::lodNodeSamplesMatchTheGridsChunks() {
+    // Every chunk sampled as a node with the grid's own chunks around it gets the grid's own samples, to the bit:
+    // hills with a small dig (chunks of levels 0 to 2), on a grid of whole chunks and on one of odd sides.
+    for (const glm::ivec3& count : { glm::ivec3(96, 64, 96), glm::ivec3(80, 40, 72) }) {
+        VoxelGrid grid(count);
+        grid.fillHeightField(hills, 2);
+        Brush small;
+        small.center = glm::vec3(40.0f, hills(40, 40), 40.0f);
+        small.radius = 1.5f;
+        QVERIFY(sculpt(grid, small, SculptMode::Dig) > 0);
+        QCOMPARE(grid.getFinestLevel(), 2);
+        ChunkSamples expected;
+        ChunkSamples actual;
+        QString why;
+        bool same = true;
+        int compared = 0;
+        grid.forEachChunk([&](const ChunkKey& key, const Chunk&) {
+            if (!same) {
+                return;
+            }
+            grid.sampleChunk(key, expected);
+            sampleNode(grid, key, gridContext(grid, key), actual);
+            same = samplesEqual(expected, actual, why);
+            if (!same) {
+                why = "chunk " + describe(key) + ": " + why;
+            }
+            ++compared;
+        });
+        QVERIFY2(same, qPrintable(why));
+        QVERIFY(compared > 50);
+    }
+}
+
+void TerrainTests::lodCutCoversTheGridOnceAndKeepsTheTwoToOneRule() {
+    VoxelGrid grid(glm::ivec3(512, 64, 512));
+    grid.fillHeightField(hills, 2);
+    const glm::vec3 metres(0.5f);
+    const glm::vec3 camera(256.0f, 30.0f, 256.0f);
+    LodSettings settings;
+    settings.detail = 1.0f;
+    LodCut cut;
+    cut.update(grid, camera, metres, settings);
+    QCOMPARE(cut.getRootLevel(), -4);
+    const std::vector<LodCut::Node>& nodes = cut.getNodes();
+
+    // Each part of the grid in one node: the nodes' boxes within the grid add up to it, and none overlap.
+    int64_t volume = 0;
+    int coarsest = MAX_CHUNK_LEVEL;
+    int finest = MIN_LOD_LEVEL;
+    for (const LodCut::Node& node : nodes) {
+        const glm::ivec3 low = node.key.getOrigin();
+        const glm::ivec3 high = glm::min(low + node.key.getSpan(), grid.getVoxelCount());
+        volume += (int64_t)(high.x - low.x) * (high.y - low.y) * (high.z - low.z);
+        coarsest = std::min(coarsest, node.key.level);
+        finest = std::max(finest, node.key.level);
+    }
+    QCOMPARE(volume, (int64_t)512 * 64 * 512);
+    QCOMPARE(coarsest, -2);
+    QCOMPARE(finest, 0);
+    bool overlap = false;
+    bool twoToOne = true;
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        for (size_t j = i + 1; j < nodes.size(); ++j) {
+            overlap = overlap || boxesOverlap(nodes[i].key, nodes[j].key);
+            if (boxesTouch(nodes[i].key, nodes[j].key) && std::abs(nodes[i].key.level - nodes[j].key.level) > 1) {
+                twoToOne = false;
+            }
+        }
+    }
+    QVERIFY(!overlap);
+    QVERIFY(twoToOne);
+
+    // Each node's context is the levels of the nodes at its probes; the nodes under the camera are the grid's own
+    // chunks, drawn with their own meshes, those far away coarse.
+    bool contextsAgree = true;
+    for (const LodCut::Node& node : nodes) {
+        for (int i = 0; i < 27; ++i) {
+            if (i != NodeContext::CENTRE && cut.nodeCovering(contextProbe(grid, node.key, i)).level - node.key.level != node.context.at(i)) {
+                contextsAgree = false;
+            }
+        }
+    }
+    QVERIFY(contextsAgree);
+    const ChunkKey under = cut.nodeCovering(fineOf(glm::vec3(256.0f, 12.0f, 256.0f)));
+    QCOMPARE(under.level, 0);
+    bool underIsGridChunk = false;
+    int gridChunks = 0;
+    for (const LodCut::Node& node : nodes) {
+        underIsGridChunk = underIsGridChunk || (node.key == under && node.isGridChunk);
+        gridChunks += node.isGridChunk ? 1 : 0;
+    }
+    QVERIFY(underIsGridChunk);
+    QVERIFY(gridChunks > 0 && gridChunks < (int)nodes.size());
+    QCOMPARE(cut.nodeCovering(fineOf(glm::vec3(5.0f, 12.0f, 5.0f))).level, -2);
+
+    // At the default detail the whole terrain is near: the grid's chunks within 128 voxels, a level coarser at the corners.
+    cut.update(grid, camera, metres, LodSettings());
+    QCOMPARE(cut.nodeCovering(fineOf(glm::vec3(256.0f + 100.0f, 12.0f, 256.0f))).level, 0);
+    QCOMPARE(cut.nodeCovering(fineOf(glm::vec3(5.0f, 12.0f, 5.0f))).level, -1);
+
+    // Without level of detail: the grid's own chunks, every one drawn with its own mesh.
+    settings.detail = 0.0f;
+    cut.update(grid, camera, metres, settings);
+    QCOMPARE((int)cut.getNodes().size(), grid.countChunks());
+    bool allGridChunks = true;
+    for (const LodCut::Node& node : cut.getNodes()) {
+        allGridChunks = allGridChunks && node.isGridChunk;
+    }
+    QVERIFY(allGridChunks);
+}
+
+void TerrainTests::lodCutKeepsItsSplitsWithinTheHysteresis() {
+    // A row of chunks with the camera moving along it from beyond its low end. With a detail of 1 a level -1 node
+    // (64 voxels of half a metre) is drawn as its children while the camera is within 32 m of it, and stays so
+    // until it is 40 m away (a quarter more).
+    VoxelGrid grid(glm::ivec3(256, 32, 32));
+    grid.fillBelow(10.5f);
+    const glm::vec3 metres(0.5f);
+    LodSettings settings;
+    settings.detail = 1.0f;
+    LodCut cut;
+    const ChunkKey node(-1, 3, 0, 0);   // grid voxels 192 to 255 along x
+    auto drawnWhole = [&](float x) {
+        cut.update(grid, glm::vec3(x, 16.0f, 16.0f), metres, settings);
+        return cut.nodeCovering(fineOf(glm::vec3(200.0f, 10.0f, 10.0f))) == node;
+    };
+    QVERIFY(drawnWhole(100.0f));    // 46 m away
+    QVERIFY(!drawnWhole(140.0f));   // 26 m: split
+    QVERIFY(!drawnWhole(120.0f));   // 36 m: still split
+    QVERIFY(drawnWhole(105.0f));    // 43.5 m: whole again
+    QVERIFY(drawnWhole(120.0f));    // 36 m, coming from further: stays whole
+}
+
+void TerrainTests::lodMeshesMeetWithoutACrack() {
+    // Hills under a camera at one corner: nodes from level -2 at the far corner to the grid's own chunks near the
+    // camera (a low detail, for several levels on a small grid), closed but for the grid's sides. (Nearer the
+    // middle, the 2:1 rule would split the far corner's node for the chunks a corner away from it.)
+    VoxelGrid grid(glm::ivec3(256, 64, 256));
+    grid.fillHeightField(hills, 2);
+    const glm::vec3 metres(0.5f);
+    LodSettings settings;
+    settings.detail = 1.0f;
+    LodCut cut;
+    cut.update(grid, glm::vec3(10.0f, 20.0f, 10.0f), metres, settings);
+    std::map<int, int> levels;
+    int ownMeshes = 0;
+    for (const LodCut::Node& node : cut.getNodes()) {
+        ++levels[node.key.level];
+        ownMeshes += node.isGridChunk ? 0 : 1;
+    }
+    QVERIFY(levels.begin()->first <= -2);
+    QVERIFY(levels.count(0) > 0);
+    QVERIFY(ownMeshes > 0);
+    int triangles = 0;
+    int full = 0;
+    QElapsedTimer timer;
+    timer.start();
+    QCOMPARE(countOpenEdges(grid, meshCut(grid, cut), &triangles, 8.0f), 0);
+    qDebug() << "meshed" << cut.getNodes().size() << "nodes from level" << levels.begin()->first << "to" << levels.rbegin()->first
+             << "," << ownMeshes << "of them not the grid's chunks," << triangles << "triangles, in" << timer.elapsed() << "ms";
+    QCOMPARE(countOpenEdges(grid, &full), 0);
+    qDebug() << "the grid's own chunks:" << grid.countChunks() << "chunks," << full << "triangles";
+    QVERIFY(triangles < full / 2);
+
+    // Fine chunks near the camera, drawn as they are, and far from it, where coarser nodes draw them.
+    Brush small;
+    small.radius = 1.5f;
+    small.center = glm::vec3(30.0f, hills(30, 30), 30.0f);
+    QVERIFY(sculpt(grid, small, SculptMode::Dig) > 0);
+    small.center = glm::vec3(220.0f, hills(220, 220), 220.0f);
+    QVERIFY(sculpt(grid, small, SculptMode::Dig) > 0);
+    QCOMPARE(grid.getFinestLevel(), 2);
+    cut.update(grid, glm::vec3(10.0f, 20.0f, 10.0f), metres, settings);
+    QCOMPARE(cut.nodeCovering(fineOf(glm::vec3(30.0f, hills(30, 30), 30.0f))).level, 2);
+    QVERIFY(cut.nodeCovering(fineOf(glm::vec3(220.0f, hills(220, 220), 220.0f))).level < 0);
+    QCOMPARE(countOpenEdges(grid, meshCut(grid, cut), nullptr, 8.0f), 0);
+    // and the camera over the far dig
+    cut.update(grid, glm::vec3(225.0f, 15.0f, 225.0f), metres, settings);
+    QCOMPARE(cut.nodeCovering(fineOf(glm::vec3(220.0f, hills(220, 220), 220.0f))).level, 2);
+    QVERIFY(cut.nodeCovering(fineOf(glm::vec3(30.0f, hills(30, 30), 30.0f))).level < 0);
+    QCOMPARE(countOpenEdges(grid, meshCut(grid, cut), nullptr, 8.0f), 0);
+
+    // A grid of odd sides: no mesh runs on past the grid's end, by more than a voxel of its node.
+    VoxelGrid odd(glm::ivec3(200, 40, 168));
+    odd.fillHeightField(hills, 2);
+    cut.update(odd, glm::vec3(10.0f, 20.0f, 10.0f), metres, settings);
+    const KeyedMeshes meshes = meshCut(odd, cut);
+    bool within = true;
+    for (const auto& pair : meshes) {
+        const glm::vec3 end = glm::vec3(odd.getVoxelCount()) + pair.first.getVoxelSize();
+        for (const glm::vec3& p : pair.second.positions) {
+            const glm::vec3 position = glm::vec3(pair.first.getOrigin()) + p * pair.first.getVoxelSize();
+            within = within && glm::all(glm::lessThan(position, end));
+        }
+    }
+    QVERIFY(within);
+    QCOMPARE(countOpenEdges(odd, meshes, nullptr, 8.0f), 0);
+}
+
+void TerrainTests::levelOfDetailShowsANewCutOnceItsMeshesAreIn() {
+    QThreadPool pool;
+    pool.setMaxThreadCount(4);
+    VoxelGrid grid(glm::ivec3(256, 64, 256));
+    grid.fillHeightField(hills, 2);
+    LevelOfDetail lod(&pool);
+    LodSettings settings;
+    settings.detail = 1.0f;
+    lod.setSettings(settings);
+    const glm::vec3 metres(0.5f);
+    glm::vec3 camera(20.0f, 20.0f, 20.0f);
+    auto gridChunkReady = [](const ChunkKey&) { return true; };   // the terrain's own chunks' meshes: there
+    auto settle = [&] {
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < 20000) {
+            lod.update(grid, camera, metres, gridChunkReady);
+            if (lod.isSettled()) {
+                return true;
+            }
+            QThread::msleep(1);
+        }
+        return false;
+    };
+    auto drawnKeys = [&] {
+        std::vector<ChunkKey> keys;
+        for (const LevelOfDetail::Drawn& drawn : lod.getDrawn()) {
+            keys.push_back(drawn.key);
+        }
+        return keys;
+    };
+    auto cutKeys = [&] {
+        std::vector<ChunkKey> keys;
+        for (const LodCut::Node& node : lod.getCut().getNodes()) {
+            keys.push_back(node.key);
+        }
+        return keys;
+    };
+    auto drawnAt = [&](const ChunkKey& key) -> const LevelOfDetail::Drawn* {
+        for (const LevelOfDetail::Drawn& drawn : lod.getDrawn()) {
+            if (drawn.key == key) {
+                return &drawn;
+            }
+        }
+        return nullptr;
+    };
+
+    // The first cut is drawn as its meshes come and settles on the cut wanted, each node with its samples' mesh.
+    QElapsedTimer timer;
+    timer.start();
+    QVERIFY(settle());
+    qDebug() << "the first cut," << lod.getDrawn().size() << "nodes," << lod.getMeshCount() << "meshes made here, settled in" << timer.elapsed() << "ms";
+    QVERIFY(drawnKeys() == cutKeys());
+    const KeyedMeshes expected = meshCut(grid, lod.getCut());
+    bool meshesAgree = true;
+    for (size_t i = 0; i < expected.size(); ++i) {
+        const LevelOfDetail::Drawn& drawn = lod.getDrawn()[i];
+        if (!drawn.isGridChunk) {
+            const size_t triangles = drawn.mesh ? drawn.mesh->getTriangleCount() : 0;
+            meshesAgree = meshesAgree && triangles == expected[i].second.getTriangleCount();
+        }
+    }
+    QVERIFY(meshesAgree);
+    const std::vector<ChunkKey> before = drawnKeys();
+
+    // The camera at the far corner: the cut drawn stays until every node of the new one has its mesh.
+    camera = glm::vec3(236.0f, 20.0f, 236.0f);
+    lod.update(grid, camera, metres, gridChunkReady);
+    QVERIFY(cutKeys() != before);
+    QVERIFY(drawnKeys() == before);
+    QVERIFY(settle());
+    QVERIFY(drawnKeys() == cutKeys());
+
+    // An edit under a coarse node far from the camera: its mesh is made again, and drawn.
+    const glm::vec3 far(30.0f, hills(30, 30), 30.0f);
+    const ChunkKey coarse = lod.getCut().nodeCovering(fineOf(far));
+    QVERIFY(coarse.level < 0);
+    QVERIFY(drawnAt(coarse) && drawnAt(coarse)->mesh);
+    const uint64_t version = drawnAt(coarse)->version;
+    const size_t triangles = drawnAt(coarse)->mesh->getTriangleCount();
+    Brush wide;
+    wide.center = far;
+    wide.radius = 12.0f;
+    QVERIFY(sculpt(grid, wide, SculptMode::Dig) > 0);
+    QVERIFY(settle());
+    QVERIFY(drawnAt(coarse) && drawnAt(coarse)->mesh);
+    QVERIFY(drawnAt(coarse)->version != version);
+    QVERIFY(drawnAt(coarse)->mesh->getTriangleCount() != triangles);
+
+    // Without level of detail every node drawn is a grid chunk, drawn with its own mesh.
+    settings.detail = 0.0f;
+    lod.setSettings(settings);
+    QVERIFY(settle());
+    QCOMPARE((int)lod.getDrawn().size(), grid.countChunks());
+    bool allGridChunks = true;
+    for (const LevelOfDetail::Drawn& drawn : lod.getDrawn()) {
+        allGridChunks = allGridChunks && drawn.isGridChunk;
+    }
+    QVERIFY(allGridChunks);
+}
+
+void TerrainTests::paintTilesOfCoarserNodesAverageTheMap() {
+    PaintMap map(glm::ivec2(128, 128), 2);   // 256 texels a side
+    // A level -1 node's tile: 36 of its voxels a side at two texels each, a texel the mean of 2 x 2 of the map's,
+    // its texel (0, 0) at the map's (-8, -8).
+    for (int z = 20; z < 22; ++z) {
+        for (int x = 10; x < 12; ++x) {
+            map.at(glm::ivec2(x, z))[3] = 200;
+        }
+    }
+    map.at(glm::ivec2(12, 20))[3] = 100;
+    map.at(glm::ivec2(12, 20))[6] = 40;
+    std::vector<uint8_t> low, high;
+    map.fillTile(-1, glm::ivec2(0, 0), low, high);
+    QCOMPARE((int)low.size(), 72 * 72 * 4);
+    QCOMPARE((int)low[((14 * 72) + 9) * 4 + 3], 200);    // map texels (10, 20) to (11, 21)
+    QCOMPARE((int)low[((14 * 72) + 10) * 4 + 3], 25);    // (12, 20) to (13, 21): one of four at 100
+    QCOMPARE((int)high[((14 * 72) + 10) * 4 + 2], 10);   // and one at 40 of layer 6
+    QCOMPARE((int)low[((14 * 72) + 11) * 4 + 3], 0);
+    // At level -3 a texel covers 8 x 8 of the map's and reads 4 x 4 of them, every other one: texel (5, 6) covers
+    // the map's (8, 16) to (15, 23), and of the sixteen it reads (10, 20) holds 200 and (12, 20) 100.
+    map.fillTile(-3, glm::ivec2(0, 0), low, high);
+    QCOMPARE((int)low[((6 * 72) + 5) * 4 + 3], (300 + 8) / 16);
+    QCOMPARE((int)low[((5 * 72) + 5) * 4 + 3], 0);
+    // level 0 is the column's own tile
+    std::vector<uint8_t> own0, own1;
+    map.fillTile(0, glm::ivec2(1, 2), low, high);
+    map.fillTile(glm::ivec2(1, 2), own0, own1);
+    QVERIFY(low == own0 && high == own1);
+}
+
+void TerrainTests::raiseAcrossChunkLevelsKeepsTheGroundLevel() {
+    // A wide Raise over ground whose chunks are at two levels (a small dig split one place) lifts the ground
+    // evenly, with no wall along the chunks' join. A voxel at the byte's limit is not shifted by the brush, only
+    // given a distance from its neighbours afterwards, so a chunk reading a neighbour at another level between
+    // the passes sees it as far rather than a few of its own voxels off, which once grew a wall as tall as the
+    // brush along the join, half a voxel a pass.
+    VoxelGrid grid(glm::ivec3(128, 128, 128));
+    grid.fillBelow(64.0f);
+    Brush small;
+    small.center = glm::vec3(48.0f, 64.0f, 56.0f);
+    small.radius = 2.0f;
+    QVERIFY(sculpt(grid, small, SculptMode::Dig) > 0);
+    QCOMPARE(grid.getFinestLevel(), 1);
+    QCOMPARE(grid.chunkCovering(glm::ivec3(48, 70, 63)).level, 1);
+    QCOMPARE(grid.chunkCovering(glm::ivec3(48, 70, 64)).level, 0);
+    auto topGround = [&](int x, int z) {
+        for (int y = grid.getVoxelCount().y - 1; y >= 0; --y) {
+            if (grid.get(glm::ivec3(x, y, z)).isGround()) {
+                return y;
+            }
+        }
+        return -1;
+    };
+
+    Brush raise;
+    raise.radius = 20.0f;
+    raise.strength = 0.5f;
+    raise.hardness = 0.5f;
+    for (int pass = 0; pass < 30; ++pass) {
+        // the editor picks the ground under the pointer again at every step of a stroke
+        raise.center = glm::vec3(48.5f, (float)topGround(48, 64) + 0.5f, 64.5f);
+        QVERIFY(sculpt(grid, raise, SculptMode::Raise) > 0);
+    }
+    // half a voxel a pass under the brush's centre, the same on both sides of the join and across it
+    const int atJoin = topGround(48, 64);
+    QVERIFY2(atJoin >= 64 + 13 && atJoin <= 64 + 17, qPrintable(QString("the ground at the join rose to %1").arg(atJoin)));
+    for (int z = 58; z <= 70; ++z) {
+        const int top = topGround(48, z);
+        QVERIFY2(std::abs(top - atJoin) <= 1, qPrintable(QString("z %1: top %2, at the join %3").arg(z).arg(top).arg(atJoin)));
+    }
+    // and the air above the ground is at the byte's limit again beyond the band, on both sides
+    QCOMPARE((int)grid.get(glm::ivec3(48, atJoin + 5, 64)).distance, (int)DISTANCE_MAX);
+    QCOMPARE((int)grid.get(glm::ivec3(48, atJoin + 5, 65)).distance, (int)DISTANCE_MAX);
+    QCOMPARE((int)grid.get(glm::ivec3(48, atJoin + 5, 63)).distance, (int)DISTANCE_MAX);
+}
+
+void TerrainTests::raiseMendsAirLeftTooNearTheGround() {
+    // A field the old brush left behind: air well above the ground at distances a few voxels short of the limit
+    // (it read "far" as a few voxels when a neighbour at another level was shifted). The brush now mends such
+    // air under it as it passes, so a Raise over it lifts the ground evenly instead of putting it up through the
+    // whole column at once.
+    VoxelGrid grid(glm::ivec3(96, 96, 96));
+    grid.fillBelow(40.0f);
+    for (int z = 30; z < 66; ++z) {
+        for (int x = 30; x < 66; ++x) {
+            for (int y = 44; y < 60; ++y) {
+                Voxel damaged = grid.get(glm::ivec3(x, y, z));
+                damaged.setDistance(x < 48 ? 3.5f : 3.0f + 0.03f * (float)(y - 44));
+                grid.set(glm::ivec3(x, y, z), damaged);
+            }
+        }
+    }
+    auto topGround = [&](int x, int z) {
+        for (int y = grid.getVoxelCount().y - 1; y >= 0; --y) {
+            if (grid.get(glm::ivec3(x, y, z)).isGround()) {
+                return y;
+            }
+        }
+        return -1;
+    };
+    Brush raise;
+    raise.radius = 14.0f;
+    raise.strength = 0.5f;
+    raise.hardness = 0.5f;
+    for (int pass = 0; pass < 24; ++pass) {
+        raise.center = glm::vec3(48.5f, (float)topGround(48, 48) + 0.5f, 48.5f);
+        QVERIFY(sculpt(grid, raise, SculptMode::Raise) > 0);
+    }
+    const int atCentre = topGround(48, 48);
+    QVERIFY2(atCentre >= 39 + 10 && atCentre <= 39 + 14, qPrintable(QString("the ground rose to %1").arg(atCentre)));
+    for (int z = 44; z <= 52; ++z) {
+        for (int x = 44; x <= 52; ++x) {
+            const int top = topGround(x, z);
+            QVERIFY2(std::abs(top - atCentre) <= 1, qPrintable(QString("(%1, %2): top %3, at the centre %4").arg(x).arg(z).arg(top).arg(atCentre)));
+        }
+    }
+    // the damaged air under the brush is mended: at the limit again beyond the band
+    QCOMPARE((int)grid.get(glm::ivec3(48, atCentre + 6, 48)).distance, (int)DISTANCE_MAX);
+    QCOMPARE((int)grid.get(glm::ivec3(40, topGround(40, 48) + 6, 48)).distance, (int)DISTANCE_MAX);
+    // and a true field under it is left as it is: a 45 degree slope's distances grow by 0.71 a voxel
+    VoxelGrid slope(glm::ivec3(64, 64, 64));
+    slope.fillHeightField([](int x, int) { return (float)x; }, 0);
+    const float before = slope.get(glm::ivec3(20, 24, 32)).getDistance();
+    Brush touch;
+    touch.center = glm::vec3(20.0f, 20.0f, 32.0f);
+    touch.radius = 6.0f;
+    touch.strength = 0.1f;
+    sculpt(slope, touch, SculptMode::Raise);
+    QVERIFY2(std::abs(slope.get(glm::ivec3(20, 24, 32)).getDistance() - (before - 0.1f)) < 0.1f,
+             qPrintable(QString("%1 -> %2").arg(before).arg(slope.get(glm::ivec3(20, 24, 32)).getDistance())));
 }

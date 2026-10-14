@@ -71,10 +71,11 @@ public:
         }
         _cellVertices.assign((size_t)CELL_COUNT * CELL_COUNT * CELL_COUNT, -1);
 
-        // Every edge whose low voxel is the chunk's own is this chunk's to mesh.
-        for (int z = 0; z < CHUNK_SIZE; ++z) {
-            for (int y = 0; y < CHUNK_SIZE; ++y) {
-                for (int x = 0; x < CHUNK_SIZE; ++x) {
+        // Every edge whose low voxel is the chunk's own is this chunk's to mesh, up to the grid's end.
+        const glm::ivec3& limit = _samples.getLimit();
+        for (int z = 0; z < limit.z; ++z) {
+            for (int y = 0; y < limit.y; ++y) {
+                for (int x = 0; x < limit.x; ++x) {
                     const glm::ivec3 voxel(x, y, z);
                     const bool lowInside = _samples.at(x, y, z).isGround();
                     for (int axis = 0; axis < 3; ++axis) {
@@ -150,14 +151,20 @@ private:
     // halves of the chunk's own (those meshOwnEdge takes): the ones along one in-plane axis at the odd points of
     // the other. Each lies between two of the neighbour's cells and one of the chunk's: a triangle.
     void meshFinerFace(int axis) {
+        const glm::ivec3& limit = _samples.getFinerLimit();   // the grid's end, in the finer lattice
+        if (limit[axis] <= 0) {
+            return;
+        }
         const int inPlane[2] = { (axis + 1) % 3, (axis + 2) % 3 };
         for (int which = 0; which < 2; ++which) {
             const int along = inPlane[which];
             const int across = inPlane[1 - which];
             const glm::ivec3& b = AXES[(along + 1) % 3];
             const glm::ivec3& c = AXES[(along + 2) % 3];
-            for (int i = 0; i < FINE_SIZE; ++i) {
-                for (int j = 1; j < FINE_SIZE; j += 2) {
+            const int alongEnd = std::min(FINE_SIZE, limit[along]);
+            const int acrossEnd = std::min(FINE_SIZE, limit[across]);
+            for (int i = 0; i < alongEnd; ++i) {
+                for (int j = 1; j < acrossEnd; j += 2) {
                     glm::ivec3 low(0);
                     low[along] = i;
                     low[across] = j;
