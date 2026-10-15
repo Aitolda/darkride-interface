@@ -85,6 +85,22 @@ export class ExploreService {
 	// the world whose instance chooser is open, so the other worlds can step back
 	chooserWorldId: string = null;
 
+	// the world being hopped into (its instance starting, or the client on its way there), so the other
+	// worlds step back and take no clicks meanwhile
+	hoppingWorldId: string = null;
+	private hoppingTimer: ReturnType<typeof setTimeout> = null;
+
+	setHopping(worldId: string | null) {
+		this.hoppingWorldId = worldId;
+		clearTimeout(this.hoppingTimer);
+		// a hop that never lands (the Explore left open) frees the list again after a while
+		if (worldId != null) {
+			this.hoppingTimer = setTimeout(() => {
+				this.hoppingWorldId = null;
+			}, 30000);
+		}
+	}
+
 	worlds: World[] = [];
 	type: "popular" | "liked" | "private" = "popular";
 	search = "";
@@ -195,6 +211,7 @@ export class ExploreService {
 	}
 
 	joinInstance(instance: Instance) {
+		this.setHopping(instance.world);
 		this.scriptService.emitEvent("explore", "joinDomain", instance.address);
 		this.scriptService.emitEvent("explore", "close");
 	}
