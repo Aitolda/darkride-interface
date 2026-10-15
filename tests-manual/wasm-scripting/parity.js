@@ -44,7 +44,14 @@
         }
     }
 
+    var modelEntity;
+
     function run() {
+        // a model for the Graphics API, read once it has loaded (below)
+        modelEntity = Entities.addEntity({
+            type: "Model", name: "wasm-parity-model", modelURL: Paths.defaultScripts + "/system/assets/models/black-sphere.fbx",
+            position: { x: 0, y: 2, z: -5 }, dimensions: { x: 0.5, y: 0.5, z: 0.5 }, lifetime: 60
+        });
         var id = Entities.addEntity({
             type: "Box", name: "wasm-parity", position: ENTITY_POSITION, dimensions: { x: 0.5, y: 0.5, z: 0.5 },
             color: { red: 200, green: 120, blue: 40 }, lifetime: 600, userData: JSON.stringify({ a: 1 })
@@ -252,12 +259,22 @@
         Script.setTimeout(function () {
             attempt("clickDownOnEntity event", function () { return clicks.length ? [clicks[0].entityID === id, clicks[0].event] : "none"; });
             attempt("Assets outcomes", function () { return assetOutcomes; });
+            attempt("Graphics.getModel", function () {
+                var model = Graphics.getModel(modelEntity);
+                if (!model) { return "no model"; }
+                var mesh = model.meshes[0];
+                var part = mesh ? mesh.parts[0] : null;
+                return [typeof model, model.numMeshes, model.meshes.length, typeof model.objectID, model.materialNames,
+                        Object.keys(model.materialLayers).sort(), mesh ? mesh.numParts : null, part ? part.topology : null,
+                        JSON.stringify(model.materialLayers).length > 2];
+            });
+            Entities.deleteEntity(modelEntity);
             for (var i = 0; i < lines.length; i++) {
                 print("PARITY " + lines[i]);
             }
             print("PARITY done " + lines.length + " checks");
             Script.setTimeout(function () { Test.quit(); }, 1000);
-        }, 1000);
+        }, 2500);
     }
 
     Script.setTimeout(run, 8000);
