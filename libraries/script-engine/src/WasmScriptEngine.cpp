@@ -612,6 +612,10 @@ void WasmScriptEngine::loop() {
             ++_frames;
         }
         _lastUpdate = nowUsecs;
+        if (thisFrame % SCRIPT_FPS == 0) {
+            // about once a second: the objects the script let go of while they were busy, deleted once they are not
+            _objects->sweepLingering();
+        }
     }
 }
 

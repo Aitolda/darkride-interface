@@ -72,3 +72,16 @@ void QtScriptOverloadTests::testMembersByAccess() {
     QCOMPARE(engine.evaluate("probe.protectedInvokable()").toInt32(), 3);
 }
 
+void QtScriptOverloadTests::testVariantResults() {
+    QScriptEngine engine;
+    OverloadProbe probe;
+    engine.globalObject().setProperty("probe", engine.newQObject(&probe));
+    auto evaluate = [&](const QString& program) { return engine.evaluate(program).toString(); };
+    // a QVariant holding nullptr reaches a script as an opaque variant, not null; a null QObject* is null
+    QCOMPARE(evaluate("String(probe.nothing() === null)"), QString("false"));
+    QCOMPARE(evaluate("String(probe.noObject() === null)"), QString("true"));
+    QCOMPARE(evaluate("typeof probe.invalid()"), QString("undefined"));
+    QCOMPARE(evaluate("typeof probe.text() + ':' + probe.text()"), QString("string:chosen"));
+    QCOMPARE(evaluate("typeof probe.flag() + ':' + probe.flag()"), QString("boolean:true"));
+}
+

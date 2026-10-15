@@ -269,7 +269,7 @@ bool ValueCodec::isBuiltinType(int typeId) {
 
 // --- encoding ----------------------------------------------------------------------------------------------
 
-QCborValue ValueCodec::encodeObject(QObject* object, bool owned) const {
+QCborValue ValueCodec::encodeObject(QObject* object, bool owned, std::function<bool(QObject*)> lingers) const {
     if (!object) {
         return QCborValue(nullptr);
     }
@@ -278,13 +278,13 @@ QCborValue ValueCodec::encodeObject(QObject* object, bool owned) const {
         return QCborValue(QCborValue::Undefined);
     }
     QCborMap map;
-    map.insert(OBJECT_KEY, qint64(owned ? _objects->adopt(object) : _objects->handleFor(object)));
+    map.insert(OBJECT_KEY, qint64(owned ? _objects->adopt(object, std::move(lingers)) : _objects->handleFor(object)));
     map.insert(CLASS_KEY, QString::fromUtf8(object->metaObject()->className()));
     return map;
 }
 
-QCborValue ValueCodec::toCborOwned(QObject* object) const {
-    return encodeObject(object, true);
+QCborValue ValueCodec::toCborOwned(QObject* object, std::function<bool(QObject*)> lingers) const {
+    return encodeObject(object, true, std::move(lingers));
 }
 
 bool ValueCodec::encodeRegistered(const QVariant& value, QCborValue& out) const {

@@ -72,8 +72,9 @@ public:
 
     QCborValue toCbor(const QVariant& value) const;
     /// An object as a handle record, the object table owning it from now on (ObjectTable::adopt): for a
-    /// registered conversion of a type the QtScript engine gave the script with ScriptOwnership.
-    QCborValue toCborOwned(QObject* object) const;
+    /// registered conversion of a type the QtScript engine gave the script with ScriptOwnership. `lingers`, when
+    /// given, says whether the object stays for now when the script releases it (see ObjectTable).
+    QCborValue toCborOwned(QObject* object, std::function<bool(QObject*)> lingers = std::function<bool(QObject*)>()) const;
     /// With a target type: the value converted to it, with QtScript's coercions; `ok` says whether a
     /// conversion existed. Without one (QMetaType::UnknownType): the natural QVariant for the CBOR item.
     QVariant fromCbor(const QCborValue& value, int targetType, bool* ok) const;
@@ -92,7 +93,7 @@ public:
     static bool isBuiltinType(int typeId);
 
 private:
-    QCborValue encodeObject(QObject* object, bool owned = false) const;
+    QCborValue encodeObject(QObject* object, bool owned = false, std::function<bool(QObject*)> lingers = std::function<bool(QObject*)>()) const;
     bool encodeRegistered(const QVariant& value, QCborValue& out) const;
     bool decodeRegistered(const QCborValue& value, int targetType, QVariant& out, bool& ok) const;
     QCborValue encodeSequence(const QVariant& value) const;

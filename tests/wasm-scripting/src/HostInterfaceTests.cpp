@@ -8,6 +8,8 @@
 
 #include "HostInterfaceTests.h"
 
+#include <QtScript/QScriptEngine>
+
 #include <QtCore/QCborValue>
 
 #include <HostInterface.h>
@@ -316,6 +318,10 @@ void HostInterfaceTests::testCallErrors() {
     QVERIFY(HostInterface::isErrorRecord(f.call(probe, "countChanged", { 1 })));
     QVERIFY(HostInterface::isErrorRecord(f.call(probe, "hidden", {})));
     QCOMPARE(f.call(probe, "guarded", {}).toInt(), 9);
+    // a QScriptValue parameter: only the QtScript engine has such values (a QtScript engine registers the type, as
+    // the client's do)
+    QScriptEngine scriptEngine;
+    QVERIFY(errorMessage(f.call(probe, "takeScriptValue", { 1 })).contains("takes a QtScript value"));
     // a wrong-class handle for an object parameter
     Other other;
     QVariantMap record;

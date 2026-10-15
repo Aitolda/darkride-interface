@@ -18,6 +18,7 @@
 #include <QtCore/QStringList>
 #include <QtCore/QUuid>
 #include <QtCore/QVariant>
+#include <QtScript/QScriptValue>
 
 #include <RegisteredMetaTypes.h>
 
@@ -60,6 +61,8 @@ public:
     Q_INVOKABLE int countOfProbe(const Probe* probe) { return probe ? probe->count() : -1; }
     Q_INVOKABLE QVariantMap describeSelf() { QVariantMap m; m["count"] = _count; m["mode"] = int(_mode); return m; }
     Q_INVOKABLE Other* makeOther() { return new Other(); }
+    // a method of the QtScript engine's, which a module cannot call
+    Q_INVOKABLE void takeScriptValue(const QScriptValue& value) { Q_UNUSED(value); }
 
 public slots:
     void setPosition(const glm::vec3& position) {

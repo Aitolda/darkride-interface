@@ -565,6 +565,34 @@ void ValueCodecTests::testOwnedObjects() {
         QCOMPARE(table.object(goneHandle), nullptr);
         table.release(goneHandle);
 
+        // an owned object with work left lingers when released (an injector whose sound plays): it stays until it
+        // sees to its own end, or until the owned objects are released
+        QPointer<Probe> busy = new Probe();
+        QPointer<Probe> idle = new Probe();
+        bool idleIsBusy = false;
+        const ObjectTable::Handle busyHandle = table.adopt(busy, [](QObject*) { return true; });
+        const ObjectTable::Handle idleHandle = table.adopt(idle, [&idleIsBusy](QObject*) { return idleIsBusy; });
+        table.release(busyHandle);
+        table.release(idleHandle);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(!busy.isNull());
+        QVERIFY(!table.contains(busyHandle));
+        QVERIFY(idle.isNull());
+        // a sweep keeps what is still busy and deletes what is done
+        QPointer<Probe> done = new Probe();
+        bool doneIsBusy = true;
+        table.release(table.adopt(done, [&doneIsBusy](QObject*) { return doneIsBusy; }));
+        QCOMPARE(table.sweepLingering(), 2);
+        doneIsBusy = false;
+        QCOMPARE(table.sweepLingering(), 1);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(done.isNull());
+        QVERIFY(!busy.isNull());
+        // and the owned objects' release takes the rest
+        table.releaseOwned();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(busy.isNull());
+
         // the table's end deletes the owned objects it still has
         later = new Probe();
         table.adopt(later);

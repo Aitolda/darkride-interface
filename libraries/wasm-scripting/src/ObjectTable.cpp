@@ -36,11 +36,12 @@ ObjectTable::Handle ObjectTable::handleFor(QObject* object) {
     return handle;
 }
 
-ObjectTable::Handle ObjectTable::adopt(QObject* object) {
+ObjectTable::Handle ObjectTable::adopt(QObject* object, Lingers lingers) {
     Handle handle = handleFor(object);
     auto entry = _entries.find(handle);
     if (entry != _entries.end()) {
         entry.value().owned = true;
+        entry.value().lingers = std::move(lingers);
     }
     return handle;
 }
@@ -70,9 +71,14 @@ void ObjectTable::release(Handle handle) {
         return;
     }
     if (entry.value().object) {
-        _handles.remove(entry.value().object.data());
+        QObject* object = entry.value().object.data();
+        _handles.remove(object);
         if (entry.value().owned) {
-            entry.value().object->deleteLater();
+            if (entry.value().lingers && entry.value().lingers(object)) {
+                _lingering.append(Lingering { QPointer<QObject>(object), entry.value().lingers });
+            } else {
+                object->deleteLater();
+            }
         }
     }
     _entries.erase(entry);
@@ -93,8 +99,44 @@ void ObjectTable::releaseOwned() {
         }
     }
     for (Handle handle : owned) {
-        release(handle);
+        auto entry = _entries.find(handle);
+        if (entry == _entries.end()) {
+            continue;
+        }
+        if (entry.value().object) {
+            _handles.remove(entry.value().object.data());
+            entry.value().object->deleteLater();
+        }
+        _entries.erase(entry);
+        for (auto it = _globals.begin(); it != _globals.end();) {
+            if (it.value() == handle) {
+                it = _globals.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
+    // and those that lingered: their work ends with the script, as a QtScript engine's end deletes what it owns
+    for (const Lingering& lingering : _lingering) {
+        if (lingering.object) {
+            lingering.object->deleteLater();
+        }
+    }
+    _lingering.clear();
+}
+
+int ObjectTable::sweepLingering() {
+    for (auto it = _lingering.begin(); it != _lingering.end();) {
+        if (!it->object) {
+            it = _lingering.erase(it);
+        } else if (!it->lingers(it->object.data())) {
+            it->object->deleteLater();
+            it = _lingering.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return _lingering.size();
 }
 
 void ObjectTable::registerGlobal(const QString& name, QObject* object) {

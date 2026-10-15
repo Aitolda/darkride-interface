@@ -47,6 +47,13 @@ public:
         called = "ScriptCallback";
     }
 
+    // results as QVariants, as Model's and Window's methods return them
+    Q_INVOKABLE QVariant nothing() { return QVariant::fromValue(nullptr); }
+    Q_INVOKABLE QVariant noObject() { return QVariant::fromValue<QObject*>(nullptr); }
+    Q_INVOKABLE QVariant invalid() { return QVariant(); }
+    Q_INVOKABLE QVariant text() { return QVariant(QString("chosen")); }
+    Q_INVOKABLE QVariant flag() { return QVariant(true); }
+
     // as the controller builders' from(): a twin with no callback in it
     Q_INVOKABLE void pick(QScriptValue value) {
         Q_UNUSED(value);
@@ -81,6 +88,7 @@ private slots:
     void testCallbackOverloadIsNeverChosen();
     void testPlainValueTwinIsAmbiguous();
     void testMembersByAccess();
+    void testVariantResults();
 };
 
 #endif // hifi_QtScriptOverloadTests_h

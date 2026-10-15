@@ -9,7 +9,10 @@
 //
 //  An entry may own its object: one made for the script alone (an audio injector, a sound, an avatar's data
 //  that a method returns new each call), which the QtScript engine gives the script with ScriptOwnership.
-//  An owned object is deleted (deleteLater) when its handle is released or the owned entries are released.
+//  An owned object is deleted (deleteLater) when its handle is released or the owned entries are released;
+//  one that still has work to do when the script lets it go (an injector whose sound plays) may linger: the
+//  engine sweeps the lingering ones now and then, deleting those whose work is done, and the rest go with the
+//  owned entries.
 //
 //  Used from one thread, the engine's.
 //
@@ -21,6 +24,7 @@
 #define hifi_ObjectTable_h
 
 #include <cstdint>
+#include <functional>
 
 #include <QtCore/QHash>
 #include <QtCore/QPointer>
@@ -39,8 +43,10 @@ public:
 
     /// The handle of an object, allocated on first sight; NULL_HANDLE for null.
     Handle handleFor(QObject* object);
+    /// Whether an owned object the script releases stays for now (asked again at each sweep).
+    using Lingers = std::function<bool(QObject* object)>;
     /// The handle of an object the table is to own from now on (see above).
-    Handle adopt(QObject* object);
+    Handle adopt(QObject* object, Lingers lingers = Lingers());
     bool owns(Handle handle) const;
     /// The object behind a handle; null when the handle is unknown, released, or the object was deleted.
     QObject* object(Handle handle) const;
@@ -52,6 +58,8 @@ public:
     /// Deletes the objects the table owns and forgets their handles (the engine does this as its script stops,
     /// on its own thread).
     void releaseOwned();
+    /// Deletes the lingering objects whose work is done; returns how many still linger.
+    int sweepLingering();
 
     /// A named global, as registerGlobalObject makes one. The name is bound to the object's handle.
     void registerGlobal(const QString& name, QObject* object);
@@ -65,10 +73,16 @@ private:
         QPointer<QObject> object;
         QString className;
         bool owned { false };
+        Lingers lingers;
     };
     QHash<Handle, Entry> _entries;
     QHash<QObject*, Handle> _handles;
     QHash<QString, Handle> _globals;
+    struct Lingering {
+        QPointer<QObject> object;
+        Lingers lingers;
+    };
+    QList<Lingering> _lingering;  // owned objects released while they had work to do
     Handle _next { 1 };
 };
 

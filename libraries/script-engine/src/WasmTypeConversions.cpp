@@ -26,6 +26,7 @@
 #include <ResourceCache.h>
 #include <ScriptAvatarData.h>
 #include <Sound.h>
+#include <ObjectTable.h>
 #include <ValueCodec.h>
 #include <controllers/UserInputMapper.h>
 
@@ -125,11 +126,12 @@ void addSequence(Encode<Element> encode, Decode<Element> decode) {
 }
 
 // An object pointer the QtScript engine hands to the script with ScriptOwnership (newQObject(..., ScriptOwnership)):
-// the engine's object table owns it, so it is deleted when the script releases it or stops.
+// the engine's object table owns it, so it is deleted when the script releases it or stops; `lingers` may keep one
+// the script released while it still has work to do (see ObjectTable).
 template <typename T>
-void addOwnedObject() {
+void addOwnedObject(ObjectTable::Lingers lingers = ObjectTable::Lingers()) {
     ValueCodec::registerType(qMetaTypeId<T*>(),
-        [](const ValueCodec& codec, const QVariant& value) { return codec.toCborOwned(value.value<T*>()); },
+        [lingers](const ValueCodec& codec, const QVariant& value) { return codec.toCborOwned(value.value<T*>(), lingers); },
         [](const ValueCodec& codec, const QCborValue& value, QVariant& out) {
             bool ok = true;
             QObject* object = codec.fromCbor(value, QMetaType::QObjectStar, &ok).value<QObject*>();
@@ -512,6 +514,15 @@ bool decodeAudioInjectorOptions(const ValueCodec& codec, const QCborValue& value
     return true;
 }
 
+// An injector the script let go of while its sound plays: deleting it would stop the sound (~ScriptAudioInjector),
+// which a script that plays a sound and keeps no reference does not mean (QtScript's collector stopped it at a
+// time of its own, usually after the end). It goes at the engine's first sweep after the sound has finished, or
+// when the script stops.
+bool injectorLingers(QObject* object) {
+    auto injector = qobject_cast<ScriptAudioInjector*>(object);
+    return injector && injector->isPlaying();
+}
+
 QCborValue encodeSound(const ValueCodec& codec, const SharedSoundPointer& sound) {
     // a new wrapper for each crossing, which the script owns (soundSharedPointerToScriptValue)
     return codec.toCborOwned(new SoundScriptingInterface(sound));
@@ -868,7 +879,7 @@ void WasmTypeConversions::registerAll() {
 
         add<AudioInjectorOptions>(&encodeAudioInjectorOptions, &decodeAudioInjectorOptions);
         add<SharedSoundPointer>(&encodeSound, &decodeSound);
-        addOwnedObject<ScriptAudioInjector>();
+        addOwnedObject<ScriptAudioInjector>(&injectorLingers);
 
         add<MeshFace>(&encodeMeshFace, &decodeMeshFace);
         addSequence<QVector<MeshFace>, MeshFace>(&encodeMeshFace, &decodeMeshFace);
