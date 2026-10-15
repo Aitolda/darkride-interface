@@ -76,9 +76,9 @@ void Head::simulate(float deltaTime) {
         !getSuppressProceduralAnimationFlag(HeadData::SaccadeProceduralEyeJointAnimation)) {
         // Update eye saccades
         const float AVERAGE_MICROSACCADE_INTERVAL = 1.0f;
-        const float AVERAGE_SACCADE_INTERVAL = 6.0f;
+        const float AVERAGE_SACCADE_INTERVAL = 2.5f;
         const float MICROSACCADE_MAGNITUDE = 0.002f;
-        const float SACCADE_MAGNITUDE = 0.04f;
+        const float SACCADE_MAGNITUDE = 0.1f;  // about 6 degrees: seen, not restless
         const float NOMINAL_FRAME_RATE = 60.0f;
 
         if (randFloat() < deltaTime / AVERAGE_MICROSACCADE_INTERVAL) {

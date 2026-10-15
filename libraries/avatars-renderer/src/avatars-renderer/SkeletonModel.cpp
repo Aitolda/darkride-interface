@@ -137,7 +137,7 @@ void SkeletonModel::updateRig(float deltaTime, glm::mat4 parentTransform) {
 
     Rig::EyeParameters eyeParams;
     eyeParams.eyeLookAt = lookAt;
-    eyeParams.eyeSaccade = glm::vec3(0.0f);
+    eyeParams.eyeSaccade = head->getSaccade();  // this client's own darts for someone else's eyes
     eyeParams.modelRotation = getRotation();
     eyeParams.modelTranslation = getTranslation();
     eyeParams.leftEyeJointIndex = _rig.indexOfJoint("LeftEye");

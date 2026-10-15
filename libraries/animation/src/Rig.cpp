@@ -2160,7 +2160,9 @@ void Rig::updateEyeJoint(int index, const glm::vec3& modelTranslation, const glm
     if (isIndexValid(index) && !_internalPoseSet._overrideFlags[index]) {
         const glm::mat4 rigToWorld = createMatFromQuatAndPos(modelRotation, modelTranslation);
         const glm::mat4 worldToRig = glm::inverse(rigToWorld);
-        const glm::vec3 lookAtVector = glm::normalize(transformPoint(worldToRig, lookAtSpot) - _internalPoseSet._absolutePoses[index].trans());
+        // where the eye looks, with the head's small darts (Head::simulate's saccades) on top
+        const glm::vec3 lookAtVector = glm::normalize(
+            glm::normalize(transformPoint(worldToRig, lookAtSpot) - _internalPoseSet._absolutePoses[index].trans()) + saccade);
 
         int headIndex = indexOfJoint("Head");
         glm::quat headQuat;
