@@ -49,7 +49,9 @@ QVariantMap describe(const QMetaObject* meta, const Options& options) {
     QVariantList methods, signalList, properties, enums;
     for (int i = 0; i < meta->methodCount(); ++i) {
         QMetaMethod method = meta->method(i);
-        if (method.access() != QMetaMethod::Public || method.methodType() == QMetaMethod::Constructor) {
+        // the members QtScript shows a script: public and protected ones (AudioScriptingInterface's playSound is
+        // a protected invokable), not private ones
+        if (method.access() == QMetaMethod::Private || method.methodType() == QMetaMethod::Constructor) {
             continue;
         }
         const QMetaObject* declaring = method.enclosingMetaObject();

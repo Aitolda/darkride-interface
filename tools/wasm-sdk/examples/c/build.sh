@@ -7,7 +7,7 @@ D=$(cd "$(dirname "$0")" && pwd)
 SDK=${WASI_SDK:-$HOME/git/tivolicloud/wasi-sdk/wasi-sdk-34.0-arm64-macos}
 CC="$SDK/bin/clang"
 [ -x "$CC" ] || { echo "no wasi-sdk clang at $CC (set WASI_SDK)" >&2; exit 1; }
-for name in orbit hang alert entity; do
+for name in orbit hang alert entity assets; do
     # a reactor: the module has no main, it is initialised once and called into; the attributes in darkride.h
     # name the exports, so no linker flags are needed for them
     "$CC" --target=wasm32-wasip1 -O2 -mexec-model=reactor -Wall -o "$D/$name.wasm" "$D/$name.c" -lm

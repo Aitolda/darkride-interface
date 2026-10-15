@@ -11,6 +11,7 @@
 #include <chrono>
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QEventLoop>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
@@ -19,6 +20,7 @@
 #include <QtCore/QMetaEnum>
 #include <QtCore/QPointer>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QSet>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
@@ -50,6 +52,7 @@
 #include "ScriptCache.h"
 #include "ScriptEngineLogging.h"
 #include "ScriptEngines.h"
+#include "WasmTypeConversions.h"
 #include "WebSocketObject.h"
 
 namespace {
@@ -58,6 +61,8 @@ const QString WASM_SUFFIX = QStringLiteral("wasm");
 const QString JS_SUFFIX = QStringLiteral("js");
 const int MIN_TIMEOUT_FOR_COARSE_TIMER = 200;  // below this a Qt timer is made precise, as the QtScript engine does
 const int MAX_SCRIPT_QUITTING_TIME_MS = 500;
+const int MAX_SCRIPT_ENDING_TIME_MS = 3000;  // for the scriptEnding handlers, before the modules are interrupted
+const int SHUTDOWN_POLL_MS = 5;
 const int MAX_MODULE_ID_LENGTH = 4096;
 const int MAX_DEBUG_VALUE_LENGTH = 80;
 
@@ -148,6 +153,7 @@ WasmScriptEngine::WasmScriptEngine(Context context, const QString& scriptContent
     _sockets(new WebSocketFactory(this)),
     _audioEffectOptions(new AudioEffectOptionsFactory(this)),
     _resourceStates(new ResourceStates(this)) {
+    WasmTypeConversions::registerAll();
     if (_isEntitiesEngine) {
         // an entities engine hosts every entity script of the world: more room
         _limits.memoryBytes = int64_t(1024) * 1024 * 1024;
@@ -414,6 +420,8 @@ void WasmScriptEngine::run() {
         loop();
     }
     stopAll();
+    // the objects made for the script alone go with it, on this thread
+    _objects->releaseOwned();
 
     emit finished(_fileNameString, qSharedPointerCast<ScriptEngine>(sharedFromThis()));
     hifi::scripting::setLocalAccessSafeThread(false);
@@ -700,7 +708,21 @@ void WasmScriptEngine::waitTillDoneRunning() {
     }
     if (_isThreaded && workerThread && workerThread->isRunning()) {
         workerThread->quit();
-        if (!workerThread->wait(MAX_SCRIPT_QUITTING_TIME_MS)) {
+        // While the script stops, its scriptEnding handlers may call objects of this thread with a blocking
+        // invocation (a tablet button removed, a menu item): those calls, and only those (no user input, no
+        // timers), are served here, so the handlers finish rather than wait on a thread that waits on them.
+        auto waitServingCalls = [workerThread](int milliseconds) {
+            QElapsedTimer elapsed;
+            elapsed.start();
+            while (!workerThread->wait(SHUTDOWN_POLL_MS)) {
+                QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+                if (elapsed.elapsed() >= milliseconds) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        if (!waitServingCalls(MAX_SCRIPT_ENDING_TIME_MS)) {
             {
                 std::lock_guard<std::mutex> lock(_instancesMutex);
                 if (_main && _main->instance) {
@@ -712,7 +734,7 @@ void WasmScriptEngine::waitTillDoneRunning() {
                     }
                 }
             }
-            if (!workerThread->wait(MAX_SCRIPT_QUITTING_TIME_MS)) {
+            if (!waitServingCalls(MAX_SCRIPT_QUITTING_TIME_MS)) {
                 qCWarning(scriptengine) << "WebAssembly script engine did not stop, terminating its thread:" << getFilename();
                 workerThread->terminate();
             }
@@ -722,6 +744,22 @@ void WasmScriptEngine::waitTillDoneRunning() {
 }
 
 // --- the serializer: QtScript's conversions for the types that have no QVariant ones yet ----------------------
+
+namespace {
+
+// Each type the serializer converts is logged once per process, so a run shows what still crosses through QtScript.
+void noteSerializedType(int type, const char* direction) {
+    static std::mutex mutex;
+    static QSet<QString> noted;
+    const QString key = QString("%1 %2").arg(direction).arg(type);
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!noted.contains(key)) {
+        noted.insert(key);
+        qCDebug(scriptengine) << "WasmScriptEngine: a" << QMetaType::typeName(type) << "value was" << direction << "through QtScript's conversion";
+    }
+}
+
+} // namespace
 
 void WasmScriptEngine::installSerializer(ValueCodec& codec) {
     const int scriptValueType = QMetaType::type("QScriptValue");  // registered by QtScript at run time
@@ -739,6 +777,7 @@ void WasmScriptEngine::installSerializer(ValueCodec& codec) {
             if (plain.userType() == type) {
                 return false;  // no conversion registered: QtScript wrapped the value as it was
             }
+            noteSerializedType(type, "encoded");
             out = codec.toCbor(plain);
             return true;
         },
@@ -757,6 +796,7 @@ void WasmScriptEngine::installSerializer(ValueCodec& codec) {
             }
             bool ok = qscriptvalue_cast_helper(scriptValue, targetType, buffer);
             if (ok) {
+                noteSerializedType(targetType, "decoded");
                 out = QVariant(targetType, buffer);
             }
             QMetaType::destroy(targetType, buffer);

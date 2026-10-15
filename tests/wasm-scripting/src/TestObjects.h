@@ -21,6 +21,16 @@
 
 #include <RegisteredMetaTypes.h>
 
+/// Another class, for the checks that a handle of one class is not accepted as another, and for the objects a
+/// method makes new for each call (counted, so a test can tell they are deleted).
+class Other : public QObject {
+    Q_OBJECT
+public:
+    explicit Other(QObject* parent = nullptr) : QObject(parent) { ++alive; }
+    ~Other() override { --alive; }
+    static inline int alive { 0 };
+};
+
 class Probe : public QObject {
     Q_OBJECT
     Q_PROPERTY(int count READ count WRITE setCount NOTIFY countChanged)
@@ -49,6 +59,7 @@ public:
     Q_INVOKABLE int countOf(QObject* object) { Probe* probe = qobject_cast<Probe*>(object); return probe ? probe->count() : -1; }
     Q_INVOKABLE int countOfProbe(const Probe* probe) { return probe ? probe->count() : -1; }
     Q_INVOKABLE QVariantMap describeSelf() { QVariantMap m; m["count"] = _count; m["mode"] = int(_mode); return m; }
+    Q_INVOKABLE Other* makeOther() { return new Other(); }
 
 public slots:
     void setPosition(const glm::vec3& position) {
@@ -74,19 +85,16 @@ signals:
     void objectSent(QObject* object);
 
 protected:
-    Q_INVOKABLE void hidden() {}
+    // QtScript shows a script protected invokables (and hides private ones): so does the WebAssembly engine
+    Q_INVOKABLE int guarded() { return 9; }
 
 private:
+    Q_INVOKABLE void hidden() {}
+
     int _count { 0 };
     Mode _mode { Idle };
     glm::vec3 _position { 0.0f };
 };
 
-/// Another class, for the checks that a handle of one class is not accepted as another.
-class Other : public QObject {
-    Q_OBJECT
-public:
-    explicit Other(QObject* parent = nullptr) : QObject(parent) {}
-};
 
 #endif // hifi_TestObjects_h

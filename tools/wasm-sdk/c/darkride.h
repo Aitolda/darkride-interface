@@ -102,6 +102,8 @@ void cw_key(cbor_writer* w, const char* key); /* a text key */
 void cw_object(cbor_writer* w, int32_t handle);
 /* a function of this module, by the id the module chooses: {"@callback": id} */
 void cw_callback(cbor_writer* w, int32_t id);
+/* the items another writer holds, as they are (an options map written apart, then put into the arguments) */
+void cw_append(cbor_writer* w, const cbor_writer* items);
 
 typedef struct { double x, y, z; } dr_vec3;
 typedef struct { double x, y, z, w; } dr_quat;
@@ -337,6 +339,12 @@ void cw_callback(cbor_writer* w, int32_t id) {
     cw_map(w, 1);
     cw_key(w, "@callback");
     cw_int(w, id);
+}
+
+void cw_append(cbor_writer* w, const cbor_writer* items) {
+    cw_reserve(w, items->length);
+    memcpy(w->data + w->length, items->data, items->length);
+    w->length += items->length;
 }
 
 void cw_vec3(cbor_writer* w, dr_vec3 v) {

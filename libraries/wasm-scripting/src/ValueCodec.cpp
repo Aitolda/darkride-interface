@@ -269,7 +269,7 @@ bool ValueCodec::isBuiltinType(int typeId) {
 
 // --- encoding ----------------------------------------------------------------------------------------------
 
-QCborValue ValueCodec::encodeObject(QObject* object) const {
+QCborValue ValueCodec::encodeObject(QObject* object, bool owned) const {
     if (!object) {
         return QCborValue(nullptr);
     }
@@ -278,9 +278,44 @@ QCborValue ValueCodec::encodeObject(QObject* object) const {
         return QCborValue(QCborValue::Undefined);
     }
     QCborMap map;
-    map.insert(OBJECT_KEY, qint64(_objects->handleFor(object)));
+    map.insert(OBJECT_KEY, qint64(owned ? _objects->adopt(object) : _objects->handleFor(object)));
     map.insert(CLASS_KEY, QString::fromUtf8(object->metaObject()->className()));
     return map;
+}
+
+QCborValue ValueCodec::toCborOwned(QObject* object) const {
+    return encodeObject(object, true);
+}
+
+bool ValueCodec::encodeRegistered(const QVariant& value, QCborValue& out) const {
+    Encoder encoder;
+    {
+        QReadLocker lock(&registryLock());
+        auto registered = registry().find(value.userType());
+        if (registered == registry().end()) {
+            return false;
+        }
+        encoder = registered.value().encoder;
+    }
+    out = encoder(*this, value);
+    return true;
+}
+
+bool ValueCodec::decodeRegistered(const QCborValue& value, int targetType, QVariant& out, bool& ok) const {
+    Decoder decoder;
+    {
+        QReadLocker lock(&registryLock());
+        auto registered = registry().find(targetType);
+        if (registered == registry().end()) {
+            return false;
+        }
+        decoder = registered.value().decoder;
+    }
+    if (!decoder(*this, value, out)) {
+        ok = false;
+        out = QVariant(targetType, nullptr);
+    }
+    return true;
 }
 
 QCborValue ValueCodec::encodeSequence(const QVariant& value) const {
@@ -525,24 +560,26 @@ QCborValue ValueCodec::toCbor(const QVariant& value) const {
         return map;
     }
 
+    {
+        QCborValue registered;
+        if (encodeRegistered(value, registered)) {
+            return registered;
+        }
+    }
+
     const QMetaType::TypeFlags flags = QMetaType::typeFlags(type);
     if (flags & QMetaType::PointerToQObject) {
         return encodeObject(*reinterpret_cast<QObject* const*>(value.constData()));
+    }
+    if (flags & (QMetaType::TrackingPointerToQObject | QMetaType::SharedPointerToQObject | QMetaType::WeakPointerToQObject)) {
+        // a QPointer, QSharedPointer or QWeakPointer to an object (Desktop.createWindow's window, Graphics' models):
+        // the object, through the conversion to QObject* Qt registers for these
+        return encodeObject(value.value<QObject*>());
     }
     if (flags & QMetaType::IsEnumeration) {
         QVariant number = value;
         if (number.convert(QMetaType::LongLong)) {
             return QCborValue(number.toLongLong());
-        }
-    }
-
-    {
-        QReadLocker lock(&registryLock());
-        auto registered = registry().find(type);
-        if (registered != registry().end()) {
-            Encoder encoder = registered.value().encoder;
-            lock.unlock();
-            return encoder(*this, value);
         }
     }
 
@@ -1133,27 +1170,19 @@ QVariant ValueCodec::decodeTyped(const QCborValue& value, int targetType, bool& 
         }
     }
 
+    {
+        QVariant registered;
+        if (decodeRegistered(value, targetType, registered, ok)) {
+            return registered;
+        }
+    }
+
     const QMetaType::TypeFlags flags = QMetaType::typeFlags(targetType);
     if (flags & QMetaType::PointerToQObject) {
         return decodeObjectPointer(value, targetType, ok);
     }
     if (flags & QMetaType::IsEnumeration) {
         return decodeEnum(value, targetType, ok);
-    }
-
-    {
-        QReadLocker lock(&registryLock());
-        auto registered = registry().find(targetType);
-        if (registered != registry().end()) {
-            Decoder decoder = registered.value().decoder;
-            lock.unlock();
-            QVariant out;
-            if (decoder(*this, value, out)) {
-                return out;
-            }
-            ok = false;
-            return QVariant(targetType, nullptr);
-        }
     }
 
     // the conversions QVariant itself knows (QMetaType::registerConverter)

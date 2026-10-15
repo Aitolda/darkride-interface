@@ -62,9 +62,11 @@ void MetaObjectDescriptionTests::testMethods() {
     QCOMPARE(scale.value("parameters").toList()[0].toMap().value("type").toString(), QString("glm::vec3"));
     QCOMPARE(scale.value("parameters").toList()[1].toMap().value("type").toString(), QString("float"));
 
-    // a slot is a method of kind slot; a protected invokable is not listed; a signal is not a method
+    // a slot is a method of kind slot; a private invokable is not listed, a protected one is (as QtScript shows it);
+    // a signal is not a method
     QCOMPARE(entry(description, "methods", "reset").value("kind").toString(), QString("slot"));
     QVERIFY(entry(description, "methods", "hidden").isEmpty());
+    QCOMPARE(entry(description, "methods", "guarded").value("kind").toString(), QString("invokable"));
     QVERIFY(entry(description, "methods", "countChanged").isEmpty());
     // deleteLater is left out by default, QObject's other members are kept and marked
     QVERIFY(entry(description, "methods", "deleteLater").isEmpty());

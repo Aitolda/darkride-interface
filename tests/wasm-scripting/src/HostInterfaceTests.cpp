@@ -308,12 +308,14 @@ void HostInterfaceTests::testCallErrors() {
     result = f.call(probe, "scale", { true, QVariantMap() });
     QVERIFY(HostInterface::isErrorRecord(result));
     QVERIFY(errorMessage(result).contains("converted"));
-    // a wrong signature, a bad index, an unknown handle, a signal is not callable, a protected invokable is hidden
+    // a wrong signature, a bad index, an unknown handle, a signal is not callable, a private invokable is hidden;
+    // a protected one is callable, as on QtScript
     QVERIFY(HostInterface::isErrorRecord(f.call(probe, "add(float)", { 1 })));
     QVERIFY(HostInterface::isErrorRecord(f.call(probe, "#9999", {})));
     QVERIFY(errorMessage(f.call(12345, "add", { 1, 2 })).contains("unknown object"));
     QVERIFY(HostInterface::isErrorRecord(f.call(probe, "countChanged", { 1 })));
     QVERIFY(HostInterface::isErrorRecord(f.call(probe, "hidden", {})));
+    QCOMPARE(f.call(probe, "guarded", {}).toInt(), 9);
     // a wrong-class handle for an object parameter
     Other other;
     QVariantMap record;

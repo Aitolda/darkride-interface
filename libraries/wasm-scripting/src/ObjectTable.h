@@ -7,6 +7,10 @@
 //  handle (object() returns null) rather than a dangling pointer. The registered globals (Entities, MyAvatar,
 //  Script...) are the named entries; every other entry is an object a method returned or a signal carried.
 //
+//  An entry may own its object: one made for the script alone (an audio injector, a sound, an avatar's data
+//  that a method returns new each call), which the QtScript engine gives the script with ScriptOwnership.
+//  An owned object is deleted (deleteLater) when its handle is released or the owned entries are released.
+//
 //  Used from one thread, the engine's.
 //
 //  Distributed under the Apache License, Version 2.0.
@@ -28,15 +32,26 @@ public:
     using Handle = int32_t;
     static constexpr Handle NULL_HANDLE = 0;
 
+    ObjectTable() = default;
+    ObjectTable(const ObjectTable&) = delete;
+    ObjectTable& operator=(const ObjectTable&) = delete;
+    ~ObjectTable();
+
     /// The handle of an object, allocated on first sight; NULL_HANDLE for null.
     Handle handleFor(QObject* object);
+    /// The handle of an object the table is to own from now on (see above).
+    Handle adopt(QObject* object);
+    bool owns(Handle handle) const;
     /// The object behind a handle; null when the handle is unknown, released, or the object was deleted.
     QObject* object(Handle handle) const;
     /// The class name the object had when it was entered (readable after the object is gone).
     QString className(Handle handle) const;
     bool contains(Handle handle) const;
-    /// Forgets a handle. The object itself is not touched.
+    /// Forgets a handle. The object itself is not touched, unless the table owns it.
     void release(Handle handle);
+    /// Deletes the objects the table owns and forgets their handles (the engine does this as its script stops,
+    /// on its own thread).
+    void releaseOwned();
 
     /// A named global, as registerGlobalObject makes one. The name is bound to the object's handle.
     void registerGlobal(const QString& name, QObject* object);
@@ -49,6 +64,7 @@ private:
     struct Entry {
         QPointer<QObject> object;
         QString className;
+        bool owned { false };
     };
     QHash<Handle, Entry> _entries;
     QHash<QObject*, Handle> _handles;

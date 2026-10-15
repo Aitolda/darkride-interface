@@ -124,7 +124,22 @@
     }
 
     // --- host objects: one JavaScript object per handle, one prototype per class --------------------------------
-    var objectsByHandle = new Map();
+    // A registered global's object is kept for the script's life. Any other object (one a method returned or a
+    // signal carried) is held weakly: once the script no longer reaches it and it is collected, its handle is
+    // released, so the host forgets it (and deletes it, when the object was made for the script alone). An
+    // object the host hands over again before the release runs gets a new wrapper, which takes the handle over.
+    var globalObjects = new Map();      // handle -> object
+    var objectsByHandle = new Map();    // handle -> WeakRef to the object
+    var releases = new FinalizationRegistry(function (handle) {
+        var ref = objectsByHandle.get(handle);
+        if (ref !== undefined) {
+            if (ref.deref() !== undefined) {
+                return; // a newer wrapper holds the handle
+            }
+            objectsByHandle.delete(handle);
+        }
+        host.release(handle);
+    });
     var prototypesByClass = new Map();
     var warnedReadOnly = new Set();
 
@@ -212,8 +227,86 @@
         "HMDScriptingInterface": { getHUDLookAtPosition2D: "getHUDLookAtPosition2DValue", getHUDLookAtPosition3D: "getHUDLookAtPosition3DValue" }
     };
 
+    // A callback as QtScript's makeScopedHandlerObject takes one: a function; a scope and a function; a scope and the
+    // name of one of its methods; or (with no second argument) a {scope, callback} record. Called with the scope as this.
+    function scopedCallback(scopeOrCallback, methodOrName, hasSecond) {
+        var scope, callback = scopeOrCallback;
+        if (scopeOrCallback !== null && (typeof scopeOrCallback === "object" || typeof scopeOrCallback === "function")) {
+            if (typeof methodOrName === "string") {
+                scope = scopeOrCallback;
+                callback = scope[methodOrName];
+            } else if (typeof methodOrName === "function") {
+                scope = scopeOrCallback;
+                callback = methodOrName;
+            } else if (!hasSecond && typeof scopeOrCallback.callback === "function") {
+                scope = scopeOrCallback.scope;
+                callback = scopeOrCallback.callback;
+            }
+        }
+        if (typeof callback !== "function") {
+            return callback; // the host reports what is missing
+        }
+        return function () { return callback.apply(scope, arguments); };
+    }
+
+    // A callback the host calls once (an asset request's outcome): its id is forgotten when it has been called.
+    function oneShot(fn) {
+        if (typeof fn !== "function") {
+            return fn;
+        }
+        var wrapped = function () {
+            var id = callbackIds.get(wrapped);
+            if (id !== undefined) {
+                unregisterCallback(id);
+            }
+            return fn.apply(this, arguments);
+        };
+        return wrapped;
+    }
+
+    function defineMethod(object, name, fn) {
+        Object.defineProperty(object, name, { value: fn, writable: true, enumerable: true, configurable: true });
+    }
+
     // What the QtScript engine added to an object as native functions, which the description cannot list
     var extraMembers = {
+        "AssetScriptingInterface": function (assets) {
+            // the host's forms take (values..., callback); a script may give a scope with the callback, as on QtScript
+            ["getAsset", "putAsset", "deleteAsset", "resolveAsset", "decompressData", "compressData", "queryCacheMeta",
+             "loadFromCache"].forEach(function (name) {
+                defineMethod(assets, name, function (options, scopeOrCallback, methodOrName) {
+                    return host.call(assets, name, [options, oneShot(scopedCallback(scopeOrCallback, methodOrName, arguments.length > 2))]);
+                });
+            });
+            defineMethod(assets, "getCacheStatus", function (scopeOrCallback, methodOrName) {
+                return host.call(assets, "getCacheStatus", [oneShot(scopedCallback(scopeOrCallback, methodOrName, arguments.length > 1))]);
+            });
+            defineMethod(assets, "saveToCache", function (first, second, third, fourth, fifth) {
+                if (arguments.length >= 4) { // (url, data, metadata, scope[, callback])
+                    return host.call(assets, "saveToCache", [first, second, third, oneShot(scopedCallback(fourth, fifth, arguments.length > 4))]);
+                }
+                return host.call(assets, "saveToCache", [first, oneShot(scopedCallback(second, third, arguments.length > 2))]);
+            });
+            // the forms with a callback alone call it with Assets as this (jsBindCallback(thisObject(), callback))
+            [["uploadData", 1], ["downloadData", 1], ["setMapping", 2], ["getMapping", 1], ["setBakingEnabled", 2]].forEach(function (entry) {
+                var name = entry[0], callbackIndex = entry[1];
+                defineMethod(assets, name, function () {
+                    var args = Array.prototype.slice.call(arguments);
+                    if (typeof args[callbackIndex] === "function") {
+                        args[callbackIndex] = oneShot(scopedCallback(assets, args[callbackIndex], true));
+                    }
+                    return host.call(assets, name, args);
+                });
+            });
+        },
+        "AvatarManager": function (avatars) {
+            // findRayIntersection(ray, include, discard, pickAgainstMesh) takes the lists as QScriptValues; the host's
+            // findRayIntersectionVector takes them as lists (QtScript reads a value that is not an array as no list)
+            defineMethod(avatars, "findRayIntersection", function (ray, include, discard, pickAgainstMesh) {
+                return host.call(avatars, "findRayIntersectionVector", [ray, Array.isArray(include) ? include : [],
+                    Array.isArray(discard) ? discard : [], pickAgainstMesh === undefined ? true : !!pickAgainstMesh]);
+            });
+        },
         "EntityScriptingInterface": function (entities) {
             // getMultipleEntityProperties(ids, properties): one getEntityProperties per id
             Object.defineProperty(entities, "getMultipleEntityProperties", {
@@ -231,11 +324,16 @@
     };
 
     function wrapObject(handle, className) {
-        var object = objectsByHandle.get(handle);
+        var isGlobal = globalHandleSet.has(handle);
+        var object = isGlobal ? globalObjects.get(handle) : undefined;
+        if (!isGlobal) {
+            var ref = objectsByHandle.get(handle);
+            object = ref !== undefined ? ref.deref() : undefined;
+        }
         if (object) {
             return object;
         }
-        var description = host.describe(host.newHostObject(handle, null));
+        var description = host.describe(host.newHostObject(handle, null)); // a stand-in, never registered for release
         if (!description || !description["class"]) {
             return null; // the object is gone
         }
@@ -251,13 +349,19 @@
         if (extraMembers[className]) {
             extraMembers[className](object);
         }
-        objectsByHandle.set(handle, object);
+        if (isGlobal) {
+            globalObjects.set(handle, object);
+        } else {
+            objectsByHandle.set(handle, new WeakRef(object));
+            releases.register(object, handle);
+        }
         return object;
     }
 
     // --- the globals: defined lazily, resolved on first use ------------------------------------------------------
     var globalHandles = host.globals();
     var globalNames = Object.keys(globalHandles);
+    var globalHandleSet = new Set(globalNames.map(function (name) { return globalHandles[name]; }));
 
     function defineGlobal(name, handle) {
         var dot = name.indexOf(".");
@@ -442,7 +546,22 @@
         return error;
     });
     define(Script, "formatException", function (e) { return describeError(e); });
-    define(Script, "registerValue", function () {});
+    // ScriptEngine::registerValue: the value under its dotted name on the global object, unless the name is taken;
+    // a missing part on the way is made an array, as there
+    define(Script, "registerValue", function (valueName, value) {
+        var parts = String(valueName).split(".");
+        var object = global;
+        for (var i = 0; i < parts.length; i++) {
+            var part = parts[i];
+            if (!(part in object)) {
+                object[part] = i < parts.length - 1 ? [] : value;
+            }
+            object = object[part];
+            if (object === null || (typeof object !== "object" && typeof object !== "function")) {
+                break;
+            }
+        }
+    });
     define(Script, "lintScript", function () { return []; });
 
     // Script.include: synchronous (a callback, when given, is called after the files ran)

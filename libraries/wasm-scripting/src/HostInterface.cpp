@@ -428,7 +428,7 @@ const QVector<int>& HostInterface::candidates(const QMetaObject* meta, const QBy
     QVector<int> indices;
     for (int i = meta->methodCount() - 1; i >= 0; --i) {
         QMetaMethod method = meta->method(i);
-        if (method.access() == QMetaMethod::Public && method.methodType() != QMetaMethod::Constructor &&
+        if (method.access() != QMetaMethod::Private && method.methodType() != QMetaMethod::Constructor &&
             method.methodType() != QMetaMethod::Signal && method.name() == name) {
             indices.append(i);
         }

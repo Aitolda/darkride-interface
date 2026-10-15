@@ -43,6 +43,7 @@ struct Guest {
     std::unique_ptr<HostInterface> host;
     FakeScript script;
     Probe probe;
+    AssetScriptingInterface assets;
     QStringList logged;        // "<level> <text>"
     QStringList errors;        // level 3 only
     QStringList failures;
@@ -73,6 +74,7 @@ struct Guest {
         instance->enableWasi();
         objects.registerGlobal("Script", &script);
         objects.registerGlobal("Probe", &probe);
+        objects.registerGlobal("Assets", &assets);
         QObject::connect(&probe, &Probe::carried, [this](const QVariant& value) { carried << value; });
         script.source = source;
         if (!instance->instantiate(error)) {
@@ -372,3 +374,91 @@ void JavaScriptGuestTests::testEntityScripts() {
 }
 
 #include "moc_TestObjects.cpp"
+
+void JavaScriptGuestTests::testObjectsAreReleased() {
+    // a type whose objects the script owns, as the engine registers the QtScript engine's ScriptOwnership types
+    ValueCodec::registerType(qRegisterMetaType<Other*>(),
+        [](const ValueCodec& codec, const QVariant& value) { return codec.toCborOwned(value.value<Other*>()); },
+        [](const ValueCodec& codec, const QCborValue& value, QVariant& out) {
+            out = QVariant::fromValue(qobject_cast<Other*>(codec.fromCbor(value).value<QObject*>()));
+            return true;
+        });
+    const int aliveBefore = Other::alive;
+    Guest guest;
+    const QString source = R"(
+        var kept = Probe.makeOther();
+        for (var i = 0; i < 200; i++) {
+            Probe.makeOther();
+        }
+        gc();
+        Probe.carry([typeof kept, typeof Probe.add, Probe.add(1, 2)]);
+    )";
+    START_OR_SKIP(guest, source);
+    QVERIFY2(guest.errors.isEmpty(), qPrintable(guest.errors.join(" | ")));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    // the 200 dropped objects were released and deleted; the kept one and the globals stay
+    QCOMPARE(Other::alive - aliveBefore, 1);
+    QCOMPARE(guest.objects.size(), 4);
+    QCOMPARE(guest.carried.size(), 1);
+    QCOMPARE(guest.carried[0].toList()[0].toString(), QString("object"));
+    QCOMPARE(guest.carried[0].toList()[2].toInt(), 3);
+    // what the script still owns goes when it stops, as the engine releases it
+    guest.stop();
+    guest.objects.releaseOwned();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCOMPARE(Other::alive, aliveBefore);
+}
+
+void JavaScriptGuestTests::testScopedCallbacks() {
+    Guest guest;
+    const QString source = R"(
+        var scope = {
+            name: "scope",
+            done: function (error, result) { Probe.carry(["method", this.name, error, result]); }
+        };
+        Assets.getAsset({ url: "atp:/a.txt" }, function (error, result) { Probe.carry(["plain", error, result]); });
+        Assets.getAsset("atp:/b.txt", scope, "done");
+        Assets.getAsset("atp:/c.txt", scope, function (error, result) { Probe.carry(["function", this.name, error, result]); });
+        Assets.getAsset("atp:/d.txt", { scope: scope, callback: scope.done });
+        Assets.getCacheStatus(scope, "done");
+        Assets.saveToCache("cache:/e", "data", {}, scope, "done");
+        Assets.saveToCache({ url: "cache:/f", data: "data" }, function (error, result) { Probe.carry(["options", error, result]); });
+        Assets.uploadData("text", function (url, hash) { Probe.carry(["upload", this === Assets, url, hash]); });
+    )";
+    START_OR_SKIP(guest, source);
+    QVERIFY2(guest.errors.isEmpty(), qPrintable(guest.errors.join(" | ")));
+    const auto& requests = guest.assets.requests;
+    QCOMPARE(requests.size(), 8);
+    QCOMPARE(requests[0].values[0].toMap()["url"].toString(), QString("atp:/a.txt"));
+    QCOMPARE(requests[1].values[0].toString(), QString("atp:/b.txt"));
+    QCOMPARE(requests[5].values.size(), 3);  // the long form of saveToCache
+    QCOMPARE(requests[5].values[0].toUrl(), QUrl("cache:/e"));
+    QCOMPARE(requests[6].values.size(), 1);  // the options form
+    for (const auto& request : requests) {
+        QVERIFY2(request.callback.isValid(), qPrintable(request.method));
+    }
+    // the outcomes, as the engine posts them: (error or null, result)
+    QString error;
+    QVariantMap result { { "ok", 1 } };
+    for (int i = 0; i < 7; ++i) {
+        QVERIFY(guest.host->deliverCallback(requests[i].callback.id, { QVariant::fromValue(nullptr), result }, error));
+    }
+    QVERIFY(guest.host->deliverCallback(requests[7].callback.id, { "atp:abc", "abc" }, error));
+    QCOMPARE(guest.carried.size(), 8);
+    QCOMPARE(guest.carried[0].toList()[0].toString(), QString("plain"));
+    QVERIFY(guest.carried[0].toList()[1].isNull());
+    QCOMPARE(guest.carried[0].toList()[2].toMap()["ok"].toInt(), 1);
+    for (int i : { 1, 3, 4, 5 }) {
+        QCOMPARE(guest.carried[i].toList()[0].toString(), QString("method"));
+        QCOMPARE(guest.carried[i].toList()[1].toString(), QString("scope"));
+    }
+    QCOMPARE(guest.carried[2].toList()[0].toString(), QString("function"));
+    QCOMPARE(guest.carried[2].toList()[1].toString(), QString("scope"));
+    QCOMPARE(guest.carried[6].toList()[0].toString(), QString("options"));
+    QCOMPARE(guest.carried[7].toList(), QVariantList({ "upload", true, "atp:abc", "abc" }));
+    // each callback runs once: a second outcome finds it forgotten
+    QVERIFY(guest.host->deliverCallback(requests[0].callback.id, { QVariant::fromValue(nullptr), result }, error));
+    QCOMPARE(guest.carried.size(), 8);
+    guest.stop();
+}
+

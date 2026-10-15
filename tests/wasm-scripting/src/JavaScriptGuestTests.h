@@ -90,6 +90,33 @@ signals:
     void scriptEnding();
 };
 
+/// A stand-in for the engine's Assets object, under its class name (the guest binds the scope forms of the
+/// callbacks for that class): each call is recorded with its callback, for the test to call back.
+class AssetScriptingInterface : public QObject {
+    Q_OBJECT
+public:
+    struct Request {
+        QString method;
+        QVariantList values;
+        ScriptCallback callback;
+    };
+    QList<Request> requests;
+
+    Q_INVOKABLE QVariant getAsset(const QVariant& options, const ScriptCallback& callback) { return record("getAsset", { options }, callback); }
+    Q_INVOKABLE QVariant getCacheStatus(const ScriptCallback& callback) { return record("getCacheStatus", {}, callback); }
+    Q_INVOKABLE QVariant saveToCache(const QVariant& options, const ScriptCallback& callback) { return record("saveToCache", { options }, callback); }
+    Q_INVOKABLE QVariant saveToCache(const QUrl& url, const QByteArray& data, const QVariantMap& metadata, const ScriptCallback& callback) {
+        return record("saveToCache", { url, data, metadata }, callback);
+    }
+    Q_INVOKABLE QVariant uploadData(const QString& data, const ScriptCallback& callback) { return record("uploadData", { data }, callback); }
+
+private:
+    QVariant record(const QString& method, const QVariantList& values, const ScriptCallback& callback) {
+        requests.append({ method, values, callback });
+        return QVariant();
+    }
+};
+
 class JavaScriptGuestTests : public QObject {
     Q_OBJECT
 private slots:
@@ -100,6 +127,8 @@ private slots:
     void testApiDump();
     void testManyCalls();
     void testEntityScripts();
+    void testObjectsAreReleased();
+    void testScopedCallbacks();
 };
 
 #endif // hifi_JavaScriptGuestTests_h

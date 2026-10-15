@@ -10,6 +10,9 @@
 
 #include <QtCore/QCborArray>
 #include <QtCore/QCborMap>
+#include <QtCore/QCoreApplication>
+#include <QtCore/QPointer>
+#include <QtCore/QSharedPointer>
 #include <QtCore/QUrl>
 #include <QtCore/QUuid>
 #include <QtGui/QColor>
@@ -44,6 +47,17 @@ QVariant roundTrip(const ValueCodec& codec, const QVariant& value, int targetTyp
 
 Q_DECLARE_METATYPE(Opaque)
 Q_DECLARE_METATYPE(Unknown)
+
+namespace {
+
+// An enum and an object pointer type the codec handles by itself, until a registered conversion says otherwise.
+enum class Shade { Light = 1, Dark = 2 };
+
+} // namespace
+
+Q_DECLARE_METATYPE(Shade)
+Q_DECLARE_METATYPE(QPointer<Probe>)
+Q_DECLARE_METATYPE(QSharedPointer<Probe>)
 
 void ValueCodecTests::testPrimitives() {
     ValueCodec codec;
@@ -468,6 +482,114 @@ void ValueCodecTests::testRegistryAndFallback() {
     codec.fromCbor(QCborValue(1), opaqueType);
     QCOMPARE(encodeCalls, 1);
     QCOMPARE(decodeCalls, 1);
+}
+
+void ValueCodecTests::testRegistryPrecedence() {
+    ObjectTable table;
+    ValueCodec codec(&table);
+    const int shadeType = qRegisterMetaType<Shade>();
+    QCOMPARE(codec.toCbor(QVariant::fromValue(Shade::Dark)), QCborValue(2));
+
+    // a registered enum has the shape its conversion gives (as {action, actionName} for a controller action)
+    ValueCodec::registerType(shadeType,
+        [](const ValueCodec&, const QVariant& value) {
+            QCborMap map;
+            map.insert(QStringLiteral("shade"), int(value.value<Shade>()));
+            map.insert(QStringLiteral("name"), value.value<Shade>() == Shade::Dark ? "Dark" : "Light");
+            return QCborValue(map);
+        },
+        [](const ValueCodec&, const QCborValue& value, QVariant& out) {
+            out = QVariant::fromValue(Shade(value.toMap().value(QStringLiteral("shade")).toInteger()));
+            return true;
+        });
+    QCborValue cbor = codec.toCbor(QVariant::fromValue(Shade::Dark));
+    QCOMPARE(cbor.toMap().value(QStringLiteral("name")).toString(), QString("Dark"));
+    QCOMPARE(codec.fromCbor(cbor, shadeType).value<Shade>(), Shade::Dark);
+
+    // a registered object pointer type: here owned by the table, as a conversion for a ScriptOwnership type does
+    const int otherType = qRegisterMetaType<Other*>();
+    ValueCodec::registerType(otherType,
+        [](const ValueCodec& codec, const QVariant& value) { return codec.toCborOwned(value.value<Other*>()); },
+        [](const ValueCodec& codec, const QCborValue& value, QVariant& out) {
+            out = QVariant::fromValue(qobject_cast<Other*>(codec.fromCbor(value).value<QObject*>()));
+            return true;
+        });
+    QPointer<Other> other = new Other();
+    cbor = codec.toCbor(QVariant::fromValue(other.data()));
+    const auto handle = ObjectTable::Handle(cbor.toMap().value(ValueCodec::OBJECT_KEY).toInteger());
+    QVERIFY(table.owns(handle));
+    QCOMPARE(codec.fromCbor(cbor, otherType).value<Other*>(), other.data());
+    table.release(handle);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(other.isNull());
+
+    // an unregistered object pointer is not owned
+    Probe probe;
+    cbor = codec.toCbor(QVariant::fromValue(&probe));
+    QVERIFY(!table.owns(ObjectTable::Handle(cbor.toMap().value(ValueCodec::OBJECT_KEY).toInteger())));
+}
+
+void ValueCodecTests::testOwnedObjects() {
+    QPointer<Probe> kept = new Probe();
+    QPointer<Probe> owned = new Probe();
+    QPointer<Probe> later = new Probe();
+    {
+        ObjectTable table;
+        const ObjectTable::Handle keptHandle = table.handleFor(kept);
+        const ObjectTable::Handle ownedHandle = table.adopt(owned);
+        QVERIFY(!table.owns(keptHandle));
+        QVERIFY(table.owns(ownedHandle));
+        // adopting an object already in the table keeps its handle
+        QCOMPARE(table.adopt(owned), ownedHandle);
+
+        // releasing an owned handle deletes the object; releasing another only forgets it
+        table.release(keptHandle);
+        table.release(ownedHandle);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(!kept.isNull());
+        QVERIFY(owned.isNull());
+
+        // releaseOwned deletes what is left of the owned objects and keeps the rest
+        const ObjectTable::Handle laterHandle = table.adopt(later);
+        const ObjectTable::Handle keptAgain = table.handleFor(kept);
+        table.releaseOwned();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(later.isNull());
+        QVERIFY(!table.contains(laterHandle));
+        QCOMPARE(table.object(keptAgain), kept.data());
+
+        // an owned object deleted on the host side is just a dead handle
+        QPointer<Probe> gone = new Probe();
+        const ObjectTable::Handle goneHandle = table.adopt(gone);
+        delete gone.data();
+        QCOMPARE(table.object(goneHandle), nullptr);
+        table.release(goneHandle);
+
+        // the table's end deletes the owned objects it still has
+        later = new Probe();
+        table.adopt(later);
+    }
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(later.isNull());
+    QVERIFY(!kept.isNull());
+    delete kept.data();
+}
+
+void ValueCodecTests::testSmartPointers() {
+    ObjectTable table;
+    ValueCodec codec(&table);
+    qRegisterMetaType<QPointer<Probe>>();
+    qRegisterMetaType<QSharedPointer<Probe>>();
+    Probe probe;
+    // a QPointer to an object (Desktop.createWindow's window) crosses as the object's handle
+    QCborValue cbor = codec.toCbor(QVariant::fromValue(QPointer<Probe>(&probe)));
+    QCOMPARE(cbor.toMap().value(ValueCodec::CLASS_KEY).toString(), QString("Probe"));
+    QCOMPARE(table.object(ObjectTable::Handle(cbor.toMap().value(ValueCodec::OBJECT_KEY).toInteger())), &probe);
+    QCOMPARE(codec.toCbor(QVariant::fromValue(QPointer<Probe>())), QCborValue(nullptr));
+    // and a QSharedPointer the same way
+    QSharedPointer<Probe> shared(new Probe());
+    cbor = codec.toCbor(QVariant::fromValue(shared));
+    QCOMPARE(table.object(ObjectTable::Handle(cbor.toMap().value(ValueCodec::OBJECT_KEY).toInteger())), shared.data());
 }
 
 void ValueCodecTests::testDecodeArguments() {

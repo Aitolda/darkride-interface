@@ -17,6 +17,15 @@
     var ENTITY_POSITION = { x: 0, y: 2, z: -3 };
     var lines = [];
 
+    // fetched now, read in run(): the types that cross with a conversion of their own (WASM-SCRIPTING.md round 5)
+    var animation = AnimationCache.getAnimation(Paths.defaultScripts + "/system/assets/animations/Clapping.fbx");
+    var sound = SoundCache.getSound(Paths.defaultScripts + "/tivoli/assets/chat1.wav");
+    var clicks = [];
+    var assetOutcomes = [];
+    Entities.clickDownOnEntity.connect(function (entityID, event) {
+        clicks.push({ entityID: entityID, event: event });
+    });
+
     function check(name, value) {
         var text;
         try {
@@ -179,6 +188,38 @@
         attempt("Entities.getEntityProperties(id).renderInfo", function () { return typeof Entities.getEntityProperties(id, ["renderInfo"]).renderInfo; });
         attempt("Entities.getEntityProperties(id).clientOnly", function () { return Entities.getEntityProperties(id, ["clientOnly"]).clientOnly; });
         attempt("Entities.addEntity avatar entity", function () { var e = Entities.addEntity({ type: "Sphere", position: ENTITY_POSITION, dimensions: { x: 0.1, y: 0.1, z: 0.1 }, lifetime: 60 }, "avatar"); var p = Entities.getEntityProperties(e, ["entityHostType", "clientOnly"]); Entities.deleteEntity(e); return [p.entityHostType, p.clientOnly]; });
+        attempt("Entities.getPropertyInfo", function () { return Entities.getPropertyInfo("alpha"); });
+        attempt("Entities.findRayIntersection", function () { var r = Entities.findRayIntersection({ origin: { x: 0, y: 2, z: 0 }, direction: { x: 0, y: 0, z: -1 } }, true, [id]); return [Object.keys(r), r.intersects, r.entityID === id, r.face, Math.round(r.distance * 100), r.intersection, r.surfaceNormal]; });
+        attempt("AvatarList.findRayIntersection", function () { var r = AvatarList.findRayIntersection({ origin: { x: 0, y: 100, z: 0 }, direction: { x: 0, y: 1, z: 0 } }); return [Object.keys(r), r.intersects, r.avatarID, r.jointIndex]; });
+        attempt("Controller.getPoseValue", function () { return Controller.getPoseValue(Controller.Standard.LeftHand); });
+        attempt("MyAvatar.getLeftHandPose", function () { return MyAvatar.getLeftHandPose(); });
+        attempt("Controller.getAllActions", function () { var a = Controller.getAllActions(); return [Array.isArray(a), a.length > 0, a.length ? a[0] : null]; });
+        attempt("Controller.getAvailableInputs", function () { var a = Controller.getAvailableInputs(0); return [Array.isArray(a), a.length > 0 ? Object.keys(a[0]) : a.length]; });
+        attempt("MyAvatar.getAnimationDetailsByRole keys", function () { return Object.keys(MyAvatar.getAnimationDetailsByRole("idle")); });
+        attempt("MyAvatar.getAvatarEntityData", function () { var e = Entities.addEntity({ type: "Box", name: "wasm-parity-avatar-entity", position: ENTITY_POSITION, dimensions: { x: 0.1, y: 0.1, z: 0.1 }, lifetime: 60 }, "avatar"); var data = MyAvatar.getAvatarEntityData(); var mine = data[e]; Entities.deleteEntity(e); return [typeof data, mine ? mine.name : typeof mine]; });
+        attempt("MyAvatar.getAttachmentData", function () { return MyAvatar.getAttachmentData(); });
+        attempt("Menu.addMenuItem properties", function () { Menu.addMenuItem({ menuName: "Developer", menuItemName: "wasm-parity item", isCheckable: true, isChecked: true }); var r = [Menu.menuItemExists("Developer", "wasm-parity item"), Menu.isOptionChecked("wasm-parity item")]; Menu.removeMenuItem("Developer", "wasm-parity item"); return r; });
+        attempt("Controller.captureKeyEvents", function () { Controller.captureKeyEvents({ text: "F9" }); Controller.releaseKeyEvents({ text: "F9" }); return "ok"; });
+        attempt("AnimationCache.getAnimation", function () { return [typeof animation, Array.isArray(animation.frames), animation.frames.length > 0, animation.jointNames.length > 0, animation.frames.length ? Object.keys(animation.frames[0]) : null]; });
+        attempt("SoundCache.getSound loaded", function () { return [sound.downloaded, sound.duration > 0]; });
+        attempt("Audio.playSound options", function () { var injector = Audio.playSound(sound, { volume: 0.01, localOnly: true, position: { x: 1, y: 2, z: 3 }, loop: false }); if (!injector) { return "null"; } var options = injector.options; injector.stop(); return options; });
+        attempt("Entities.sendClickDownOnEntity", function () { Entities.sendClickDownOnEntity(id, { type: "Press", id: 7, pos2D: { x: 0.25, y: 0.5 }, pos3D: { x: 1, y: 2, z: 3 }, normal: { x: 0, y: 0, z: 1 }, direction: { x: 0, y: 0, z: -1 }, button: "Primary", isPrimaryHeld: true, keyboardModifiers: 0 }); return "sent"; });
+        attempt("Desktop.createWindow", function () { var w = Desktop.createWindow(Paths.defaultScripts + "/system/create/qml/NewModelWindow.qml", { title: "wasm-parity", visible: false, size: { x: 100, y: 100 } }); var r = [typeof w, typeof w.sendToQml, typeof w.fromQml]; w.close(); return r; });
+        attempt("MyAvatar.getTargetAvatar", function () { return MyAvatar.getTargetAvatar(); });
+        attempt("AvatarList.findRayIntersection lists", function () { var r = AvatarList.findRayIntersection({ origin: { x: 0, y: 100, z: 0 }, direction: { x: 0, y: 1, z: 0 } }, [], [MyAvatar.sessionUUID]); return [r.intersects, r.avatarID]; });
+        attempt("Picks.setIgnoreItems", function () { var p = Picks.createPick(PickType.Ray, { joint: "Mouse", filter: Picks.PICK_ENTITIES, enabled: true }); Picks.setIgnoreItems(p, [id]); Picks.setIncludeItems(p, []); Picks.removePick(p); return "ok"; });
+        attempt("Pointers.setIgnoreItems", function () { var p = Pointers.createPointer(PickType.Ray, { joint: "Mouse", filter: Picks.PICK_ENTITIES, enabled: false, renderStates: [] }); Pointers.setIgnoreItems(p, [id]); Pointers.setIncludeItems(p, [id]); Pointers.removePointer(p); return "ok"; });
+        attempt("Script.registerValue", function () { Script.registerValue("wasmParity.inner.value", 5); Script.registerValue("Vec3", 1); return [Array.isArray(wasmParity), wasmParity.inner.value, typeof Vec3]; });
+        attempt("Assets.getMapping bad path", function () { Assets.getMapping("not a path", function () {}); return "no throw"; });
+        attempt("Assets.compressData", function () {
+            Assets.compressData({ data: "hello hello hello hello hello" }, function (error, result) {
+                assetOutcomes.push(["compressed", error, typeof result.data, result.byteLength > 0]);
+                Assets.decompressData({ data: result.data, responseType: "text" }, { name: "scope" }, function (error2, result2) {
+                    assetOutcomes.push(["decompressed", error2, this.name, result2.response]);
+                });
+            });
+            return "asked";
+        });
         attempt("Entities.deleteEntity", function () { Entities.deleteEntity(id); return typeof Entities.getEntityProperties(id).name; });
         attempt("Entities.addEntity with script", function () { var e = Entities.addEntity({ type: "Box", position: ENTITY_POSITION, dimensions: { x: 0.1, y: 0.1, z: 0.1 }, lifetime: 60, script: "(function(){ this.preload = function(){}; })" }); var s = Entities.getEntityProperties(e, ["script"]).script; Entities.deleteEntity(e); return s.length > 10; });
         attempt("Math.random type", function () { return typeof Math.random(); });
@@ -197,11 +238,16 @@
         attempt("Script.print", function () { Script.print("parity print"); return "ok"; });
         attempt("Test present", function () { return typeof Test; });
 
-        for (var i = 0; i < lines.length; i++) {
-            print("PARITY " + lines[i]);
-        }
-        print("PARITY done " + lines.length + " checks");
-        Script.setTimeout(function () { Test.quit(); }, 1000);
+        // what arrives by signal, a moment later
+        Script.setTimeout(function () {
+            attempt("clickDownOnEntity event", function () { return clicks.length ? [clicks[0].entityID === id, clicks[0].event] : "none"; });
+            attempt("Assets outcomes", function () { return assetOutcomes; });
+            for (var i = 0; i < lines.length; i++) {
+                print("PARITY " + lines[i]);
+            }
+            print("PARITY done " + lines.length + " checks");
+            Script.setTimeout(function () { Test.quit(); }, 1000);
+        }, 1000);
     }
 
     Script.setTimeout(run, 8000);

@@ -11,8 +11,10 @@
 //  with the coercions QtScript applies today: a number for a vec3, an array of three for a vec3, a colour name
 //  for a vec3, an integer or its key for an enum.
 //
-//  Types the codec does not know are looked up in a registry (registerType), then in the codec's fallback (the
-//  engine hands it QtScript's own conversions during the transition), and otherwise encode as undefined.
+//  Other types are looked up in a registry (registerType), which also takes precedence over the codec's own
+//  handling of enums and object pointers (a type registered there has a shape of its own: an action as
+//  {action, actionName}, an object the script owns), then in the codec's fallback (the engine hands it
+//  QtScript's own conversions during the transition), and otherwise encode as undefined.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -69,6 +71,9 @@ public:
     void setCallbackTarget(std::shared_ptr<CallbackTarget> target) { _callbackTarget = std::move(target); }
 
     QCborValue toCbor(const QVariant& value) const;
+    /// An object as a handle record, the object table owning it from now on (ObjectTable::adopt): for a
+    /// registered conversion of a type the QtScript engine gave the script with ScriptOwnership.
+    QCborValue toCborOwned(QObject* object) const;
     /// With a target type: the value converted to it, with QtScript's coercions; `ok` says whether a
     /// conversion existed. Without one (QMetaType::UnknownType): the natural QVariant for the CBOR item.
     QVariant fromCbor(const QCborValue& value, int targetType, bool* ok) const;
@@ -87,7 +92,9 @@ public:
     static bool isBuiltinType(int typeId);
 
 private:
-    QCborValue encodeObject(QObject* object) const;
+    QCborValue encodeObject(QObject* object, bool owned = false) const;
+    bool encodeRegistered(const QVariant& value, QCborValue& out) const;
+    bool decodeRegistered(const QCborValue& value, int targetType, QVariant& out, bool& ok) const;
     QCborValue encodeSequence(const QVariant& value) const;
     QCborValue encodeAssociative(const QVariant& value) const;
     QCborValue encodeVariantMap(const QVariantMap& items) const;

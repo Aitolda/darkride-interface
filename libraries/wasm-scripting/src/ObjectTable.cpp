@@ -10,6 +10,10 @@
 
 #include <QtCore/QObject>
 
+ObjectTable::~ObjectTable() {
+    releaseOwned();
+}
+
 ObjectTable::Handle ObjectTable::handleFor(QObject* object) {
     if (!object) {
         return NULL_HANDLE;
@@ -30,6 +34,20 @@ ObjectTable::Handle ObjectTable::handleFor(QObject* object) {
     _entries.insert(handle, Entry { QPointer<QObject>(object), QString::fromUtf8(object->metaObject()->className()) });
     _handles.insert(object, handle);
     return handle;
+}
+
+ObjectTable::Handle ObjectTable::adopt(QObject* object) {
+    Handle handle = handleFor(object);
+    auto entry = _entries.find(handle);
+    if (entry != _entries.end()) {
+        entry.value().owned = true;
+    }
+    return handle;
+}
+
+bool ObjectTable::owns(Handle handle) const {
+    auto entry = _entries.find(handle);
+    return entry != _entries.end() && entry.value().owned;
 }
 
 QObject* ObjectTable::object(Handle handle) const {
@@ -53,6 +71,9 @@ void ObjectTable::release(Handle handle) {
     }
     if (entry.value().object) {
         _handles.remove(entry.value().object.data());
+        if (entry.value().owned) {
+            entry.value().object->deleteLater();
+        }
     }
     _entries.erase(entry);
     for (auto it = _globals.begin(); it != _globals.end();) {
@@ -61,6 +82,18 @@ void ObjectTable::release(Handle handle) {
         } else {
             ++it;
         }
+    }
+}
+
+void ObjectTable::releaseOwned() {
+    QList<Handle> owned;
+    for (auto it = _entries.constBegin(); it != _entries.constEnd(); ++it) {
+        if (it.value().owned) {
+            owned.append(it.key());
+        }
+    }
+    for (Handle handle : owned) {
+        release(handle);
     }
 }
 
