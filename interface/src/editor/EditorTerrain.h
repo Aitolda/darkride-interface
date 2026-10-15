@@ -39,10 +39,11 @@
 class RenderableTerrainEntityItem;
 
 // The brush as the tool bar sets it. The radius is in metres and becomes voxels on each terrain; the strength is
-// how fast Raise, Lower, Smooth and Flatten work, how fast Dig and Fill go in, and how much one pass of Paint lays
-// down (Paint Voxels always takes the whole brush). The shape is the picture the brush takes its shape from
-// (terrain::BrushMask): a path in the client's resources (":/terrain/brushes/star.png") or a file on disk; empty
-// for the round brush. The angle (degrees) turns the picture about the brush's centre.
+// how fast Raise, Lower, Smooth and Flatten work, how fast Dig and Fill go in, and how much one pass of Paint or
+// Paint Voxels lays down (a voxel holds one material, so a pass paints that share of the voxels). The shape is the
+// picture the brush takes its shape from (terrain::BrushMask): a path in the client's resources
+// (":/terrain/brushes/star.png") or a file on disk; empty for the round brush. The angle (degrees) turns the picture
+// about the brush's centre.
 struct EditorTerrainBrush {
     terrain::SculptMode mode { terrain::SculptMode::Raise };
     float radius { 3.0f };
@@ -165,6 +166,7 @@ private:
     float _accumulated { 0.0f };    // the brush's effect waiting to be applied as one step
     int _steps { 0 };
     int _changed { 0 };             // voxels, or texels, changed by the stroke so far
+    uint32_t _voxelPaintSeed { 0 }; // a new one for every step that paints voxels, stroke after stroke (terrain::Brush::seed)
     glm::vec3 _lastStepPoint { 0.0f };
     // Dig and Fill: the sphere the stroke is cutting (Fill: adding), how far it has gone into the ground it first
     // touched, and every sphere the stroke has cut so far, which tells its own cut from fresh ground

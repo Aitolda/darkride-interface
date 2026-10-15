@@ -650,30 +650,35 @@ void VoxelGrid::markChunkDirty(const ChunkKey& key) {
 void VoxelGrid::markAllChunksDirty() {
     _dirtyChunks.clear();
     forEachChunk([&](const ChunkKey& key, const Chunk&) { _dirtyChunks.insert(key); });
-    _changes.clear();
-    _everythingChanged = true;
+    for (Changes& changes : _changes) {
+        changes.boxes.clear();
+        changes.everything = true;
+    }
 }
 
 void VoxelGrid::noteChange(const glm::ivec3& fineLow, const glm::ivec3& fineHigh) {
-    if (_everythingChanged) {
-        return;
+    for (Changes& changes : _changes) {
+        if (changes.everything) {
+            continue;
+        }
+        if (changes.boxes.size() >= MAX_CHANGE_BOXES) {
+            changes.boxes.clear();
+            changes.everything = true;
+            continue;
+        }
+        changes.boxes.emplace_back(fineLow, fineHigh);
     }
-    if (_changes.size() >= MAX_CHANGE_BOXES) {
-        _changes.clear();
-        _everythingChanged = true;
-        return;
-    }
-    _changes.emplace_back(fineLow, fineHigh);
 }
 
-bool VoxelGrid::takeChanges(std::vector<std::pair<glm::ivec3, glm::ivec3>>& boxes) {
+bool VoxelGrid::takeChanges(std::vector<std::pair<glm::ivec3, glm::ivec3>>& boxes, ChangeLog log) {
+    Changes& changes = _changes[(int)log];
     boxes.clear();
-    const bool told = !_everythingChanged;
+    const bool told = !changes.everything;
     if (told) {
-        boxes.swap(_changes);
+        boxes.swap(changes.boxes);
     }
-    _changes.clear();
-    _everythingChanged = false;
+    changes.boxes.clear();
+    changes.everything = false;
     return told;
 }
 

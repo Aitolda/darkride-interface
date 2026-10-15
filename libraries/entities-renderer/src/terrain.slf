@@ -14,7 +14,9 @@
 //  other across a cell rather than cut along triangle edges. And the paint map (PaintMap.h), read from the chunk's
 //  tile by the position within the chunk wherever the ground faces up: its eight layer weights lay their layers
 //  over the voxel material bottom to top, each by its blend mode, and the voxel material takes over again as the
-//  ground turns to face sideways or down, on cliffs and in anything dug. The fragment is shaded like any opaque
+//  ground turns to face sideways or down, on cliffs and in anything dug. The map is a picture seen from the sky, so
+//  it lies on the ground the sky sees alone (TopSurface.h): a fragment further below the top surface's height than
+//  a voxel, on a cave's floor or under an overhang, shows its voxel material. The fragment is shaded like any opaque
 //  material (deferred), or lit in place on the forward path.
 //
 //  Distributed under the Apache License, Version 2.0.
@@ -65,6 +67,9 @@ struct TerrainParams {
 struct TerrainChunkParams {
     vec4 paint;    // x: tile texture coordinates per voxel of the chunk; yz: the tile coordinates of the chunk's voxel (0, 0);
                    // w: 1 while the Height blend applies here, 0 on a coarse node (its tile averages the map)
+    vec4 top;      // x: top tile texture coordinates per voxel of the chunk; yz: the top tile coordinates of its voxel
+                   // (0, 0); w: 1 while the paint lies on the top surface alone, 0 on a coarse node (which draws the top)
+    vec4 vertical; // x: grid voxels per voxel of the chunk; y: the grid height of its voxel 0
 };
 
 LAYOUT_STD140(binding=ENTITIES_BUFFER_TERRAIN_LAYERS) uniform terrainParamsBuffer {
@@ -84,6 +89,7 @@ LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER6) uniform sampler2D layerMap6;
 LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER7) uniform sampler2D layerMap7;
 LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_PAINT0) uniform sampler2D paintMap0;   // the chunk's tile: weights of layers 0 to 3
 LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_PAINT1) uniform sampler2D paintMap1;   // and of layers 4 to 7
+LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_TOP) uniform sampler2D topHeights;      // the column's top surface heights, grid voxels
 LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_NORMALS) uniform sampler2DArray layerNormals;   // a slice per slot: the normal map's xyz, 0 to 1
 LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_MASKS) uniform sampler2DArray layerMasks;       // r roughness, g occlusion, b height
 
@@ -95,6 +101,10 @@ const float PROJECTION_LEAST = 0.02;     // a projection weighing less is not sa
 const float PAINT_FACING_LOW = 0.3;
 const float PAINT_FACING_HIGH = 0.6;
 const float PAINT_LEAST = 0.002;         // a weight below this is nothing: its layer is not sampled
+// The paint map lies on the top surface: fully within the first value (grid voxels) below its height, not at all
+// beyond the sum of both (TOP_SURFACE_TOLERANCE and TOP_SURFACE_FADE in TopSurface.h).
+const float TOP_SURFACE_TOLERANCE = 1.0;
+const float TOP_SURFACE_FADE = 0.5;
 const float HEIGHT_BLEND_EDGE = 0.2;     // the Height blend: how far above what is below a layer rises to show fully
 
 // The surface's derivatives in terrain space, taken once for the whole fragment, so every texture sample can be
@@ -308,6 +318,13 @@ void main(void) {
     // the paint map, where the ground faces up: the stack's layers bottom to top, each laid over what is below it
     // by its coverage here times its opacity, as a painter would, starting from the voxel material
     float facingUp = smoothstep(PAINT_FACING_LOW, PAINT_FACING_HIGH, terrainNormal.y);
+    // and only on the ground the sky sees: under it, on a cave's floor or the ground beneath an overhang, the voxel
+    // material shows (an explicit level: the tile has one, and this may be a branch no neighbour takes)
+    if (facingUp > 0.0 && chunk.top.w > 0.5) {
+        float topHeight = textureLod(topHeights, _positionMS.xz * chunk.top.x + chunk.top.yz, 0.0).r;
+        float height = chunk.vertical.y + _positionMS.y * chunk.vertical.x;
+        facingUp *= 1.0 - smoothstep(TOP_SURFACE_TOLERANCE, TOP_SURFACE_TOLERANCE + TOP_SURFACE_FADE, topHeight - height);
+    }
     if (facingUp > 0.0) {
         vec2 uv = _positionMS.xz * chunk.paint.x + chunk.paint.yz;
         vec4 low = texture(paintMap0, uv);

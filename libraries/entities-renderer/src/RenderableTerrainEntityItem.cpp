@@ -68,10 +68,14 @@ struct TerrainParams {
     TerrainLayerParams layers[TerrainLayerSet::LAYER_COUNT];   // by slot
     glm::ivec4 order[2];   // the slots drawn over the voxel material, bottom to top; -1 past the stack's end
 };
-// One chunk's own parameters (terrain.slf): where in its column's paint tile its voxels are read.
+// One chunk's own parameters (terrain.slf): where in its column's paint tile its voxels are read, and where in its
+// column's top surface tile, with its voxels' height in the grid.
 struct TerrainChunkParams {
     glm::vec4 paint;    // x: tile texture coordinates per voxel of the chunk; yz: the tile coordinates of its voxel (0, 0);
                         // w: 1 while the Height blend applies here, 0 on a coarse node (its tile averages the map)
+    glm::vec4 top;      // x: top tile texture coordinates per voxel of the chunk; yz: the top tile coordinates of its voxel
+                        // (0, 0); w: 1 while the paint lies on the top surface alone (a chunk of the grid's), 0 on a coarse node
+    glm::vec4 vertical; // x: grid voxels per voxel of the chunk; y: the grid height of its voxel 0
 };
 
 // The plain colours of slots the stack has no layer for, and of layers named by the entity's terrainLayers property
@@ -88,6 +92,7 @@ uint8_t CUSTOM_PIPELINE_NUMBER = 0;
 std::map<std::pair<bool, bool>, ShapePipelinePointer> _pipelines;   // (forward, wireframe)
 gpu::Stream::FormatPointer _vertexFormat;
 gpu::TexturePointer _unpaintedTile;   // one texel of no weight at all: a chunk without a tile reads it
+gpu::TexturePointer _noTopTile;       // one height under any ground: a chunk without a top tile reads it
 gpu::PipelinePointer _mapPipeline;    // draws a layer's map into a slice of a set's arrays, shared by every set
 
 gpu::PipelinePointer mapPipeline() {
@@ -97,6 +102,17 @@ gpu::PipelinePointer mapPipeline() {
         _mapPipeline = gpu::Pipeline::create(program, std::make_shared<gpu::State>());
     });
     return _mapPipeline;
+}
+
+// A top surface tile (TopSurface::fillTile): heights in grid voxels, one float a texel, read linearly between them.
+gpu::TexturePointer makeTopTileTexture(int size, const std::vector<float>& heights, const char* name) {
+    const gpu::Element format(gpu::SCALAR, gpu::FLOAT, gpu::RED);
+    auto texture = gpu::Texture::createStrict(format, (uint16_t)size, (uint16_t)size, gpu::Texture::SINGLE_MIP,
+                                              gpu::Sampler(gpu::Sampler::FILTER_MIN_MAG_LINEAR, gpu::Sampler::WRAP_CLAMP));
+    texture->setSource(name);
+    texture->setStoredMipFormat(format);
+    texture->assignStoredMip(0, heights.size() * sizeof(float), (const gpu::Byte*)heights.data());
+    return texture;
 }
 
 gpu::TexturePointer makeTileTexture(int size, const std::vector<uint8_t>& rgba, const char* name) {
@@ -140,6 +156,7 @@ void initTerrainPipelines() {
         _vertexFormat->setAttribute(gpu::Stream::NORMAL, 0, gpu::Element(gpu::VEC3, gpu::FLOAT, gpu::XYZ), offsetof(TerrainVertex, normal));
         _vertexFormat->setAttribute(gpu::Stream::COLOR, 0, gpu::Element(gpu::VEC4, gpu::NUINT8, gpu::RGBA), offsetof(TerrainVertex, materials));
         _unpaintedTile = makeTileTexture(1, std::vector<uint8_t>(4, 0), "terrain unpainted");
+        _noTopTile = makeTopTileTexture(1, std::vector<float>(1, terrain::NO_GROUND_HEIGHT), "terrain no top surface");
     });
 }
 
@@ -811,6 +828,14 @@ void TerrainChunkPayload::setChunk(const terrain::ChunkKey& chunk) {
     params.paint = glm::vec4(perTileVoxel * std::min(chunk.getVoxelSize(), 1.0f),
                              (float)(terrain::PAINT_TILE_APRON + inColumn.x) * perTileVoxel,
                              (float)(terrain::PAINT_TILE_APRON + inColumn.z) * perTileVoxel, chunk.level < 0 ? 0.0f : 1.0f);
+    // The top surface's tile has a texel a grid voxel, each the height at the grid's column through its middle
+    // (TopSurface::fillTile), so a point reads its tile half a texel on, between the columns as heightAt() does. A
+    // coarse node draws the top alone: it paints wherever its ground faces up, as before.
+    const float perTopTexel = 1.0f / (float)terrain::TopSurface::getTileSize();
+    params.top = glm::vec4(perTopTexel * std::min(chunk.getVoxelSize(), 1.0f),
+                           ((float)(terrain::PAINT_TILE_APRON + inColumn.x) + 0.5f) * perTopTexel,
+                           ((float)(terrain::PAINT_TILE_APRON + inColumn.z) + 0.5f) * perTopTexel, chunk.level < 0 ? 0.0f : 1.0f);
+    params.vertical = glm::vec4(std::min(chunk.getVoxelSize(), 1.0f), (float)chunk.getOrigin().y, 0.0f, 0.0f);
     if (!_chunkParams) {
         _chunkParams = std::make_shared<gpu::Buffer>(sizeof(TerrainChunkParams), (const gpu::Byte*)&params);
     } else {
@@ -839,6 +864,7 @@ void TerrainChunkPayload::render(RenderArgs* args) {
     batch.setUniformBuffer(ENTITIES_BUFFER_TERRAIN_CHUNK, _chunkParams, 0, sizeof(TerrainChunkParams));
     batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_PAINT0, _paintTile ? _paintTile->layers0to3 : _unpaintedTile);
     batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_PAINT1, _paintTile ? _paintTile->layers4to7 : _unpaintedTile);
+    batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_TOP, _topTile ? _topTile : _noTopTile);
     batch.draw(gpu::TRIANGLES, _vertexCount, 0);
 }
 
@@ -1035,6 +1061,26 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         }
     }
 
+    // The ground the sky sees: its heights follow the grid's edits, and the columns whose heights moved lose their
+    // tiles, as the paint map's dirty columns do.
+    entity->updateTopSurface();
+    terrain::TopSurface& top = entity->getTopSurface();
+    terrain::ColumnSet lostTopTiles;
+    bool allTopTilesLost = false;
+    if (top.allColumnsDirty() || top.isEmpty()) {
+        allTopTilesLost = top.allColumnsDirty() || !_topTiles.empty();
+        top.clearAllColumnsDirty();
+        top.clearDirtyColumns();
+        _topTiles.clear();
+    } else if (!top.getDirtyColumns().empty()) {
+        for (const glm::ivec2& column : top.getDirtyColumns()) {
+            if (_topTiles.erase(column) > 0) {
+                lostTopTiles.insert(column);
+            }
+        }
+        top.clearDirtyColumns();
+    }
+
     // The chunk items, one for each mesh drawn: nothing to do on most frames.
     const Transform& model = getModelTransform();
     const glm::vec3 dimensions = entity->getScaledDimensions();
@@ -1045,7 +1091,7 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
     const bool keyChanged = key != _lastChunkKey || wireframe != _lastWireframe;
     const uint64_t drawnVersion = entity->getDrawnVersion();
     if (_drawnOnce && drawnVersion == _drawnVersion && !placementChanged && !keyChanged && !layersChanged && lostTiles.empty() &&
-            !allTilesLost) {
+            !allTilesLost && lostTopTiles.empty() && !allTopTilesLost) {
         return;
     }
     _drawnOnce = true;
@@ -1076,6 +1122,7 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         const Transform placement = chunkToWorld(model, dimensions, voxelScale, chunk.key);
         const glm::ivec3 tileKey = paintTileKey(chunk.key);
         const TerrainPaintTile::Pointer paintTile = paintTileFor(paint, tileKey);
+        const gpu::TexturePointer topTile = topTileFor(top, chunk.key);
         auto found = _chunkItems.find(chunk.key);
         if (found == _chunkItems.end()) {
             auto payload = std::make_shared<TerrainChunkPayload>();
@@ -1087,6 +1134,7 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
             payload->setLayers(layerSet);
             payload->setWorldToTerrain(worldToTerrain);
             payload->setPaintTile(paintTile);
+            payload->setTopTile(topTile);
             ChunkItem item;
             item.id = scene->allocateID();
             item.meshVersion = chunk.version;
@@ -1096,7 +1144,9 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         }
         const bool meshChanged = found->second.meshVersion != chunk.version;
         const bool paintChanged = allTilesLost || lostTiles.count(tileKey) > 0;
-        if (!meshChanged && !placementChanged && !keyChanged && !layersChanged && !paintChanged) {
+        const bool topChanged = allTopTilesLost ||
+            (chunk.key.level >= 0 && lostTopTiles.count(glm::ivec2(chunk.key.getSlot().x, chunk.key.getSlot().z)) > 0);
+        if (!meshChanged && !placementChanged && !keyChanged && !layersChanged && !paintChanged && !topChanged) {
             continue;
         }
         found->second.meshVersion = chunk.version;
@@ -1104,7 +1154,7 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         gpu::BufferPointer vertices = meshChanged ? TerrainChunkPayload::makeVertexBuffer(*chunk.mesh) : nullptr;
         const uint32_t vertexCount = TerrainChunkPayload::getVertexCount(*chunk.mesh);
         transaction.updateItem<TerrainChunkPayload>(found->second.id,
-                [vertices, vertexCount, placement, key, wireframe, layerSet, worldToTerrain, paintTile](TerrainChunkPayload& payload) {
+                [vertices, vertexCount, placement, key, wireframe, layerSet, worldToTerrain, paintTile, topTile](TerrainChunkPayload& payload) {
             if (vertices) {
                 payload.setBuffers(vertices, vertexCount);
             }
@@ -1114,6 +1164,7 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
             payload.setLayers(layerSet);
             payload.setWorldToTerrain(worldToTerrain);
             payload.setPaintTile(paintTile);
+            payload.setTopTile(topTile);
         });
     }
     handOverSubItems();
@@ -1135,6 +1186,23 @@ TerrainPaintTile::Pointer TerrainEntityRenderer::paintTileFor(const terrain::Pai
     }
     TerrainPaintTile::Pointer tile = TerrainPaintTile::make(paint, tileKey.z, glm::ivec2(tileKey.x, tileKey.y));
     _paintTiles[tileKey] = tile;
+    return tile;
+}
+
+gpu::TexturePointer TerrainEntityRenderer::topTileFor(const terrain::TopSurface& top, const terrain::ChunkKey& chunk) {
+    if (top.isEmpty() || chunk.level < 0) {
+        return nullptr;
+    }
+    const glm::ivec3 slot = chunk.getSlot();
+    const glm::ivec2 column(slot.x, slot.z);
+    auto found = _topTiles.find(column);
+    if (found != _topTiles.end()) {
+        return found->second;
+    }
+    std::vector<float> heights;
+    top.fillTile(column, heights);
+    gpu::TexturePointer tile = makeTopTileTexture(terrain::TopSurface::getTileSize(), heights, "terrain top surface");
+    _topTiles[column] = tile;
     return tile;
 }
 

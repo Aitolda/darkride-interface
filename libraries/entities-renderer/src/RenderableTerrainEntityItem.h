@@ -38,6 +38,7 @@
 #include <terrain/LevelOfDetail.h>
 #include <terrain/PaintMap.h>
 #include <terrain/SurfaceNets.h>
+#include <terrain/TopSurface.h>
 #include <terrain/VoxelGrid.h>
 #include <TerrainEntityItem.h>
 
@@ -73,6 +74,12 @@ public:
     // remakes the tiles of the columns the map marks dirty.
     void paintEdited() { ++_paintVersion; somethingChangedNotification(); }
     uint64_t getPaintVersion() const { return _paintVersion; }
+    // The ground the sky sees (terrain::TopSurface): the paint map lies on it alone, so a cave's floor shows its
+    // voxels' materials. It follows the grid's edits; updateTopSurface() takes those made since its last call (the
+    // renderer's update every frame, and the editor before it asks where a stroke landed).
+    terrain::TopSurface& getTopSurface() { return _topSurface; }
+    const terrain::TopSurface& getTopSurface() const { return _topSurface; }
+    void updateTopSurface() { _topSurface.update(_grid); }
     static const float PAINT_TEXEL_METRES;
     static const int MAX_PAINT_TEXELS_PER_AXIS;
     // How many texels a voxel of voxelMetres gets, so a texel is about PAINT_TEXEL_METRES, within the map's size limit.
@@ -177,6 +184,7 @@ private:
     terrain::VoxelGrid _grid;
     terrain::PaintMap _paint;
     uint64_t _paintVersion { 0 };
+    terrain::TopSurface _topSurface;
     terrain::LayerStack _layers;
     uint64_t _layersVersion { 0 };
     bool _layersFixed { false };
@@ -296,6 +304,9 @@ public:
     void setWorldToTerrain(const glm::mat4& worldToTerrain);
     // The chunk's column's tile; none draws the chunk unpainted.
     void setPaintTile(const TerrainPaintTile::Pointer& tile) { _paintTile = tile; }
+    // The heights of the ground the sky sees over the chunk's column (TopSurface::fillTile), under which the paint
+    // map does not lie; none (a coarse node, which draws the top alone) paints wherever the ground faces up.
+    void setTopTile(const gpu::TexturePointer& tile) { _topTile = tile; }
 
     const ItemKey& getKey() const { return _key; }
     const Item::Bound& getBound() const { return _bound; }
@@ -311,6 +322,7 @@ private:
     bool _wireframe { false };
     TerrainLayerSet::Pointer _layers;
     TerrainPaintTile::Pointer _paintTile;
+    gpu::TexturePointer _topTile;
     gpu::BufferPointer _chunkParams;
 };
 
@@ -337,6 +349,9 @@ private:
     // coarser node; made from the map if there is none yet, null while the map is empty.
     static glm::ivec3 paintTileKey(const terrain::ChunkKey& chunk);   // column x, column z, level
     TerrainPaintTile::Pointer paintTileFor(const terrain::PaintMap& paint, const glm::ivec3& tileKey);
+    // The top surface's tile of a chunk's level-0 column, made if there is none yet; null for a coarse node, or while
+    // there are no heights.
+    gpu::TexturePointer topTileFor(const terrain::TopSurface& top, const terrain::ChunkKey& chunk);
     ItemKey chunkKey() const;
     static Transform chunkToWorld(const Transform& model, const glm::vec3& dimensions, const glm::vec3& voxelScale, const terrain::ChunkKey& chunk);
 
@@ -367,6 +382,7 @@ private:
     bool _layerSetMade { false };
     std::map<glm::ivec3, TerrainPaintTile::Pointer, terrain::IVec3Less> _paintTiles;
     uint64_t _paintVersion { 0 };
+    std::map<glm::ivec2, gpu::TexturePointer, terrain::IVec2Less> _topTiles;
 
     ResourceRequest* _request { nullptr };
     QString _requestURL;

@@ -316,11 +316,14 @@ public:
     void markChunkDirty(const ChunkKey& key);
     void markAllChunksDirty();
 
-    // Where voxels have changed since the last call: boxes in finest units (inclusive), for a holder of what is
-    // built from the voxels besides the chunks' own meshes (the level of detail's coarser meshes), which takes them
-    // each frame. False when the boxes would not say: the whole grid changed, or more than MAX_CHANGE_BOXES of them
-    // piled up with nobody taking them; everything is to be taken as changed then.
-    bool takeChanges(std::vector<std::pair<glm::ivec3, glm::ivec3>>& boxes);
+    // The holders of what is built from the voxels besides the chunks' own meshes, each with a change log of its own:
+    // the level of detail's coarser meshes (LevelOfDetail.h) and the top surface's heights (TopSurface.h).
+    enum class ChangeLog { LevelOfDetail, TopSurface };
+    static const int CHANGE_LOG_COUNT = 2;
+    // Where voxels have changed since the holder's last call: boxes in finest units (inclusive), which the holder
+    // takes each frame. False when the boxes would not say: the whole grid changed, or more than MAX_CHANGE_BOXES of
+    // them piled up with nobody taking them; everything is to be taken as changed then.
+    bool takeChanges(std::vector<std::pair<glm::ivec3, glm::ivec3>>& boxes, ChangeLog log = ChangeLog::LevelOfDetail);
     static const size_t MAX_CHANGE_BOXES = 4096;
 
     // The chunk's voxels and one layer of its neighbours' around them, at the chunk's level; and, for the
@@ -402,8 +405,11 @@ private:
     std::vector<ChunkNode> _slots;
     ChunkKeySet _dirtyChunks;
     uint64_t _structureVersion { 0 };
-    std::vector<std::pair<glm::ivec3, glm::ivec3>> _changes;
-    bool _everythingChanged { true };
+    struct Changes {
+        std::vector<std::pair<glm::ivec3, glm::ivec3>> boxes;
+        bool everything { true };
+    };
+    std::array<Changes, CHANGE_LOG_COUNT> _changes;
 };
 
 } // namespace terrain

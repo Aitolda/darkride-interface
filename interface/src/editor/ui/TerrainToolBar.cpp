@@ -116,7 +116,8 @@ TerrainToolBar::TerrainToolBar(QWidget* parent) : QToolBar("Terrain", parent) {
     _strength->setSingleStep(5.0);
     _strength->setSuffix(" %");
     _strength->setValue(50.0);
-    addField("Strength", _strength, 0.5, false, "How fast Raise, Lower, Smooth and Flatten work and how fast Dig and Fill go in, and how much Paint lays down in one pass");
+    addField("Strength", _strength, 0.5, false, "How fast Raise, Lower, Smooth and Flatten work and how fast Dig and Fill go in, and how "
+             "much Paint and Paint Voxels lay down in one pass (a voxel holds one material: that share of them takes it)");
 
     _hardness = new QDoubleSpinBox(this);
     _hardness->setRange(0.0, 100.0);

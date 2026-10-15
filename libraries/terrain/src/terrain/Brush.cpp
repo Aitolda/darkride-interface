@@ -30,6 +30,24 @@ const float MEND_SLACK = 0.7f;
 // brush levels hills rather than polishing voxel-sized dents.
 const float SMOOTH_REACH_FRACTION = 0.25f;
 
+// The PCG hash (Jarzynski and Olano, "Hash Functions for GPU Rendering", 2020).
+uint32_t pcgHash(uint32_t value) {
+    const uint32_t state = value * 747796405u + 2891336453u;
+    const uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// A number in [0, 1) for a voxel of a level and a seed, the hash nested over them as the paper does for more than
+// one dimension.
+float voxelChance(const glm::ivec3& point, int level, uint32_t seed) {
+    uint32_t hash = pcgHash(seed);
+    hash = pcgHash((uint32_t)level + hash);
+    hash = pcgHash((uint32_t)point.z + hash);
+    hash = pcgHash((uint32_t)point.y + hash);
+    hash = pcgHash((uint32_t)point.x + hash);
+    return (float)(hash >> 8) * (1.0f / 16777216.0f);
+}
+
 // Replaces every value of the block with the mean of the values within reach of it along each axis (a box, cut off
 // at the block's edges): a running sum along each axis in turn.
 void boxBlur(std::vector<float>& values, const glm::ivec3& size, int reach) {
@@ -274,7 +292,9 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
                                 next.setDistance(glm::mix(distance, region.beforeAt(point), strength * weight));
                                 break;
                             case SculptMode::PaintVoxels:
-                                if (old.isGround()) {
+                                // one material a voxel: a share of the ground voxels, as much as the paint map's coverage
+                                // would rise by, each by chance
+                                if (old.isGround() && voxelChance(point, region.key.level, brush.seed) < strength * weight) {
                                     next.material = brush.material;
                                 }
                                 break;

@@ -40,6 +40,10 @@ namespace {
     const float CUT_MARGIN = 1.0f;          // voxels: a mesh's vertices sit within a voxel of the field's surface, so a hit this near one of the stroke's spheres is on it
     const float MIN_VOXEL_RADIUS = 0.75f;   // a brush smaller than a voxel would change nothing
     const float MIN_PAINT_RADIUS_TEXELS = 0.75f;
+    // Paint lays the paint map where the ground's normal rises at least this far, the middle of the shader's fade
+    // (terrain.slf: PAINT_FACING_LOW 0.3 to PAINT_FACING_HIGH 0.6); on steeper ground, where the map hardly shows,
+    // and below the top surface, it paints the voxels' materials instead
+    const float PAINT_MAP_FACING = 0.45f;
     const int TERRAIN_SEARCH_FRAMES = 30;   // how often the world's terrains are looked for
     const float TERRAIN_SEARCH_RADIUS = 4000.0f;
     const int OUTLINE_SEGMENTS = 48;
@@ -108,6 +112,20 @@ namespace {
 
     bool isBlending(terrain::SculptMode mode) {
         return mode == terrain::SculptMode::Smooth || mode == terrain::SculptMode::Flatten;
+    }
+
+    // A stroke's step leaves its record of chunks with only those it changed: a chunk the same before and after goes
+    // from both (chunks split or merged keep their keys on one side only, so they stay)
+    void keepChangedChunks(TerrainChunks& before, TerrainChunks& after) {
+        for (auto it = before.begin(); it != before.end();) {
+            auto same = after.find(it->first);
+            if (same != after.end() && same->second == it->second) {
+                after.erase(same);
+                it = before.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 
     terrain::SculptMode invert(terrain::SculptMode mode) {
@@ -414,11 +432,12 @@ bool EditorTerrain::beginStroke(const PickRay& ray, bool inverted, QString& refu
     _ray = ray;
     _hasRay = true;
     _strokeMode = inverted ? invert(_brush.mode) : _brush.mode;
-    // Shift swaps Paint and Erase; with Paint Voxels (as its Erase box does) it writes the bottom layer's material
+    // Shift swaps Paint and Erase; with Paint Voxels (as its Erase box does) it writes the bottom layer's material,
+    // as Erase does where it falls through to the voxels
     _erasing = (_brush.mode == terrain::SculptMode::Paint || _brush.mode == terrain::SculptMode::PaintVoxels) &&
                _brush.erase != inverted;
     _strokeMaterial = (uint8_t)glm::clamp(_brush.material, 0, 255);
-    if (_strokeMode == terrain::SculptMode::PaintVoxels && _erasing) {
+    if ((_strokeMode == terrain::SculptMode::PaintVoxels || _strokeMode == terrain::SculptMode::Paint) && _erasing) {
         if (auto entity = terrainEntity(_strokeId)) {
             const std::vector<uint8_t> order = entity->getLayers().order();
             if (!order.empty()) {
@@ -461,17 +480,38 @@ void EditorTerrain::update(float deltaTime) {
         return;         // the pointer is off the terrain: the stroke waits for it to come back
     }
     if (_strokeMode == terrain::SculptMode::Paint) {
-        // the paint map: one pass of the brush, again once the pointer has moved on a little
-        const terrain::PaintBrush brush = paintBrush(*entity, hit);
-        if (_steps > 0 && glm::distance(hit.voxelPoint, _lastStepPoint) < brush.radius * REAPPLY_FRACTION) {
-            showOutline(*entity, hit);
-            return;
-        }
-        captureBeforePaint(*entity, brush);
-        const int changed = terrain::paint(entity->getPaint(), brush, _erasing);
-        if (changed > 0) {
-            _changed += changed;
-            entity->paintEdited();
+        // The paint map is a picture seen from the sky: it shows on the ground the sky sees, where that faces up. On
+        // steep ground, and below the top surface (a cave's floor, the ground under an overhang: terrain::TopSurface),
+        // the stroke paints the voxels' materials instead, the layer's (Erase: the bottom layer's), as Paint Voxels
+        // does, so it shows wherever it lands. The shader draws the same line.
+        entity->updateTopSurface();
+        const glm::vec3 terrainNormal = glm::normalize(hit.normal / entity->getVoxelScale());
+        const bool onMap = terrainNormal.y >= PAINT_MAP_FACING && entity->getTopSurface().isOnTop(hit.voxelPoint);
+        if (onMap) {
+            // the paint map: one pass of the brush, again once the pointer has moved on a little
+            const terrain::PaintBrush brush = paintBrush(*entity, hit);
+            if (_steps > 0 && glm::distance(hit.voxelPoint, _lastStepPoint) < brush.radius * REAPPLY_FRACTION) {
+                showOutline(*entity, hit);
+                return;
+            }
+            captureBeforePaint(*entity, brush);
+            const int changed = terrain::paint(entity->getPaint(), brush, _erasing);
+            if (changed > 0) {
+                _changed += changed;
+                entity->paintEdited();
+            }
+        } else {
+            terrain::Brush brush = voxelBrush(*entity, hit);
+            if (_steps > 0 && glm::distance(hit.voxelPoint, _lastStepPoint) < brush.radius * REAPPLY_FRACTION) {
+                showOutline(*entity, hit);
+                return;
+            }
+            brush.strength = glm::clamp(_brush.strength, 0.0f, 1.0f);
+            brush.seed = _voxelPaintSeed++;
+            captureBefore(*entity, brush);
+            if (terrain::sculpt(entity->getGrid(), brush, terrain::SculptMode::PaintVoxels) > 0) {
+                entity->gridEdited();
+            }
         }
         _lastStepPoint = hit.voxelPoint;
         ++_steps;
@@ -485,7 +525,8 @@ void EditorTerrain::update(float deltaTime) {
             showOutline(*entity, hit);
             return;
         }
-        brush.strength = 1.0f;
+        brush.strength = glm::clamp(_brush.strength, 0.0f, 1.0f);
+        brush.seed = _voxelPaintSeed++;
     } else if (isSphere(_strokeMode)) {
         // Dig and Fill: the sphere starts a radius short of the ground under the pointer, above it along the ground's
         // normal (Fill: below), and moves toward the point under the pointer at the pace the strength sets, no
@@ -556,16 +597,43 @@ void EditorTerrain::endStroke(bool cancel) {
         if (_strokeMode == terrain::SculptMode::Paint) {
             if (cancel) {
                 restorePaint(*entity, _beforePaint);
-            } else if (_changed > 0 && !_beforePaint.empty()) {
-                TerrainPaintBlocks after;
-                const terrain::PaintMap& paint = entity->getPaint();
-                for (const auto& pair : _beforePaint) {
-                    after.emplace(pair.first, paint.copy(pair.second.low, pair.second.low + pair.second.size - 1));
+                if (!_before.empty()) {
+                    restore(*entity, _before);   // the voxels it painted where the map does not show
                 }
-                _undo->pushTerrainPaint((_erasing ? QStringLiteral("Erase") : QStringLiteral("Paint")) + QStringLiteral(" Terrain"),
-                                        _strokeId, _beforePaint, after);
-                entity->paintEdited();
-                markChanged(_strokeId);
+            } else {
+                // one step for the stroke: the paint map's blocks it changed, and the voxels it painted where the map
+                // does not show
+                const QString name = (_erasing ? QStringLiteral("Erase") : QStringLiteral("Paint")) + QStringLiteral(" Terrain");
+                const bool texels = _changed > 0 && !_beforePaint.empty();
+                TerrainChunks voxelsAfter;
+                if (!_before.empty()) {
+                    voxelsAfter = captureAfter(*entity);
+                    keepChangedChunks(_before, voxelsAfter);
+                }
+                const bool voxels = !_before.empty() || !voxelsAfter.empty();
+                if (texels && voxels) {
+                    _undo->stack()->beginMacro(name);
+                }
+                if (texels) {
+                    TerrainPaintBlocks after;
+                    const terrain::PaintMap& paint = entity->getPaint();
+                    for (const auto& pair : _beforePaint) {
+                        after.emplace(pair.first, paint.copy(pair.second.low, pair.second.low + pair.second.size - 1));
+                    }
+                    _undo->pushTerrainPaint(name, _strokeId, _beforePaint, after);
+                    entity->paintEdited();
+                }
+                if (voxels) {
+                    _undo->pushTerrainEdit(name, _strokeId, _before, voxelsAfter);
+                    entity->markCollisionShapeStale();
+                    entity->gridEdited();
+                }
+                if (texels && voxels) {
+                    _undo->stack()->endMacro();
+                }
+                if (texels || voxels) {
+                    markChanged(_strokeId);
+                }
             }
         } else if (cancel) {
             restore(*entity, _before);
@@ -573,15 +641,7 @@ void EditorTerrain::endStroke(bool cancel) {
             // the step keeps what the stroke changed: the chunks that differ, and those split or merged (whose keys
             // are on one side only); a chunk the same before and after is left out of both
             TerrainChunks after = captureAfter(*entity);
-            for (auto it = _before.begin(); it != _before.end();) {
-                auto same = after.find(it->first);
-                if (same != after.end() && same->second == it->second) {
-                    after.erase(same);
-                    it = _before.erase(it);
-                } else {
-                    ++it;
-                }
-            }
+            keepChangedChunks(_before, after);
             if (!_before.empty() || !after.empty()) {
                 const QString name = _strokeMode == terrain::SculptMode::PaintVoxels && _erasing ? QStringLiteral("Erase Voxels")
                                                                                               : modeName(_strokeMode);

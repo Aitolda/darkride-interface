@@ -5,7 +5,8 @@
 //  The sculpt brushes: a sphere in voxel space with a falloff, applied to a grid one step at a time (the tool applies
 //  a step per frame while the mouse is down). Raise and Lower grow and shrink the ground under the brush, Dig and
 //  Fill cut the brush's sphere out of the ground or add it, Flatten pulls the surface toward a height, Smooth blurs
-//  it as wide as a quarter of the radius, PaintVoxels sets the material of the ground voxels. A brush can take its
+//  it as wide as a quarter of the radius, PaintVoxels sets the material of the ground voxels (a voxel holds one, so
+//  at part strength, and in the soft edge, it paints that share of them, each by chance). A brush can take its
 //  shape from a picture instead (BrushMask.h), laid over its square from above: the picture gives the falloff
 //  across the ground and the hardness the softness up and down; Dig and Fill keep their sphere. The brush is
 //  given in grid voxels; the chunks under it are worked each in its own voxels, and a chunk whose voxels are too
@@ -52,6 +53,10 @@ struct Brush {
     // brush's square 2 radii a side and turned by the angle (radians) about the centre
     const BrushMask* mask { nullptr };
     float angle { 0.0f };
+    // PaintVoxels: which ground voxels a step paints where strength times weight is under one. Each takes the material
+    // with that chance, drawn from a hash of its place and this number, so steps with different seeds build the
+    // coverage up as the paint map's steps do (1 - (1 - s)^n after n of them) and the same seed paints the same voxels.
+    uint32_t seed { 0 };
 
     // Round: 1 at the centre, falling smoothly to 0 at the radius. With a picture: the picture's value under the
     // point, times the same falloff along y, so the brush is a column of the picture's shape with soft ends.

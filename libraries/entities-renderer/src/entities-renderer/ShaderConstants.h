@@ -41,6 +41,7 @@
 #define ENTITIES_TEXTURE_TERRAIN_LAYER7 7
 #define ENTITIES_TEXTURE_TERRAIN_PAINT0 8
 #define ENTITIES_TEXTURE_TERRAIN_PAINT1 9
+#define ENTITIES_TEXTURE_TERRAIN_TOP 10      // the chunk column's heights of the ground the sky sees (TopSurface.h)
 #define ENTITIES_TEXTURE_TERRAIN_NORMALS 12   // past the forward variant's skybox (11); its ambient LUT is at 14
 #define ENTITIES_TEXTURE_TERRAIN_MASKS 13
 #define ENTITIES_BUFFER_TERRAIN_LAYERS 1
@@ -61,6 +62,7 @@ enum Texture {
     MirrorPicture = ENTITIES_TEXTURE_MIRROR_PICTURE,
     TerrainLayer0 = ENTITIES_TEXTURE_TERRAIN_LAYER0,
     TerrainPaint0 = ENTITIES_TEXTURE_TERRAIN_PAINT0,
+    TerrainTop = ENTITIES_TEXTURE_TERRAIN_TOP,
     TerrainNormals = ENTITIES_TEXTURE_TERRAIN_NORMALS,
     TerrainMasks = ENTITIES_TEXTURE_TERRAIN_MASKS,
 };

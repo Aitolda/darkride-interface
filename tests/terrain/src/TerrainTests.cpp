@@ -21,6 +21,7 @@
 #include <terrain/Resample.h>
 #include <terrain/SurfaceNets.h>
 #include <terrain/TerrainFile.h>
+#include <terrain/TopSurface.h>
 #include <terrain/VoxelGrid.h>
 
 QTEST_MAIN(TerrainTests)
@@ -2445,4 +2446,123 @@ void TerrainTests::brushMaskShapesTheBrushAndItsOutline() {
     const auto ringCurves = ring.outline(0.5f, 16);
     QCOMPARE((int)ringCurves.size(), 2);
     QVERIFY(BrushMask().outline(0.5f, 16).empty());
+}
+
+void TerrainTests::topSurfaceIsTheGroundTheSkySees() {
+    VoxelGrid grid(glm::ivec3(64, 64, 64));
+    grid.fillBelow(40.5f, 1);
+    std::vector<std::pair<glm::ivec3, glm::ivec3>> boxes;
+    QVERIFY(!grid.takeChanges(boxes));   // the level of detail's log: a new grid has changed everywhere
+    TopSurface top;
+    top.update(grid);   // the first call finds every column
+    QVERIFY(top.allColumnsDirty());
+    top.clearAllColumnsDirty();
+    QVERIFY(std::abs(top.heightAt(glm::ivec2(10, 10)) - 40.5f) < 0.3f);
+    QVERIFY(std::abs(top.heightAt(glm::vec2(10.5f, 20.25f)) - 40.5f) < 0.3f);
+
+    // a cave under the ground: a sphere dug well below it, a roof five voxels thick over it
+    Brush brush;
+    brush.center = glm::vec3(32.0f, 30.0f, 32.0f);
+    brush.radius = 5.0f;
+    QVERIFY(sculpt(grid, brush, SculptMode::Dig) > 0);
+    top.update(grid);
+    QVERIFY(!top.allColumnsDirty());
+    QVERIFY(top.getDirtyColumns().count(glm::ivec2(1, 1)) > 0);
+    top.clearDirtyColumns();
+    QVERIFY(std::abs(top.heightAt(glm::ivec2(32, 32)) - 40.5f) < 0.3f);   // over the cave the ground is still the top
+    QVERIFY(!top.isOnTop(glm::vec3(32.0f, 25.5f, 32.0f)));               // the cave's floor is under it
+    QVERIFY(top.isOnTop(glm::vec3(32.0f, 40.5f, 32.0f)));                // the ground is on it
+    QVERIFY(top.isOnTop(glm::vec3(32.0f, 39.8f, 32.0f)));                // within the tolerance
+    QVERIFY(top.isOnTop(glm::vec3(32.0f, 45.0f, 32.0f)));                // above it
+
+    // a hole through the roof: under it the cave's floor is what the sky sees now. The level of detail takes its own
+    // change log first, and the top surface still gets its edits.
+    brush.center = glm::vec3(32.0f, 38.0f, 32.0f);
+    brush.radius = 4.0f;
+    QVERIFY(sculpt(grid, brush, SculptMode::Dig) > 0);
+    QVERIFY(grid.takeChanges(boxes));
+    QVERIFY(!boxes.empty());
+    top.update(grid);
+    QVERIFY(top.heightAt(glm::ivec2(32, 32)) < 30.0f);
+    QVERIFY(top.isOnTop(glm::vec3(32.0f, top.heightAt(glm::ivec2(32, 32)), 32.0f)));
+    QVERIFY(std::abs(top.heightAt(glm::ivec2(10, 10)) - 40.5f) < 0.3f);   // far from it nothing moved
+    QVERIFY(!top.getDirtyColumns().empty());
+
+    // a tile: the column's heights, with the neighbours' apron around them and the grid's edge repeating past it
+    const int size = TopSurface::getTileSize();
+    std::vector<float> tile;
+    top.fillTile(glm::ivec2(1, 1), tile);
+    QCOMPARE((int)tile.size(), size * size);
+    QCOMPARE(tile[(size_t)PAINT_TILE_APRON * size + PAINT_TILE_APRON], top.heightAt(glm::ivec2(32, 32)));
+    QCOMPARE(tile[0], top.heightAt(glm::ivec2(32 - PAINT_TILE_APRON, 32 - PAINT_TILE_APRON)));
+    top.fillTile(glm::ivec2(0, 0), tile);
+    QCOMPARE(tile[0], top.heightAt(glm::ivec2(0, 0)));   // beyond the grid: the edge column's
+
+    // a column of air all the way down is under every surface
+    VoxelGrid empty(glm::ivec3(32, 32, 32));
+    TopSurface none;
+    none.update(empty);
+    QCOMPARE(none.heightAt(glm::ivec2(5, 5)), NO_GROUND_HEIGHT);
+    QVERIFY(none.isOnTop(glm::vec3(5.0f, 0.0f, 5.0f)));
+
+    // ground up to the grid's top: the height is at the top
+    VoxelGrid full(glm::ivec3(32, 40, 32), Voxel::ground(2));
+    TopSurface high;
+    high.update(full);
+    QVERIFY(high.heightAt(glm::ivec2(3, 3)) >= 39.0f);
+}
+
+void TerrainTests::paintVoxelsPaintsTheStrengthsShareOfTheVoxels() {
+    // a voxel holds one material, so a step at part strength paints that share of the ground voxels under the brush
+    // (each by chance), and steps with new seeds build the share up as the paint map's coverage builds
+    Brush brush;
+    brush.center = glm::vec3(32.0f, 40.5f, 32.0f);
+    brush.radius = 8.0f;
+    brush.hardness = 1.0f;   // the whole radius at its full effect
+    brush.material = 3;
+
+    VoxelGrid full(glm::ivec3(64, 64, 64));
+    full.fillBelow(40.5f, 1);
+    brush.strength = 1.0f;
+    const int all = sculpt(full, brush, SculptMode::PaintVoxels);
+    QVERIFY(all > 500);
+
+    VoxelGrid half(glm::ivec3(64, 64, 64));
+    half.fillBelow(40.5f, 1);
+    brush.strength = 0.5f;
+    brush.seed = 1;
+    const int first = sculpt(half, brush, SculptMode::PaintVoxels);
+    QVERIFY(std::abs((float)first / (float)all - 0.5f) < 0.06f);
+    QCOMPARE(sculpt(half, brush, SculptMode::PaintVoxels), 0);   // the same seed paints the same voxels
+    brush.seed = 2;
+    const int second = sculpt(half, brush, SculptMode::PaintVoxels);
+    QVERIFY(std::abs((float)(first + second) / (float)all - 0.75f) < 0.06f);
+
+    // the soft edge: nearly every voxel near the middle, few near the rim
+    VoxelGrid soft(glm::ivec3(64, 64, 64));
+    soft.fillBelow(40.5f, 1);
+    brush.strength = 1.0f;
+    brush.hardness = 0.0f;
+    brush.seed = 3;
+    QVERIFY(sculpt(soft, brush, SculptMode::PaintVoxels) > 0);
+    int middle = 0, middlePainted = 0, rim = 0, rimPainted = 0;
+    for (int z = 22; z <= 42; ++z) {
+        for (int y = 30; y <= 40; ++y) {
+            for (int x = 22; x <= 42; ++x) {
+                const float distance = glm::length(glm::vec3(x, y, z) - brush.center);
+                const bool painted = soft.get(glm::ivec3(x, y, z)).material == 3;
+                if (distance < 2.0f) {
+                    ++middle;
+                    middlePainted += painted ? 1 : 0;
+                } else if (distance > 6.0f && distance < 8.0f) {
+                    ++rim;
+                    rimPainted += painted ? 1 : 0;
+                }
+            }
+        }
+    }
+    QVERIFY(middle > 0 && rim > 0);
+    QVERIFY((float)middlePainted / (float)middle > 0.8f);
+    QVERIFY((float)rimPainted / (float)rim < 0.2f);
+    QCOMPARE((int)soft.get(glm::ivec3(32, 45, 32)).material, 1);   // air keeps its material
 }

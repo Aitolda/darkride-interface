@@ -53,6 +53,8 @@ private slots:
     void sharesBecomeCoveragesThatDrawTheSame();
     void paintCoversOneLayerAlone();
     void brushMaskShapesTheBrushAndItsOutline();
+    void topSurfaceIsTheGroundTheSkySees();
+    void paintVoxelsPaintsTheStrengthsShareOfTheVoxels();
 };
 
 #endif // hifi_TerrainTests_h
