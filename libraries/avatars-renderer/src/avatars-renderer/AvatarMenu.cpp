@@ -237,17 +237,56 @@ bool AvatarMenu::setParameter(const QString& name, float value) {
     if (found == _parameterIndex.end()) {
         return false;
     }
-    Parameter& parameter = _parameters[found.value()];
+    assign(_parameters[found.value()], value);
+    return true;
+}
+
+QJsonObject AvatarMenu::getSyncedParameters() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    QJsonObject values;
+    for (const Parameter& parameter : _parameters) {
+        if (isSynced(parameter)) {
+            values.insert(parameter.name, parameter.value);
+        }
+    }
+    return values;
+}
+
+void AvatarMenu::setSyncedParameters(const QJsonObject& values) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
+        auto found = _parameterIndex.find(it.key());
+        if (found == _parameterIndex.end() || !isSynced(_parameters[found.value()]) || !it.value().isDouble()) {
+            continue;  // only what the avatar shares: anything else stays as this client has it
+        }
+        const float value = (float)it.value().toDouble();
+        if (std::isfinite(value)) {
+            assign(_parameters[found.value()], value);
+        }
+    }
+}
+
+bool AvatarMenu::isSynced(const Parameter& parameter) {
+    // the built-in parameters the avatar's own client sets (gestures.js) and others' need for the faces that answer them
+    static const QStringList SYNCED_BUILTINS { "GestureLeft", "GestureRight", "GestureLeftWeight", "GestureRightWeight" };
+    return parameter.synced || (parameter.builtin && SYNCED_BUILTINS.contains(parameter.name));
+}
+
+void AvatarMenu::assign(Parameter& parameter, float value) {
     if (parameter.type == "bool") {
         value = value != 0.0f ? 1.0f : 0.0f;
     } else if (parameter.type == "int") {
         value = glm::round(value);
+        if (!parameter.builtin) {
+            value = glm::clamp(value, 0.0f, 255.0f);  // the ranges an avatar's own parameters have
+        }
+    } else if (!parameter.builtin) {
+        value = glm::clamp(value, -1.0f, 1.0f);
     }
     if (parameter.value != value) {
         parameter.value = value;
         _parametersChanged = true;
     }
-    return true;
 }
 
 float AvatarMenu::getParameter(const QString& name, float fallback) const {

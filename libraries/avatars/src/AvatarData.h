@@ -1229,6 +1229,12 @@ public:
 
     void prepareResetTraitInstances();
 
+    // The avatar's menu parameters (avatars-renderer's AvatarMenu): a small JSON object of its synced parameters'
+    // values, which others' clients run the avatar's menu from. Empty when the avatar has no menu.
+    void setAvatarMenuParameters(const QByteArray& parameters);  // the avatar's own client: sent when they change
+    QByteArray getAvatarMenuParameters() const;
+    bool takeAvatarMenuParametersChanged();  // true once after new parameters arrive from the network
+
     QByteArray identityByteArray(bool setIsReplicated = false) const;
 
     QUrl getWireSafeSkeletonModelURL() const;
@@ -1840,6 +1846,10 @@ protected:
     mutable ReadWriteLockable _avatarGrabsLock;
     AvatarGrabDataMap _avatarGrabData;
     bool _avatarGrabDataChanged { false }; // by network
+
+    mutable ReadWriteLockable _avatarMenuParametersLock;
+    QByteArray _avatarMenuParameters;
+    bool _avatarMenuParametersChanged { false }; // by network
 
     mutable ReadWriteLockable _avatarSkeletonDataLock;
     std::vector<AvatarSkeletonTrait::UnpackedJointData> _avatarSkeletonData;

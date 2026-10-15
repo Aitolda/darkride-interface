@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <vector>
 
+#include <QJsonDocument>
 #include <QBuffer>
 
 #include <glm/gtx/norm.hpp>
@@ -903,6 +904,7 @@ void MyAvatar::simulate(float deltaTime, bool inView) {
     // The avatar's menu (an imported avatar's menu and effects layer) sets clothes, shape keys and joint poses
     // before the rig animates.
     updateAvatarMenu(deltaTime);
+    sendAvatarMenuParameters();
 
     // Head's look at blending needs updating
     // before we perform rig animations and IK.
@@ -1234,6 +1236,23 @@ bool MyAvatar::setAvatarParameter(const QString& name, float value) {
 
 float MyAvatar::getAvatarParameter(const QString& name) const {
     return _avatarMenu.getParameter(name);
+}
+
+// Others' clients run the avatar's menu too, from its synced parameters: send those when they change, at most ten
+// times a second while a control moves (the AvatarMenuParameters trait carries them).
+void MyAvatar::sendAvatarMenuParameters() {
+    const QByteArray parameters = _avatarMenu.isActive()
+        ? QJsonDocument(_avatarMenu.getSyncedParameters()).toJson(QJsonDocument::Compact) : QByteArray();
+    if (parameters == getAvatarMenuParameters()) {
+        return;
+    }
+    const quint64 MIN_SEND_INTERVAL = 100 * USECS_PER_MSEC;
+    const quint64 now = usecTimestampNow();
+    if (!parameters.isEmpty() && now - _avatarMenuParametersSent < MIN_SEND_INTERVAL) {
+        return;  // the latest values go on a later frame
+    }
+    setAvatarMenuParameters(parameters);
+    _avatarMenuParametersSent = now;
 }
 
 void MyAvatar::restoreHandAnimation(bool isLeft) {

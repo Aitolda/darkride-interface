@@ -55,6 +55,11 @@ public:
     bool setParameter(const QString& name, float value);
     float getParameter(const QString& name, float fallback = 0.0f) const;
 
+    // The parameters others' clients need, by name: those the avatar marks synced, and the built-in gesture ones. The
+    // avatar's own client sends them (MyAvatar); others' clients set them from what arrives (Avatar).
+    QJsonObject getSyncedParameters() const;
+    void setSyncedParameters(const QJsonObject& values);
+
     // Follows the layers' transitions; true when what the avatar shows changed since the last call.
     bool update(float deltaTime);
     QSet<int> getHiddenParts() const;
@@ -102,6 +107,8 @@ private:
         bool builtin { false };
     };
 
+    static bool isSynced(const Parameter& parameter);
+    void assign(Parameter& parameter, float value);  // with its type's rounding and range; the caller holds the lock
     bool holds(const Transition& transition, float timeInState) const;
     int enterFromEntry(const Layer& layer) const;
     void enter(Layer& layer, int state);

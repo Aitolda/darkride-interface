@@ -176,6 +176,15 @@ public slots:
      */
     QVariantList getSkeleton() const;
 
+    /**jsdoc
+     * Gets one of the avatar's menu parameters as this client has it: what the avatar's owner picked in its menu, for an
+     * avatar imported with one. See {@link MyAvatar.getAvatarParameter}.
+     * @function ScriptAvatar.getAvatarParameter
+     * @param {string} name - The parameter's name.
+     * @returns {number} Its value, or <code>0</code> if the avatar has no such parameter or avatar data aren't available.
+     */
+    float getAvatarParameter(const QString& name) const;
+
 
     /**jsdoc
      * @function ScriptAvatar.getSimulationRate

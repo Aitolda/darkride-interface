@@ -11,6 +11,7 @@
 
 #include "Avatar.h"
 
+#include <QJsonDocument>
 #include <QtCore/QThread>
 #include <glm/gtx/transform.hpp>
 #include <glm/gtx/vector_query.hpp>
@@ -2064,6 +2065,7 @@ void Avatar::updateAvatarMenu(float deltaTime) {
         return;
     }
     const QString url = _skeletonModel->getURL().toString();
+    bool newMenu = false;
     if (url != _avatarMenuModelURL) {
         // a newly loaded avatar: set its menu up, or clear the last one's
         _avatarMenuModelURL = url;
@@ -2073,9 +2075,20 @@ void Avatar::updateAvatarMenu(float deltaTime) {
         }
         const HFMModel& model = _skeletonModel->getHFMModel();
         _avatarMenu.setup(model.humanoid.avatarMenu, model, *_skeletonModel->getRig().getAnimSkeleton());
+        if (!isMyAvatar()) {
+            _avatarMenu.setParameter("IsLocal", 0.0f);
+        }
         _skeletonModel->setOwnBlendshapeOverrides(QHash<int, float>());
         _skeletonModel->getRig().setAvatarMenuPoses({});
+        newMenu = true;
         emit avatarMenuChanged();
+    }
+    // Someone else's avatar follows the parameters its owner's client sends (MyAvatar sends them).
+    if (!isMyAvatar() && (takeAvatarMenuParametersChanged() || newMenu)) {
+        const QByteArray parameters = getAvatarMenuParameters();
+        if (!parameters.isEmpty()) {
+            _avatarMenu.setSyncedParameters(QJsonDocument::fromJson(parameters).object());
+        }
     }
     if (!_avatarMenu.isActive() || !_avatarMenu.update(deltaTime)) {
         return;

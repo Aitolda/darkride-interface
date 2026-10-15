@@ -769,7 +769,8 @@ public:
 
     /**jsdoc
      * Sets one of the avatar's parameters (as the menu does), and the avatar follows: clothes shown or
-     * hidden, shape keys and bones set by its effects layer.
+     * hidden, shape keys and bones set by its effects layer. Others see the change too, in worlds whose avatar
+     * mixer passes avatar menus on.
      * @function MyAvatar.setAvatarParameter
      * @param {string} name - The parameter's name.
      * @param {number} value - Its value; a bool takes 0 or 1.
@@ -2744,6 +2745,7 @@ private:
 
     void simulate(float deltaTime, bool inView) override;
     void saveAvatarUrl();
+    void sendAvatarMenuParameters();
     virtual void render(RenderArgs* renderArgs) override;
     virtual bool shouldRenderHead(const RenderArgs* renderArgs) const override;
     void setShouldRenderLocally(bool shouldRender) { _shouldRender = shouldRender; setEnableMeshVisible(shouldRender); }
@@ -2851,6 +2853,7 @@ private:
     AvatarWeakPointer _lookAtTargetAvatar;
     glm::vec3 _targetAvatarPosition;
     bool _shouldRender { true };
+    quint64 _avatarMenuParametersSent { 0 };
     float _oculusYawOffset;
 
     eyeContactTarget _eyeContactTarget;

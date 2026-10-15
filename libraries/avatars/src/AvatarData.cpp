@@ -2274,6 +2274,8 @@ QByteArray AvatarData::packTraitInstance(AvatarTraits::TraitType traitType, Avat
         traitBinaryData = packAvatarEntityTraitInstance(traitInstanceID);
     } else if (traitType == AvatarTraits::Grab) {
         traitBinaryData = packGrabTraitInstance(traitInstanceID);
+    } else if (traitType == AvatarTraits::AvatarMenuParameters) {
+        traitBinaryData = getAvatarMenuParameters();
     }
 
     return traitBinaryData;
@@ -2291,6 +2293,11 @@ void AvatarData::processTraitInstance(AvatarTraits::TraitType traitType,
         storeAvatarEntityDataPayload(instanceID, traitBinaryData);
     } else if (traitType == AvatarTraits::Grab) {
         updateAvatarGrabData(instanceID, traitBinaryData);
+    } else if (traitType == AvatarTraits::AvatarMenuParameters) {
+        _avatarMenuParametersLock.withWriteLock([&] {
+            _avatarMenuParameters = traitBinaryData;
+            _avatarMenuParametersChanged = true;
+        });
     }
 }
 
@@ -2299,6 +2306,11 @@ void AvatarData::processDeletedTraitInstance(AvatarTraits::TraitType traitType, 
         clearAvatarEntity(instanceID);
     } else if (traitType == AvatarTraits::Grab) {
         clearAvatarGrabData(instanceID);
+    } else if (traitType == AvatarTraits::AvatarMenuParameters) {
+        _avatarMenuParametersLock.withWriteLock([&] {
+            _avatarMenuParameters = QByteArray();
+            _avatarMenuParametersChanged = true;
+        });
     }
 }
 
@@ -2312,7 +2324,43 @@ void AvatarData::prepareResetTraitInstances() {
                 _clientTraitsHandler->markInstancedTraitUpdated(AvatarTraits::Grab, grabID);
             }
         });
+        if (!getAvatarMenuParameters().isEmpty()) {
+            _clientTraitsHandler->markInstancedTraitUpdated(AvatarTraits::AvatarMenuParameters,
+                                                            AvatarTraits::AVATAR_MENU_PARAMETERS_ID);
+        }
     }
+}
+
+void AvatarData::setAvatarMenuParameters(const QByteArray& parameters) {
+    bool changed = false;
+    _avatarMenuParametersLock.withWriteLock([&] {
+        if (parameters != _avatarMenuParameters) {
+            _avatarMenuParameters = parameters.isEmpty() ? QByteArray() : parameters;
+            changed = true;
+        }
+    });
+    if (changed && _clientTraitsHandler) {
+        if (parameters.isEmpty()) {
+            _clientTraitsHandler->markInstancedTraitDeleted(AvatarTraits::AvatarMenuParameters,
+                                                            AvatarTraits::AVATAR_MENU_PARAMETERS_ID);
+        } else {
+            _clientTraitsHandler->markInstancedTraitUpdated(AvatarTraits::AvatarMenuParameters,
+                                                            AvatarTraits::AVATAR_MENU_PARAMETERS_ID);
+        }
+    }
+}
+
+QByteArray AvatarData::getAvatarMenuParameters() const {
+    return _avatarMenuParametersLock.resultWithReadLock<QByteArray>([&] { return _avatarMenuParameters; });
+}
+
+bool AvatarData::takeAvatarMenuParametersChanged() {
+    bool changed = false;
+    _avatarMenuParametersLock.withWriteLock([&] {
+        changed = _avatarMenuParametersChanged;
+        _avatarMenuParametersChanged = false;
+    });
+    return changed;
 }
 
 QByteArray AvatarData::identityByteArray(bool setIsReplicated) const {
