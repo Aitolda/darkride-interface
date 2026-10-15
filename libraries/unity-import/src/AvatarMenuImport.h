@@ -40,7 +40,7 @@ namespace avatarimport {
 // - layers: {"name", "default" (state index), "entry" and "anyState" (transitions), "states": [{"name",
 //   "writeDefaults", "effect", "transitions"}]}; a transition is {"to" (state index, -1 for the exit), "conditions":
 //   [[parameter, mode, threshold]] with mode "if", "ifNot", "greater", "less", "equals", "notEqual", "exitTime" (null
-//   or the normalized time), "duration" (seconds)}. An effect is what the state's clip sets at its first frame:
+//   or the normalized time), "duration" (seconds; the engine blends what the transition changes over it)}. An effect is what the state's clip sets at its first frame:
 //   {"active": [[object, bool]], "blendshapes": {name: 0 to 1}, "joints": {name: {"translation", "rotation",
 //   "scale"}}} (only the parts it animates, in the engine's frame).
 // - base: each property's value before any layer writes (for states that write defaults).

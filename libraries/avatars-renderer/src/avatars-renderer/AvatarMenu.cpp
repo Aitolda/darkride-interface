@@ -71,10 +71,18 @@ void AvatarMenu::clear() {
     _objectParts.clear();
     _objectActive.clear();
     _baseObjectActive.clear();
+    _shownObjectActive.clear();
     _blendshapes.clear();
     _baseBlendshapes.clear();
+    _shownBlendshapes.clear();
     _joints.clear();
     _baseJoints.clear();
+    _shownJoints.clear();
+    _restJoints.clear();
+    _objectFades.clear();
+    _blendshapeFades.clear();
+    _jointFades.clear();
+    _fadeDuration = 0.0f;
     _changed = true;
     _parametersChanged = false;
 }
@@ -150,6 +158,7 @@ void AvatarMenu::setup(const QJsonObject& data, const hfm::Model& model, const A
                 transition.conditions.push_back(parsed);
             }
             transition.hasExitTime = t.value("exitTime").isDouble();
+            transition.duration = (float)t.value("duration").toDouble();
             transition.exitTime = (float)t.value("exitTime").toDouble();
             if (transition.conditions.empty() && !transition.hasExitTime) {
                 continue;  // would fire every frame
@@ -207,10 +216,20 @@ void AvatarMenu::setup(const QJsonObject& data, const hfm::Model& model, const A
         _layers.push_back(layer);
     }
 
-    // Start as the animator starts: the base, then each layer entering its first state.
-    _objectActive = _baseObjectActive;
-    _blendshapes = _baseBlendshapes;
-    _joints = _baseJoints;
+    // Start as the animator starts: the base, then each layer entering its first state, all at once.
+    for (const Layer& layer : _layers) {
+        for (int joint : layer.animatedJoints) {
+            const AnimPose& rest = skeleton.getRelativeDefaultPose(joint);
+            JointPose pose;
+            pose.translation = rest.trans();
+            pose.rotation = rest.rot();
+            pose.scale = rest.scale();
+            _restJoints.insert(joint, pose);
+        }
+    }
+    _objectActive = _shownObjectActive = _baseObjectActive;
+    _blendshapes = _shownBlendshapes = _baseBlendshapes;
+    _joints = _shownJoints = _baseJoints;
     for (Layer& layer : _layers) {
         enter(layer, enterFromEntry(layer));
     }
@@ -358,36 +377,27 @@ void AvatarMenu::enter(Layer& layer, int stateIndex) {
         }
         for (int object : objects) {
             if (_objectActive[object] != _baseObjectActive[object]) {
-                _objectActive[object] = _baseObjectActive[object];
-                _changed = true;
+                setObject(object, _baseObjectActive[object]);
             }
         }
         for (int shape : shapes) {
             const float value = _baseBlendshapes.value(shape, 0.0f);
             if (_blendshapes.value(shape, -1.0f) != value) {
-                _blendshapes[shape] = value;
-                _changed = true;
+                setBlendshape(shape, value);
             }
         }
         for (int joint : joints) {
-            if (_baseJoints.contains(joint)) {
-                _joints[joint] = _baseJoints[joint];
-            } else {
-                _joints.remove(joint);
-            }
-            _changed = true;
+            setJoint(joint, _baseJoints.contains(joint) ? &_baseJoints[joint] : nullptr);
         }
     }
     for (const auto& a : state.effect.active) {
         if (_objectActive[a.first] != a.second) {
-            _objectActive[a.first] = a.second;
-            _changed = true;
+            setObject(a.first, a.second);
         }
     }
     for (const auto& b : state.effect.blendshapes) {
         if (_blendshapes.value(b.first, -1.0f) != b.second) {
-            _blendshapes[b.first] = b.second;
-            _changed = true;
+            setBlendshape(b.first, b.second);
         }
     }
     for (const auto& j : state.effect.joints) {
@@ -405,9 +415,114 @@ void AvatarMenu::enter(Layer& layer, int stateIndex) {
             pose.scale = j.second.scale;
         }
         if (!_joints.contains(j.first) || !samePose(_joints[j.first], pose)) {
-            _joints[j.first] = pose;
+            setJoint(j.first, &pose);
+        }
+    }
+}
+
+void AvatarMenu::setObject(int object, bool active) {
+    _objectActive[object] = active;
+    if (_fadeDuration > 0.0f && _shownObjectActive[object] != active) {
+        Fade fade;
+        fade.duration = _fadeDuration;
+        _objectFades[object] = fade;
+    } else {
+        _objectFades.remove(object);
+        if (_shownObjectActive[object] != active) {
+            _shownObjectActive[object] = active;
             _changed = true;
         }
+    }
+}
+
+void AvatarMenu::setBlendshape(int shape, float value) {
+    _blendshapes[shape] = value;
+    const float shown = _shownBlendshapes.value(shape, _baseBlendshapes.value(shape, 0.0f));
+    if (_fadeDuration > 0.0f && shown != value) {
+        Fade fade;
+        fade.from = shown;
+        fade.duration = _fadeDuration;
+        _blendshapeFades[shape] = fade;
+    } else {
+        _blendshapeFades.remove(shape);
+        if (_shownBlendshapes.value(shape, -1.0f) != value) {
+            _shownBlendshapes[shape] = value;
+            _changed = true;
+        }
+    }
+}
+
+void AvatarMenu::setJoint(int joint, const JointPose* pose) {
+    if (pose) {
+        _joints[joint] = *pose;
+    } else {
+        _joints.remove(joint);
+    }
+    const bool shown = _shownJoints.contains(joint);
+    if (_fadeDuration > 0.0f && (shown || pose)) {
+        Fade fade;
+        fade.fromPose = shown ? _shownJoints[joint] : JointPose();
+        fade.duration = _fadeDuration;
+        _jointFades[joint] = fade;
+    } else {
+        _jointFades.remove(joint);
+        if (pose) {
+            _shownJoints[joint] = *pose;
+        } else {
+            _shownJoints.remove(joint);
+        }
+        _changed = true;
+    }
+}
+
+void AvatarMenu::advanceFades(float deltaTime) {
+    for (auto it = _objectFades.begin(); it != _objectFades.end();) {
+        it->elapsed += deltaTime;
+        if (it->elapsed < 0.5f * it->duration) {
+            ++it;
+            continue;
+        }
+        _shownObjectActive[it.key()] = _objectActive[it.key()];  // shown or hidden halfway through
+        _changed = true;
+        it = _objectFades.erase(it);
+    }
+    for (auto it = _blendshapeFades.begin(); it != _blendshapeFades.end();) {
+        it->elapsed += deltaTime;
+        const float t = glm::min(1.0f, it->elapsed / it->duration);
+        _shownBlendshapes[it.key()] = glm::mix(it->from, _blendshapes.value(it.key(), 0.0f), t);
+        _changed = true;
+        it = t >= 1.0f ? _blendshapeFades.erase(it) : std::next(it);
+    }
+    for (auto it = _jointFades.begin(); it != _jointFades.end();) {
+        it->elapsed += deltaTime;
+        const float t = glm::min(1.0f, it->elapsed / it->duration);
+        const int joint = it.key();
+        auto target = _joints.find(joint);
+        _changed = true;
+        if (t >= 1.0f) {
+            if (target != _joints.end()) {
+                _shownJoints[joint] = target.value();
+            } else {
+                _shownJoints.remove(joint);
+            }
+            it = _jointFades.erase(it);
+            continue;
+        }
+        // a part only one end sets blends from or to the skeleton's own
+        const JointPose rest = _restJoints.value(joint);
+        const JointPose& from = it->fromPose;
+        const JointPose to = target != _joints.end() ? target.value() : JointPose();
+        JointPose pose;
+        pose.hasTranslation = from.hasTranslation || to.hasTranslation;
+        pose.translation = glm::mix(from.hasTranslation ? from.translation : rest.translation,
+                                    to.hasTranslation ? to.translation : rest.translation, t);
+        pose.hasRotation = from.hasRotation || to.hasRotation;
+        pose.rotation = glm::slerp(from.hasRotation ? from.rotation : rest.rotation,
+                                   to.hasRotation ? to.rotation : rest.rotation, t);
+        pose.hasScale = from.hasScale || to.hasScale;
+        pose.scale = glm::mix(from.hasScale ? from.scale : rest.scale, to.hasScale ? to.scale : rest.scale, t);
+        _shownJoints[joint] = pose;
+        ++it;
     }
 }
 
@@ -434,9 +549,12 @@ bool AvatarMenu::update(float deltaTime) {
             if (!next) {
                 break;
             }
+            _fadeDuration = next->duration;
             enter(layer, next->to >= 0 ? next->to : enterFromEntry(layer));
+            _fadeDuration = 0.0f;
         }
     }
+    advanceFades(deltaTime);
     _parametersChanged = false;
     const bool changed = _changed;
     _changed = false;
@@ -446,8 +564,8 @@ bool AvatarMenu::update(float deltaTime) {
 QSet<int> AvatarMenu::getHiddenParts() const {
     std::lock_guard<std::mutex> lock(_mutex);
     QSet<int> hidden;
-    for (int object = 0; object < (int)_objectActive.size(); object++) {
-        if (!_objectActive[object]) {
+    for (int object = 0; object < (int)_shownObjectActive.size(); object++) {
+        if (!_shownObjectActive[object]) {
             for (int part : _objectParts[object]) {
                 hidden.insert(part);
             }
@@ -458,10 +576,10 @@ QSet<int> AvatarMenu::getHiddenParts() const {
 
 QHash<int, float> AvatarMenu::getOwnBlendshapes() const {
     std::lock_guard<std::mutex> lock(_mutex);
-    return _blendshapes;
+    return _shownBlendshapes;
 }
 
 QHash<int, AvatarMenu::JointPose> AvatarMenu::getJointPoses() const {
     std::lock_guard<std::mutex> lock(_mutex);
-    return _joints;
+    return _shownJoints;
 }

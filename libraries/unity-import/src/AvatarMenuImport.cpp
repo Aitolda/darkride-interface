@@ -361,7 +361,10 @@ AvatarMenuData avatarMenuData(const unity::Package& package, const QVariantMap& 
                         { "to", to },
                         { "conditions", conditions },
                         { "exitTime", exitTime ? QJsonValue(unity::toNumber(t->fields.value("m_ExitTime"), 1.0)) : QJsonValue() },
-                        { "duration", unity::toNumber(t->fields.value("m_TransitionDuration")) },
+                        // seconds; a duration relative to the clip counts as none, the effects layer's clips being a
+                        // frame or two long
+                        { "duration", unity::toNumber(t->fields.value("m_HasFixedDuration"), 1.0) != 0.0
+                                            ? unity::toNumber(t->fields.value("m_TransitionDuration")) : 0.0 },
                     });
                 }
                 return transitions;

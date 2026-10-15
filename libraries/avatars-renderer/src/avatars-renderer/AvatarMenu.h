@@ -32,8 +32,9 @@ class AnimSkeleton;
 // .fst's "avatarMenu" line (the avatar import writes it; unity-import's AvatarMenuImport.h has the
 // format). Each layer follows its transitions as the parameters change, and each state's effect sets what the avatar's
 // animator would: objects shown or hidden, the model's own blend shapes, and joints moved, turned or scaled. A state
-// that writes defaults first puts back what its layer animates. Effects are applied at once (a transition's blend
-// time is not yet), and exit times count from entering the state.
+// that writes defaults first puts back what its layer animates. What a transition changes moves there over its
+// duration: blend shapes and joints blend, an object shows or hides halfway through. Exit times count from entering
+// the state.
 class AvatarMenu {
 public:
     struct JointPose {
@@ -79,6 +80,7 @@ private:
         std::vector<Condition> conditions;
         bool hasExitTime { false };
         float exitTime { 0.0f };
+        float duration { 0.0f };  // seconds what it changes takes
     };
     struct Effect {
         std::vector<std::pair<int, bool>> active;            // object -> shown
@@ -114,6 +116,11 @@ private:
     bool holds(const Transition& transition, float timeInState) const;
     int enterFromEntry(const Layer& layer) const;
     void enter(Layer& layer, int state);
+    // what the layers set, which what the avatar shows follows over the entering transition's duration
+    void setObject(int object, bool active);
+    void setBlendshape(int shape, float value);
+    void setJoint(int joint, const JointPose* pose);  // nullptr: none of the layers' poses
+    void advanceFades(float deltaTime);
 
     mutable std::mutex _mutex;
     QJsonObject _menu;
@@ -122,10 +129,19 @@ private:
     QHash<QString, int> _parameterIndex;
     std::vector<Layer> _layers;
     std::vector<std::vector<int>> _objectParts;
-    // what the avatar shows now, and before any layer wrote
-    std::vector<bool> _objectActive, _baseObjectActive;
-    QHash<int, float> _blendshapes, _baseBlendshapes;
-    QHash<int, JointPose> _joints, _baseJoints;
+    // what the layers set now, before any layer wrote, and what the avatar shows on its way to what the layers set
+    std::vector<bool> _objectActive, _baseObjectActive, _shownObjectActive;
+    QHash<int, float> _blendshapes, _baseBlendshapes, _shownBlendshapes;
+    QHash<int, JointPose> _joints, _baseJoints, _shownJoints;
+    QHash<int, JointPose> _restJoints;  // the skeleton's own local poses, where a joint's fade starts or ends unset
+    struct Fade {
+        float from { 0.0f };  // a blend shape's weight when the fade began
+        JointPose fromPose;   // a joint's pose when the fade began
+        float elapsed { 0.0f };
+        float duration { 0.0f };
+    };
+    QHash<int, Fade> _objectFades, _blendshapeFades, _jointFades;
+    float _fadeDuration { 0.0f };  // the duration of the transition being entered
     bool _changed { false };
     bool _parametersChanged { false };
 };
