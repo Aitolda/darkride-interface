@@ -13,6 +13,8 @@
 #ifndef hifi_AssetsPanel_h
 #define hifi_AssetsPanel_h
 
+#include <functional>
+
 #include <QtCore/QHash>
 #include <QtCore/QList>
 #include <QtCore/QSet>
@@ -30,6 +32,7 @@ class QAbstractItemDelegate;
 class QComboBox;
 class QHBoxLayout;
 class QHeaderView;
+class QKeyEvent;
 class QLabel;
 class QLineEdit;
 class QListView;
@@ -102,6 +105,8 @@ public:
     void setSort(Column column, bool descending);
     // build mode on: the listing is fetched, and again after every change; off: nothing is fetched
     void setActive(bool active);
+    // where the editor's own keys go when pressed in the panel (true: taken)
+    void setKeyFallback(std::function<bool(QKeyEvent*)> fallback) { _keyFallback = std::move(fallback); }
     UserFiles* files() const { return _files; }
     QString folder() const { return _folder; }
     void setFolder(const QString& folderPath);
@@ -177,6 +182,7 @@ private:
     QTimer _searchTimer;
     QTimer _thumbnailTimer;
     QTimer _refreshTimer;
+    std::function<bool(QKeyEvent*)> _keyFallback;
     bool _active { false };
     bool _updating { false };
     int _uploadsActive { 0 };

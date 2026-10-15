@@ -531,6 +531,10 @@ void Editor::createPanels() {
     connect(_assets, &AssetsPanel::status, this, [this](const QString& text, int clearAfterMs) {
         setStatus(text, clearAfterMs);
     });
+    // the tools, the handle space, Frame and V work from the panel too
+    _assets->setKeyFallback([this](QKeyEvent* event) {
+        return event->type() == QEvent::KeyPress ? handleKeyPress(event) : handleKeyRelease(event);
+    });
 
     _toolBar = new EditorToolBar(window);
     _toolBar->setGridChecked(_gridVisible);

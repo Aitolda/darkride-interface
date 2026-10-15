@@ -402,6 +402,8 @@ protected:
         qCDebug(interfaceapp) << "Assets: dragged" << count << "items for" << timer.elapsed() << "ms";
     }
 
+    void keyboardSearch(const QString&) override {}   // the search box searches; letters go to the editor's keys
+
     void updateGeometries() override {
         if (_header && !_recursing) {
             _recursing = true;
@@ -420,6 +422,13 @@ private:
     bool _pressedOnItem { false };
     bool _dragDone { false };
     bool _recursing { false };
+};
+
+// The folder tree: a QTreeView whose letters are not a type-ahead search, so they can reach the editor's keys.
+class AssetTreeView : public QTreeView {
+public:
+    explicit AssetTreeView(QWidget* parent = nullptr) : QTreeView(parent) {}
+    void keyboardSearch(const QString&) override {}
 };
 
 // --- AssetItemModel -----------------------------------------------------------------------------
@@ -571,7 +580,7 @@ AssetsPanel::AssetsPanel(QWidget* parent) : QDockWidget("Assets", parent) {
     auto splitter = new QSplitter(Qt::Horizontal, body);
     splitter->setChildrenCollapsible(false);
     _treeModel = new AssetItemModel(this);
-    _tree = new QTreeView(splitter);
+    _tree = new AssetTreeView(splitter);
     _tree->setObjectName("EditorAssetsTree");
     _tree->setModel(_treeModel);
     _tree->setHeaderHidden(true);
@@ -618,6 +627,7 @@ AssetsPanel::AssetsPanel(QWidget* parent) : QDockWidget("Assets", parent) {
     _grid->setContextMenuPolicy(Qt::CustomContextMenu);
     _grid->installEventFilter(this);
     _grid->viewport()->installEventFilter(this);
+    _tree->installEventFilter(this);   // only now: the filter asks the grid for its viewport
     _iconDelegate = _grid->itemDelegate();
     _detailsDelegate = new AssetDetailsDelegate(this);
     // the Details view's header: the columns, each clicked to sort by it
@@ -1194,18 +1204,34 @@ void AssetsPanel::requestThumbnails() {
 }
 
 bool AssetsPanel::eventFilter(QObject* watched, QEvent* event) {
+    if (!_grid || !_tree) {
+        return QDockWidget::eventFilter(watched, event);
+    }
     if (watched == _grid->viewport() && event->type() == QEvent::Resize) {
         placeEmptyNote();
         _thumbnailTimer.start();
     }
-    if (watched == _grid && event->type() == QEvent::KeyPress) {
+    bool aView = watched == _grid || watched == _tree;
+    if (aView && (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease)) {
         // a name being typed in place has its own editor, which keeps its keys
         QWidget* focus = QApplication::focusWidget();
-        if (focus && focus != _grid && _grid->isAncestorOf(focus)) {
+        auto view = static_cast<QWidget*>(watched);
+        if (focus && focus != view && view->isAncestorOf(focus)) {
             return QDockWidget::eventFilter(watched, event);
         }
         auto keyEvent = static_cast<QKeyEvent*>(event);
         bool command = keyEvent->modifiers().testFlag(Qt::ControlModifier) || keyEvent->modifiers().testFlag(Qt::MetaModifier);
+        // the editor's own keys (the tools, the handle space, Frame, vertex snapping while V is held) work from
+        // here too, as the panel has no use for them
+        static const QSet<int> EDITOR_KEYS { Qt::Key_Q, Qt::Key_W, Qt::Key_E, Qt::Key_R, Qt::Key_T, Qt::Key_X, Qt::Key_Z,
+                                             Qt::Key_F, Qt::Key_V, Qt::Key_1, Qt::Key_2, Qt::Key_3,
+                                             Qt::Key_BracketLeft, Qt::Key_BracketRight };
+        if (!command && EDITOR_KEYS.contains(keyEvent->key()) && _keyFallback && _keyFallback(keyEvent)) {
+            return true;
+        }
+        if (watched != _grid || event->type() != QEvent::KeyPress) {
+            return QDockWidget::eventFilter(watched, event);
+        }
         switch (keyEvent->key()) {
             case Qt::Key_Return:
             case Qt::Key_Enter:
@@ -1332,8 +1358,7 @@ void AssetsPanel::deleteFiles(const QList<const UserFile*>& files) {
             question += QString(" The %1 hold %2 files.").arg(folders == 1 ? "folder" : "folders").arg(inside);
         }
     }
-    QMessageBox box(QMessageBox::Warning, "Delete", question + "\n\nEvery world that uses them will lose them. This cannot be undone.",
-                    QMessageBox::Cancel, this);
+    QMessageBox box(window());
     QPushButton* deleteButton = box.addButton("Delete", QMessageBox::DestructiveRole);
     box.setDefaultButton(QMessageBox::Cancel);
     box.exec();
@@ -1548,7 +1573,7 @@ void AssetsPanel::onDropped(const QMimeData* data, const QString& folderPath) {
 
 void AssetsPanel::showGridMenu(const QPoint& globalPos) {
     QList<const UserFile*> files = selectedFiles();
-    QMenu menu(this);
+    QMenu menu;   // not a child of the dock: its style sheet would paint over the menu's highlight
     if (!files.isEmpty()) {
         const UserFile* one = files.size() == 1 ? files.first() : nullptr;
         bool anyFile = false;
@@ -1610,7 +1635,7 @@ void AssetsPanel::showGridMenu(const QPoint& globalPos) {
 void AssetsPanel::showTreeMenu(const QPoint& globalPos) {
     const UserFile* folder = treeFolderAt(_tree->currentIndex());
     QString path = folder ? folder->path : QStringLiteral("/");
-    QMenu menu(this);
+    QMenu menu;   // not a child of the dock: its style sheet would paint over the menu's highlight
     menu.addAction("New Folder", this, [this, path] { newFolder(path); });
     if (folder && path != QStringLiteral("/")) {
         menu.addAction("Rename", this, [this, path] {
