@@ -19,6 +19,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QPair>
 #include <QtCore/QString>
+#include <QtCore/QStringList>
 #include <QtCore/QVector>
 #include <QtNetwork/QNetworkAccessManager>
 
@@ -65,6 +66,14 @@ public:
     QString freeName(const QString& folderPath, const QString& wanted) const;
     qint64 usedSize() const { return _usedSize; }
     qint64 maxSize() const { return _maxSize; }
+    // where the user's files are by path: "<files host>/<username>", from the listing
+    QString baseUrl() const { return _baseUrl; }
+    // the text with every link to one of the user's files by its path (<files host>/<username>/<path>, with any query
+    // or fragment kept) replaced by the file's stable link, from the listing (Build > Use Stable Links). `rewritten`
+    // counts the links replaced; `missing` gathers, once each, the path links to the user's files the listing has no
+    // file for (moved, renamed or deleted since; the files host still follows a moved file's former paths). Links to
+    // other users' files, stable links and private tea:// links are left as they are.
+    QString withStableLinks(const QString& text, int& rewritten, QStringList& missing) const;
 
 public slots:
     // fetches the listing (and the quota); nothing happens while one is on its way
@@ -79,6 +88,7 @@ public slots:
 signals:
     void loadingChanged(bool loading);
     void listed();                       // the listing has arrived, or was dropped (clear)
+    void listingFailed(const QString& why);   // the listing could not be fetched (failed says so too)
     void quotaChanged();                 // usedSize and maxSize are known
     // an operation has succeeded (a listing follows) or failed, in words for the status bar
     void changed(const QString& what);

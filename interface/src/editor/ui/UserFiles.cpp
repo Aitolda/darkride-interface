@@ -15,6 +15,7 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QSet>
 #include <QtCore/QUrl>
 #include <QtNetwork/QNetworkReply>
@@ -122,6 +123,67 @@ bool UserFiles::isLoggedIn() {
 const UserFile* UserFiles::find(const QString& path) const {
     auto found = _byPath.find(path);
     return found == _byPath.end() ? nullptr : &_files[*found];
+}
+
+QString UserFiles::withStableLinks(const QString& text, int& rewritten, QStringList& missing) const {
+    if (_baseUrl.isEmpty() || !text.contains(QStringLiteral("://"))) {
+        return text;
+    }
+    const QUrl base(_baseUrl);
+    const QString host = base.host().toLower();
+    QString own = base.path(QUrl::FullyDecoded);   // "/<username>/": the user's files on the host
+    if (!own.endsWith('/')) {
+        own += '/';
+    }
+    // a link runs to the first space, quote or angle bracket: as links sit in JSON, in scripts and in plain text
+    static const QRegularExpression LINK(QStringLiteral("https?://[^\\s\"'<>\\\\]+"), QRegularExpression::CaseInsensitiveOption);
+    static const QString TRAILING = QStringLiteral(".,;:!?)]}");
+    QString result;
+    int done = 0;   // the text up to here is in result
+    auto matches = LINK.globalMatch(text);
+    while (matches.hasNext()) {
+        const QRegularExpressionMatch match = matches.next();
+        QString link = match.captured(0);
+        const UserFile* file = nullptr;
+        QUrl url;
+        bool ours = false;
+        // punctuation after a link in a sentence is not part of it: tried without it when the link names nothing
+        while (true) {
+            url = QUrl(link, QUrl::TolerantMode);
+            const QString path = url.path(QUrl::FullyDecoded);
+            ours = url.isValid() && url.host().toLower() == host && path.startsWith(own, Qt::CaseInsensitive);
+            if (ours) {
+                file = find(path.mid(own.length() - 1));   // "/images/a.png"
+            }
+            if ((ours && file) || link.isEmpty() || !TRAILING.contains(link.back())) {
+                break;
+            }
+            link.chop(1);
+        }
+        if (!ours || (file && file->folder)) {
+            continue;   // another host, another user's files, a stable link already (<files host>/f/<id>/...), a folder
+        }
+        if (!file || file->url.isEmpty()) {
+            if (!missing.contains(link)) {
+                missing << link;
+            }
+            continue;
+        }
+        QString stable = file->url;
+        if (url.hasQuery()) {
+            stable += '?' + url.query(QUrl::FullyEncoded);
+        }
+        if (url.hasFragment()) {
+            stable += '#' + url.fragment(QUrl::FullyEncoded);
+        }
+        result += text.mid(done, match.capturedStart(0) - done) + stable;
+        done = match.capturedStart(0) + link.length();
+        ++rewritten;
+    }
+    if (done == 0) {
+        return text;
+    }
+    return result + text.mid(done);
 }
 
 QVector<const UserFile*> UserFiles::childrenOf(const QString& folderPath) const {
@@ -256,6 +318,7 @@ void UserFiles::onListing(QNetworkReply* reply) {
         QString why = errorText(reply);
         qCWarning(interfaceapp) << "My Files listing failed:" << why;
         emit failed("Could not list your files: " + why);
+        emit listingFailed(why);
         return;
     }
     QJsonObject listing = QJsonDocument::fromJson(reply->readAll()).object();

@@ -355,6 +355,12 @@ QToolBar#EditorTerrainBar QLabel#EditorHint {
     color: #ffffff;
     font-weight: bold;
 }
+/* a picture dragged over a row (from the Assets panel): the layer that will take it as its texture */
+#EditorTerrainLayerRow[dropTarget="true"] {
+    background: #3a6f9c;
+    border: 1px solid #8cc4f0;
+    border-radius: 3px;
+}
 
 /* the Assets panel along the bottom: My Files as a folder tree beside a grid of the folder's contents */
 #EditorAssets {

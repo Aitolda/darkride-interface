@@ -61,6 +61,7 @@ namespace MenuOption {
     const QString BuildMode = "Build Mode";
     const QString BuildRedo = "Redo";
     const QString BuildResetPanels = "Reset Panels";
+    const QString BuildUseStableLinks = "Use Stable Links";
     const QString BuildUndo = "Undo";
     const QString CalibrateCamera = "Calibrate Camera";
     const QString CenterPlayerInView = "Center Player In View";

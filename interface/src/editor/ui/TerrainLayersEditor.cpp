@@ -13,9 +13,12 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QMimeData>
 #include <QtCore/QPointer>
 #include <QtCore/QSet>
 #include <QtCore/QUrl>
+#include <QtGui/QDragEnterEvent>
+#include <QtGui/QDropEvent>
 #include <QtGui/QPainter>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
@@ -86,6 +89,34 @@ namespace {
         painter.drawRect(0, 0, pixels - 1, pixels - 1);
         painter.end();
         return swatch;
+    }
+
+    // the picture in what is dragged: the first web address naming a picture file, as a file from the Assets panel
+    // (its stable link) or a picture from a browser does; a file from Finder is not taken here, it goes into My Files
+    // through the Assets panel first
+    QUrl droppedPicture(const QMimeData* mime) {
+        static const QStringList PICTURE_SUFFIXES { "png", "jpg", "jpeg", "webp", "bmp", "gif", "tga", "tif", "tiff", "ktx", "exr", "hdr" };
+        for (const QUrl& url : mime->urls()) {
+            if (url.scheme() != QStringLiteral("http") && url.scheme() != QStringLiteral("https")) {
+                continue;
+            }
+            const QString path = url.path();
+            const QString suffix = path.mid(path.lastIndexOf('.') + 1).toLower();
+            if (path.contains('.') && PICTURE_SUFFIXES.contains(suffix)) {
+                return url;
+            }
+        }
+        return QUrl();
+    }
+
+    // a drop taken as a copy where the drag allows it: a move would have the Assets panel take the item out of its view
+    void acceptCopy(QDropEvent* event) {
+        if (event->possibleActions() & Qt::CopyAction) {
+            event->setDropAction(Qt::CopyAction);
+            event->accept();
+        } else {
+            event->acceptProposedAction();
+        }
     }
 
     QPixmap framed(const QPixmap& picture, int pixels) {
@@ -169,6 +200,7 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
         }
     });
     connect(_list->model(), &QAbstractItemModel::rowsMoved, this, [this] { dragReordered(); });
+    _list->viewport()->installEventFilter(this);   // a picture dropped on a row: that layer's colour texture
     bodyLayout->addWidget(_list);
 
     // the buttons under it
@@ -269,8 +301,8 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
     addRow(new QLabel("Material", _fields), _material);
 
     _url = new QLineEdit(_fields);
-    _url->setPlaceholderText("https://… a colour texture (none draws the plain colour)");
-    _url->setToolTip("The layer's colour texture, by URL; empty draws the plain colour");
+    _url->setPlaceholderText("https://… (none draws the plain colour)");
+    _url->setToolTip("The layer's base map: its colour texture, by URL; empty draws the plain colour");
     connect(_url, &QLineEdit::editingFinished, this, [this] {
         auto layer = selectedLayer();
         if (_updating || !layer || !_url->isModified()) {
@@ -278,9 +310,11 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
         }
         layer->materialURL = _url->text().trimmed().toStdString();
         _url->setModified(false);
-        commit("Layer Material");
+        commit("Layer Base Map");
     });
-    addRow(new QLabel("URL", _fields), _url);
+    addRow(new QLabel("Base Map", _fields), _url);
+    _mapFields.push_back({ _url, "Layer Base Map", [](terrain::Layer& layer, const std::string& url) { layer.materialURL = url; } });
+    _url->installEventFilter(this);
 
     // the other maps, by URL: one line each, applied when editing ends
     auto mapField = [&](QLineEdit*& edit, const char* label, const char* tooltip, const char* undoText,
@@ -300,8 +334,10 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
             commit(text);
         });
         addRow(new QLabel(label, _fields), edit);
+        _mapFields.push_back({ edit, text, apply });
+        edit->installEventFilter(this);   // a picture dropped on it: the map
     };
-    mapField(_normalURL, "Normal map", "The layer's normal map, tangent space with green up (OpenGL's way); none leaves the ground's own normal",
+    mapField(_normalURL, "Normal Map", "The layer's normal map, tangent space with green up (OpenGL's way); none leaves the ground's own normal",
              "Layer Normal Map", [](terrain::Layer& layer, const std::string& url) { layer.normalURL = url; });
 
     _useNormal = new QCheckBox(_fields);
@@ -314,7 +350,7 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
         layer->useNormal = on;
         commit(on ? "Normal Map On" : "Normal Map Off");
     });
-    addRow(new QLabel("Normal map on", _fields), _useNormal);
+    addRow(new QLabel("Normal Map On", _fields), _useNormal);
 
     auto number = [&](NumberEditor*& editor, const PropertySpec& spec, const char* undoText, std::function<void(terrain::Layer&, double)> apply) {
         editor = new NumberEditor(spec, _fields);
@@ -335,14 +371,14 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
         connect(editor, &PropertyEditor::editCancelled, this, [this] { cancelScrub(); });
         addRow(editor->createLabel(_fields), editor);
     };
-    number(_normalStrength, numberSpec("normalStrength", "Normal strength", PropertyKind::Float, 0.0, 4.0, 0.05, 2, ""), "Layer Normal Strength",
+    number(_normalStrength, numberSpec("normalStrength", "Normal Strength", PropertyKind::Float, 0.0, 4.0, 0.05, 2, ""), "Layer Normal Strength",
            [](terrain::Layer& layer, double value) { layer.normalStrength = (float)value; });
     _normalStrength->setToolTip("How far the normal map tilts the ground: 0 is flat, 1 as the map says, more exaggerates it");
-    mapField(_roughnessURL, "Roughness map", "One channel, black smooth to white rough; none is the terrain's plain roughness",
+    mapField(_roughnessURL, "Roughness Map", "One channel, black smooth to white rough; none is the terrain's plain roughness",
              "Layer Roughness Map", [](terrain::Layer& layer, const std::string& url) { layer.roughnessURL = url; });
-    mapField(_occlusionURL, "Occlusion map", "One channel, black shaded to white open; none is no occlusion",
+    mapField(_occlusionURL, "Occlusion Map", "One channel, black shaded to white open; none is no occlusion",
              "Layer Occlusion Map", [](terrain::Layer& layer, const std::string& url) { layer.occlusionURL = url; });
-    mapField(_heightURL, "Height map", "One channel, black low to white high, read by the Height blend; none is half height",
+    mapField(_heightURL, "Height Map", "One channel, black low to white high, read by the Height blend; none is half height",
              "Layer Height Map", [](terrain::Layer& layer, const std::string& url) { layer.heightURL = url; });
     number(_tiling, numberSpec("tiling", "Tiling", PropertyKind::Float, 0.05, 1000.0, 0.1, 2, "m"), "Layer Tiling",
            [](terrain::Layer& layer, double value) { layer.tiling = (float)value; });
@@ -412,6 +448,92 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
     _body->hide();
 }
 
+bool TerrainLayersEditor::eventFilter(QObject* watched, QEvent* event) {
+    const QEvent::Type type = event->type();
+    if (type != QEvent::DragEnter && type != QEvent::DragMove && type != QEvent::DragLeave && type != QEvent::Drop) {
+        return PropertyEditor::eventFilter(watched, event);
+    }
+
+    // a row of the list: the picture becomes that layer's colour texture, and the layer the selected one
+    if (watched == _list->viewport()) {
+        if (type == QEvent::DragLeave) {
+            setDropRow(-1);
+            return false;
+        }
+        auto drop = static_cast<QDropEvent*>(event);   // the enter and move events are drop events too
+        if (drop->source() == _list) {
+            return false;   // a row dragged within the list: the list reorders the layers
+        }
+        const QUrl url = droppedPicture(drop->mimeData());
+        QListWidgetItem* item = url.isEmpty() ? nullptr : _list->itemAt(drop->pos());
+        if (!item) {
+            setDropRow(-1);
+            drop->ignore();
+            return true;
+        }
+        if (type != QEvent::Drop) {
+            setDropRow(_list->row(item));
+            acceptCopy(drop);
+            return true;
+        }
+        setDropRow(-1);
+        acceptCopy(drop);
+        const int slot = item->data(Qt::UserRole).toInt();
+        if (auto layer = _stack.find((uint8_t)slot)) {
+            layer->materialURL = url.toString().toStdString();
+            _selectedSlot = slot;
+            commit("Layer Base Map");
+            emit layerChosen(slot);
+        }
+        return true;
+    }
+
+    // a map field: the picture becomes that map of the selected layer
+    for (const MapField& field : _mapFields) {
+        if (watched != field.edit) {
+            continue;
+        }
+        if (type == QEvent::DragLeave) {
+            return false;
+        }
+        auto drop = static_cast<QDropEvent*>(event);
+        const QUrl url = droppedPicture(drop->mimeData());
+        if (url.isEmpty() || !selectedLayer()) {
+            drop->ignore();
+            return true;   // not a picture: nor is it pasted in as typing
+        }
+        acceptCopy(drop);
+        if (type == QEvent::Drop) {
+            const QString text = url.toString();
+            field.edit->setText(text);
+            field.edit->setModified(false);
+            field.apply(*selectedLayer(), text.toStdString());
+            commit(field.undoText);
+        }
+        return true;
+    }
+    return PropertyEditor::eventFilter(watched, event);
+}
+
+void TerrainLayersEditor::setDropRow(int row) {
+    if (row == _dropRow) {
+        return;
+    }
+    auto mark = [this](int index, bool on) {
+        QListWidgetItem* item = index >= 0 ? _list->item(index) : nullptr;
+        QWidget* widget = item ? _list->itemWidget(item) : nullptr;
+        if (!widget) {
+            return;
+        }
+        widget->setProperty("dropTarget", on);
+        widget->style()->unpolish(widget);
+        widget->style()->polish(widget);
+    };
+    mark(_dropRow, false);
+    _dropRow = row;
+    mark(_dropRow, true);
+}
+
 QWidget* TerrainLayersEditor::createLabel(QWidget* parent) {
     auto label = new QWidget(parent);
     label->setFixedSize(0, 0);
@@ -478,6 +600,7 @@ terrain::Layer* TerrainLayersEditor::selectedLayer() {
 
 void TerrainLayersEditor::rebuildList() {
     _updating = true;
+    _dropRow = -1;   // the rows are made again
     _list->clear();
     int selectRow = -1;
     for (int index = (int)_stack.layers.size() - 1; index >= 0; --index) {

@@ -11,8 +11,10 @@
 //  defaults. Below the list, the selected layer's own settings: name, material (the library, or any texture's
 //  URL), its normal map (with an on/off and a strength), roughness, occlusion and height maps by URL, tiling and
 //  offset in metres, opacity, blend mode, tint, and the plain colour drawn until the texture is in. The selected
-//  row is also the layer the Paint tools paint. Every change is an undo step and is saved with
-//  the terrain; the layers are not an entity property, so the editor reads and sets them through EditorTerrain.
+//  row is also the layer the Paint tools paint. A picture dragged from the Assets panel (or a browser) onto a row
+//  becomes that layer's colour texture, and onto one of the map fields that map. Every change is an undo step and is
+//  saved with the terrain; the layers are not an entity property, so the editor reads and sets them through
+//  EditorTerrain.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -20,6 +22,8 @@
 
 #ifndef hifi_TerrainLayersEditor_h
 #define hifi_TerrainLayersEditor_h
+
+#include <functional>
 
 #include <QtCore/QUuid>
 #include <QtCore/QVector>
@@ -47,6 +51,8 @@ public:
     QVariant currentValue() const override { return QVariant(); }
 
     void setTerrainEditor(EditorTerrain* terrain) { _terrain = terrain; }
+    // drops on the rows and on the map fields (pictures from the Assets panel or a browser)
+    bool eventFilter(QObject* watched, QEvent* event) override;
     // the terrain whose layers to show, at every refresh of the Inspector; none, or several selected, shows a note
     void showTerrain(const QUuid& id, bool multiple);
 
@@ -90,6 +96,17 @@ private:
     void moveLayer(int by);            // +1 up the list (drawn later), -1 down
     void dragReordered();
     void resetLayers();
+    // the row a picture is being dragged over is marked for the stylesheet; -1 marks none
+    void setDropRow(int row);
+
+    // a field holding one of the selected layer's maps by URL: what a drop or an edit of it sets, and its undo text
+    struct MapField {
+        QLineEdit* edit { nullptr };
+        QString undoText;
+        std::function<void(terrain::Layer&, const std::string&)> apply;
+    };
+    QVector<MapField> _mapFields;
+    int _dropRow { -1 };
 
     EditorTerrain* _terrain { nullptr };
     QUuid _id;

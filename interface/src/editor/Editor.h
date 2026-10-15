@@ -63,6 +63,7 @@ class EntityTreeModel;
 class HierarchyPanel;
 class InspectorPanel;
 class TerrainToolBar;
+class UserFiles;
 
 class Editor : public QObject, public Dependency {
     Q_OBJECT
@@ -148,6 +149,10 @@ public slots:
     void cutSelection();
     void paste();
     void selectAll();
+    // Build > Use Stable Links: every link in the world to one of the user's own files by its path becomes the file's
+    // stable link, read from a fresh listing of My Files; one undo step, and a report of what could not be matched
+    // (NATIVE-EDITOR.md section 7.4)
+    void useStableLinks();
 
 signals:
     void activeChanged(bool active);
@@ -231,6 +236,8 @@ private:
     void showUploadProgress(EditorUpload* upload);
     void pollModelDimensions();
     void showHierarchyMenu(const QPoint& globalPos);
+    // Use Stable Links, once the listing is in
+    void rewriteStableLinks(const UserFiles& files);
     void showViewportMenu(const QPoint& viewportPos, const QPoint& globalPos);
     void addSelectionActions(QMenu& menu, const glm::vec3* pasteTarget);
     // a note in the middle of the toolbar; one with a timeout clears itself
@@ -342,6 +349,7 @@ private:
     std::vector<EditorBoundsShape> _boundsShapes;
     EditorLightGizmos _lightGizmos;
     EditorTerrain _terrain;             // the Terrain tool: its brushes, strokes and outline
+    bool _stableLinksPending { false };  // Use Stable Links waits for the listing of My Files
     bool _gizmosVisible { true };       // every light's icon, not only the selected ones'
     QVector<QUuid> _nearbyLights;       // the lights round the camera, looked for every so often
     int _lightSearchFrame { -1 };       // when they were last looked for; -1 to look at once

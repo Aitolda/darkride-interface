@@ -304,6 +304,10 @@ Menu::Menu() {
         buildMenu->addSeparator();
         editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildResetPanels, 0,
             editor.data(), SLOT(resetLayout())));
+        buildMenu->addSeparator();
+        // Build > Use Stable Links: the world's links to your files by path become their stable links (NATIVE-EDITOR.md 7.4)
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildUseStableLinks, 0,
+            editor.data(), SLOT(useStableLinks())));
     }
 
     //TODO: Remove Navigation menu when these functions are included in GoTo menu
