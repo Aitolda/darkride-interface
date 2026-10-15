@@ -33,6 +33,7 @@
 #include "TextureCache.h"
 #include "RenderCommonTask.h"
 #include "RenderHUDLayerTask.h"
+#include "DeferredLightingEffect.h"
 
 namespace ru {
     using render_utils::slot::texture::Texture;
@@ -104,6 +105,12 @@ void RenderForwardTask::build(JobModel& task, const render::Varying& input, rend
  
         const auto& zones = lightingStageInputs[1];
 
+    // Shadow Task Outputs: the frame's shadows, drawn before the deferred/forward choice
+    const auto& shadowTaskOutputs = inputs.get3();
+
+        // Shadow Stage Frame: the sun's cascades, and the lights' shadow maps and cookies with them
+        const auto shadowFrame = shadowTaskOutputs[1];
+
     // First job, alter faded
     fadeEffect->build(task, opaques);
 
@@ -113,6 +120,15 @@ void RenderForwardTask::build(JobModel& task, const render::Varying& input, rend
 
     // Prepare deferred, generate the shared Deferred Frame Transform. Only valid with the scaled frame buffer
     const auto deferredFrameTransform = task.addJob<GenerateDeferredFrameTransform>("DeferredFrameTransform");
+
+    // Light Clustering: the grid of the lights in view, as the deferred path builds it (on the CPU, from the lights'
+    // bounds against the view: it needs no depth buffer, so the pass takes none)
+    const auto lightClusteringPassInputs = LightClusteringPass::Input(deferredFrameTransform, lightingModel, lightFrame, render::Varying(LinearDepthFramebufferPointer())).asVarying();
+    const auto lightClusters = task.addJob<LightClusteringPass>("LightClustering", lightClusteringPassInputs);
+
+    // The clusters and the shadows go to the forward pipelines' batch setter, which binds them at every pipeline change
+    const auto frameLightingInputs = SetFrameLighting::Inputs(lightClusters, shadowFrame, lightingModel).asVarying();
+    task.addJob<SetFrameLighting>("SetFrameLighting", frameLightingInputs);
 
     // Prepare Forward Framebuffer pass 
     const auto prepareForwardInputs = PrepareForward::Inputs(scaledPrimaryFramebuffer, lightFrame).asVarying();
@@ -275,6 +291,9 @@ void DrawForward::run(const RenderContextPointer& renderContext, const Inputs& i
         // Setup lighting model for all items;
         batch.setUniformBuffer(ru::Buffer::LightModel, lightingModel->getParametersBuffer());
         batch.setResourceTexture(ru::Texture::AmbientFresnel, lightingModel->getAmbientFresnelLUT());
+
+        // the frame's local lights and shadows (bound again by each pipeline's batch setter as the pipelines change)
+        DependencyManager::get<DeferredLightingEffect>()->setupFrameLightingBatch(batch, args);
 
         if (haze) {
             batch.setUniformBuffer(graphics::slot::buffer::Buffer::HazeParams, haze->getHazeParametersBuffer());

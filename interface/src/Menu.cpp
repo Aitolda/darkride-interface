@@ -549,6 +549,23 @@ Menu::Menu() {
     addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::AmbientOcclusion, 0, RenderScriptingInterface::getInstance()->getAmbientOcclusionEnabled(),
         RenderScriptingInterface::getInstance(), SLOT(setAmbientOcclusionEnabled(bool)));
 
+    // Developer > Render > Forward Rendering: the forward path (Forward+: the point and spot lights with their shadows
+    // and cookies, and the sun's cascades, shaded in one multisampled pass) instead of deferred, whatever the graphics
+    // preset says, and in build mode too, which draws no selection outline then (only deferred has it yet). Off, the
+    // method goes back to deferred. A preset's own choice of forward (Low, Potato) leaves this unchecked, so that
+    // build mode keeps forcing deferred for it, as before
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::RenderForward, 0, false);
+    connect(action, &QAction::triggered, [action] {
+        RenderScriptingInterface::getInstance()->setRenderMethod(action->isChecked() ?
+            RenderScriptingInterface::RenderMethod::FORWARD : RenderScriptingInterface::RenderMethod::DEFERRED);
+    });
+    connect(RenderScriptingInterface::getInstance(), &RenderScriptingInterface::settingsChanged, action, [action] {
+        // the method went back to deferred by another road (a preset, a script): the item follows
+        if (RenderScriptingInterface::getInstance()->getRenderMethod() != RenderScriptingInterface::RenderMethod::FORWARD) {
+            action->setChecked(false);
+        }
+    });
+
     // Developer > Render > Cache Light Shadows: off, a spot or point light's shadow maps are drawn every frame, for
     // comparing
     action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::LocalShadowCaching, 0, true);

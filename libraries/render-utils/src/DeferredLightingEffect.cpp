@@ -109,6 +109,70 @@ void DeferredLightingEffect::setupLocalLightsBatch(gpu::Batch& batch, const Ligh
         localShadows ? localShadows->getTable() : LocalShadows::getEmptyTable());
 }
 
+// a grid of one empty cluster, for the forward pipelines before any view has published its clusters
+static const LightClustersPointer& getEmptyLightClusters() {
+    static const LightClustersPointer EMPTY_CLUSTERS = [] {
+        auto clusters = std::make_shared<LightClusters>();
+        clusters->setDimensions(glm::uvec3(1, 1, 1), 1);
+        clusters->updateClusterResource();
+        return clusters;
+    }();
+    return EMPTY_CLUSTERS;
+}
+
+// the sun's shadow parameters with no cascade: the shaders skip the sampling
+static const gpu::BufferView& getNoShadowParameters() {
+    static const gpu::BufferView NO_SHADOW = [] {
+        LightStage::Shadow::Schema schema;
+        schema.cascadeCount = 0;
+        return gpu::BufferView(std::make_shared<gpu::Buffer>(sizeof(schema), (const gpu::Byte*)&schema, sizeof(schema)));
+    }();
+    return NO_SHADOW;
+}
+
+void DeferredLightingEffect::setFrameLighting(const LightClustersPointer& lightClusters, const LightStage::ShadowFramePointer& shadowFrame,
+                                              const LightingModelPointer& lightingModel) {
+    _frameLightClusters = lightClusters;
+    _frameShadowFrame = shadowFrame;
+    _frameShadowsEnabled = lightingModel && lightingModel->isShadowEnabled();
+}
+
+void DeferredLightingEffect::setupFrameLightingBatch(gpu::Batch& batch, const RenderArgs* args) const {
+    // the light array and the clusters
+    const auto& lightClusters = _frameLightClusters ? _frameLightClusters : getEmptyLightClusters();
+    auto lightStage = args->_scene ? args->_scene->getStage<LightStage>() : nullptr;
+    if (lightStage) {
+        batch.setUniformBuffer(gr::Buffer::Light, lightStage->getLightArrayBuffer());
+    }
+    batch.setUniformBuffer(ru::Buffer::LightClusterFrustumGrid, lightClusters->_frustumGridBuffer);
+    batch.setUniformBuffer(ru::Buffer::LightClusterGrid, lightClusters->_clusterGridBuffer);
+    batch.setUniformBuffer(ru::Buffer::LightClusterContent, lightClusters->_clusterContentBuffer);
+
+    // the lights' shadow maps and cookies; with none, a table in which no light has either
+    const auto localShadows = _frameShadowFrame ? _frameShadowFrame->_localShadows : LocalShadowsPointer();
+    batch.setResourceTexture(ru::Texture::LocalShadow, localShadows ? localShadows->getAtlas() : nullptr);
+    batch.setResourceTexture(ru::Texture::LocalCookies, localShadows ? localShadows->getCookies() : nullptr);
+    batch.setResourceBuffer(RENDER_UTILS_RESOURCE_BUFFER_LOCAL_SHADOW_TABLE,
+        localShadows ? localShadows->getTable() : LocalShadows::getEmptyTable());
+
+    // the sun's cascades
+    LightStage::ShadowPointer globalShadow;
+    if (_frameShadowsEnabled && _frameShadowFrame && !_frameShadowFrame->_objects.empty()) {
+        globalShadow = _frameShadowFrame->_objects.front();
+    }
+    if (globalShadow) {
+        batch.setResourceTexture(ru::Texture::Shadow, globalShadow->map);
+        batch.setUniformBuffer(ru::Buffer::ShadowParams, globalShadow->getBuffer());
+    } else {
+        batch.setResourceTexture(ru::Texture::Shadow, nullptr);
+        batch.setUniformBuffer(ru::Buffer::ShadowParams, getNoShadowParameters());
+    }
+}
+
+void SetFrameLighting::run(const render::RenderContextPointer& renderContext, const Inputs& inputs) {
+    DependencyManager::get<DeferredLightingEffect>()->setFrameLighting(inputs.get0(), inputs.get1(), inputs.get2());
+}
+
 void DeferredLightingEffect::unsetLocalLightsBatch(gpu::Batch& batch) {
     batch.setUniformBuffer(gr::Buffer::Light, nullptr);
     batch.setUniformBuffer(ru::Buffer::LightClusterGrid, nullptr);

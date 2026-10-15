@@ -338,7 +338,11 @@ void lightBatchSetter(const ShapePipeline& pipeline, gpu::Batch& batch, RenderAr
 
     // Set the light
     if (pipeline.locations->keyLightBufferUnit) {
-        DependencyManager::get<DeferredLightingEffect>()->setupKeyLightBatch(args, batch);
+        auto deferredLightingEffect = DependencyManager::get<DeferredLightingEffect>();
+        deferredLightingEffect->setupKeyLightBatch(args, batch);
+        // and the frame's local lights and shadows, which the forward shaders light with: bound again at every
+        // pipeline change, since a program drawn in between may have its own maps and buffers at the same slots
+        deferredLightingEffect->setupFrameLightingBatch(batch, args);
     }
 }
 

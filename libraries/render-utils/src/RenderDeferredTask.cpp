@@ -101,6 +101,8 @@ void RenderDeferredTask::configure(const Config& config) {
 }
 
 void RenderDeferredTask::build(JobModel& task, const render::Varying& input, render::Varying& output) {
+    task.addJob<SetRenderMethod>("SetRenderMethodTask", render::Args::DEFERRED);
+
     auto fadeEffect = DependencyManager::get<FadeEffect>();
     // Prepare the ShapePipelines
     ShapePlumberPointer shapePlumber = std::make_shared<ShapePlumber>();
@@ -195,6 +197,11 @@ void RenderDeferredTask::build(JobModel& task, const render::Varying& input, ren
     // Create the cluster grid of lights, cpu job for now
     const auto lightClusteringPassInputs = LightClusteringPass::Input(deferredFrameTransform, lightingModel, lightFrame, linearDepthTarget).asVarying();
     const auto lightClusters = task.addJob<LightClusteringPass>("LightClustering", lightClusteringPassInputs);
+
+    // The clusters and the shadows go to the forward pipelines' batch setter too: the in-front and HUD layers of this
+    // frame draw with the forward pipelines, which light with them
+    const auto frameLightingInputs = SetFrameLighting::Inputs(lightClusters, shadowFrame, lightingModel).asVarying();
+    task.addJob<SetFrameLighting>("SetFrameLighting", frameLightingInputs);
 
     // DeferredBuffer is complete, now let's shade it into the LightingBuffer
     const auto extraDeferredBuffer = RenderDeferred::ExtraDeferredBuffer(surfaceGeometryFramebuffer, ambientOcclusionFramebuffer, scatteringResource).asVarying();

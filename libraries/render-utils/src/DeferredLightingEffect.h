@@ -52,8 +52,26 @@ public:
     static void setupLocalLightsBatch(gpu::Batch& batch, const LightClustersPointer& lightClusters, const LocalShadowsPointer& localShadows);
     static void unsetLocalLightsBatch(gpu::Batch& batch);
 
+    // The frame's lighting for the forward pipelines: the view's light clusters, as its clustering pass built them,
+    // and its shadow frame (the sun's cascades, the lights' shadow maps and cookies), as its shadow tasks left it.
+    // Each view publishes them before it draws (SetFrameLighting, in the forward task and the deferred one: the
+    // in-front and HUD layers of a deferred frame draw with the forward pipelines too), and the forward pipelines'
+    // batch setter binds them at every pipeline change
+    void setFrameLighting(const LightClustersPointer& lightClusters, const LightStage::ShadowFramePointer& shadowFrame,
+                          const LightingModelPointer& lightingModel);
+    // Binds what the forward shaders light with: the light array and the clusters (a grid of one empty cluster
+    // before any view has published), the lights' shadow atlas, cookies and table, and the sun's cascades with
+    // their parameters (a cascade count of 0 with no shadow this frame, or shadows off: the shaders then skip the
+    // sampling). Bound again at every pipeline change, since a program drawn in between may keep its own maps and
+    // buffers at the same slots (the terrain's arrays at the shadow texture units, its chunk at the parameters' slot)
+    void setupFrameLightingBatch(gpu::Batch& batch, const RenderArgs* args) const;
+
 private:
     DeferredLightingEffect() = default;
+
+    LightClustersPointer _frameLightClusters;
+    LightStage::ShadowFramePointer _frameShadowFrame;
+    bool _frameShadowsEnabled { false };
 
     graphics::MeshPointer _pointLightMesh;
     graphics::MeshPointer getPointLightMesh();
@@ -73,6 +91,15 @@ private:
     friend class RenderDeferredSetup;
     friend class RenderDeferredLocals;
     friend class RenderDeferredCleanup;
+};
+
+// Publishes the view's light clusters and shadow frame to the DeferredLightingEffect for the forward pipelines
+class SetFrameLighting {
+public:
+    using Inputs = render::VaryingSet3<LightClustersPointer, LightStage::ShadowFramePointer, LightingModelPointer>;
+    using JobModel = render::Job::ModelI<SetFrameLighting, Inputs>;
+
+    void run(const render::RenderContextPointer& renderContext, const Inputs& inputs);
 };
 
 class PrepareDeferred {

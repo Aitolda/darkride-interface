@@ -19,6 +19,16 @@
     <@if HIFI_USE_FORWARD or HIFI_USE_TRANSLUCENT@>
         <@include DefaultMaterials.slh@>
         <@include GlobalLight.slh@>
+        <@if HIFI_USE_FORWARD@>
+            <@if not HIFI_USE_UNLIT@>
+                // the forward path lights in place: the sun's shadow cascades, and the point and spot lights of the
+                // fragment's cluster with their shadows and cookies (the pass binds them for every lit pipeline)
+                <@include Shadow.slh@>
+                <@if not HIFI_USE_LIGHTMAP@>
+                    <@include LightLocal.slh@>
+                <@endif@>
+            <@endif@>
+        <@endif@>
         <@if HIFI_USE_LIGHTMAP@>
             <$declareEvalLightmappedColor()$>
         <@elif HIFI_USE_TRANSLUCENT@>
@@ -203,25 +213,48 @@ void main(void) {
     <@if HIFI_USE_FORWARD@>
         TransformCamera cam = getTransformCamera();
         vec3 fresnel = getFresnelF0(metallic, albedo);
+        vec3 fragPositionWS = _positionWS.xyz;
+
+        // the sun's shadow, from its cascades, when the frame has them (a count of 0 with shadows off, or none drawn)
+        float shadowAttenuation = 1.0;
+        if (getShadowCascadeCount() > 0) {
+            shadowAttenuation = evalShadowAttenuation(getLightDirection(getKeyLight()), _positionWS, -_positionES.z, fragNormalWS);
+        }
+        <@if not HIFI_USE_LIGHTMAP@>
+            // the point and spot lights of the cluster the fragment falls in, with their shadows and cookies, as the
+            // deferred path's translucent pass takes them; the derivatives are for the cookies, taken here where
+            // control flow is uniform
+            vec3 fragPositionWSDx = dFdx(fragPositionWS);
+            vec3 fragPositionWSDy = dFdy(fragPositionWS);
+            vec3 fragToEyeDirWS = normalize(cam._viewInverse[3].xyz - fragPositionWS);
+            SurfaceData surfaceWS = initSurfaceData(roughness, fragNormalWS, fragToEyeDirWS);
+
+            vec4 localLighting = vec4(0.0);
+            <$fetchClusterInfo(_positionWS)$>;
+            if (hasLocalLights(numLights, clusterPos, dims)) {
+                localLighting = evalLocalLighting(cluster, numLights, fragPositionWS, fragPositionWSDx, fragPositionWSDy, surfaceWS,
+                                                  metallic, fresnel, albedo, 0.0,
+                                                  vec4(0), vec4(0), opacity);
+            }
+        <@endif@>
         <@if not HIFI_USE_TRANSLUCENT@>
             <@if not HIFI_USE_LIGHTMAP@>
-                vec4 color = vec4(evalSkyboxGlobalColor(
+                _fragColor0 = vec4(evalSkyboxGlobalColor(
                     cam._viewInverse,
-                    1.0,
+                    shadowAttenuation,
                     occlusion,
                     _positionES.xyz,
-                    fragNormalWS,
                     albedo,
                     fresnel,
                     metallic,
-                    roughness),
+                    emissive,
+                    surfaceWS,
+                    localLighting.rgb),
                     opacity);
-                color.rgb += emissive * isEmissiveEnabled();
-                _fragColor0 = color;
             <@else@>
                 _fragColor0 = vec4(evalLightmappedColor(
                     cam._viewInverse,
-                    1.0,
+                    shadowAttenuation,
                     DEFAULT_OCCLUSION,
                     fragNormalWS,
                     albedo,
@@ -232,7 +265,7 @@ void main(void) {
             <@if not HIFI_USE_LIGHTMAP@>
                 _fragColor0 =  vec4(evalGlobalLightingAlphaBlended(
                     cam._viewInverse,
-                    1.0,
+                    shadowAttenuation,
                     occlusion,
                     _positionES.xyz,
                     fragNormalWS,
@@ -240,12 +273,12 @@ void main(void) {
                     fresnel,
                     metallic,
                     emissive,
-                    roughness, opacity),
+                    surfaceWS, opacity, localLighting.rgb),
                     opacity);
             <@else@>
                 _fragColor0 = vec4(evalLightmappedColor(
                 cam._viewInverse,
-                1.0,
+                shadowAttenuation,
                 DEFAULT_OCCLUSION,
                 fragNormalWS,
                 albedo,

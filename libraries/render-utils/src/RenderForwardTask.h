@@ -16,6 +16,7 @@
 #include <render/RenderFetchCullSortTask.h>
 #include "AssembleLightingStageTask.h"
 #include "LightingModel.h"
+#include "RenderShadowTask.h"
 
 class RenderForwardTaskConfig : public render::Task::Config {
     Q_OBJECT
@@ -27,9 +28,12 @@ signals:
     void dirty();
 };
 
+// The forward path (Forward+): everything shaded in one multisampled pass, each fragment over the sun, the ambient
+// light and the point and spot lights of the cluster it falls in, with the frame's shadows and cookies, which were
+// drawn before the deferred/forward choice (RenderViewTask) and come in as the shadow task's output
 class RenderForwardTask {
 public:
-    using Input = render::VaryingSet3<RenderFetchCullSortTask::Output, LightingModelPointer, AssembleLightingStageTask::Output>;
+    using Input = render::VaryingSet4<RenderFetchCullSortTask::Output, LightingModelPointer, AssembleLightingStageTask::Output, RenderShadowTask::Output>;
     using Config = RenderForwardTaskConfig;
     using JobModel = render::Task::ModelI<RenderForwardTask, Input, Config>;
 

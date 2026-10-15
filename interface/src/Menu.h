@@ -226,6 +226,7 @@ namespace MenuOption {
     const QString DesktopTabletToToolbar = "Desktop Tablet Becomes Toolbar";
     const QString HMDTabletToToolbar = "HMD Tablet Becomes Toolbar";
     const QString Shadows = "Shadows";
+    const QString RenderForward = "Forward Rendering";
     const QString LocalShadowCaching = "Cache Light Shadows";
     const QString LocalShadowStaticCaching = "Cache Static Shadow Casters";
     const QString Mirrors = "Mirrors";
