@@ -110,6 +110,7 @@ public:
     void registerFunction(const QString& parent, const QString& name, QScriptEngine::FunctionSignature fun,
                           int numArguments = -1) override;
     void registerValue(const QString& valueName, QScriptValue value) override;
+    void registerGlobalValue(const QString& name, const QVariant& value) override;
     void loadURL(const QUrl& scriptURL, bool reload) override;
     bool hasValidScriptSuffix(const QString& scriptFileName) override;
     void run() override;
@@ -203,6 +204,7 @@ private:
     QByteArray _moduleBytes;
     WasmInstance::Limits _limits;
     std::unique_ptr<ObjectTable> _objects;
+    QVariantMap _globalValues;  // registerGlobalValue's
     SignalRelay* _relay { nullptr };  // a child, so it moves to the engine's thread with it
     HttpRequestFactory* _http { nullptr };
     WebSocketFactory* _sockets { nullptr };

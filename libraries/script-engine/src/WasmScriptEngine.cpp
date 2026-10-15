@@ -322,6 +322,16 @@ void WasmScriptEngine::registerFunction(const QString& parent, const QString& na
     qCDebug(scriptengine) << "WasmScriptEngine: the function" << parent + "." + name << "is a QtScript function, not available to a module";
 }
 
+void WasmScriptEngine::registerGlobalValue(const QString& name, const QVariant& value) {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, [this, name, value] { registerGlobalValue(name, value); });
+        return;
+    }
+    if (!_globalValues.contains(name)) {
+        _globalValues.insert(name, value);
+    }
+}
+
 void WasmScriptEngine::registerValue(const QString& valueName, QScriptValue value) {
     Q_UNUSED(value);
     qCDebug(scriptengine) << "WasmScriptEngine: the value" << valueName << "is a QtScript value, not available to a module";
@@ -1258,7 +1268,8 @@ QVariantMap WasmScriptEngine::scriptSource() const {
 // The hosts put a few plain objects of numbers on the QtScript global object (DriveKeys, PickType); the carried
 // engine has them, and a guest gets them as values. Objects with functions or objects inside are not values.
 QVariantMap WasmScriptEngine::scriptGlobalValues() const {
-    QVariantMap values;
+    // registerGlobalValue's, then the plain objects hosts put on the QtScript global object themselves
+    QVariantMap values = _globalValues;
     QScriptValueIterator it(globalObject());
     while (it.hasNext()) {
         it.next();
@@ -1280,7 +1291,7 @@ QVariantMap WasmScriptEngine::scriptGlobalValues() const {
                 break;
             }
         }
-        if (plain && !members.isEmpty()) {
+        if (plain && !members.isEmpty() && !values.contains(it.name())) {
             values[it.name()] = members;
         }
     }

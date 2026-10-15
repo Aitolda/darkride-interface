@@ -206,6 +206,11 @@ public:
     /// registers a global object by name
     Q_INVOKABLE virtual void registerGlobalObject(const QString& name, QObject* object);
 
+    /// A plain value (numbers by name, as DriveKeys and PickType are; a number; text) under a global name, unless
+    /// the name is taken: for a host that would otherwise put one on the QtScript global object itself, so that
+    /// every engine sees it (the WebAssembly engine gives a module these through Script.scriptGlobalValues).
+    virtual void registerGlobalValue(const QString& name, const QVariant& value);
+
     /**jsdoc
      * @function Script.registerGetterSetter
      * @param {string} name - Name.

@@ -965,6 +965,17 @@ void ScriptEngine::registerValue(const QString& valueName, QScriptValue value) {
     }
 }
 
+void ScriptEngine::registerGlobalValue(const QString& name, const QVariant& value) {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, [this, name, value] { registerGlobalValue(name, value); });
+        return;
+    }
+    if (!globalObject().property(name).isValid()) {
+        // a map becomes a plain object, a list an array, a number or text the primitive
+        globalObject().setProperty(name, toScriptValue(value));
+    }
+}
+
 void ScriptEngine::registerGlobalObject(const QString& name, QObject* object) {
     if (QThread::currentThread() != thread()) {
 #ifdef THREAD_DEBUGGING
