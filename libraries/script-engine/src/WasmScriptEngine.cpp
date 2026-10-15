@@ -95,6 +95,21 @@ public:
             }, Qt::QueuedConnection);
         }
     }
+    void request(int32_t callback, const QVariantList& arguments, std::function<void(const QVariant&)> onResult) override {
+        QPointer<WasmScriptEngine> engine = _engine;
+        auto instance = _instance;
+        if (engine) {
+            QMetaObject::invokeMethod(engine, [engine, instance, callback, arguments, onResult] {
+                auto strong = instance.lock();
+                QVariant result;
+                QString error;
+                if (engine && strong) {
+                    engine->invokeCallback(strong, callback, arguments, result, error);
+                }
+                onResult(result);
+            }, Qt::QueuedConnection);
+        }
+    }
 private:
     QPointer<WasmScriptEngine> _engine;
     std::weak_ptr<WasmScriptEngine::ModuleInstance> _instance;

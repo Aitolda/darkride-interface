@@ -15,7 +15,7 @@
 
 #include <QtCore/QObject>
 
-#include <ValueCodec.h>
+#include <ScriptCallback.h>
 
 #include "../Conditional.h"
 

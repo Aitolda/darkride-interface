@@ -44,25 +44,6 @@ const QString ValueCodec::OBJECT_KEY = QStringLiteral("@object");
 const QString ValueCodec::CLASS_KEY = QStringLiteral("@class");
 const QString ValueCodec::CALLBACK_KEY = QStringLiteral("@callback");
 
-QVariant ScriptCallback::call(const QVariantList& arguments) const {
-    auto engine = target.lock();
-    if (!engine || !isValid()) {
-        return QVariant();
-    }
-    QVariant result;
-    QString error;
-    if (!engine->invoke(id, arguments, result, error)) {
-        return QVariant();
-    }
-    return result;
-}
-
-void ScriptCallback::post(const QVariantList& arguments) const {
-    auto engine = target.lock();
-    if (engine && isValid()) {
-        engine->post(id, arguments);
-    }
-}
 
 namespace {
 

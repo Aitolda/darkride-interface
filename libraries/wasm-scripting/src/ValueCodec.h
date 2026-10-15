@@ -34,33 +34,11 @@
 #include <QtCore/QVariantList>
 #include <QtCore/QVariantMap>
 
+#include <ScriptCallback.h>
+
 class ObjectTable;
 
-/// What calls a guest's function back: the engine implements it. `invoke` runs the function and returns its
-/// result; it must be called on the engine's thread. `post` queues the call from any thread and returns at
-/// once.
-class CallbackTarget {
-public:
-    virtual ~CallbackTarget() = default;
-    virtual bool invoke(int32_t callback, const QVariantList& arguments, QVariant& result, QString& error) = 0;
-    virtual void post(int32_t callback, const QVariantList& arguments) = 0;
-};
-
-/// A function in the guest, held by the id the guest gave it. Crosses as {"@callback": id}; the engine calls
-/// it back through the module's on_callback or call_callback export. A callback decoded by a codec knows its
-/// engine, so whoever holds it can call it.
-struct ScriptCallback {
-    int32_t id { 0 };
-    std::weak_ptr<CallbackTarget> target;
-    bool isValid() const { return id != 0; }
-    bool operator==(const ScriptCallback& other) const { return id == other.id; }
-    /// Calls the function and returns its result (on the engine's thread); an invalid QVariant when the
-    /// engine is gone or the call failed.
-    QVariant call(const QVariantList& arguments = QVariantList()) const;
-    /// Queues the call, from any thread.
-    void post(const QVariantList& arguments = QVariantList()) const;
-};
-Q_DECLARE_METATYPE(ScriptCallback)
+// ScriptCallback and CallbackTarget live in libraries/shared (ScriptCallback.h): any library may hold one.
 
 class ValueCodec {
 public:

@@ -14,7 +14,7 @@
 #ifndef hifi_Controllers_CallbackEndpoint_h
 #define hifi_Controllers_CallbackEndpoint_h
 
-#include <ValueCodec.h>
+#include <ScriptCallback.h>
 
 #include "../Endpoint.h"
 

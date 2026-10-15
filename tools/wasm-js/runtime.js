@@ -207,7 +207,8 @@
     // the script keeps calling the name it knows.
     var methodTwins = {
         "controller::MappingBuilderProxy": { from: "fromValue", makeAxis: "makeAxisFromValues" },
-        "controller::RouteBuilderProxy": { to: "toValue", when: "whenValue" }
+        "controller::RouteBuilderProxy": { to: "toValue", when: "whenValue" },
+        "MyAvatar": { addAnimationStateHandler: "addAnimationStateCallback", removeAnimationStateHandler: "removeAnimationStateCallback" }
     };
 
     // What the QtScript engine added to an object as native functions, which the description cannot list
