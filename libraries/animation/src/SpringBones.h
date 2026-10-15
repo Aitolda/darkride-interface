@@ -115,9 +115,9 @@ struct Law {
     static float pull(const ComponentSpec& spec, float pull);
     // the fraction of the chain parent's rigid motion (its turn and its translation) a particle is carried by each step
     static float rigidCarried(const ComponentSpec& spec);
-    // the fraction of the avatar's own movement per step that is not carried by the chain: what the rigid carry leaves,
-    // less the immobile share of it
-    static float avatarMoveFelt(const ComponentSpec& spec, float immobile);
+    // the fraction of the avatar's own movement per step that the chain is carried by beyond the rigid carry: the
+    // immobile share of what that carry leaves
+    static float avatarMoveImmobile(const ComponentSpec& spec, float immobile);
 };
 
 struct Particle {
@@ -199,9 +199,22 @@ public:
     const std::vector<Chain>& getChains() const { return _chains; }
     // A test's lockstep: once on, an update advances the simulation only by the time a test has handed it since the
     // last update (advance()), whatever the frames take, so a recording can be replayed frame by frame.
-    static void setLockstep(bool on) { _lockstep = on; _pendingTime = 0.0f; }
+    static void setLockstep(bool on) { _lockstep = on; _pendingTime = 0.0f; _pendingMove = glm::vec3(0.0f); _moveGiven = false; }
     static bool getLockstep() { return _lockstep; }
     static void advance(float seconds) { _pendingTime += seconds; }
+    // the same, with the avatar's own movement over that time given rather than read from the avatar's position (a
+    // replay whose avatar is placed by its hips can then say what the recorded root did)
+    static void advance(float seconds, const glm::vec3& avatarMove) { _pendingTime += seconds; _pendingMove += avatarMove; _moveGiven = true; }
+    // the time handed by advance() that no update has consumed yet
+    static float getPendingTime() { return _pendingTime; }
+    // how many updates have consumed handed time, counted once each has written its poses: a test that read the
+    // pending time instead could read poses back between the two and get the frame before
+    static long getConsumedCount() { return _consumedCount; }
+    // the blend between the last two steps the last update presented (0.5 at a step's own frame, 1 a frame later)
+    static float getLastAlpha() { return _lastAlpha; }
+    // how many updates have run in all (a test lets two pass after it sets a pose before it hands the time that steps
+    // on that pose: a frame samples the avatar's position early and the handed time late)
+    static long getUpdateCount() { return _updateCount; }
     // how many simulation steps every solver has taken (a test reads it to know which step a read-back pose is of)
     static long getStepCount() { return _stepCount; }
     const Data& getData() const { return _data; }
@@ -211,9 +224,10 @@ private:
     void readAnimation(Chain& chain, const AnimPoseVec& relativePoses, const AnimPoseVec& absolutePoses);
     void resetChain(Chain& chain);
     // One step of a chain: its root's parent went from the last frame to the next (position and rotation in the
-    // avatar's frame); `avatarMove` is the avatar's own movement over the step.
-    void stepChain(Chain& chain, const glm::vec3& avatarMove, const glm::vec3& lastParentPosition, const glm::quat& lastParentRotation,
-                   const glm::vec3& parentPosition, const glm::quat& parentRotation);
+    // avatar's frame); `frameMove` is how far the avatar's frame (the positions' origin) moved in the world over the
+    // step and `ownMove` the avatar's own movement the immobile term applies to (the same, unless a test says otherwise).
+    void stepChain(Chain& chain, const glm::vec3& frameMove, const glm::vec3& ownMove, const glm::vec3& lastParentPosition,
+                   const glm::quat& lastParentRotation, const glm::vec3& parentPosition, const glm::quat& parentRotation);
     void updateColliders(const AnimPoseVec& absolutePoses);
     glm::vec3 jointPosition(const AnimPoseVec& absolutePoses, int joint) const;
     glm::quat jointRotation(const AnimPoseVec& absolutePoses, int joint) const;
@@ -228,14 +242,21 @@ private:
     glm::quat _entityRotation { 1.0f, 0.0f, 0.0f, 0.0f };
     glm::vec3 _lastEntityPosition { 0.0f };
     bool _hasLastEntity { false };
-    glm::vec3 _avatarMoveSinceStep { 0.0f };   // world
+    glm::vec3 _avatarMoveSinceStep { 0.0f };   // world: the avatar's (the frame's) movement since the last step
+    glm::vec3 _ownMoveSinceStep { 0.0f };      // world: the avatar's own movement for the immobile term since the last step
     float _accumulator { 0.0f };
+    bool _lockstepArmed { false };   // the accumulator reset once lockstep began, so a test's steps fall where it says
     int _jointCount { 0 };
     bool _initialized { false };
     bool _active { false };
     static bool _lockstep;
     static float _pendingTime;
+    static glm::vec3 _pendingMove;
+    static bool _moveGiven;
     static long _stepCount;
+    static long _consumedCount;
+    static long _updateCount;
+    static float _lastAlpha;
 };
 
 }

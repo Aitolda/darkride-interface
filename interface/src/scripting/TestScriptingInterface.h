@@ -13,6 +13,8 @@
 #include <functional>
 #include <QtCore/QObject>
 
+#include <glm/glm.hpp>
+
 /**jsdoc
  * Here's how you could use the Test API:
  * 
@@ -220,11 +222,50 @@ public slots:
     Q_INVOKABLE void advanceSpringBones(float seconds);
 
     /*@jsdoc
+     * The same, with the avatar's own movement over those seconds given (a replay whose avatar is placed by its hips
+     * says what the recorded root did) rather than read from the avatar's position.
+     * @function Test.advanceSpringBones
+     * @param {number} seconds - The time to advance.
+     * @param {Vec3} avatarMove - The avatar's own movement over that time.
+     */
+    Q_INVOKABLE void advanceSpringBones(float seconds, const glm::vec3& avatarMove);
+
+    /*@jsdoc
      * Gets how many steps the avatar's spring bones have taken since the client started.
      * @function Test.getSpringBoneSteps
      * @returns {number} The step count.
      */
     Q_INVOKABLE int getSpringBoneSteps();
+
+    /*@jsdoc
+     * Gets the time handed to {@link Test.advanceSpringBones} that the spring bones have not consumed yet.
+     * @function Test.getSpringBonePendingTime
+     * @returns {number} Seconds.
+     */
+    Q_INVOKABLE float getSpringBonePendingTime();
+
+    /*@jsdoc
+     * Gets how many updates of the spring bones have consumed time handed by {@link Test.advanceSpringBones}, each
+     * counted once its poses are written, so a test can read poses back only then.
+     * @function Test.getSpringBoneConsumed
+     * @returns {number} The count.
+     */
+    Q_INVOKABLE int getSpringBoneConsumed();
+
+    /*@jsdoc
+     * Gets the blend between the last two steps the spring bones last presented: 0.5 at a step's own frame, 1 a frame
+     * of 60 Hz later.
+     * @function Test.getSpringBoneAlpha
+     * @returns {number} The blend.
+     */
+    Q_INVOKABLE float getSpringBoneAlpha();
+
+    /*@jsdoc
+     * Gets how many updates the avatar's spring bones have run in all.
+     * @function Test.getSpringBoneUpdates
+     * @returns {number} The count.
+     */
+    Q_INVOKABLE int getSpringBoneUpdates();
 
 private:
     bool waitForCondition(qint64 maxWaitMs, std::function<bool()> condition);

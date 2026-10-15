@@ -22,7 +22,12 @@ static const glm::quat IDENTITY_QUAT(1.0f, 0.0f, 0.0f, 0.0f);
 
 bool Solver::_lockstep = false;
 float Solver::_pendingTime = 0.0f;
+glm::vec3 Solver::_pendingMove { 0.0f };
+bool Solver::_moveGiven = false;
 long Solver::_stepCount = 0;
+long Solver::_consumedCount = 0;
+long Solver::_updateCount = 0;
+float Solver::_lastAlpha = 1.0f;
 
 // ---- the data ----
 
@@ -198,10 +203,10 @@ float Law::rigidCarried(const ComponentSpec& spec) {
     return 1.0f - (1.0f - s) * (1.0f - s);
 }
 
-float Law::avatarMoveFelt(const ComponentSpec& spec, float immobile) {
-    // the same fits: the avatar's own movement is carried by the rigid share plus the immobile share of the rest
-    // (0.942 at immobile 0.9, 0.428 at immobile 0), so what is felt is (1 - rigid)(1 - immobile)
-    return (1.0f - rigidCarried(spec)) * glm::clamp(1.0f - immobile, 0.0f, 1.0f);
+float Law::avatarMoveImmobile(const ComponentSpec& spec, float immobile) {
+    // the avatar's own movement is carried by the rigid carry's share like any rigid motion, and by immobile of the
+    // rest (fitted over whole recordings at immobile 0.9 and 0: 0.935 and 0.363 carried in all, the carry 0.36)
+    return (1.0f - rigidCarried(spec)) * glm::clamp(immobile, 0.0f, 1.0f);
 }
 
 // ---- colliders ----
@@ -459,6 +464,7 @@ void Solver::cleanUp() {
     _hasLastEntity = false;
     _accumulator = 0.0f;
     _avatarMoveSinceStep = glm::vec3(0.0f);
+    _ownMoveSinceStep = glm::vec3(0.0f);
 }
 
 void Solver::setTransform(float scale, const glm::vec3& position, const glm::quat& rotation) {
@@ -508,8 +514,8 @@ void Solver::resetChain(Chain& chain) {
     }
 }
 
-void Solver::stepChain(Chain& chain, const glm::vec3& avatarMove, const glm::vec3& lastParentPosition, const glm::quat& lastParentRotation,
-                       const glm::vec3& parentPosition, const glm::quat& parentRotation) {
+void Solver::stepChain(Chain& chain, const glm::vec3& frameMove, const glm::vec3& ownMove, const glm::vec3& lastParentPosition,
+                       const glm::quat& lastParentRotation, const glm::vec3& parentPosition, const glm::quat& parentRotation) {
     const ComponentSpec& spec = *chain.spec;
     auto& parts = chain.particles;
     if (parts.empty()) {
@@ -542,11 +548,14 @@ void Solver::stepChain(Chain& chain, const glm::vec3& avatarMove, const glm::vec
     for (size_t i = 1; i < parts.size(); i++) {
         Particle& p = parts[i];
         const Particle& parent = parts[p.parent];
-        // the velocity: the particle's displacement in the parent's frame over the last step, in that frame now; the
-        // position carried by the parent's translation, less the part of the avatar's own movement the chain feels
+        // the velocity: the particle's displacement in the parent's frame over the last step, in that frame now. The
+        // position is carried by the rigid carry's share of its rigid motion with the root; the positions being
+        // relative to the avatar, the frame's own movement in the world is rigid motion too, of which the carry's
+        // share is already in `rigid` and the rest must be taken out here, less the immobile share the chain keeps
         glm::vec3 velocity = parentRotation * (p.localPosition - p.previousLocalPosition);
         glm::vec3 rigid = root.position + frameTurn * (p.position - root.previousPosition);
-        glm::vec3 carried = p.position + (rigid - p.position) * rigidCarried - avatarMove * Law::avatarMoveFelt(spec, p.immobile);
+        glm::vec3 carried = p.position + (rigid - p.position) * rigidCarried - frameMove * (1.0f - rigidCarried)
+                            + ownMove * Law::avatarMoveImmobile(spec, p.immobile);
 
         // the pull toward the rest: the bone's animated rest direction (the rest rotations composed down from the
         // chain's parent, as the components do), anchored at the parent particle where it is now; the gap is measured
@@ -556,7 +565,7 @@ void Solver::stepChain(Chain& chain, const glm::vec3& avatarMove, const glm::vec
         glm::vec3 rest = parent.position + restWorld[parentIndex] * p.restLocal;
         glm::vec3 next = carried + velocity * Law::velocityKept(spec, p.spring) + (rest - carried) * Law::pull(spec, p.pull);
         if (trace && i == 1) {
-            qCDebug(animation) << "spring trace" << spec.root << "avatarMove" << avatarMove << "rigid" << rigid << "velocity" << velocity
+            qCDebug(animation) << "spring trace" << spec.root << "length" << p.length << "root" << root.position << "avatarMove" << frameMove << "ownMove" << ownMove << "rigid" << rigid << "velocity" << velocity
                                << "position" << p.position << "rest" << rest << "next" << next;
         }
 
@@ -644,14 +653,32 @@ void Solver::update(float deltaTime, AnimPoseVec& relativePoses, AnimPoseVec& ab
     _lastEntityPosition = _entityPosition;
     _hasLastEntity = true;
     _avatarMoveSinceStep += avatarMove;
+    if (_lockstep && _moveGiven) {
+        // a test says what the avatar's own movement was (see advance(seconds, avatarMove)); the frame's movement
+        // stays the avatar's actual one
+        _ownMoveSinceStep += _pendingMove;
+        _pendingMove = glm::vec3(0.0f);
+    } else {
+        _ownMoveSinceStep += avatarMove;
+    }
 
     for (auto& chain : _chains) {
         readAnimation(chain, relativePoses, absolutePoses);
     }
 
+    bool consumed = false;
     if (_lockstep) {
+        if (!_lockstepArmed) {
+            // the remainder of the free run before lockstep would set where between two steps every frame of the
+            // test is presented; from here the handed time alone decides
+            _accumulator = 0.0f;
+            _lockstepArmed = true;
+        }
         deltaTime = _pendingTime;
+        consumed = deltaTime > 0.0f;
         _pendingTime = 0.0f;
+    } else {
+        _lockstepArmed = false;
     }
     float frameTime = glm::clamp(deltaTime, 0.0f, MAX_STEPS_PER_FRAME * STEP);
     _accumulator += frameTime;
@@ -663,6 +690,7 @@ void Solver::update(float deltaTime, AnimPoseVec& relativePoses, AnimPoseVec& ab
     _accumulator -= steps * STEP;
     _stepCount += steps;
     glm::vec3 movePerStep = steps > 0 ? _avatarMoveSinceStep / (float)steps : glm::vec3(0.0f);
+    glm::vec3 ownMovePerStep = steps > 0 ? _ownMoveSinceStep / (float)steps : glm::vec3(0.0f);
 
     for (auto& chain : _chains) {
         if (!chain.spec->enabled || chain.particles.empty()) {
@@ -687,18 +715,20 @@ void Solver::update(float deltaTime, AnimPoseVec& relativePoses, AnimPoseVec& ab
             glm::vec3 stepPosition = glm::mix(framePosition, parentPositionNow, alpha);
             glm::quat stepRotation = safeMix(frameRotation, parentRotationNow, alpha);
             chain.particles[0].animPosition = stepPosition + stepRotation * rootOffset;
-            stepChain(chain, movePerStep, chain.lastParentPosition, chain.lastParentRotation, stepPosition, stepRotation);
+            stepChain(chain, movePerStep, ownMovePerStep, chain.lastParentPosition, chain.lastParentRotation, stepPosition, stepRotation);
             chain.lastParentPosition = stepPosition;
             chain.lastParentRotation = stepRotation;
         }
         if (steps > 0) {
             _avatarMoveSinceStep = glm::vec3(0.0f);
+            _ownMoveSinceStep = glm::vec3(0.0f);
         }
     }
 
     // the presentation: between the last two steps, half way at the step's own frame and the whole way one frame of
     // 60 Hz later (the components' recordings show a new state half at its frame and whole at the next)
     float alpha = glm::clamp(0.5f + _accumulator / STEP, 0.0f, 1.0f);
+    _lastAlpha = alpha;
     for (auto& chain : _chains) {
         for (auto& p : chain.particles) {
             p.presented = glm::mix(p.previousPosition, p.position, alpha);
@@ -717,6 +747,10 @@ void Solver::update(float deltaTime, AnimPoseVec& relativePoses, AnimPoseVec& ab
             }
         }
     }
+    if (consumed) {
+        _consumedCount++;
+    }
+    _updateCount++;
 }
 
 void Solver::copyJointRotations(const AnimPoseVec& fromRelativePoses, AnimPoseVec& toRelativePoses) const {

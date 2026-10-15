@@ -214,8 +214,28 @@ void TestScriptingInterface::advanceSpringBones(float seconds) {
     springbones::Solver::advance(seconds);
 }
 
+void TestScriptingInterface::advanceSpringBones(float seconds, const glm::vec3& avatarMove) {
+    springbones::Solver::advance(seconds, avatarMove);
+}
+
 int TestScriptingInterface::getSpringBoneSteps() {
     return (int)springbones::Solver::getStepCount();
+}
+
+float TestScriptingInterface::getSpringBonePendingTime() {
+    return springbones::Solver::getPendingTime();
+}
+
+int TestScriptingInterface::getSpringBoneConsumed() {
+    return (int)springbones::Solver::getConsumedCount();
+}
+
+float TestScriptingInterface::getSpringBoneAlpha() {
+    return springbones::Solver::getLastAlpha();
+}
+
+int TestScriptingInterface::getSpringBoneUpdates() {
+    return (int)springbones::Solver::getUpdateCount();
 }
 
 float TestScriptingInterface::getGameLoopRate() {
