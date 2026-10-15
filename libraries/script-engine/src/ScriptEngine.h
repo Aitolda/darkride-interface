@@ -993,8 +993,11 @@ protected:
     QWeakPointer<ScriptEngines> _scriptEngines;
 };
 
+// scriptURL, when known, is the script's full URL: an engine chosen for the script in the Running Scripts window
+// takes precedence over the setting.
 ScriptEnginePointer scriptEngineFactory(ScriptEngine::Context context,
                                         const QString& scriptContents,
-                                        const QString& fileNameString);
+                                        const QString& fileNameString,
+                                        const QUrl& scriptURL = QUrl());
 
 #endif // hifi_ScriptEngine_h

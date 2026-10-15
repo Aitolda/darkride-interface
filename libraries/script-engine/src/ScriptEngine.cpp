@@ -191,15 +191,21 @@ QString ScriptEngine::logException(const QScriptValue& exception) {
 
 ScriptEnginePointer scriptEngineFactory(ScriptEngine::Context context,
                                                  const QString& scriptContents,
-                                                 const QString& fileNameString) {
+                                                 const QString& fileNameString,
+                                                 const QUrl& scriptURL) {
     // a WebAssembly module runs on the engine beside this one; it is told from the file name's suffix, which
     // ScriptEngines::loadScript puts in the name before the content is fetched. A JavaScript client script
     // and the entities engines (the client's, the entity script server's) go there too when the setting says
-    // so; agents stay on this engine until their owners say otherwise.
+    // so, and a client script for which an engine was chosen goes to that one; agents stay on this engine
+    // until their owners say otherwise.
     const bool isEntitiesEngine = context == ScriptEngine::ENTITY_CLIENT_SCRIPT || context == ScriptEngine::ENTITY_SERVER_SCRIPT;
+    const bool isClientJavaScript = context == ScriptEngine::CLIENT_SCRIPT && WasmScriptEngine::isJavaScriptFile(fileNameString);
+    bool javaScriptOnWebAssembly = WasmScriptEngine::runJavaScriptOnWebAssembly();
+    if (isClientJavaScript && !scriptURL.isEmpty()) {
+        WasmScriptEngine::engineChosenForScript(scriptURL, javaScriptOnWebAssembly);
+    }
     const bool onWebAssembly = WasmScriptEngine::isWasmScript(fileNameString) ||
-        (WasmScriptEngine::runJavaScriptOnWebAssembly() &&
-         ((context == ScriptEngine::CLIENT_SCRIPT && WasmScriptEngine::isJavaScriptFile(fileNameString)) || isEntitiesEngine));
+        (javaScriptOnWebAssembly && (isClientJavaScript || isEntitiesEngine));
     ScriptEngine* engine = onWebAssembly ? new WasmScriptEngine(context, scriptContents, fileNameString)
                                          : new ScriptEngine(context, scriptContents, fileNameString);
     ScriptEnginePointer engineSP = ScriptEnginePointer(engine, &QObject::deleteLater);

@@ -86,6 +86,11 @@ public:
     /// QtScript one.
     static bool runJavaScriptOnWebAssembly();
     static void setRunJavaScriptOnWebAssembly(bool on);
+    /// The engine chosen for one JavaScript client script (in the Running Scripts window), over the setting until
+    /// the client quits: true for this engine, false for the QtScript one. Safe from any thread.
+    static void chooseEngineForScript(const QUrl& url, bool onWebAssembly);
+    /// Whether an engine was chosen for the script, and which.
+    static bool engineChosenForScript(const QUrl& url, bool& onWebAssembly);
     /// Where the JavaScript guest module is: $DARKRIDE_JS_WASM, else wasm/darkride-js.wasm under the
     /// resources beside the executable (Contents/Resources on macOS, resources/ elsewhere).
     static QString javascriptGuestPath();

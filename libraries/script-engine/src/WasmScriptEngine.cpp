@@ -190,6 +190,35 @@ void WasmScriptEngine::setRunJavaScriptOnWebAssembly(bool on) {
     runJavaScriptOnWebAssemblySetting.set(on);
 }
 
+namespace {
+
+std::mutex& chosenEnginesMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+QHash<QUrl, bool>& chosenEngines() {
+    static QHash<QUrl, bool> chosen;
+    return chosen;
+}
+
+} // namespace
+
+void WasmScriptEngine::chooseEngineForScript(const QUrl& url, bool onWebAssembly) {
+    std::lock_guard<std::mutex> lock(chosenEnginesMutex());
+    chosenEngines()[url] = onWebAssembly;
+}
+
+bool WasmScriptEngine::engineChosenForScript(const QUrl& url, bool& onWebAssembly) {
+    std::lock_guard<std::mutex> lock(chosenEnginesMutex());
+    auto found = chosenEngines().constFind(url);
+    if (found == chosenEngines().constEnd()) {
+        return false;
+    }
+    onWebAssembly = found.value();
+    return true;
+}
+
 QString WasmScriptEngine::javascriptGuestPath() {
     QString fromEnvironment = qEnvironmentVariable("DARKRIDE_JS_WASM");
     if (!fromEnvironment.isEmpty()) {
