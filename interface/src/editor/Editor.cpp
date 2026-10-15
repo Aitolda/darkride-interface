@@ -2868,6 +2868,23 @@ bool Editor::handleKeyRelease(QKeyEvent* event) {
 }
 
 bool Editor::eventFilter(QObject* watched, QEvent* event) {
+    // In build mode the world takes a drop only over the viewport. Qt hands a drag that a widget turns down to its
+    // parents, up to the main window, which gives every drop to the world: a model dragged onto a picture field (which
+    // refused it) was placed in the world. Over the panels, a drag nothing in them takes is turned down here.
+    const QEvent::Type type = event->type();
+    if (_active && (type == QEvent::DragEnter || type == QEvent::DragMove || type == QEvent::Drop)
+            && watched == qApp->getWindow()) {
+        QWidget* window = qApp->getWindow();
+        QWidget* viewport = qApp->getPrimaryWidget();
+        auto drop = static_cast<QDropEvent*>(event);   // the enter and move events are drop events too
+        const bool overViewport = viewport && viewport->isVisible() && viewport->window() == window
+            && QRect(viewport->mapTo(window, QPoint(0, 0)), viewport->size()).contains(drop->pos());
+        if (!overViewport) {
+            drop->ignore();
+            return true;
+        }
+        return false;
+    }
     // the camera keys (1 first person, 2 selfie, 3 look at) do nothing in build mode, which has its own camera:
     // a stray one (a number meant for a field) quietly changed the camera you came back to
     if (_active && event->type() == QEvent::ShortcutOverride) {
