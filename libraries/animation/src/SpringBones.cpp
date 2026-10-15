@@ -179,28 +179,36 @@ static float interpolateTable(const std::vector<std::pair<float, float>>& table,
     return table.back().second;
 }
 
+// The sweep (SPRING-BONES.md 5; research/spring-bones/fitlaw.py on each run of 2026-10-15): the cap ear, one
+// setting changed per run from pull 0.2, spring 0.2, the whole recording fitted to this law. One axis at a time is
+// what the sweep gives, so each table reads along its own axis with the other at 0.2.
+
 float Law::velocityKept(const ComponentSpec& spec, float spring) {
-    // from the one-particle chains' free returns at the step rate (research/spring-bones/decayfit.py, 2026-10-15):
-    // spring 0.2 keeps 0.237 of the velocity per step, 0.24 keeps 0.25, 0.6 keeps 0.41, 0.7 about 0.5
-    // (the whole-recording fits of the cap ears, fitlaw.py, read 0.25 at spring 0.2)
-    static const std::vector<std::pair<float, float>> TABLE = { { 0.0f, 0.15f }, { 0.2f, 0.247f }, { 0.24f, 0.26f }, { 0.6f, 0.41f }, { 0.7f, 0.5f }, { 1.0f, 0.8f } };
+    // spring 0, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0: fitted 0.248, 0.254, 0.250, 0.299, 0.360, 0.608, 0.668, the fit
+    // 0.1 to 0.3 degrees to 0.6, 0.8 at 0.8 and 6 at 1.0 (a wobble this law does not make)
+    static const std::vector<std::pair<float, float>> TABLE = { { 0.0f, 0.248f }, { 0.1f, 0.254f }, { 0.2f, 0.250f }, { 0.4f, 0.299f }, { 0.6f, 0.360f }, { 0.8f, 0.608f }, { 1.0f, 0.668f } };
     return interpolateTable(TABLE, glm::clamp(spring, 0.0f, 1.0f));
 }
 
 float Law::pull(const ComponentSpec& spec, float pull) {
-    // the same fits: pull 0.2 closes 0.237 of the gap per step, 0.24 closes 0.255
-    // (the whole-recording fits read 0.243 at pull 0.2)
-    static const std::vector<std::pair<float, float>> TABLE = { { 0.0f, 0.0f }, { 0.2f, 0.244f }, { 0.24f, 0.26f }, { 1.0f, 1.0f } };
+    // pull 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0: fitted 0.069, 0.129, 0.243, 0.569, 0.672, 0.819, 1.000 (the walk's
+    // lag 63, 39, 19, 7, 3, 1, 0 degrees); from 0.4 up the return is within a step
+    static const std::vector<std::pair<float, float>> TABLE = { { 0.0f, 0.0f }, { 0.05f, 0.069f }, { 0.1f, 0.129f }, { 0.2f, 0.243f }, { 0.4f, 0.569f }, { 0.6f, 0.672f }, { 0.8f, 0.819f }, { 1.0f, 1.0f } };
     return interpolateTable(TABLE, glm::clamp(pull, 0.0f, 1.0f));
 }
 
 float Law::rigidCarried(const ComponentSpec& spec) {
-    // fitted over whole recordings of the test avatar's two cap ears (research/spring-bones/fitlaw.py, 2026-10-15):
-    // 0.343 to 0.365 on both, at immobile 0.9 and at immobile 0 alike. The components carry a stiffness of 0.2, and
-    // the stiffness applied twice per state shown, 1 - (1 - 0.2)^2, is 0.36: the reading taken until the sweep's
-    // stiffness runs confirm or deny it.
-    float s = glm::clamp(spec.stiffness, 0.0f, 1.0f);
-    return 1.0f - (1.0f - s) * (1.0f - s);
+    // fitted over whole recordings of the test avatar's cap ears (research/spring-bones/fitlaw.py, 2026-10-15): 0.36
+    // at immobile 0.9 and 0 alike, and the sweep's stiffness runs (SPRING-BONES.md 5) read the same at stiffness 0,
+    // 0.5 and 1.0: in the simplified integration stiffness does nothing and the carry is a constant whose source is
+    // open. In the advanced integration stiffness is the carry: 0.39, 0.50, 0.65, 0.94 fitted at 0, 0.2, 0.5, 1.0.
+    if (spec.integrationType == 1) {
+        return glm::clamp(0.39f + 0.55f * glm::clamp(spec.stiffness, 0.0f, 1.0f), 0.0f, 1.0f);
+    }
+    // along the spring axis: 0.396, 0.385, 0.360, 0.342, 0.251, 0.253 at spring 0, 0.1, 0.2, 0.4, 0.6, 0.8 (and
+    // 0.29, 0.34 at pull 0.05, 0.1, which this does not follow)
+    static const std::vector<std::pair<float, float>> TABLE = { { 0.0f, 0.396f }, { 0.1f, 0.385f }, { 0.2f, 0.360f }, { 0.4f, 0.342f }, { 0.6f, 0.251f }, { 0.8f, 0.253f }, { 1.0f, 0.253f } };
+    return interpolateTable(TABLE, glm::clamp(spec.spring, 0.0f, 1.0f));
 }
 
 float Law::avatarMoveImmobile(const ComponentSpec& spec, float immobile) {
@@ -277,16 +285,12 @@ bool Collider::pushOut(const glm::vec3& from, glm::vec3& point, float radius, fl
             return false;
         }
         case Shape::Plane: {
-            // a disc of the shape's radius through its position, its normal the shape's up; a particle over the disc
-            // stays on the up side. (The test avatar's chest has one such disc whose up points down, 9 cm aside of the
-            // hair root it names; the recording leaves that root above it, so the disc is finite, not a whole plane.)
+            // a whole plane through the shape's position, its normal the shape's up; the particle's sphere stays on
+            // the up side. (The sweep's plane runs, SPRING-BONES.md 5: a plane 2 cm past the ear's tip pushes the ear's
+            // 5 cm sphere 86 degrees off when its up faces the ear and pins the ear through it when its up faces away;
+            // and the chest planes hold the hair's root from 4 cm away, which a disc of the shape's radius did not.)
             glm::vec3 normal = rotation * Vectors::UP;
-            glm::vec3 d = point - position;
-            float height = glm::dot(d, normal);
-            glm::vec3 across = d - normal * height;
-            if (glm::length(across) > r) {
-                return false;
-            }
+            float height = glm::dot(point - position, normal);
             if (height < radius) {
                 point += normal * (radius - height);
                 return true;
@@ -554,15 +558,36 @@ void Solver::stepChain(Chain& chain, const glm::vec3& frameMove, const glm::vec3
         // share is already in `rigid` and the rest must be taken out here, less the immobile share the chain keeps
         glm::vec3 velocity = parentRotation * (p.localPosition - p.previousLocalPosition);
         glm::vec3 rigid = root.position + frameTurn * (p.position - root.previousPosition);
+        // the immobile share: of the avatar's own movement in the World type, of every rigid motion (the parent's
+        // turn included) in the All Motion type (the sweep, SPRING-BONES.md 5: at immobile 0.9 the All Motion type
+        // takes the spin's lag from 25 to 2.8 degrees and leaves the walk's alone)
+        glm::vec3 immobileMotion = ownMove;
+        if (spec.immobileType == ImmobileType::AllMotion) {
+            immobileMotion += rigid - p.position;
+        }
         glm::vec3 carried = p.position + (rigid - p.position) * rigidCarried - frameMove * (1.0f - rigidCarried)
-                            + ownMove * Law::avatarMoveImmobile(spec, p.immobile);
+                            + immobileMotion * Law::avatarMoveImmobile(spec, p.immobile);
 
         // the pull toward the rest: the bone's animated rest direction (the rest rotations composed down from the
         // chain's parent, as the components do), anchored at the parent particle where it is now; the gap is measured
         // from the carried position, before the velocity is added
         int parentIndex = p.parent;
         glm::vec3 restDirection = glm::normalize(restWorld[parentIndex] * p.restLocal);
-        glm::vec3 rest = parent.position + restWorld[parentIndex] * p.restLocal;
+        // gravity (version 1.1): the rest direction blended toward the world's down by the gravity value, a
+        // normalized lerp (the sweep: 8.2 degrees of droop at 0.2, 77 at 0.5, straight down at 1.0, up at -0.5),
+        // less the falloff's share of it while the bone lies along its rest (falloff 1 leaves none at rest)
+        glm::vec3 pullDirection = restDirection;
+        if (spec.version == 1 && fabsf(p.gravity) > EPSILON) {
+            glm::vec3 current = p.position - parent.position;
+            float along = glm::length(current) > EPSILON ? glm::clamp(glm::dot(current / glm::length(current), restDirection), 0.0f, 1.0f) : 1.0f;
+            float gravity = p.gravity * (1.0f - glm::clamp(p.gravityFalloff, 0.0f, 1.0f) * along);
+            glm::vec3 toward = gravity < 0.0f ? Vectors::UP : -Vectors::UP;
+            glm::vec3 blended = glm::mix(restDirection, toward, glm::clamp(fabsf(gravity), 0.0f, 1.0f));
+            if (glm::length(blended) > EPSILON) {
+                pullDirection = glm::normalize(blended);
+            }
+        }
+        glm::vec3 rest = parent.position + pullDirection * glm::length(p.restLocal);
         glm::vec3 next = carried + velocity * Law::velocityKept(spec, p.spring) + (rest - carried) * Law::pull(spec, p.pull);
         if (trace && i == 1) {
             qCDebug(animation) << "spring trace" << spec.root << "length" << p.length << "root" << root.position << "avatarMove" << frameMove << "ownMove" << ownMove << "rigid" << rigid << "velocity" << velocity
