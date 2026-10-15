@@ -7,6 +7,8 @@
 //
 #include "TestScriptingInterface.h"
 
+#include <SpringBones.h>
+
 #include <QtCore/QCoreApplication>
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QThread>
@@ -202,6 +204,14 @@ int TestScriptingInterface::getOtherAvatarsReplicaCount() {
 
 void TestScriptingInterface::setMinimumGPUTextureMemStabilityCount(int count) {
     QMetaObject::invokeMethod(qApp, "setMinimumGPUTextureMemStabilityCount", Qt::DirectConnection, Q_ARG(int, count));
+}
+
+void TestScriptingInterface::setSpringBoneLockstep(bool on) {
+    springbones::Solver::setLockstep(on);
+}
+
+void TestScriptingInterface::advanceSpringBones(float seconds) {
+    springbones::Solver::advance(seconds);
 }
 
 float TestScriptingInterface::getGameLoopRate() {

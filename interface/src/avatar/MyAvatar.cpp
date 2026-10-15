@@ -6823,7 +6823,6 @@ void MyAvatar::initSpringBonesFromFST() {
     auto& rig = _skeletonModel->getRig();
     const auto& mapping = _skeletonModel->getNetworkModel()->getMapping();
     static const QString SPRING_BONES_FIELD = "springBones";
-    static const QString SCALE_FIELD = "scale";
     if (!getFlowEnabled() || !mapping.contains(SPRING_BONES_FIELD)) {
         rig.getSpringBones().cleanUp();
         return;
@@ -6835,8 +6834,8 @@ void MyAvatar::initSpringBonesFromFST() {
         rig.getSpringBones().cleanUp();
         return;
     }
-    float scale = mapping.contains(SCALE_FIELD) ? mapping.value(SCALE_FIELD).toFloat() : 1.0f;
-    rig.initSpringBones(document.object(), scale > 0.0f ? scale : 1.0f);
+    // the data's metres are the model's; the rig's poses are in the model's metres too (the .fst's scale does not reach them)
+    rig.initSpringBones(document.object(), 1.0f);
 }
 
 void MyAvatar::initFlowFromFST() {

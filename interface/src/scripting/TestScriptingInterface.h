@@ -204,6 +204,21 @@ public slots:
      */
     Q_INVOKABLE float getRenderLoopRate();
 
+    /*@jsdoc
+     * Runs the avatar's spring bones in lockstep: once on, they advance only by the time handed to them with
+     * {@link Test.advanceSpringBones}, whatever the frames take, so a recording can be replayed frame by frame.
+     * @function Test.setSpringBoneLockstep
+     * @param {boolean} on - Lockstep on or off (off returns them to real time).
+     */
+    Q_INVOKABLE void setSpringBoneLockstep(bool on);
+
+    /*@jsdoc
+     * Hands the spring bones time to advance by at their next update, in lockstep.
+     * @function Test.advanceSpringBones
+     * @param {number} seconds - The time to advance.
+     */
+    Q_INVOKABLE void advanceSpringBones(float seconds);
+
 private:
     bool waitForCondition(qint64 maxWaitMs, std::function<bool()> condition);
     QString _testResultsLocation;

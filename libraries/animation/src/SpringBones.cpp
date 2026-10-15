@@ -20,6 +20,9 @@ using namespace springbones;
 
 static const glm::quat IDENTITY_QUAT(1.0f, 0.0f, 0.0f, 0.0f);
 
+bool Solver::_lockstep = false;
+float Solver::_pendingTime = 0.0f;
+
 // ---- the data ----
 
 float Curve::evaluate(float t) const {
@@ -257,9 +260,16 @@ bool Collider::pushOut(const glm::vec3& from, glm::vec3& point, float radius, fl
             return false;
         }
         case Shape::Plane: {
-            // the plane through the shape's position, its normal the shape's up; the particle stays on the up side
+            // a disc of the shape's radius through its position, its normal the shape's up; a particle over the disc
+            // stays on the up side. (The test avatar's chest has one such disc whose up points down, 9 cm aside of the
+            // hair root it names; the recording leaves that root above it, so the disc is finite, not a whole plane.)
             glm::vec3 normal = rotation * Vectors::UP;
-            float height = glm::dot(point - position, normal);
+            glm::vec3 d = point - position;
+            float height = glm::dot(d, normal);
+            glm::vec3 across = d - normal * height;
+            if (glm::length(across) > r) {
+                return false;
+            }
             if (height < radius) {
                 point += normal * (radius - height);
                 return true;
@@ -271,6 +281,12 @@ bool Collider::pushOut(const glm::vec3& from, glm::vec3& point, float radius, fl
 }
 
 // ---- the solver ----
+
+// SPRING_BONES_TRACE=<root joint> logs one chain's first particle every step
+static bool traceChain(const ComponentSpec& spec) {
+    static const QString TRACE = QString::fromLocal8Bit(qgetenv("SPRING_BONES_TRACE"));
+    return !TRACE.isEmpty() && spec.root == TRACE;
+}
 
 glm::vec3 Solver::jointPosition(const AnimPoseVec& absolutePoses, int joint) const {
     if (joint < 0 || joint >= (int)absolutePoses.size()) {
@@ -476,6 +492,7 @@ void Solver::resetChain(Chain& chain) {
             p.worldRotation = parent.worldRotation * p.animRotation;
         }
         p.localRotation = p.previousLocalRotation = p.presentedLocalRotation = p.animRotation;
+        p.localPosition = p.previousLocalPosition = glm::inverse(parentRotation) * (p.position - chain.lastParentPosition);
     }
 }
 
@@ -486,9 +503,8 @@ void Solver::stepChain(Chain& chain, const glm::vec3& avatarMove, const glm::vec
     if (parts.empty()) {
         return;
     }
-    // the parent frame's rigid motion since the last step: its translation carries the particles, its turn does not
-    const glm::vec3 parentMove = parentPosition - lastParentPosition;
-    const glm::quat frameTurn = parentRotation * glm::inverse(lastParentRotation);
+    const glm::quat inverseParentRotation = glm::inverse(parentRotation);
+    const bool trace = traceChain(spec);
 
     // the joints' rest rotations under this step's animation: the animated local rotations composed down from the
     // chain's parent (the components reset their bones to the rest before each step)
@@ -502,26 +518,32 @@ void Solver::stepChain(Chain& chain, const glm::vec3& avatarMove, const glm::vec
         }
     }
 
-    // the root follows its animation
+    // the root follows its animation; its movement since the last step carries the chain (the parent's turn does not:
+    // the rest turns away from the particles, and the pull brings them round)
     Particle& root = parts[0];
     root.previousPosition = root.position;
     root.position = root.animPosition;
+    const glm::vec3 parentMove = root.position - root.previousPosition;
 
     for (size_t i = 1; i < parts.size(); i++) {
         Particle& p = parts[i];
         const Particle& parent = parts[p.parent];
-        // the velocity relative to the parent frame's rigid motion; the position carried by its translation only, less
-        // the part of the avatar's own movement the chain feels
-        glm::vec3 rigid = parentPosition + frameTurn * (p.previousPosition - lastParentPosition);
-        glm::vec3 velocity = (p.position - p.previousPosition) - (rigid - p.previousPosition);
-        glm::vec3 next = p.position + parentMove - avatarMove * Law::avatarMoveFelt(spec, p.immobile) + velocity * Law::velocityKept(spec, p.spring);
+        // the velocity: the particle's displacement in the parent's frame over the last step, in that frame now; the
+        // position carried by the parent's translation, less the part of the avatar's own movement the chain feels
+        glm::vec3 velocity = parentRotation * (p.localPosition - p.previousLocalPosition);
+        glm::vec3 carried = p.position + parentMove - avatarMove * Law::avatarMoveFelt(spec, p.immobile);
 
         // the pull toward the rest: the bone's animated rest direction (the rest rotations composed down from the
-        // chain's parent, as the components do), anchored at the parent particle where it is now
+        // chain's parent, as the components do), anchored at the parent particle where it is now; the gap is measured
+        // from the carried position, before the velocity is added
         int parentIndex = p.parent;
         glm::vec3 restDirection = glm::normalize(restWorld[parentIndex] * p.restLocal);
         glm::vec3 rest = parent.position + restWorld[parentIndex] * p.restLocal;
-        next += (rest - next) * Law::pull(spec, p.pull);
+        glm::vec3 next = carried + velocity * Law::velocityKept(spec, p.spring) + (rest - carried) * Law::pull(spec, p.pull);
+        if (trace && i == 1) {
+            qCDebug(animation) << "spring trace" << spec.root << "avatarMove" << avatarMove << "parentMove" << parentMove << "velocity" << velocity
+                               << "position" << p.position << "rest" << rest << "next" << next;
+        }
 
         // the limit: a cone about the rest direction turned by the limit's rotation
         glm::vec3 direction = next - parent.position;
@@ -558,6 +580,8 @@ void Solver::stepChain(Chain& chain, const glm::vec3& avatarMove, const glm::vec
         }
         p.previousPosition = p.position;
         p.position = next;
+        p.previousLocalPosition = p.localPosition;
+        p.localPosition = inverseParentRotation * (next - parentPosition);
     }
 
     // the rotations, root to tip: a joint turns so that its bone points at its child particle
@@ -610,6 +634,10 @@ void Solver::update(float deltaTime, AnimPoseVec& relativePoses, AnimPoseVec& ab
         readAnimation(chain, relativePoses, absolutePoses);
     }
 
+    if (_lockstep) {
+        deltaTime = _pendingTime;
+        _pendingTime = 0.0f;
+    }
     float frameTime = glm::clamp(deltaTime, 0.0f, MAX_STEPS_PER_FRAME * STEP);
     _accumulator += frameTime;
     int steps = (int)(_accumulator / STEP);

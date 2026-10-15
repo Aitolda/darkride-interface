@@ -144,6 +144,9 @@ struct Particle {
     glm::vec3 position { 0.0f };
     glm::vec3 previousPosition { 0.0f };
     glm::vec3 presented { 0.0f };
+    // the position in the chain parent's frame at the last two steps: their difference is the velocity the law keeps
+    glm::vec3 localPosition { 0.0f };
+    glm::vec3 previousLocalPosition { 0.0f };
     // the fitted rotations at the last two steps (joints only) and the presented one
     glm::quat localRotation { 1.0f, 0.0f, 0.0f, 0.0f };
     glm::quat previousLocalRotation { 1.0f, 0.0f, 0.0f, 0.0f };
@@ -191,6 +194,11 @@ public:
     void copyJointRotations(const AnimPoseVec& fromRelativePoses, AnimPoseVec& toRelativePoses) const;
 
     const std::vector<Chain>& getChains() const { return _chains; }
+    // A test's lockstep: once on, an update advances the simulation only by the time a test has handed it since the
+    // last update (advance()), whatever the frames take, so a recording can be replayed frame by frame.
+    static void setLockstep(bool on) { _lockstep = on; _pendingTime = 0.0f; }
+    static bool getLockstep() { return _lockstep; }
+    static void advance(float seconds) { _pendingTime += seconds; }
     const Data& getData() const { return _data; }
     int getJointCount() const { return _jointCount; }
 
@@ -220,6 +228,8 @@ private:
     int _jointCount { 0 };
     bool _initialized { false };
     bool _active { false };
+    static bool _lockstep;
+    static float _pendingTime;
 };
 
 }
