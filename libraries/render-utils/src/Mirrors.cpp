@@ -17,6 +17,21 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/transform.hpp>
 
+namespace {
+    // the projection with its near plane moved onto a plane given in camera space (Lengyel's oblique near plane):
+    // the camera lies on the plane's negative side, and only the positive side is drawn
+    glm::mat4 obliqueProjection(const glm::mat4& projection, const glm::vec4& plane) {
+        glm::vec4 q = glm::inverse(projection) * glm::vec4(glm::sign(plane.x), glm::sign(plane.y), 1.0f, 1.0f);
+        glm::vec4 c = plane * (2.0f / glm::dot(plane, q));
+        glm::mat4 result = projection;
+        result[0][2] = c.x;
+        result[1][2] = c.y;
+        result[2][2] = c.z + 1.0f;
+        result[3][2] = c.w;
+        return result;
+    }
+}
+
 Mirrors& Mirrors::instance() {
     static Mirrors mirrors;
     return mirrors;
@@ -111,6 +126,33 @@ bool Mirrors::cameraFor(const Surface& surface, const ViewFrustum& view, const g
     if (area < 4.0f) {
         return false;
     }
+    if (surface.mode == Mode::Screen) {
+        // the main view reflected in the face's plane: the picture is the whole view, a pixel a pixel. The
+        // reflected camera's axes are reflected too, which makes a left-handed camera; its right is turned round to
+        // keep a proper one, and the glass flips the picture back across when it shows it. The near plane is moved
+        // onto the glass, so nothing behind the mirror is drawn.
+        glm::vec3 normal = surface.orientation * glm::vec3(0.0f, 0.0f, 1.0f);
+        glm::vec3 onFace = surface.position + normal * front;
+        auto reflectPoint = [&](const glm::vec3& p) { return p - 2.0f * glm::dot(p - onFace, normal) * normal; };
+        auto reflectDirection = [&](const glm::vec3& d) { return d - 2.0f * glm::dot(d, normal) * normal; };
+        glm::vec3 forward = reflectDirection(view.getDirection());
+        glm::vec3 up = reflectDirection(view.getUp());
+        glm::vec3 right = glm::cross(forward, up);
+        camera.setPosition(reflectPoint(view.getPosition()));
+        camera.setOrientation(glm::quat_cast(glm::mat3(right, up, -forward)));
+        glm::mat4 cameraFromWorld = glm::inverse(glm::translate(camera.getPosition()) * glm::mat4_cast(camera.getOrientation()));
+        glm::vec3 normalInCamera = glm::normalize(glm::mat3(cameraFromWorld) * normal);
+        glm::vec3 onFaceInCamera = glm::vec3(cameraFromWorld * glm::vec4(onFace, 1.0f));
+        glm::vec4 plane(normalInCamera, -glm::dot(normalInCamera, onFaceInCamera));   // the viewer's side is positive
+        // the planes, near and far from the view's own projection (the oblique one's far corners land behind the
+        // eye); the oblique projection only to draw with
+        camera.setProjection(view.getProjection());
+        camera.calculate();
+        camera.setObliqueProjection(obliqueProjection(view.getProjection(), plane));
+        pixels = viewport;
+        return true;
+    }
+
     // the picture: the mirror's size on screen (scaled), a texel a pixel, within bounds
     glm::vec2 wanted = glm::clamp(sizeOnScreen * _resolutionScale, glm::vec2(32.0f), glm::vec2((float)_maxPixels));
     pixels = glm::ivec2(glm::round(wanted));

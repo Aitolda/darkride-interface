@@ -19,6 +19,8 @@
 #define ENTITIES_TEXTURE_POLYVOX_YMAP 1
 #define ENTITIES_TEXTURE_POLYVOX_ZMAP 2
 
+#define ENTITIES_TEXTURE_MIRROR_PICTURE 0
+
 // Terrain: the layers' colour textures take the material texture slots, the chunk's paint map tiles (layers 0 to 3
 // and 4 to 7 of the weights) the two after them, the layers' normal and mask arrays (a slice per layer) at 12 and
 // 13 (the forward variant's lighting takes 11 and 14), the terrain's parameters the material buffer slot and the chunk's own (where its tile is read) the

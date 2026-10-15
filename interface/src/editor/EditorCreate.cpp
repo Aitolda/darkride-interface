@@ -136,7 +136,7 @@ EntityItemProperties EditorCreate::properties(const QString& key, const glm::vec
         p.setName("Mirror");
         p.setDimensions(glm::vec3(1.0f, 2.0f, 0.02f));
         p.setColor(glm::u8vec3(40, 44, 48));
-        p.setUserData("{\"mirror\": \"true\"}");
+        p.setUserData("{\"mirror\": \"screen\"}");
         p.setRotation(facing(cameraYaw));
         return p;
     }

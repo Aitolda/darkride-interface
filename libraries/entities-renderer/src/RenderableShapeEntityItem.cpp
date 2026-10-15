@@ -5,12 +5,17 @@
 
 #include "RenderableShapeEntityItem.h"
 
+#include <mutex>
+
 #include <glm/gtx/quaternion.hpp>
 
 #include <gpu/Batch.h>
 #include <DependencyManager.h>
 #include <GeometryCache.h>
 #include <Mirrors.h>
+#include <StencilMaskPass.h>
+#include <shaders/Shaders.h>
+#include "entities-renderer/ShaderConstants.h"
 #include "EntitiesRendererLogging.h"
 #include <Transform.h>
 #include <graphics/TextureMap.h>
@@ -27,6 +32,23 @@ static const float SPHERE_ENTITY_SCALE = 0.5f;
 
 ShapeEntityRenderer::ShapeEntityRenderer(const EntityItemPointer& entity) : Parent(entity) {
     addMaterial(graphics::MaterialLayer(_material, 0), "0");
+}
+
+namespace {
+    // the glass of a screen-mode mirror: its picture by screen position, unlit, into the G-buffer
+    gpu::PipelinePointer screenMirrorPipeline() {
+        static gpu::PipelinePointer pipeline;
+        static std::once_flag once;
+        std::call_once(once, [] {
+            auto program = gpu::Shader::createProgram(shader::entities_renderer::program::mirror_screen);
+            auto state = std::make_shared<gpu::State>();
+            state->setCullMode(gpu::State::CULL_BACK);
+            state->setDepthTest(true, true, gpu::LESS_EQUAL);
+            PrepareStencil::testMaskDrawShape(*state);
+            pipeline = gpu::Pipeline::create(program, state);
+        });
+        return pipeline;
+    }
 }
 
 ShapeEntityRenderer::~ShapeEntityRenderer() {
@@ -99,7 +121,8 @@ void ShapeEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
 
             _renderTransform.postScale(_dimensions);
             if (_mirror) {
-                Mirrors::instance().setSurface(entity->getID(), { _position, _orientation, entity->getScaledDimensions() });
+                Mirrors::instance().setSurface(entity->getID(), { _position, _orientation, entity->getScaledDimensions(),
+                                                                  _mirrorScreen ? Mirrors::Mode::Screen : Mirrors::Mode::Picture });
             }
         });
     });
@@ -150,23 +173,30 @@ void ShapeEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPoint
                     _billboardMode = BillboardMode::NONE;
                 }
             }
-            // a mirror: the entry true, or "true" as the editor's checkbox writes it
+            // a mirror: the entry "picture" (or true, or "true", as the editor wrote it at first) or "screen"
             QJsonValue mirrorEntry = userDataObject.value("mirror");
-            bool mirror = mirrorEntry.toBool() || mirrorEntry.toString().compare("true", Qt::CaseInsensitive) == 0;
-            if (mirror != _mirror) {
-                _mirror = mirror;
-                _mirrorId = entity->getID();
+            QString mirrorText = mirrorEntry.toBool() ? QStringLiteral("picture") : mirrorEntry.toString().toLower();
+            bool mirrorScreen = mirrorText == "screen";
+            bool mirror = mirrorScreen || mirrorText == "picture" || mirrorText == "true";
+            if (mirror != _mirror || mirrorScreen != _mirrorScreen) {
                 if (_mirror) {
-                    Mirrors::instance().setSurface(_mirrorId, { entity->getWorldPosition(), entity->getWorldOrientation(), entity->getScaledDimensions() });
-                } else {
+                    // out of the old mode: the material its own again
                     Mirrors::instance().removeSurface(_mirrorId);
                     _material->setTextureMap(graphics::MaterialKey::EMISSIVE_MAP, nullptr);
                     _material->setTexCoordTransform(0, glm::mat4());
                     _material->setEmissive(glm::vec3(0.0f), false);
                     _material->setAlbedo(_color);
                     _mirrorShown = false;
-                    _mirrorGeneration = 0;
+                    _mirrorPicture = nullptr;
                     materialChanged = true;
+                }
+                _mirror = mirror;
+                _mirrorScreen = mirrorScreen;
+                _mirrorId = entity->getID();
+                _mirrorGeneration = 0;
+                if (_mirror) {
+                    Mirrors::instance().setSurface(_mirrorId, { entity->getWorldPosition(), entity->getWorldOrientation(), entity->getScaledDimensions(),
+                                                               _mirrorScreen ? Mirrors::Mode::Screen : Mirrors::Mode::Picture });
                 }
             }
         }
@@ -177,7 +207,11 @@ void ShapeEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPoint
             gpu::TexturePointer picture = Mirrors::instance().textureFor(_mirrorId, generation);
             if (generation != _mirrorGeneration) {
                 _mirrorGeneration = generation;
-                if (picture) {
+                _mirrorPicture = picture;
+                if (_mirrorScreen) {
+                    // the glass draws the picture itself, by screen position (doRender); the material stays its own
+                    _mirrorShown = (bool)picture;
+                } else if (picture) {
                     if (!_mirrorSource) {
                         _mirrorSource = std::make_shared<gpu::TextureSource>(QUrl("mirror://picture"));
                     }
@@ -368,6 +402,21 @@ void ShapeEntityRenderer::doRender(RenderArgs* args) {
     });
 
     if (outColor.a == 0.0f) {
+        return;
+    }
+
+    // a screen-mode mirror in the main view draws its picture by screen position with a pipeline of its own; in a
+    // mirror's view, or in forward rendering, it is a plain shape of its colour
+    if (_mirrorScreen && _mirrorShown && _mirrorPicture && args->_renderMethod == render::Args::DEFERRED
+            && args->_renderMode == RenderArgs::DEFAULT_RENDER_MODE && _primitiveMode != PrimitiveMode::LINES) {
+        auto previous = args->_shapePipeline;
+        batch.setPipeline(screenMirrorPipeline());
+        batch.setResourceTexture(ENTITIES_TEXTURE_MIRROR_PICTURE, _mirrorPicture);
+        geometryCache->renderShape(batch, geometryShape);
+        if (previous && previous->pipeline) {
+            batch.setPipeline(previous->pipeline);   // the items after this one expect theirs
+        }
+        args->_details._trianglesRendered += (int)geometryCache->getShapeTriangleCount(geometryShape);
         return;
     }
 

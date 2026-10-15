@@ -59,10 +59,12 @@ private:
 
     // a mirror (userData "mirror": true): registered with Mirrors, its picture shown as an unlit albedo map
     bool _mirror { false };
-    bool _mirrorShown { false };   // the picture is on the material (else its colour)
+    bool _mirrorScreen { false };  // screen mode: the glass draws its picture by screen position (else as a map)
+    bool _mirrorShown { false };   // it has a picture this frame (else it shows its colour)
     QUuid _mirrorId;
     uint32_t _mirrorGeneration { 0 };
     gpu::TextureSourcePointer _mirrorSource;
+    gpu::TexturePointer _mirrorPicture;
 };
 
 } } 

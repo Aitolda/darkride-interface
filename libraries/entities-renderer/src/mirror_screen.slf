@@ -1,0 +1,27 @@
+<@include gpu/Config.slh@>
+<$VERSION_HEADER$>
+//  Generated on <$_SCRIBE_DATE$>
+//
+//  mirror_screen.slf
+//  The glass of a screen-mode mirror (Mirrors.h): its picture was drawn from the viewer's reflection with the
+//  main view's own projection, so it lies pixel for pixel under the glass; it is read by screen position, flipped
+//  across (the reflected camera was turned into a proper one), and written unlit, as light of its own.
+//
+//  Distributed under the Apache License, Version 2.0.
+//  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
+//
+
+<@include DeferredBufferWrite.slh@>
+<@include render-utils/ShaderConstants.h@>
+<@include entities-renderer/ShaderConstants.h@>
+
+LAYOUT(binding=ENTITIES_TEXTURE_MIRROR_PICTURE) uniform sampler2D mirrorPicture;
+
+layout(location=RENDER_UTILS_ATTR_NORMAL_WS) in vec3 _normalWS;
+
+void main(void) {
+    vec2 size = vec2(textureSize(mirrorPicture, 0));
+    vec2 uv = vec2(1.0 - gl_FragCoord.x / size.x, gl_FragCoord.y / size.y);
+    vec3 color = texture(mirrorPicture, uv).rgb;
+    packDeferredFragmentUnlit(normalize(_normalWS), 1.0, color);
+}

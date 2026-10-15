@@ -35,11 +35,18 @@ class Mirrors {
 public:
     static const int SLOT_COUNT = 4;    // mirrors drawn in a frame at most
 
+    // how a mirror shows its reflection
+    enum class Mode {
+        Picture,   // a picture of what the face frames, from a camera behind it, mapped onto the face
+        Screen     // the main view reflected in the face's plane, drawn pixel for pixel where the face is on screen
+    };
+
     // a mirror as its entity stands
     struct Surface {
         glm::vec3 position;      // world
         glm::quat orientation;   // world
         glm::vec3 dimensions;    // scaled: x and y the face, z the thickness
+        Mode mode { Mode::Picture };
     };
 
     struct Slot {

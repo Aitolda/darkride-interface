@@ -433,13 +433,19 @@ namespace {
                 [=](EP& p, const QVariant& v) { setUserDataEntry(p, name, v.toString()); }
             });
         }
-        // a shape's Mirror: the entry "mirror" true, on which the shape renderer shows the reflection (Mirrors.h)
+        // a shape's Mirror: the entry "mirror", "picture" (a picture of the reflection mapped onto the face; true
+        // and "true" mean the same) or "screen" (the reflection drawn pixel for pixel where the face is on screen);
+        // Off removes the entry (Mirrors.h)
         a.insert(QStringLiteral("userData:mirror"), Accessor {
             [=](const EP& p) {
                 QJsonValue entry = QJsonDocument::fromJson(p.getUserData().toUtf8()).object().value("mirror");
-                return QVariant(entry.toBool() || entry.toString() == "true");
+                QString text = entry.toBool() ? QStringLiteral("picture") : entry.toString().toLower();
+                return QVariant(text == "screen" ? "screen" : (text == "picture" || text == "true") ? "picture" : "off");
             },
-            [=](EP& p, const QVariant& v) { setUserDataEntry(p, "mirror", v.toBool() ? QStringLiteral("true") : QString()); }
+            [=](EP& p, const QVariant& v) {
+                QString mode = v.toString();
+                setUserDataEntry(p, "mirror", mode == "off" ? QString() : mode);
+            }
         });
         // a light's Shadows: Off is Cast Shadows off; Normal and Important cast, and Important, the entry "shadows"
         // set to "important", goes before the other lights when more cast shadows than there are maps
@@ -703,8 +709,9 @@ namespace {
         with(add(spec("color", "Color", K::Color, "shape")), "visible=true");
         with(range(add(spec("alpha", "Alpha", K::Float, "shape")), 0, 1, 0.01, 2), "visible=true");
         // the shape's +Z face shows what the viewer would see reflected in it (a few mirrors a frame, the biggest
-        // on screen first); its colour shows while it waits for a turn
-        with(add(spec("userData:mirror", "Mirror", K::Bool, "shape")), "visible=true");
+        // on screen first); its colour shows while it waits for a turn. Picture maps a picture of the reflection
+        // onto the face; Screen draws the reflection pixel for pixel where the face is on screen
+        en("userData:mirror", "Mirror", "shape", { "off:Off", "picture:Picture", "screen:Screen" });
 
         // text
         add(spec("text", "Text", K::String, "text"));
