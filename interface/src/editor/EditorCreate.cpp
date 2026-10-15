@@ -79,6 +79,7 @@ const QVector<EditorCreate::Item>& EditorCreate::items() {
         { "empty", "Empty", "", EntityTypes::Shape },
         { "model", "Model…", "", EntityTypes::Model, true },
         { "cube", "Cube", "Shape", EntityTypes::Shape, true },
+        { "mirror", "Mirror", "Shape", EntityTypes::Shape },
         { "sphere", "Sphere", "Shape", EntityTypes::Shape },
         { "cylinder", "Cylinder", "Shape", EntityTypes::Shape },
         { "cone", "Cone", "Shape", EntityTypes::Shape },
@@ -129,6 +130,16 @@ EntityItemProperties EditorCreate::properties(const QString& key, const glm::vec
     if (key == "hexagon") { return shape("Hexagon", position); }
     if (key == "octahedron") { return shape("Octahedron", position); }
     if (key == "icosahedron") { return shape("Icosahedron", position); }
+    if (key == "mirror") {
+        // a thin dark slab facing the camera, its front the glass (userData "mirror": the shape renderer and Mirrors.h)
+        auto p = shape("Cube", position);
+        p.setName("Mirror");
+        p.setDimensions(glm::vec3(1.0f, 2.0f, 0.02f));
+        p.setColor(glm::u8vec3(40, 44, 48));
+        p.setUserData("{\"mirror\": \"true\"}");
+        p.setRotation(facing(cameraYaw));
+        return p;
+    }
     if (key == "quad" || key == "circle") {
         auto p = shape(key == "quad" ? "Quad" : "Circle", position);
         p.setDimensions(FLAT_DIMENSIONS);   // 1 x 1 m, lying flat (a 1 x 1 m upright panel came out as a line)

@@ -10,6 +10,10 @@
 #include <gpu/Batch.h>
 #include <DependencyManager.h>
 #include <GeometryCache.h>
+#include <Mirrors.h>
+#include "EntitiesRendererLogging.h"
+#include <Transform.h>
+#include <graphics/TextureMap.h>
 #include <PerfStat.h>
 
 #include "RenderPipelines.h"
@@ -23,6 +27,12 @@ static const float SPHERE_ENTITY_SCALE = 0.5f;
 
 ShapeEntityRenderer::ShapeEntityRenderer(const EntityItemPointer& entity) : Parent(entity) {
     addMaterial(graphics::MaterialLayer(_material, 0), "0");
+}
+
+ShapeEntityRenderer::~ShapeEntityRenderer() {
+    if (_mirror) {
+        Mirrors::instance().removeSurface(_mirrorId);
+    }
 }
 
 bool ShapeEntityRenderer::needsRenderUpdate() const {
@@ -61,6 +71,9 @@ bool ShapeEntityRenderer::needsRenderUpdateFromTypedEntity(const TypedEntityPoin
     if (_proceduralData != entity->getUserData()) {
         return true;
     }
+    if (_mirror && Mirrors::instance().generation(_mirrorId) != _mirrorGeneration) {
+        return true;   // its picture has changed hands or size
+    }
 
     return false;
 }
@@ -85,6 +98,9 @@ void ShapeEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
             }
 
             _renderTransform.postScale(_dimensions);
+            if (_mirror) {
+                Mirrors::instance().setSurface(entity->getID(), { _position, _orientation, entity->getScaledDimensions() });
+            }
         });
     });
 }
@@ -106,7 +122,7 @@ void ShapeEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPoint
         glm::vec3 color = toGlm(entity->getColor());
         if (_color != color) {
             _color = color;
-            _material->setAlbedo(color);
+            _material->setAlbedo(_mirrorShown ? glm::vec3(0.0f) : color);   // a mirror shows its picture as light, nothing lit
             materialChanged = true;
         }
 
@@ -133,6 +149,62 @@ void ShapeEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPoint
                 } else {
                     _billboardMode = BillboardMode::NONE;
                 }
+            }
+            // a mirror: the entry true, or "true" as the editor's checkbox writes it
+            QJsonValue mirrorEntry = userDataObject.value("mirror");
+            bool mirror = mirrorEntry.toBool() || mirrorEntry.toString().compare("true", Qt::CaseInsensitive) == 0;
+            if (mirror != _mirror) {
+                _mirror = mirror;
+                _mirrorId = entity->getID();
+                if (_mirror) {
+                    Mirrors::instance().setSurface(_mirrorId, { entity->getWorldPosition(), entity->getWorldOrientation(), entity->getScaledDimensions() });
+                } else {
+                    Mirrors::instance().removeSurface(_mirrorId);
+                    _material->setTextureMap(graphics::MaterialKey::EMISSIVE_MAP, nullptr);
+                    _material->setTexCoordTransform(0, glm::mat4());
+                    _material->setEmissive(glm::vec3(0.0f), false);
+                    _material->setAlbedo(_color);
+                    _mirrorShown = false;
+                    _mirrorGeneration = 0;
+                    materialChanged = true;
+                }
+            }
+        }
+
+        if (_mirror) {
+            // the picture of the moment, when it has changed: a slot's texture, or nothing while it has no slot
+            uint32_t generation = 0;
+            gpu::TexturePointer picture = Mirrors::instance().textureFor(_mirrorId, generation);
+            if (generation != _mirrorGeneration) {
+                _mirrorGeneration = generation;
+                if (picture) {
+                    if (!_mirrorSource) {
+                        _mirrorSource = std::make_shared<gpu::TextureSource>(QUrl("mirror://picture"));
+                    }
+                    _mirrorSource->resetTexture(picture);
+                    auto map = std::make_shared<graphics::TextureMap>();
+                    map->setTextureSource(_mirrorSource);
+                    // across, as a mirror does (the picture's left is the face's right), and over, since the face's
+                    // texture rows run top-down and a rendered picture's bottom-up
+                    Transform flip;
+                    flip.setScale(glm::vec3(-1.0f, -1.0f, 1.0f));
+                    flip.setTranslation(glm::vec3(1.0f, 1.0f, 0.0f));
+                    map->setTextureTransform(flip);
+                    // the picture is the surface's light: an emissive map over a black albedo, so no lighting touches
+                    // it and it needs no unlit path
+                    _material->setTextureMap(graphics::MaterialKey::EMISSIVE_MAP, map);
+                    _material->setTexCoordTransform(0, flip.getMatrix());   // the material applies only an albedo map's own
+                    _material->setEmissive(glm::vec3(1.0f), false);
+                    _material->setAlbedo(glm::vec3(0.0f));
+                    _mirrorShown = true;
+                } else {
+                    _material->setTextureMap(graphics::MaterialKey::EMISSIVE_MAP, nullptr);
+                    _material->setTexCoordTransform(0, glm::mat4());
+                    _material->setEmissive(glm::vec3(0.0f), false);
+                    _material->setAlbedo(_color);
+                    _mirrorShown = false;
+                }
+                materialChanged = true;
             }
         }
 
@@ -249,6 +321,11 @@ Item::Bound ShapeEntityRenderer::getBound() {
 }
 
 void ShapeEntityRenderer::doRender(RenderArgs* args) {
+    if (_mirror && Mirrors::instance().generation(_mirrorId) != _mirrorGeneration) {
+        // its picture has changed hands or size: the update takes the new one (nothing polls for that, so it is
+        // asked for from here, where the mirror is drawn every frame it is seen)
+        emit requestRenderUpdate();
+    }
     // Shapes just aren't playing well with zone culling.  Since it's a marginal performance
     // win anyway, being so low-poly, we'll not
     // const bool hasChanged = evaluateEntityZoneCullState(_entity);

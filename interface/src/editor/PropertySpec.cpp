@@ -433,6 +433,14 @@ namespace {
                 [=](EP& p, const QVariant& v) { setUserDataEntry(p, name, v.toString()); }
             });
         }
+        // a shape's Mirror: the entry "mirror" true, on which the shape renderer shows the reflection (Mirrors.h)
+        a.insert(QStringLiteral("userData:mirror"), Accessor {
+            [=](const EP& p) {
+                QJsonValue entry = QJsonDocument::fromJson(p.getUserData().toUtf8()).object().value("mirror");
+                return QVariant(entry.toBool() || entry.toString() == "true");
+            },
+            [=](EP& p, const QVariant& v) { setUserDataEntry(p, "mirror", v.toBool() ? QStringLiteral("true") : QString()); }
+        });
         // a light's Shadows: Off is Cast Shadows off; Normal and Important cast, and Important, the entry "shadows"
         // set to "important", goes before the other lights when more cast shadows than there are maps
         a.insert(SHADOWS_KEY, Accessor {
@@ -694,6 +702,9 @@ namespace {
             "Cylinder:Cylinder", "Cone:Cone", "Circle:Circle", "Quad:Quad" }, "visible=true");
         with(add(spec("color", "Color", K::Color, "shape")), "visible=true");
         with(range(add(spec("alpha", "Alpha", K::Float, "shape")), 0, 1, 0.01, 2), "visible=true");
+        // the shape's +Z face shows what the viewer would see reflected in it (a few mirrors a frame, the biggest
+        // on screen first); its colour shows while it waits for a turn
+        with(add(spec("userData:mirror", "Mirror", K::Bool, "shape")), "visible=true");
 
         // text
         add(spec("text", "Text", K::String, "text"));

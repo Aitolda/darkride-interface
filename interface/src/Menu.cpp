@@ -10,6 +10,8 @@
 //
 
 #include "Menu.h"
+
+#include <Mirrors.h>
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QMenuBar>
@@ -567,6 +569,12 @@ Menu::Menu() {
             }
         }
     });
+    // Developer > Render > Mirrors: mirror shapes show their reflection (Mirrors.h); off, they show their colour
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::Mirrors, 0, true);
+    connect(action, &QAction::triggered, [action] { Mirrors::instance().setEnabled(action->isChecked()); });
+    // Developer > Render > Half-Resolution Mirrors: a mirror's picture at half its size on screen, a quarter of the cost
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::MirrorsHalfResolution, 0, false);
+    connect(action, &QAction::triggered, [action] { Mirrors::instance().setResolutionScale(action->isChecked() ? 0.5f : 1.0f); });
 
     addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::WorldAxes);
     // addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::DefaultSkybox, Qt::Key_Asterisk, true);

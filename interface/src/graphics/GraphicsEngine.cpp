@@ -19,6 +19,14 @@
 #include <FramebufferCache.h>
 #include <UpdateSceneTask.h>
 #include <RenderViewTask.h>
+#include <AmbientOcclusionEffect.h>
+#include <BloomEffect.h>
+#include <HighlightEffect.h>
+#include <Mirrors.h>
+#include <RenderLocalShadowTask.h>
+#include <RenderMirrorsTask.h>
+#include <RenderShadowTask.h>
+#include <ToneMapAndResampleTask.h>
 #include <SecondaryCamera.h>
 
 #include "RenderEventHandler.h"
@@ -66,6 +74,10 @@ void GraphicsEngine::initializeGPU(GLWidget* glwidget) {
     DependencyManager::get<TextureCache>()->setGPUContext(_gpuContext);
 }
 
+namespace {
+    const float MIRROR_SHADOW_DISTANCE = 20.0f;   // metres
+}
+
 void GraphicsEngine::initializeRender() {
 
     // Set up the render engine
@@ -74,8 +86,40 @@ void GraphicsEngine::initializeRender() {
 #ifndef Q_OS_ANDROID
     _renderEngine->addJob<SecondaryCameraRenderTask>("SecondaryCameraJob", cullFunctor);
 #endif
+    // the mirrors' pictures, drawn before the main view shows them
+    _renderEngine->addJob<RenderMirrorsTask>("RenderMirrors", cullFunctor);
     _renderEngine->addJob<RenderViewTask>("RenderMainView", cullFunctor, render::ItemKey::TAG_BITS_0, render::ItemKey::TAG_BITS_0);
     _renderEngine->load();
+    // a mirror's view: no ambient occlusion, bloom, selection outline or HUD; no local light shadows (an atlas for
+    // each would cost too much); a linear tone curve, since the picture is tone mapped again in the main view
+    auto configuration = _renderEngine->getConfiguration();
+    for (int slot = 0; slot < Mirrors::SLOT_COUNT; ++slot) {
+        std::string view = "RenderMirrors.MirrorView" + std::to_string(slot) + ".";
+        if (auto config = configuration->getConfig<AmbientOcclusionEffect>(view + "AmbientOcclusion")) {
+            config->setEnabled(false);
+        }
+        if (auto config = configuration->getConfig<BloomEffect>(view + "Bloom")) {
+            config->setEnabled(false);
+        }
+        if (auto config = configuration->getConfig<DrawHighlightTask>(view + "DrawHighlight")) {
+            config->setEnabled(false);
+        }
+        if (auto config = configuration->getJobConfig(view + "RenderHUDLayer")) {
+            config->setEnabled(false);
+        }
+        if (auto config = configuration->getConfig<ToneMapAndResample>(view + "ToneMapping")) {
+            config->setCurve((int)ToneCurve::None);
+        }
+        if (auto config = configuration->getConfig<RenderLocalShadowSetup>(view + "LocalShadowSetup")) {
+            config->setLocalLights(false);
+        }
+        // the sun's shadows reach less far in a reflection (mirrors mostly stand in rooms), and the view is
+        // drawn only while the slot has a mirror
+        if (auto config = configuration->getConfig<RenderShadowSetup>(view + "ShadowSetup")) {
+            config->setProperty("maxDistance", MIRROR_SHADOW_DISTANCE);
+        }
+        Mirrors::instance().setSlotView(slot, configuration->getJobConfig("RenderMirrors.MirrorView" + std::to_string(slot)));
+    }
     _renderEngine->registerScene(_renderScene);
 
     // Now that OpenGL is initialized, we are sure we have a valid context and can create the various pipeline shaders with success.

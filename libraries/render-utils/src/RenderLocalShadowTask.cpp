@@ -576,6 +576,21 @@ void RenderLocalShadowSetup::run(const render::RenderContextPointer& renderConte
     const auto& shadowFrame = input.get2();
     auto lightStage = renderContext->_scene->getStage<LightStage>();
 
+    if (!_localLights) {
+        // this view does without: no tiles, no atlas made; the fetch gets a view onto nothing
+        if (shadowFrame) {
+            shadowFrame->_localShadows = nullptr;
+        }
+        _coarseFrustum->setPosition(glm::vec3(0.0f, -1.0e6f, 0.0f));
+        _coarseFrustum->setProjection(glm::perspective(glm::radians(1.0f), 1.0f, 0.1f, 0.2f));
+        _coarseFrustum->calculate();
+        output.edit0() = args->_renderMode;
+        output.edit1() = glm::ivec2(COARSE_QUERY_RESOLUTION);
+        output.edit2() = LocalShadowsPointer();
+        args->pushViewFrustum(*_coarseFrustum);
+        args->_renderMode = RenderArgs::SHADOW_RENDER_MODE;   // the teardown pops the frustum in this mode
+        return;
+    }
     if (!_localShadows) {
         _localShadows = std::make_shared<LocalShadows>();
     }

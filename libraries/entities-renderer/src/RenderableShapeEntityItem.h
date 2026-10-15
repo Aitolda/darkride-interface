@@ -11,6 +11,7 @@
 
 #include "RenderableEntityItem.h"
 
+#include <gpu/Texture.h>
 #include <procedural/Procedural.h>
 #include <ShapeEntityItem.h>
 
@@ -21,6 +22,7 @@ class ShapeEntityRenderer : public TypedEntityRenderer<ShapeEntityItem> {
     using Pointer = std::shared_ptr<ShapeEntityRenderer>;
 public:
     ShapeEntityRenderer(const EntityItemPointer& entity);
+    ~ShapeEntityRenderer();
 
     virtual scriptable::ScriptableModelBase getScriptableModel() override;
 
@@ -54,6 +56,13 @@ private:
     glm::vec3 _position;
     glm::vec3 _dimensions;
     glm::quat _orientation;
+
+    // a mirror (userData "mirror": true): registered with Mirrors, its picture shown as an unlit albedo map
+    bool _mirror { false };
+    bool _mirrorShown { false };   // the picture is on the material (else its colour)
+    QUuid _mirrorId;
+    uint32_t _mirrorGeneration { 0 };
+    gpu::TextureSourcePointer _mirrorSource;
 };
 
 } } 
