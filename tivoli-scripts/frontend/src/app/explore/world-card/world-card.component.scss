@@ -17,7 +17,7 @@
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35),
 			0 0 0 1px rgba(0, 175, 255, 0.25);
 
-		.go-hint {
+		.hop-hint {
 			opacity: 1;
 			transform: translate(-50%, -50%) scale(1);
 		}
@@ -92,7 +92,8 @@
 		}
 	}
 
-	.go-hint {
+	// the white rabbit on a violet disc, as on the Hop button
+	.hop-hint {
 		position: absolute;
 		top: 50%;
 		left: 50%;
@@ -102,9 +103,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		color: var(--dr-night);
-		background: var(--dr-cyan);
-		box-shadow: 0 0 18px rgba(0, 175, 255, 0.6);
+		color: #fff;
+		background: #8a2fe6;
+		box-shadow: 0 0 18px rgba(165, 72, 255, 0.6);
 		opacity: 0;
 		transform: translate(-50%, -50%) scale(0.85);
 		transition: opacity 150ms ease, transform 150ms ease;
@@ -204,27 +205,77 @@
 	}
 }
 
+// Hop and its caret make one split button, in violet so that the white rabbit shows
 .actions {
 	display: flex;
-	gap: 8px;
 	margin-top: 10px;
 
-	.go {
-		flex-grow: 1;
+	.hop,
+	.more {
+		color: #fff;
+		background: #8a2fe6; // Darkride violet (700): white reads well on it
 		font-weight: 500;
 
-		.mat-icon {
-			margin-left: -4px;
-			margin-right: 2px;
+		&:hover:not([disabled]) {
+			background: #9a3df5;
+		}
+
+		&[disabled] {
+			color: rgba(255, 255, 255, 0.5);
+			background: rgba(138, 47, 230, 0.35);
+		}
+
+		// still disabled while its instance starts (no second click), but not greyed: it is busy
+		&.starting[disabled] {
+			color: #fff;
+			background: #8a2fe6;
 		}
 	}
 
-	.more {
-		min-width: 0;
-		padding: 0 4px 0 8px;
+	.hop {
+		flex-grow: 1;
 
-		.caret {
-			margin-left: -4px;
+		.rabbit {
+			width: 22px;
+			height: 22px;
+			margin: -3px 6px 0 -4px;
 		}
+
+		&:hover:not([disabled]) .rabbit {
+			animation: hop 500ms ease-in-out 1;
+		}
+	}
+
+	&.split {
+		.hop {
+			border-top-right-radius: 0;
+			border-bottom-right-radius: 0;
+		}
+
+		.more {
+			min-width: 0;
+			padding: 0 4px;
+			margin-left: 1px; // a hairline between the two halves
+			border-top-left-radius: 0;
+			border-bottom-left-radius: 0;
+		}
+	}
+}
+
+// the rabbit keeps hopping while its instance starts
+.rabbit.hopping {
+	animation: hop 600ms ease-in-out infinite;
+}
+
+@keyframes hop {
+	0%,
+	100% {
+		transform: translateY(0) rotate(0);
+	}
+	40% {
+		transform: translateY(-4px) rotate(-12deg);
+	}
+	60% {
+		transform: translateY(-4px) rotate(-6deg);
 	}
 }

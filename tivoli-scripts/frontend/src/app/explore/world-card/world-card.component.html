@@ -10,7 +10,7 @@
 				'/image' +
 				')'
 		}"
-		(click)="onGo()"
+		(click)="onHop()"
 	>
 		<div class="chips">
 			<span class="chip presence" *ngIf="people > 0">
@@ -26,7 +26,7 @@
 				Invited only
 			</span>
 		</div>
-		<div class="go-hint"><mat-icon>play_arrow</mat-icon></div>
+		<div class="hop-hint"><mat-icon svgIcon="dr-rabbit"></mat-icon></div>
 		<p class="label">{{ world.label }}</p>
 	</div>
 
@@ -49,29 +49,33 @@
 		<p class="description">{{ world.description }}</p>
 		<p class="status">{{ status }}</p>
 
-		<div class="actions">
+		<!-- a split button: Hop goes straight in, the caret picks an instance or starts one -->
+		<div class="actions" [class.split]="world.instances">
 			<button
 				mat-flat-button
-				color="primary"
-				class="go"
-				[disabled]="starting || !canGo"
-				(click)="onGo()"
+				class="hop"
+				[class.starting]="starting"
+				[disabled]="starting || !canHop"
+				(click)="onHop()"
 			>
-				<mat-icon>{{
-					starting ? "hourglass_top" : "play_arrow"
-				}}</mat-icon>
-				{{ starting ? "Starting..." : canGo ? "Go" : "Sign in to go" }}
+				<mat-icon
+					svgIcon="dr-rabbit"
+					class="rabbit"
+					[class.hopping]="starting"
+				></mat-icon>
+				{{
+					starting ? "Hopping..." : canHop ? "Hop" : "Sign in to hop"
+				}}
 			</button>
 			<button
-				mat-stroked-button
+				mat-flat-button
 				class="more"
 				*ngIf="world.instances"
 				[disabled]="starting"
 				[matMenuTriggerFor]="instanceMenu"
-				matTooltip="Choose an instance, or start a new one"
+				matTooltip="Pick an instance, or start a new one"
 			>
-				<mat-icon>layers</mat-icon>
-				<mat-icon class="caret">arrow_drop_down</mat-icon>
+				<mat-icon>arrow_drop_down</mat-icon>
 			</button>
 		</div>
 	</div>

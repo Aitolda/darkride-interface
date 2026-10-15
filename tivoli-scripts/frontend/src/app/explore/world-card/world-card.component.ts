@@ -48,7 +48,7 @@ export class WorldCardComponent {
 		private readonly snackBar: MatSnackBar,
 	) {}
 
-	// an instance-only world keeps its own server for its owner's edits, so visitors only see instances
+	// an instance-only world's own domain, if it runs at all, is its source, not a place for visitors
 	private get ownServerOpen() {
 		return this.world.online && !this.world.instances?.instanceOnly;
 	}
@@ -91,7 +91,7 @@ export class WorldCardComponent {
 		return this.places.reduce((n, place) => n + place.people, 0);
 	}
 
-	get canGo() {
+	get canHop() {
 		return this.places.length > 0 || !!this.world.instances?.canStart;
 	}
 
@@ -113,12 +113,12 @@ export class WorldCardComponent {
 		}
 		if (this.places.length > 0) return "Open now. Be the first one in.";
 		if (this.world.instances?.canStart)
-			return "Go opens a new instance for you.";
+			return "Hop opens a new instance for you.";
 		return "Sign in to open this world.";
 	}
 
-	// Go: where the people are; else somewhere already running; else a new public instance
-	onGo() {
+	// Hop: where the people are; else somewhere already running; else a new public instance
+	onHop() {
 		if (this.starting) return;
 		const places = this.places;
 		const open =
