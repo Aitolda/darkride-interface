@@ -7,9 +7,10 @@
 	border-radius: 12px;
 	overflow: hidden;
 	background: var(--dr-surface);
-	border: 1px solid rgba(255, 255, 255, 0.06);
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
 	transition: transform 150ms ease, box-shadow 150ms ease,
-		border-color 150ms ease;
+		border-color 150ms ease, opacity 150ms ease, filter 150ms ease;
 
 	&:hover {
 		transform: translateY(-2px);
@@ -22,6 +23,19 @@
 			transform: translate(-50%, -50%) scale(1);
 		}
 	}
+
+	// the world whose instance chooser is open: the chooser's violet edge and glow
+	&.selected {
+		border-color: rgba(165, 72, 255, 0.7);
+		box-shadow: 0 0 0 1px rgba(165, 72, 255, 0.35),
+			0 0 24px rgba(165, 72, 255, 0.3);
+	}
+}
+
+// while a chooser is open, the other worlds step back
+:host-context(.choosing) .world-card:not(.selected) {
+	opacity: 0.35;
+	filter: saturate(0.5);
 }
 
 .thumbnail {
