@@ -21,6 +21,8 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QMimeData>
+#include <QtCore/QMimeDatabase>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QUrl>
 #include <QtGui/QClipboard>
 #include <QtGui/QDesktopServices>
@@ -30,6 +32,8 @@
 #include <QtGui/QPainter>
 #include <QtGui/QFontDatabase>
 #include <QtGui/QPainterPath>
+#include <QtNetwork/QNetworkReply>
+#include <QtNetwork/QNetworkRequest>
 #include <QtWidgets/QAbstractScrollArea>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QComboBox>
@@ -52,6 +56,7 @@
 
 #include <AccountManager.h>
 #include <DependencyManager.h>
+#include <NetworkAccessManager.h>
 
 #include "../../InterfaceLogging.h"
 #include "../EditorCreate.h"
@@ -1024,8 +1029,31 @@ void AssetsPanel::rebuildGrid() {
     bool capped = false;
     if (searching()) {
         QString text = _search->text().trimmed();
+        // a pasted stable link names its id; a pasted path link names its path
+        QString wantedId;
+        QString wantedPath;
+        QRegularExpression idLink("/f/([A-Za-z0-9]{16})(?:/|$)");
+        auto idMatch = idLink.match(text);
+        if (idMatch.hasMatch()) {
+            wantedId = idMatch.captured(1);
+        } else if (text.startsWith("http://") || text.startsWith("https://")) {
+            QUrl link(text);
+            wantedPath = QUrl::fromPercentEncoding(link.path().section('/', 2).toUtf8());   // after "/<username>"
+            if (!wantedPath.startsWith('/')) {
+                wantedPath.prepend('/');
+            }
+        }
+        auto matches = [&](const UserFile& file) {
+            if (!wantedId.isEmpty()) {
+                return file.id == wantedId;
+            }
+            if (!wantedPath.isEmpty()) {
+                return file.path.compare(wantedPath, Qt::CaseInsensitive) == 0;
+            }
+            return file.name.contains(text, Qt::CaseInsensitive) || (!file.id.isEmpty() && file.id.contains(text, Qt::CaseInsensitive));
+        };
         for (const auto& file : _files->files()) {
-            if (file.name.contains(text, Qt::CaseInsensitive) && kindMatches(file)) {
+            if (matches(file) && kindMatches(file)) {
                 if (shown.size() >= MAX_SEARCH_RESULTS) {
                     capped = true;
                     break;
@@ -1194,6 +1222,12 @@ bool AssetsPanel::eventFilter(QObject* watched, QEvent* event) {
             case Qt::Key_C:
                 if (command) {
                     copyLinks(selectedFiles(), keyEvent->modifiers().testFlag(Qt::ShiftModifier));
+                    return true;
+                }
+                break;
+            case Qt::Key_D:
+                if (command) {
+                    duplicateFiles(selectedFiles());
                     return true;
                 }
                 break;
@@ -1378,34 +1412,96 @@ void AssetsPanel::uploadFiles(const QStringList& localPaths, const QString& fold
             upload->deleteLater();
             continue;
         }
-        ++_uploadsActive;
-        emit status("Uploading " + upload->fileName() + " 0%", 0);
-        connect(upload, &EditorUpload::progress, this, [this, upload](qint64 sent, qint64 total) {
-            if (total <= 0) {
-                return;
-            }
-            QString more = _uploadsActive > 1 ? QString(" (+%1 more)").arg(_uploadsActive - 1) : QString();
-            if (sent >= total) {
-                emit status("Processing " + upload->fileName() + "…" + more, 0);
-            } else {
-                emit status(QString("Uploading %1 %2%%3").arg(upload->fileName()).arg((int)(sent * 100 / total)).arg(more), 0);
-            }
-        });
-        connect(upload, &EditorUpload::failed, this, [this, upload](const QString& error) {
-            --_uploadsActive;
-            emit status("Upload of " + upload->fileName() + " failed: " + error, STATUS_MS * 2);
-            upload->deleteLater();
-            _refreshTimer.start();
-        });
-        connect(upload, &EditorUpload::finished, this, [this, upload] {
-            --_uploadsActive;
-            emit status(_uploadsActive > 0 ? QString("Uploading…") : "Uploaded " + upload->fileName(), STATUS_MS);
-            upload->deleteLater();
-            _refreshTimer.start();   // the listing, once the batch has settled
-        });
+        trackUpload(upload);
     }
     if (folders > 0) {
         emit status(QString("%1 can't be uploaded whole yet: drop its files instead").arg(folders == 1 ? "A folder" : "Folders"), STATUS_MS * 2);
+    }
+}
+
+void AssetsPanel::trackUpload(EditorUpload* upload) {
+    ++_uploadsActive;
+    emit status("Uploading " + upload->fileName() + " 0%", 0);
+    connect(upload, &EditorUpload::progress, this, [this, upload](qint64 sent, qint64 total) {
+        if (total <= 0) {
+            return;
+        }
+        QString more = _uploadsActive > 1 ? QString(" (+%1 more)").arg(_uploadsActive - 1) : QString();
+        if (sent >= total) {
+            emit status("Processing " + upload->fileName() + "…" + more, 0);
+        } else {
+            emit status(QString("Uploading %1 %2%%3").arg(upload->fileName()).arg((int)(sent * 100 / total)).arg(more), 0);
+        }
+    });
+    connect(upload, &EditorUpload::failed, this, [this, upload](const QString& error) {
+        --_uploadsActive;
+        emit status("Upload of " + upload->fileName() + " failed: " + error, STATUS_MS * 2);
+        upload->deleteLater();
+        _refreshTimer.start();
+    });
+    connect(upload, &EditorUpload::finished, this, [this, upload] {
+        --_uploadsActive;
+        emit status(_uploadsActive > 0 ? QString("Uploading…") : "Uploaded " + upload->fileName(), STATUS_MS);
+        upload->deleteLater();
+        _refreshTimer.start();   // the listing, once the batch has settled
+    });
+}
+
+void AssetsPanel::duplicateFiles(const QList<const UserFile*>& files) {
+    // the metaverse has no copy call: the bytes come down by the stable link and go up again under the new name
+    int folders = 0;
+    for (const UserFile* file : files) {
+        if (file->folder) {
+            ++folders;
+            continue;
+        }
+        if (file->url.isEmpty()) {
+            continue;
+        }
+        QString folder = UserFile::folderOf(file->path);
+        QString remoteFolder = folder.endsWith('/') ? folder.chopped(1) : folder;   // the uploader adds "/name"
+        // "a-copy.png", then "a-copy-2.png", ...: a name free in the folder, as the upload will store it
+        QString suffix = QFileInfo(file->name).suffix();
+        QString base = EditorUpload::safeFileName(suffix.isEmpty() ? file->name : file->name.chopped(suffix.length() + 1));
+        QString extension = suffix.isEmpty() ? QString() : "." + suffix;
+        QString name = base + "-copy" + extension;
+        for (int i = 2; _files->find(folder + name); ++i) {
+            name = QString("%1-copy-%2%3").arg(base).arg(i).arg(extension);
+        }
+        QNetworkRequest request{ QUrl(file->url) };
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        QNetworkReply* reply = NetworkAccessManager::getInstance().get(request);
+        ++_uploadsActive;
+        emit status("Duplicating " + file->name + "…", 0);
+        QString original = file->name;
+        bool isPrivate = file->isPrivate;
+        connect(reply, &QNetworkReply::finished, this, [this, reply, name, remoteFolder, original, isPrivate] {
+            reply->deleteLater();
+            --_uploadsActive;
+            if (reply->error() != QNetworkReply::NoError) {
+                QString why = isPrivate ? QStringLiteral("it is private, and private files do not reach the editor yet")
+                                        : reply->errorString();
+                emit status("Could not duplicate " + original + ": " + why, STATUS_MS * 2);
+                qCWarning(interfaceapp) << "assets duplicate could not fetch" << original << reply->errorString();
+                return;
+            }
+            QByteArray bytes = reply->readAll();
+            QString mimeType = reply->header(QNetworkRequest::ContentTypeHeader).toString().section(';', 0, 0).trimmed();
+            if (mimeType.isEmpty()) {
+                mimeType = QMimeDatabase().mimeTypeForFile(name, QMimeDatabase::MatchExtension).name();
+            }
+            auto upload = new EditorUpload(this);
+            QString error;
+            if (!upload->startData(bytes, name, remoteFolder, mimeType, error)) {
+                emit status("Could not duplicate " + original + ": " + error, STATUS_MS * 2);
+                upload->deleteLater();
+                return;
+            }
+            trackUpload(upload);
+        });
+    }
+    if (folders > 0) {
+        emit status(QString("%1 can't be duplicated yet").arg(folders == 1 ? "A folder" : "Folders"), STATUS_MS * 2);
     }
 }
 
@@ -1475,6 +1571,10 @@ void AssetsPanel::showGridMenu(const QPoint& globalPos) {
                 ->setToolTip("The link by folder and name");
             menu.addAction("Copy Id", this, [this, files] { copyIds(files); })
                 ->setToolTip("The file's id alone: 16 letters and digits, fixed for its life");
+        }
+        if (anyFile) {
+            menu.addAction("Duplicate", this, [this, files] { duplicateFiles(files); })
+                ->setToolTip("A copy beside it, named -copy");
         }
         if (searching()) {
             menu.addAction("Show in Folder", this, [this, path = files.first()->path] {

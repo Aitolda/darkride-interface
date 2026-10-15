@@ -66,11 +66,12 @@ namespace {
         return p;
     }
 
-    QString safeFileName(const QString& name) {
-        QString s = name;
-        s.replace(QRegularExpression("[^A-Za-z0-9._-]+"), "_");
-        return s;
-    }
+}
+
+QString EditorUpload::safeFileName(const QString& name) {
+    QString s = name;
+    s.replace(QRegularExpression("[^A-Za-z0-9._-]+"), "_");
+    return s;
 }
 
 const QVector<EditorCreate::Item>& EditorCreate::items() {

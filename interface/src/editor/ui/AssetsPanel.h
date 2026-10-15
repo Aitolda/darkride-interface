@@ -40,6 +40,7 @@ class QTreeView;
 class AssetDetailsDelegate;
 class AssetGridView;
 class AssetThumbnails;
+class EditorUpload;
 
 // The items of the folder tree and of the contents grid. A drag carries the files' stable links as text/uri-list,
 // which every URL and picture field takes, and the panel's own description of what is dragged (ASSET_MIME_TYPE:
@@ -127,6 +128,8 @@ private:
     void onListed();
     void onDropped(const QMimeData* data, const QString& folderPath);
     void uploadFiles(const QStringList& localPaths, const QString& folderPath);
+    void trackUpload(EditorUpload* upload);
+    void duplicateFiles(const QList<const UserFile*>& files);
     void chooseUploads();
     void showGridMenu(const QPoint& globalPos);
     void showTreeMenu(const QPoint& globalPos);
