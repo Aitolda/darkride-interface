@@ -13,7 +13,7 @@
 //
 //    imports, module "darkride":
 //      version() -> i32                                  this ABI's version
-//      globals() -> i64                                  the names of the registered globals, an array
+//      globals() -> i64                                  the registered globals, a map of name to handle
 //      describe(ptr, len) -> i64                         a global's name or a handle record -> its description
 //      call(object, name_ptr, name_len, args_ptr, args_len) -> i64
 //                                                        invoke a method: the result, or {"@error": {type, message}}
@@ -46,6 +46,7 @@
 
 #include <QtCore/QByteArray>
 #include <QtCore/QHash>
+#include <QtCore/QMetaMethod>
 #include <QtCore/QString>
 #include <QtCore/QVariant>
 #include <QtCore/QVariantList>
@@ -93,7 +94,8 @@ public:
     bool callGuest(const QString& name, int32_t id, const QVariant& payload, QString& error);
 
     // --- the operations behind the imports, also usable from C++ ------------------------------------------
-    QVariantList globals() const;
+    /// The registered globals: name to handle.
+    QVariantMap globals() const;
     /// By a global's name or a handle; an invalid QVariant when there is no such object.
     QVariant describe(const QVariant& target) const;
     QVariant call(ObjectTable::Handle object, const QString& method, const QVariantList& arguments, QString& error);
@@ -131,7 +133,9 @@ private:
     void fail(const QString& entry, const QString& error);
 
     const QVector<int>& candidates(const QMetaObject* meta, const QByteArray& name);
-    QVariant invoke(QObject* object, int methodIndex, const QVariantList& arguments, bool& matched, QString& error);
+    bool convertArguments(const QMetaMethod& method, const QVariantList& arguments, QVariantList& converted, int& cost,
+                          QString& error);
+    QVariant invoke(QObject* object, int methodIndex, QVariantList& converted, QString& error);
 
     WasmInstance& _instance;
     ObjectTable& _objects;

@@ -165,7 +165,7 @@ public:
     void runDebuggable();
 
     /// run the script in the callers thread, exit when stop() is called.
-    void run();
+    virtual void run();
 
     QString getFilename() const;
    
@@ -188,10 +188,10 @@ public:
      */
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // NOTE - this is intended to be a public interface for Agent scripts, and local scripts, but not for EntityScripts
-    Q_INVOKABLE void stop(bool marshal = false);
+    Q_INVOKABLE virtual void stop(bool marshal = false);
 
     // Stop any evaluating scripts and wait for the scripting thread to finish.
-    void waitTillDoneRunning();
+    virtual void waitTillDoneRunning();
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // NOTE - these are NOT intended to be public interfaces available to scripts, the are only Q_INVOKABLE so we can
@@ -204,7 +204,7 @@ public:
      * @deprecated This function is deprecated and will be removed.
      */
     /// registers a global object by name
-    Q_INVOKABLE void registerGlobalObject(const QString& name, QObject* object);
+    Q_INVOKABLE virtual void registerGlobalObject(const QString& name, QObject* object);
 
     /**jsdoc
      * @function Script.registerGetterSetter
@@ -215,7 +215,7 @@ public:
      * @deprecated This function is deprecated and will be removed.
      */
     /// registers a global getter/setter
-    Q_INVOKABLE void registerGetterSetter(const QString& name, QScriptEngine::FunctionSignature getter,
+    Q_INVOKABLE virtual void registerGetterSetter(const QString& name, QScriptEngine::FunctionSignature getter,
                                           QScriptEngine::FunctionSignature setter, const QString& parent = QString(""));
 
     /**jsdoc
@@ -226,7 +226,7 @@ public:
      * @deprecated This function is deprecated and will be removed.
      */
     /// register a global function
-    Q_INVOKABLE void registerFunction(const QString& name, QScriptEngine::FunctionSignature fun, int numArguments = -1);
+    Q_INVOKABLE virtual void registerFunction(const QString& name, QScriptEngine::FunctionSignature fun, int numArguments = -1);
 
     /**jsdoc
      * @function Script.registerFunction
@@ -237,7 +237,7 @@ public:
      * @deprecated This function is deprecated and will be removed.
      */
     /// register a function as a method on a previously registered global object
-    Q_INVOKABLE void registerFunction(const QString& parent, const QString& name, QScriptEngine::FunctionSignature fun,
+    Q_INVOKABLE virtual void registerFunction(const QString& parent, const QString& name, QScriptEngine::FunctionSignature fun,
                                       int numArguments = -1);
 
     /**jsdoc
@@ -247,7 +247,7 @@ public:
      * @deprecated This function is deprecated and will be removed.
      */
     /// registers a global object by name
-    Q_INVOKABLE void registerValue(const QString& valueName, QScriptValue value);
+    Q_INVOKABLE virtual void registerValue(const QString& valueName, QScriptValue value);
 
     /**jsdoc
      * @function Script.evaluate
@@ -272,8 +272,8 @@ public:
     /// if the script engine is not already running, this will download the URL and start the process of seting it up
     /// to run... NOTE - this is used by Application currently to load the url. We don't really want it to be exposed
     /// to scripts. we may not need this to be invokable
-    void loadURL(const QUrl& scriptURL, bool reload);
-    bool hasValidScriptSuffix(const QString& scriptFileName);
+    virtual void loadURL(const QUrl& scriptURL, bool reload);
+    virtual bool hasValidScriptSuffix(const QString& scriptFileName);
 
     /**jsdoc
      * Gets the context that the script is running in: Interface/avatar, client entity, server entity, or assignment client.

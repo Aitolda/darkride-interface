@@ -26,6 +26,8 @@
 #include <QtCore/QMetaEnum>
 
 #include <MetaObjectDescription.h>
+
+#include "WasmScriptEngine.h"
 #include <QtCore/QMetaMethod>
 #include <QtCore/QMetaProperty>
 #include <QtScript/QScriptValueIterator>
@@ -190,7 +192,10 @@ QString ScriptEngine::logException(const QScriptValue& exception) {
 ScriptEnginePointer scriptEngineFactory(ScriptEngine::Context context,
                                                  const QString& scriptContents,
                                                  const QString& fileNameString) {
-    ScriptEngine* engine = new ScriptEngine(context, scriptContents, fileNameString);
+    // a WebAssembly module runs on the engine beside this one; it is told from the file name's suffix, which
+    // ScriptEngines::loadScript puts in the name before the content is fetched
+    ScriptEngine* engine = WasmScriptEngine::isWasmScript(fileNameString) ? new WasmScriptEngine(context, fileNameString)
+                                                                         : new ScriptEngine(context, scriptContents, fileNameString);
     ScriptEnginePointer engineSP = ScriptEnginePointer(engine, &QObject::deleteLater);
     auto scriptEngines = DependencyManager::get<ScriptEngines>();
     scriptEngines->addScriptEngine(qSharedPointerCast<ScriptEngine>(engineSP));

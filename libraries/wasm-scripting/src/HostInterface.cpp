@@ -308,12 +308,12 @@ bool HostInterface::deliverCallback(int32_t callback, const QVariantList& argume
 
 // --- the operations -------------------------------------------------------------------------------------------
 
-QVariantList HostInterface::globals() const {
-    QVariantList names;
+QVariantMap HostInterface::globals() const {
+    QVariantMap handles;
     for (const QString& name : _objects.globalNames()) {
-        names.append(name);
+        handles.insert(name, int(_objects.global(name)));
     }
-    return names;
+    return handles;
 }
 
 QVariant HostInterface::describe(const QVariant& target) const {
@@ -337,8 +337,10 @@ const QVector<int>& HostInterface::candidates(const QMetaObject* meta, const QBy
     if (found != _candidates.end()) {
         return found.value();
     }
+    // the most derived class's overloads first: an engine's own method for a module (setTimeout taking a
+    // callback) is tried before the base's of the same name (setTimeout taking a QScriptValue)
     QVector<int> indices;
-    for (int i = 0; i < meta->methodCount(); ++i) {
+    for (int i = meta->methodCount() - 1; i >= 0; --i) {
         QMetaMethod method = meta->method(i);
         if (method.access() == QMetaMethod::Public && method.methodType() != QMetaMethod::Constructor &&
             method.methodType() != QMetaMethod::Signal && method.name() == name) {
@@ -348,21 +350,72 @@ const QVector<int>& HostInterface::candidates(const QMetaObject* meta, const QBy
     return _candidates.insert(key, indices).value();
 }
 
-QVariant HostInterface::invoke(QObject* object, int methodIndex, const QVariantList& arguments, bool& matched, QString& error) {
-    const QMetaObject* meta = object->metaObject();
-    QMetaMethod method = meta->method(methodIndex);
-    matched = false;
+namespace {
+
+bool isIntegralType(int type) {
+    switch (type) {
+        case QMetaType::Int: case QMetaType::UInt: case QMetaType::LongLong: case QMetaType::ULongLong:
+        case QMetaType::Short: case QMetaType::UShort: case QMetaType::Long: case QMetaType::ULong:
+        case QMetaType::Char: case QMetaType::UChar: case QMetaType::SChar:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool isFloatingType(int type) {
+    return type == QMetaType::Double || type == QMetaType::Float;
+}
+
+// How far a value is from a parameter's type: 0 for the type itself or its family, more for a coercion.
+// With overloads, the one whose arguments cost least is called, as QtScript scores its candidates.
+int conversionCost(const QVariant& value, int type) {
+    const int from = value.userType();
+    if (type == QMetaType::QVariant || from == type) {
+        return 0;
+    }
+    if (isIntegralType(from) && isIntegralType(type)) {
+        return 0;
+    }
+    if (isFloatingType(from) && isFloatingType(type)) {
+        return 0;
+    }
+    if ((isIntegralType(from) || isFloatingType(from)) && (isIntegralType(type) || isFloatingType(type))) {
+        return 1;
+    }
+    if (type == QMetaType::QString) {
+        if (from == QMetaType::QByteArray) {
+            return 1;
+        }
+        return (isIntegralType(from) || isFloatingType(from) || from == QMetaType::Bool) ? 2 : 3;
+    }
+    if (type == QMetaType::Bool) {
+        return 3;
+    }
+    if (from == QMetaType::QString) {
+        return 2;  // text to a number, a uuid, a url, an enum key, a colour name
+    }
+    if (from == QMetaType::QVariantMap || from == QMetaType::QVariantList || from == QMetaType::QObjectStar) {
+        return 1;  // a record to a struct, a list to a container, a handle to an object
+    }
+    return 2;
+}
+
+} // namespace
+
+bool HostInterface::convertArguments(const QMetaMethod& method, const QVariantList& arguments, QVariantList& converted,
+                                     int& cost, QString& error) {
     const int count = method.parameterCount();
+    cost = 0;
+    converted.clear();
     if (count > MAX_INVOKE_ARGUMENTS) {
         error = QString("%1 takes %2 parameters, more than a call can carry").arg(QString::fromUtf8(method.methodSignature())).arg(count);
-        return QVariant();
+        return false;
     }
     if (arguments.size() < count) {
         error = QString("%1 takes %2 arguments, %3 given").arg(QString::fromUtf8(method.methodSignature())).arg(count).arg(arguments.size());
-        return QVariant();
+        return false;
     }
-    // convert each argument to the parameter's type; a value that will not convert means another overload
-    QVariantList converted;
     converted.reserve(count);
     for (int i = 0; i < count; ++i) {
         const int type = parameterTypeOf(method, i);
@@ -370,21 +423,27 @@ QVariant HostInterface::invoke(QObject* object, int methodIndex, const QVariantL
         if (type == QMetaType::UnknownType) {
             error = QString("%1: parameter %2 has a type the host interface cannot carry (%3)")
                 .arg(QString::fromUtf8(method.methodSignature())).arg(i + 1).arg(QString::fromUtf8(method.parameterTypes().at(i)));
-            return QVariant();
+            return false;
         }
+        cost += conversionCost(value, type);
         if (type != QMetaType::QVariant && value.userType() != type) {
             bool ok = true;
             value = _codec.fromCbor(_codec.toCbor(value), type, &ok);
             if (!ok) {
                 error = QString("%1: argument %2 cannot be converted to %3")
                     .arg(QString::fromUtf8(method.methodSignature())).arg(i + 1).arg(typeNameOf(type));
-                return QVariant();
+                return false;
             }
         }
         converted.append(value);
     }
-    matched = true;
+    return true;
+}
 
+QVariant HostInterface::invoke(QObject* object, int methodIndex, QVariantList& converted, QString& error) {
+    const QMetaObject* meta = object->metaObject();
+    QMetaMethod method = meta->method(methodIndex);
+    const int count = method.parameterCount();
     QGenericArgument generic[MAX_INVOKE_ARGUMENTS];
     for (int i = 0; i < count; ++i) {
         const int type = parameterTypeOf(method, i);
@@ -452,24 +511,35 @@ QVariant HostInterface::call(ObjectTable::Handle handle, const QString& methodNa
             return QVariant();
         }
     }
-    // the first overload whose arguments convert; with one candidate its error is the error
+    // the overload whose arguments convert at the least cost; the first found wins a tie
+    int bestIndex = -1;
+    int bestCost = 0;
+    QVariantList bestArguments;
     QString firstError;
     for (int index : indices) {
-        bool matched = false;
+        QVariantList converted;
+        int cost = 0;
         QString candidateError;
-        QVariant result = invoke(object, index, arguments, matched, candidateError);
-        if (matched) {
-            error = candidateError;
-            return result;
-        }
-        if (firstError.isEmpty()) {
+        if (convertArguments(meta->method(index), arguments, converted, cost, candidateError)) {
+            if (bestIndex < 0 || cost < bestCost) {
+                bestIndex = index;
+                bestCost = cost;
+                bestArguments = converted;
+                if (cost == 0) {
+                    break;
+                }
+            }
+        } else if (firstError.isEmpty()) {
             firstError = candidateError;
         }
     }
-    error = indices.size() == 1 ? firstError
-                                : QString("no overload of %1.%2 takes these %3 arguments (%4)")
-                                      .arg(QString::fromUtf8(meta->className()), methodName).arg(arguments.size()).arg(firstError);
-    return QVariant();
+    if (bestIndex < 0) {
+        error = indices.size() == 1 ? firstError
+                                    : QString("no overload of %1.%2 takes these %3 arguments (%4)")
+                                          .arg(QString::fromUtf8(meta->className()), methodName).arg(arguments.size()).arg(firstError);
+        return QVariant();
+    }
+    return invoke(object, bestIndex, bestArguments, error);
 }
 
 QVariant HostInterface::get(ObjectTable::Handle handle, const QString& propertyName, QString& error) const {

@@ -213,7 +213,9 @@ void HostInterfaceTests::testVersionAndGlobals() {
     QString error;
     QVERIFY2(f.start(error), qPrintable(error));
     QCOMPARE(f.i32("version"), HostInterface::ABI_VERSION);
-    QCOMPARE(f.unpack(f.i64("globals", {})).toList(), QVariantList { "Probe" });
+    QVariantMap globals = f.unpack(f.i64("globals", {})).toMap();
+    QCOMPARE(globals.size(), 1);
+    QCOMPARE(globals.value("Probe").toInt(), f.probeHandle());
     QCOMPARE(f.i32("started"), 0);
     QVERIFY(f.host->callScriptStart(error));
     QCOMPARE(f.i32("started"), 1);
