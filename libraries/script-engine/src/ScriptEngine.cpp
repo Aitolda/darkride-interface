@@ -24,6 +24,8 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QMetaEnum>
+
+#include <MetaObjectDescription.h>
 #include <QtCore/QMetaMethod>
 #include <QtCore/QMetaProperty>
 #include <QtScript/QScriptValueIterator>
@@ -1667,75 +1669,6 @@ QUrl ScriptEngine::resourcesPath() const {
     return QUrl(PathUtils::resourcesUrl());
 }
 
-// The meta-object of an object the engine exposes, as JSON: what QtScript's newQObject turns into functions,
-// properties and signals (public methods only, as QtScript exposes them). The declaring class is kept so that
-// QObject's own members can be told from the object's.
-static QJsonObject describeMetaObject(const QMetaObject* meta) {
-    QJsonObject description;
-    description["class"] = QString::fromUtf8(meta->className());
-    QJsonArray methods, signalList, properties, enums;
-    for (int i = 0; i < meta->methodCount(); ++i) {
-        QMetaMethod method = meta->method(i);
-        if (method.access() != QMetaMethod::Public || method.methodType() == QMetaMethod::Constructor) {
-            continue;
-        }
-        QJsonObject entry;
-        entry["name"] = QString::fromUtf8(method.name());
-        entry["signature"] = QString::fromUtf8(method.methodSignature());
-        entry["returns"] = QString::fromUtf8(method.typeName());
-        entry["declaringClass"] = QString::fromUtf8(method.enclosingMetaObject()->className());
-        QJsonArray parameters;
-        auto types = method.parameterTypes();
-        auto names = method.parameterNames();
-        for (int p = 0; p < types.size(); ++p) {
-            QJsonObject parameter;
-            parameter["type"] = QString::fromUtf8(types[p]);
-            parameter["name"] = QString::fromUtf8(names.value(p));
-            parameters.append(parameter);
-        }
-        entry["parameters"] = parameters;
-        if (method.methodType() == QMetaMethod::Signal) {
-            signalList.append(entry);
-        } else {
-            entry["kind"] = method.methodType() == QMetaMethod::Slot ? "slot" : "invokable";
-            methods.append(entry);
-        }
-    }
-    for (int i = 0; i < meta->propertyCount(); ++i) {
-        QMetaProperty property = meta->property(i);
-        QJsonObject entry;
-        entry["name"] = QString::fromUtf8(property.name());
-        entry["type"] = QString::fromUtf8(property.typeName());
-        entry["readable"] = property.isReadable();
-        entry["writable"] = property.isWritable();
-        entry["constant"] = property.isConstant();
-        entry["declaringClass"] = QString::fromUtf8(property.enclosingMetaObject()->className());
-        if (property.hasNotifySignal()) {
-            entry["notify"] = QString::fromUtf8(property.notifySignal().name());
-        }
-        if (property.isEnumType()) {
-            entry["enum"] = QString::fromUtf8(property.enumerator().name());
-        }
-        properties.append(entry);
-    }
-    for (int i = 0; i < meta->enumeratorCount(); ++i) {
-        QMetaEnum enumerator = meta->enumerator(i);
-        QJsonObject entry;
-        entry["name"] = QString::fromUtf8(enumerator.name());
-        QJsonObject values;
-        for (int k = 0; k < enumerator.keyCount(); ++k) {
-            values[QString::fromUtf8(enumerator.key(k))] = enumerator.value(k);
-        }
-        entry["values"] = values;
-        enums.append(entry);
-    }
-    description["methods"] = methods;
-    description["signals"] = signalList;
-    description["properties"] = properties;
-    description["enums"] = enums;
-    return description;
-}
-
 bool ScriptEngine::dumpApi(const QString& path) {
     QJsonObject root;
     root["context"] = getContext();
@@ -1751,7 +1684,8 @@ bool ScriptEngine::dumpApi(const QString& path) {
             QObject* object = value.toQObject();
             if (object) {
                 entry["kind"] = "qobject";
-                entry["meta"] = describeMetaObject(object->metaObject());
+                // the same record the WebAssembly engine's describe host function returns
+                entry["meta"] = QJsonObject::fromVariantMap(MetaObjectDescription::describe(object->metaObject()));
             } else {
                 entry["kind"] = "qobject (null)";
             }

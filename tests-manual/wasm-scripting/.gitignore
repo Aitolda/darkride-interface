@@ -1,0 +1,4 @@
+# the API dumps go to darkride-ops api/, the dump run leaves its log and home here
+results/api-*.json
+results/dump-api.log
+results/dump-api-home/
