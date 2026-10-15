@@ -56,6 +56,7 @@ class QMouseEvent;
 class QStatusBar;
 class QUrl;
 class QWheelEvent;
+class AssetsPanel;
 class EditorUpload;
 class EditorWorld;
 class EntityTreeModel;
@@ -358,12 +359,13 @@ private:
     bool _syncingSelection { false };
     HierarchyPanel* _hierarchy { nullptr };
     InspectorPanel* _inspector { nullptr };
+    AssetsPanel* _assets { nullptr };     // My Files, along the bottom
     EditorToolBar* _toolBar { nullptr };
     TerrainToolBar* _terrainBar { nullptr };
     QStatusBar* _statusBar { nullptr };   // the bottom of the window, in build mode: notes go there
     QLabel* _statusLabel { nullptr };
     EntityTreeModel* _treeModel { nullptr };
-    Setting::Handle<QByteArray> _layoutSetting { "editor/layout2", QByteArray() };   // 2: the panels no longer float
+    Setting::Handle<QByteArray> _layoutSetting { "editor/layout3", QByteArray() };   // 2: the panels no longer float; 3: the Assets dock
     // build mode narrows the field of view; the user's own is kept here so it survives a crash
     Setting::Handle<float> _fovBeforeBuild { "editor/fovBeforeBuild", 0.0f };
     float _savedFov { 0.0f };

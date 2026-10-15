@@ -173,6 +173,7 @@ private:
 };
 
 // String, Url
+// String, Url. A link dropped on a URL field (from the Assets panel, or a browser) is taken as its value.
 class TextEditor : public PropertyEditor {
     Q_OBJECT
 public:
@@ -182,6 +183,9 @@ public:
     void revertTyping() override;
     QVariant currentValue() const override { return QVariant(_edit->text()); }
     bool isMixed() const override { return _mixed; }
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
 private:
     QLineEdit* _edit { nullptr };
     QString _shown;

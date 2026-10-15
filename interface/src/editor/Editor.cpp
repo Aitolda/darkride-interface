@@ -72,6 +72,7 @@
 #include "Menu.h"
 #include "scripting/RenderScriptingInterface.h"
 #include "PropertySpec.h"
+#include "ui/AssetsPanel.h"
 #include "ui/HierarchyPanel.h"
 #include "ui/InspectorPanel.h"
 #include "ui/PropertyEditors.h"
@@ -525,6 +526,12 @@ void Editor::createPanels() {
     connect(_inspector, &InspectorPanel::editCancelled, this, &Editor::onInspectorEditCancelled);
     connect(_inspector, &InspectorPanel::uploadRequested, this, &Editor::onInspectorUpload);
 
+    // My Files along the bottom: its notes (a link copied, an upload's progress) go to the status bar
+    _assets = new AssetsPanel(window);
+    connect(_assets, &AssetsPanel::status, this, [this](const QString& text, int clearAfterMs) {
+        setStatus(text, clearAfterMs);
+    });
+
     _toolBar = new EditorToolBar(window);
     _toolBar->setGridChecked(_gridVisible);
     _toolBar->setGizmosChecked(_gizmosVisible);
@@ -576,11 +583,16 @@ void Editor::createPanels() {
 
     window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
     window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
+    // the Assets panel runs under the Hierarchy and the viewport, as Unity's Project window does; the Inspector
+    // keeps the right side whole
+    window->setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
+    window->addDockWidget(Qt::BottomDockWidgetArea, _assets);
     placeToolBars();
     _terrainBar->setVisible(false);
     window->setStatusBar(_statusBar);
     _statusBar->setVisible(false);
     window->resizeDocks({ _hierarchy, _inspector }, { 260, 430 }, Qt::Horizontal);
+    window->resizeDocks({ _assets }, { 240 }, Qt::Vertical);
     qApp->installEventFilter(this);
 
     QByteArray layout = _layoutSetting.get();
@@ -591,6 +603,7 @@ void Editor::createPanels() {
     // one row would keep them there
     _hierarchy->setFloating(false);
     _inspector->setFloating(false);
+    _assets->setFloating(false);
     placeToolBars();
     updateTerrainBar();   // the saved layout knows nothing of the tool
 }
@@ -633,6 +646,8 @@ void Editor::showPanels(bool show) {
     gl::ViewChangeGuard guard;   // panels coming and going change the window round the GL view
     _hierarchy->setVisible(show);
     _inspector->setVisible(show);
+    _assets->setVisible(show);
+    _assets->setActive(show);   // fetches the listing when shown
     _toolBar->setVisible(show);
     _statusBar->setVisible(show);
     updateTerrainBar();
@@ -645,8 +660,12 @@ void Editor::resetLayout() {
     }
     _hierarchy->setFloating(false);
     _inspector->setFloating(false);
+    _assets->setFloating(false);
     window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
     window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
+    window->addDockWidget(Qt::BottomDockWidgetArea, _assets);
+    window->resizeDocks({ _hierarchy, _inspector }, { 260, 430 }, Qt::Horizontal);
+    window->resizeDocks({ _assets }, { 240 }, Qt::Vertical);
     placeToolBars();
     showPanels(_active);
     _layoutSetting.set(QByteArray());

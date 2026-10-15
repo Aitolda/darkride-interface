@@ -708,6 +708,18 @@ void BoolEditor::setValue(const QVariant& value, bool mixed) {
 
 // --- TextEditor ---------------------------------------------------------------------------------
 
+namespace {
+    // the link in what is dragged, if it is a web address: a file from the Assets panel, or from a browser
+    QUrl droppedWebAddress(const QMimeData* mime) {
+        for (const auto& url : mime->urls()) {
+            if (url.scheme() == QStringLiteral("http") || url.scheme() == QStringLiteral("https")) {
+                return url;
+            }
+        }
+        return QUrl();
+    }
+}
+
 TextEditor::TextEditor(const PropertySpec& spec, QWidget* parent) : PropertyEditor(spec, parent) {
     auto layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -715,6 +727,9 @@ TextEditor::TextEditor(const PropertySpec& spec, QWidget* parent) : PropertyEdit
     _edit->setReadOnly(spec.readOnly);
     if (spec.kind == PropertyKind::Url) {
         _edit->setPlaceholderText("URL");
+        // the field takes the link itself, rather than letting the line edit paste it as typing
+        _edit->setAcceptDrops(false);
+        setAcceptDrops(!spec.readOnly);
     }
     layout->addWidget(_edit);
     connect(_edit, &QLineEdit::editingFinished, this, [this] {
@@ -730,6 +745,24 @@ TextEditor::TextEditor(const PropertySpec& spec, QWidget* parent) : PropertyEdit
 void TextEditor::revertTyping() {
     _edit->setText(_shown);
     _edit->setModified(false);
+}
+
+void TextEditor::dragEnterEvent(QDragEnterEvent* event) {
+    if (!_spec.readOnly && _spec.kind == PropertyKind::Url && !droppedWebAddress(event->mimeData()).isEmpty()) {
+        event->acceptProposedAction();
+    }
+}
+
+void TextEditor::dropEvent(QDropEvent* event) {
+    QUrl url = droppedWebAddress(event->mimeData());
+    if (url.isEmpty()) {
+        return;
+    }
+    _shown = url.toString();
+    _edit->setText(_shown);
+    _edit->setModified(false);
+    emit committed(QVariant(_shown));
+    event->acceptProposedAction();
 }
 
 void TextEditor::setValue(const QVariant& value, bool mixed) {
