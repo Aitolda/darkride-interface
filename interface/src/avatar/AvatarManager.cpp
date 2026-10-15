@@ -991,19 +991,22 @@ float AvatarManager::getAvatarSortCoefficient(const QString& name) {
 
 // HACK
 void AvatarManager::setAvatarSortCoefficient(const QString& name, const QScriptValue& value) {
-    bool somethingChanged = false;
     if (value.isNumber()) {
-        float numericalValue = (float)value.toNumber();
-        if (name == "size") {
-            AvatarData::_avatarSortCoefficientSize = numericalValue;
-            somethingChanged = true;
-        } else if (name == "center") {
-            AvatarData::_avatarSortCoefficientCenter = numericalValue;
-            somethingChanged = true;
-        } else if (name == "age") {
-            AvatarData::_avatarSortCoefficientAge = numericalValue;
-            somethingChanged = true;
-        }
+        setAvatarSortCoefficientValue(name, (float)value.toNumber());
+    }
+}
+
+void AvatarManager::setAvatarSortCoefficientValue(const QString& name, float numericalValue) {
+    bool somethingChanged = false;
+    if (name == "size") {
+        AvatarData::_avatarSortCoefficientSize = numericalValue;
+        somethingChanged = true;
+    } else if (name == "center") {
+        AvatarData::_avatarSortCoefficientCenter = numericalValue;
+        somethingChanged = true;
+    } else if (name == "age") {
+        AvatarData::_avatarSortCoefficientAge = numericalValue;
+        somethingChanged = true;
     }
     if (somethingChanged) {
         size_t packetSize = sizeof(AvatarData::_avatarSortCoefficientSize) + 

@@ -1,16 +1,9 @@
 #!/bin/sh
-# Dump the API a script sees, serverless (WASM-SCRIPTING.md round 0): tests-manual/wasm-scripting/dump-api.sh [path/to/interface.app]
-# Writes results/api-client.json and results/api-entity_client.json beside this script; the client's log goes to
-# results/dump-api.log. The client gets its own settings and data directories under results/dump-api-home.
+# Dump the API a script sees, serverless (WASM-SCRIPTING.md round 0): tests-manual/wasm-scripting/dump-api.sh
+# Writes results/api-client.json and results/api-entity_client.json beside this script. The client is this checkout's
+# build, started through run-client.sh (a time limit, its own settings and data); its log is results/dump-api/client.log.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
-APP=${1:-"$D/../../build/interface/interface.app"}
-BIN="$APP/Contents/MacOS/interface"
-[ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
-H="$D/results/dump-api-home"
-mkdir -p "$H/config" "$H/data"
-echo "client: $BIN"
-XDG_CONFIG_HOME="$H/config" TIVOLI_APP_DATA_DIR="$H/data" "$BIN" --allowMultipleInstances --url "file://$D/world.json" \
-    --testScript "$D/dump-api.js" --testResultsLocation "$H" > "$D/results/dump-api.log" 2>&1 || true
-grep "WASM-API" "$D/results/dump-api.log" || { echo "no WASM-API lines in results/dump-api.log" >&2; exit 1; }
+"$D/run-client.sh" dump-api 90 --url "file://$D/world.json" --testScript "$D/dump-api.js" --testResultsLocation "$D/results/dump-api"
+grep "WASM-API" "$D/results/dump-api/client.log" || { echo "no WASM-API lines in results/dump-api/client.log" >&2; exit 1; }
 ls -la "$D"/results/api-*.json

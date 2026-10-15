@@ -6,7 +6,7 @@
 //  context from this script, the client's entity-script context from an entity this script adds (its script is
 //  dump-entity-api.js). The files land in results/ beside this script and are copied into darkride-ops api/.
 //
-//  Run (serverless):  tests-manual/wasm-scripting/dump-api.sh [path/to/interface.app]
+//  Run (serverless):  tests-manual/wasm-scripting/dump-api.sh
 //
 //  Distributed under the Apache License, Version 2.0.
 //

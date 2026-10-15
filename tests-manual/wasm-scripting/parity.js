@@ -209,6 +209,15 @@
         attempt("AvatarList.findRayIntersection lists", function () { var r = AvatarList.findRayIntersection({ origin: { x: 0, y: 100, z: 0 }, direction: { x: 0, y: 1, z: 0 } }, [], [MyAvatar.sessionUUID]); return [r.intersects, r.avatarID]; });
         attempt("Picks.setIgnoreItems", function () { var p = Picks.createPick(PickType.Ray, { joint: "Mouse", filter: Picks.PICK_ENTITIES, enabled: true }); Picks.setIgnoreItems(p, [id]); Picks.setIncludeItems(p, []); Picks.removePick(p); return "ok"; });
         attempt("Pointers.setIgnoreItems", function () { var p = Pointers.createPointer(PickType.Ray, { joint: "Mouse", filter: Picks.PICK_ENTITIES, enabled: false, renderStates: [] }); Pointers.setIgnoreItems(p, [id]); Pointers.setIncludeItems(p, [id]); Pointers.removePointer(p); return "ok"; });
+        attempt("Model meshes", function () {
+            var mesh = Model.newMesh([{ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, { x: 0, y: 1, z: 0 }], [], [{ vertices: [0, 1, 2] }]);
+            var both = Model.appendMeshes([mesh, mesh]);
+            return [typeof mesh, Model.getVertexCount(mesh), Model.getVertex(mesh, 1), Model.getVertex(mesh, 7), Model.getVertexCount(both), Model.meshToOBJ([mesh]).length > 0];
+        });
+        attempt("Window.hasFocus type", function () { return typeof Window.hasFocus(); });
+        attempt("Overlays.findRayIntersection lists", function () { var r = Overlays.findRayIntersection({ origin: { x: 0, y: 100, z: 0 }, direction: { x: 0, y: 1, z: 0 } }, true, [], [id]); return [Object.keys(r), r.intersects, r.overlayID]; });
+        attempt("ModelCache.prefetch", function () { var r = ModelCache.prefetch(Paths.defaultScripts + "/system/assets/models/black-sphere.fbx"); return [typeof r, typeof r.state, typeof r.loaded]; });
+        attempt("AvatarList.setAvatarSortCoefficient", function () { AvatarList.setAvatarSortCoefficient("age", "not a number"); return "ok"; });
         attempt("Script.registerValue", function () { Script.registerValue("wasmParity.inner.value", 5); Script.registerValue("Vec3", 1); return [Array.isArray(wasmParity), wasmParity.inner.value, typeof Vec3]; });
         attempt("Assets.getMapping bad path", function () { Assets.getMapping("not a path", function () {}); return "no throw"; });
         attempt("Assets.compressData", function () {

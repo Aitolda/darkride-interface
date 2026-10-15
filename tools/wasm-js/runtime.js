@@ -268,6 +268,21 @@
         Object.defineProperty(object, name, { value: fn, writable: true, enumerable: true, configurable: true });
     }
 
+    // A list of IDs as QtScript reads one (qVectorQUuidFromScriptValue, qVectorEntityItemIDFromScriptValue): each
+    // element's text; no list at all for a value that is not an array
+    function idList(items) {
+        return Array.isArray(items) ? items.map(function (item) { return String(item); }) : [];
+    }
+
+    // setIgnoreItems and setIncludeItems take the lists as QScriptValues; the host's ...Vector forms take lists
+    function itemListForms(object) {
+        ["setIgnoreItems", "setIncludeItems"].forEach(function (name) {
+            defineMethod(object, name, function (uid, items) {
+                return host.call(object, name + "Vector", [uid, idList(items)]);
+            });
+        });
+    }
+
     // What the QtScript engine added to an object as native functions, which the description cannot list
     var extraMembers = {
         "AssetScriptingInterface": function (assets) {
@@ -301,12 +316,28 @@
         },
         "AvatarManager": function (avatars) {
             // findRayIntersection(ray, include, discard, pickAgainstMesh) takes the lists as QScriptValues; the host's
-            // findRayIntersectionVector takes them as lists (QtScript reads a value that is not an array as no list)
+            // findRayIntersectionVector takes them as lists
             defineMethod(avatars, "findRayIntersection", function (ray, include, discard, pickAgainstMesh) {
-                return host.call(avatars, "findRayIntersectionVector", [ray, Array.isArray(include) ? include : [],
-                    Array.isArray(discard) ? discard : [], pickAgainstMesh === undefined ? true : !!pickAgainstMesh]);
+                return host.call(avatars, "findRayIntersectionVector", [ray, idList(include), idList(discard),
+                    pickAgainstMesh === undefined ? true : !!pickAgainstMesh]);
+            });
+            // setAvatarSortCoefficient(name, value) takes a number as a QScriptValue, and ignores anything else
+            defineMethod(avatars, "setAvatarSortCoefficient", function (name, value) {
+                if (typeof value === "number") {
+                    return host.call(avatars, "setAvatarSortCoefficientValue", [name, value]);
+                }
             });
         },
+        "Overlays": function (overlays) {
+            defineMethod(overlays, "findRayIntersection", function (ray, precisionPicking, include, discard, visibleOnly, collidableOnly) {
+                return host.call(overlays, "findRayIntersectionVector", [ray, !!precisionPicking, idList(include), idList(discard),
+                    !!visibleOnly, !!collidableOnly]);
+            });
+        },
+        "PickScriptingInterface": itemListForms,
+        "RayPickScriptingInterface": itemListForms,
+        "LaserPointerScriptingInterface": itemListForms,
+        "PointerScriptingInterface": itemListForms,
         "EntityScriptingInterface": function (entities) {
             // getMultipleEntityProperties(ids, properties): one getEntityProperties per id
             Object.defineProperty(entities, "getMultipleEntityProperties", {
