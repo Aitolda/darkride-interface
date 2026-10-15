@@ -34,6 +34,7 @@
 #include <EntityTree.h>
 #include <LocationScriptingInterface.h>
 #include <NumericalConstants.h>
+#include <OctreeConstants.h>
 #include <PathUtils.h>
 #include <PointerEvent.h>
 #include <ResourceCache.h>
@@ -422,6 +423,8 @@ void WasmScriptEngine::run() {
     // two globals the QtScript engine gives as a native constructor and a plain object
     registerGlobalObject("AudioEffectOptions", _audioEffectOptions);
     registerGlobalObject("Resource", _resourceStates);
+    // a constant the QtScript engine gives as a number in a variant object; a module gets the number
+    registerGlobalValue("TREE_SCALE", QVariant(TREE_SCALE));
 
     _isRunning = true;
     emit runningStateChanged();

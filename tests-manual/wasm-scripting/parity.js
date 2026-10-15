@@ -215,6 +215,7 @@
             return [typeof mesh, Model.getVertexCount(mesh), Model.getVertex(mesh, 1), Model.getVertex(mesh, 7), Model.getVertexCount(both), Model.meshToOBJ([mesh]).length > 0];
         });
         attempt("Window.hasFocus type", function () { return typeof Window.hasFocus(); });
+        attempt("TREE_SCALE", function () { return [TREE_SCALE + 0, TREE_SCALE / 2]; });
         attempt("Overlays.findRayIntersection lists", function () { var r = Overlays.findRayIntersection({ origin: { x: 0, y: 100, z: 0 }, direction: { x: 0, y: 1, z: 0 } }, true, [], [id]); return [Object.keys(r), r.intersects, r.overlayID]; });
         attempt("ModelCache.prefetch", function () { var r = ModelCache.prefetch(Paths.defaultScripts + "/system/assets/models/black-sphere.fbx"); return [typeof r, typeof r.state, typeof r.loaded]; });
         attempt("AvatarList.setAvatarSortCoefficient", function () { AvatarList.setAvatarSortCoefficient("age", "not a number"); return "ok"; });
