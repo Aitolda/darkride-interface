@@ -219,6 +219,13 @@ public slots:
      */
     Q_INVOKABLE void advanceSpringBones(float seconds);
 
+    /*@jsdoc
+     * Gets how many steps the avatar's spring bones have taken since the client started.
+     * @function Test.getSpringBoneSteps
+     * @returns {number} The step count.
+     */
+    Q_INVOKABLE int getSpringBoneSteps();
+
 private:
     bool waitForCondition(qint64 maxWaitMs, std::function<bool()> condition);
     QString _testResultsLocation;

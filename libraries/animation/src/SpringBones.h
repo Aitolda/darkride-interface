@@ -113,7 +113,10 @@ struct Data {
 struct Law {
     static float velocityKept(const ComponentSpec& spec, float spring);
     static float pull(const ComponentSpec& spec, float pull);
-    // the fraction of the avatar's own movement per step that is not carried by the chain (the immobile term)
+    // the fraction of the chain parent's rigid motion (its turn and its translation) a particle is carried by each step
+    static float rigidCarried(const ComponentSpec& spec);
+    // the fraction of the avatar's own movement per step that is not carried by the chain: what the rigid carry leaves,
+    // less the immobile share of it
     static float avatarMoveFelt(const ComponentSpec& spec, float immobile);
 };
 
@@ -199,6 +202,8 @@ public:
     static void setLockstep(bool on) { _lockstep = on; _pendingTime = 0.0f; }
     static bool getLockstep() { return _lockstep; }
     static void advance(float seconds) { _pendingTime += seconds; }
+    // how many simulation steps every solver has taken (a test reads it to know which step a read-back pose is of)
+    static long getStepCount() { return _stepCount; }
     const Data& getData() const { return _data; }
     int getJointCount() const { return _jointCount; }
 
@@ -230,6 +235,7 @@ private:
     bool _active { false };
     static bool _lockstep;
     static float _pendingTime;
+    static long _stepCount;
 };
 
 }

@@ -214,6 +214,10 @@ void TestScriptingInterface::advanceSpringBones(float seconds) {
     springbones::Solver::advance(seconds);
 }
 
+int TestScriptingInterface::getSpringBoneSteps() {
+    return (int)springbones::Solver::getStepCount();
+}
+
 float TestScriptingInterface::getGameLoopRate() {
     return qApp->getGameLoopRate();
 }
