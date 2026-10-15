@@ -14,6 +14,7 @@
 #include <functional>
 
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QSet>
 #include <QString>
@@ -44,6 +45,13 @@ namespace avatarimport {
 //   {"active": [[object, bool]], "blendshapes": {name: 0 to 1}, "joints": {name: {"translation", "rotation",
 //   "scale"}}} (only the parts it animates, in the engine's frame).
 // - base: each property's value before any layer writes (for states that write defaults).
+// - a state's "drive": what it sets on entering, [{"type" ("set", "add", "random", "copy"), "name", "value", "min",
+//   "max", "chance", "source", "convertRange", "sourceMin", "sourceMax", "destMin", "destMax", "localOnly" (only for the
+//   avatar's owner)}].
+// - contacts: the touches that set parameters, as SpringBones.h has them but with lengths in the avatar's own meters
+//   (the joint's scale and the avatar's applied): receivers set their "parameter" when a sender with a shared tag
+//   overlaps them ("receiverType" 0 while touching, 1 on touching, 2 by how close to the middle); the engine gives every
+//   avatar senders on its head, chest, hands, index fingers and feet.
 // - emotes: the emote layer's states a menu parameter picks: {"parameter", "value", "name" (the state's), "seated",
 //   "loop", "hold" (keeps its last pose), "own" (its clip is in the package; otherwise a stock one the engine's own
 //   emote animations stand in for, by name)}.
@@ -66,6 +74,7 @@ struct AvatarMenuInputs {
     std::function<bool(int joint)> prefabActive;                   // an object's state as the prefab leaves it
     std::function<QJsonObject(int joint)> prefabPose;              // a joint's pose as the prefab leaves it
     QHash<QString, float> prefabBlendshapes;                       // shape keys the prefab sets, 0 to 1
+    QJsonArray contacts;  // the avatar's contacts in its own meters (UnityAvatar.cpp scales SpringBones.h's)
 };
 
 AvatarMenuData avatarMenuData(const unity::Package& package, const QVariantMap& descriptor, const AvatarMenuInputs& in);

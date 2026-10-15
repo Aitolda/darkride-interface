@@ -894,6 +894,27 @@ WrittenAvatar writeAvatar(const unity::Package& package, const AvatarSource& ava
         }
     }
     AvatarMenuInputs menuInputs;
+    // the contacts in the avatar's own meters: a component's lengths are in its joint's units, which the joint's scale
+    // (the product of the model's node scales down to it) and the avatar's turn into meters at the avatar's size
+    for (const QJsonValue& value : springBones.json.value("contacts").toArray()) {
+        QJsonObject contact = value.toObject();
+        float scale = avatarScale;
+        for (int i = 0; i < hfmModel->joints.size(); i++) {
+            const QString& name = hfmModel->joints[i].name;
+            if (skeletonNames.value(name, name) == contact.value("joint").toString()) {
+                scale *= glm::length(glm::vec3(hfmModel->joints[i].transform[0]));
+                break;
+            }
+        }
+        QJsonArray position = contact.value("position").toArray();
+        for (int i = 0; i < position.size(); i++) {
+            position[i] = position[i].toDouble() * scale;
+        }
+        contact["position"] = position;
+        contact["radius"] = contact.value("radius").toDouble() * scale;
+        contact["height"] = contact.value("height").toDouble() * scale;
+        menuInputs.contacts.append(contact);
+    }
     menuInputs.model = hfmModel.get();
     menuInputs.paths = paths;
     menuInputs.skeletonNames = skeletonNames;

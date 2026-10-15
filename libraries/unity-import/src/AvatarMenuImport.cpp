@@ -369,6 +369,39 @@ AvatarMenuData avatarMenuData(const unity::Package& package, const QVariantMap& 
                 }
                 return transitions;
             };
+            // what a state sets on entering: its parameter drivers
+            auto drivesOf = [&](const unity::YamlObject* state) {
+                static const char* TYPES[] = { "set", "add", "random", "copy" };
+                QJsonArray drives;
+                for (const QVariant& reference : state->fields.value("m_StateMachineBehaviours").toList()) {
+                    const unity::YamlObject* behaviour = byID.value(unity::fileIDOf(reference));
+                    if (!behaviour || unity::componentClassName(unity::fileIDOf(behaviour->fields.value("m_Script"))) !=
+                                          QLatin1String("VRCAvatarParameterDriver")) {
+                        continue;
+                    }
+                    const bool localOnly = unity::toNumber(behaviour->fields.value("localOnly")) != 0.0;
+                    for (const QVariant& entry : behaviour->fields.value("parameters").toList()) {
+                        const QVariantMap p = entry.toMap();
+                        const int type = (int)unity::toNumber(p.value("type"));
+                        drives.append(QJsonObject {
+                            { "type", type >= 0 && type < 4 ? TYPES[type] : "set" },
+                            { "name", p.value("name").toString() },
+                            { "value", unity::toNumber(p.value("value")) },
+                            { "min", unity::toNumber(p.value("valueMin")) },
+                            { "max", unity::toNumber(p.value("valueMax")) },
+                            { "chance", unity::toNumber(p.value("chance")) },
+                            { "source", p.value("source").toString() },
+                            { "convertRange", unity::toNumber(p.value("convertRange")) != 0.0 },
+                            { "sourceMin", unity::toNumber(p.value("sourceMin")) },
+                            { "sourceMax", unity::toNumber(p.value("sourceMax")) },
+                            { "destMin", unity::toNumber(p.value("destMin")) },
+                            { "destMax", unity::toNumber(p.value("destMax")) },
+                            { "localOnly", localOnly },
+                        });
+                    }
+                }
+                return drives;
+            };
             QJsonArray states;
             for (qint64 id : stateIDs) {
                 const unity::YamlObject* state = byID.value(id);
@@ -381,6 +414,7 @@ AvatarMenuData avatarMenuData(const unity::Package& package, const QVariantMap& 
                     { "writeDefaults", unity::toNumber(state->fields.value("m_WriteDefaultValues"), 1.0) != 0.0 },
                     { "effect", effectOf(clipOf(state->fields.value("m_Motion"))) },
                     { "transitions", transitionsOf(state->fields.value("m_Transitions").toList()) },
+                    { "drive", drivesOf(state) },
                 });
                 data.states++;
             }
@@ -492,6 +526,7 @@ AvatarMenuData avatarMenuData(const unity::Package& package, const QVariantMap& 
         { "objects", objects },
         { "layers", layers },
         { "emotes", emotes },
+        { "contacts", in.contacts },
         { "base", QJsonObject { { "blendshapes", baseBlendshapes }, { "joints", baseJoints } } },
     };
     return data;

@@ -14,6 +14,7 @@
 #include <QVariantMap>
 
 #include <AnimSkeleton.h>
+#include <SharedUtil.h>
 
 namespace {
 
@@ -53,6 +54,47 @@ AvatarMenu::JointPose readPose(const QJsonObject& json) {
     return pose;
 }
 
+// the closest two points of two segments are apart (an end pair alike is a point)
+float segmentDistance(const glm::vec3& p1, const glm::vec3& q1, const glm::vec3& p2, const glm::vec3& q2) {
+    const float EPSILON = 1.0e-8f;
+    const glm::vec3 d1 = q1 - p1, d2 = q2 - p2, r = p1 - p2;
+    const float a = glm::dot(d1, d1), e = glm::dot(d2, d2), f = glm::dot(d2, r);
+    float s = 0.0f, t = 0.0f;
+    if (a <= EPSILON && e <= EPSILON) {
+        return glm::length(r);
+    }
+    if (a <= EPSILON) {
+        t = glm::clamp(f / e, 0.0f, 1.0f);
+    } else {
+        const float c = glm::dot(d1, r);
+        if (e <= EPSILON) {
+            s = glm::clamp(-c / a, 0.0f, 1.0f);
+        } else {
+            const float b = glm::dot(d1, d2);
+            const float denominator = a * e - b * b;
+            s = denominator > EPSILON ? glm::clamp((b * f - c * e) / denominator, 0.0f, 1.0f) : 0.0f;
+            t = (b * s + f) / e;
+            if (t < 0.0f) {
+                t = 0.0f;
+                s = glm::clamp(-c / a, 0.0f, 1.0f);
+            } else if (t > 1.0f) {
+                t = 1.0f;
+                s = glm::clamp((b - c) / a, 0.0f, 1.0f);
+            }
+        }
+    }
+    return glm::length((p1 + d1 * s) - (p2 + d2 * t));
+}
+
+bool shareTag(const QStringList& a, const QStringList& b) {
+    for (const QString& tag : a) {
+        if (b.contains(tag, Qt::CaseInsensitive)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool samePose(const AvatarMenu::JointPose& a, const AvatarMenu::JointPose& b) {
     return a.hasTranslation == b.hasTranslation && a.hasRotation == b.hasRotation && a.hasScale == b.hasScale &&
         (!a.hasTranslation || a.translation == b.translation) && (!a.hasRotation || a.rotation == b.rotation) &&
@@ -83,6 +125,7 @@ void AvatarMenu::clear() {
     _blendshapeFades.clear();
     _jointFades.clear();
     _fadeDuration = 0.0f;
+    _contacts.clear();
     _changed = true;
     _parametersChanged = false;
 }
@@ -143,6 +186,59 @@ void AvatarMenu::setup(const QJsonObject& data, const hfm::Model& model, const A
         }
     }
 
+    for (const QJsonValue& entry : data.value("contacts").toArray()) {
+        const QJsonObject c = entry.toObject();
+        Contact contact;
+        contact.receiver = c.value("type").toString() == "receiver";
+        contact.joint = skeleton.nameToJointIndex(c.value("joint").toString());
+        float v[4];
+        if (readVector(c.value("position"), 3, v)) {
+            contact.position = glm::vec3(v[0], v[1], v[2]);
+        }
+        if (readVector(c.value("rotation"), 4, v)) {
+            contact.rotation = glm::normalize(glm::quat(v[3], v[0], v[1], v[2]));
+        }
+        contact.capsule = c.value("shapeType").toInt() == 1;
+        contact.radius = (float)c.value("radius").toDouble();
+        contact.height = (float)c.value("height").toDouble();
+        for (const QJsonValue& tag : c.value("collisionTags").toArray()) {
+            contact.tags << tag.toString();
+        }
+        contact.allowSelf = c.value("allowSelf").toBool(true);
+        contact.allowOthers = c.value("allowOthers").toBool(true);
+        contact.localOnly = c.value("localOnly").toBool();
+        contact.type = c.value("receiverType").toInt();
+        contact.parameter = _parameterIndex.value(c.value("parameter").toString(), -1);
+        if (contact.joint >= 0 && (!contact.receiver || contact.parameter >= 0)) {
+            _contacts.push_back(contact);
+        }
+    }
+
+    auto readDrives = [&](const QJsonArray& array) {
+        std::vector<Drive> drives;
+        for (const QJsonValue& entry : array) {
+            const QJsonObject d = entry.toObject();
+            const QString type = d.value("type").toString();
+            Drive drive;
+            drive.type = type == "add" ? 1 : type == "random" ? 2 : type == "copy" ? 3 : 0;
+            drive.parameter = _parameterIndex.value(d.value("name").toString(), -1);
+            drive.source = _parameterIndex.value(d.value("source").toString(), -1);
+            drive.value = (float)d.value("value").toDouble();
+            drive.min = (float)d.value("min").toDouble();
+            drive.max = (float)d.value("max").toDouble();
+            drive.chance = (float)d.value("chance").toDouble();
+            drive.convertRange = d.value("convertRange").toBool();
+            drive.sourceMin = (float)d.value("sourceMin").toDouble();
+            drive.sourceMax = (float)d.value("sourceMax").toDouble();
+            drive.destMin = (float)d.value("destMin").toDouble();
+            drive.destMax = (float)d.value("destMax").toDouble();
+            drive.localOnly = d.value("localOnly").toBool();
+            if (drive.parameter >= 0) {
+                drives.push_back(drive);
+            }
+        }
+        return drives;
+    };
     auto readTransitions = [&](const QJsonArray& array) {
         std::vector<Transition> transitions;
         for (const QJsonValue& entry : array) {
@@ -181,6 +277,7 @@ void AvatarMenu::setup(const QJsonObject& data, const hfm::Model& model, const A
             State state;
             state.writeDefaults = st.value("writeDefaults").toBool();
             state.transitions = readTransitions(st.value("transitions").toArray());
+            state.drives = readDrives(st.value("drive").toArray());
             const QJsonObject effect = st.value("effect").toObject();
             for (const QJsonValue& a : effect.value("active").toArray()) {
                 const int object = a.toArray().at(0).toInt(-1);
@@ -417,6 +514,114 @@ void AvatarMenu::enter(Layer& layer, int stateIndex) {
         if (!_joints.contains(j.first) || !samePose(_joints[j.first], pose)) {
             setJoint(j.first, &pose);
         }
+    }
+    for (const Drive& drive : state.drives) {
+        if (drive.localOnly && !_local) {
+            continue;
+        }
+        Parameter& parameter = _parameters[drive.parameter];
+        if (drive.type == 0) {
+            assign(parameter, drive.value);
+        } else if (drive.type == 1) {
+            assign(parameter, parameter.value + drive.value);
+        } else if (drive.type == 2) {
+            // a random pick is its owner's: others take it from the parameter, when the avatar shares it
+            if (_local) {
+                if (parameter.type == "bool") {
+                    assign(parameter, randFloat() < drive.chance ? 1.0f : 0.0f);
+                } else if (parameter.type == "int") {
+                    assign(parameter, glm::floor(drive.min + randFloat() * (drive.max - drive.min + 1.0f)));
+                } else {
+                    assign(parameter, drive.min + randFloat() * (drive.max - drive.min));
+                }
+            }
+        } else if (drive.source >= 0) {
+            float value = _parameters[drive.source].value;
+            if (drive.convertRange && drive.sourceMax != drive.sourceMin) {
+                value = drive.destMin + (value - drive.sourceMin) / (drive.sourceMax - drive.sourceMin) *
+                                            (drive.destMax - drive.destMin);
+            }
+            assign(parameter, value);
+        }
+    }
+}
+
+void AvatarMenu::setLocal(bool local) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _local = local;
+}
+
+bool AvatarMenu::hasContactReceivers() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (const Contact& contact : _contacts) {
+        if (contact.receiver) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool AvatarMenu::placeContact(const Contact& contact, float scale, const JointWorld& jointWorld, glm::vec3& a, glm::vec3& b,
+                              float& radius) {
+    glm::vec3 position;
+    glm::quat rotation;
+    if (!jointWorld(contact.joint, position, rotation)) {
+        return false;
+    }
+    const glm::vec3 center = position + rotation * (contact.position * scale);
+    radius = contact.radius * scale;
+    a = b = center;
+    if (contact.capsule) {  // along its own up axis, its height counting the round ends
+        const float half = glm::max(0.0f, 0.5f * contact.height * scale - radius);
+        const glm::vec3 axis = rotation * contact.rotation * glm::vec3(0.0f, 1.0f, 0.0f);
+        a = center - axis * half;
+        b = center + axis * half;
+    }
+    return true;
+}
+
+void AvatarMenu::addContactSenders(const QUuid& owner, float scale, const JointWorld& jointWorld,
+                                   std::vector<ContactSender>& senders) const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (const Contact& contact : _contacts) {
+        ContactSender sender;
+        if (!contact.receiver && placeContact(contact, scale, jointWorld, sender.a, sender.b, sender.radius)) {
+            sender.owner = owner;
+            sender.tags = contact.tags;
+            senders.push_back(sender);
+        }
+    }
+}
+
+void AvatarMenu::updateContacts(const QUuid& owner, float scale, const JointWorld& jointWorld,
+                                const std::vector<ContactSender>& senders) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (Contact& contact : _contacts) {
+        glm::vec3 a, b;
+        float radius;
+        if (!contact.receiver || (contact.localOnly && !_local) || !placeContact(contact, scale, jointWorld, a, b, radius) ||
+            radius <= 0.0f) {
+            continue;
+        }
+        bool touching = false;
+        float closeness = 0.0f;
+        for (const ContactSender& sender : senders) {
+            const bool own = sender.owner == owner;
+            if ((own ? !contact.allowSelf : !contact.allowOthers) || !shareTag(contact.tags, sender.tags)) {
+                continue;
+            }
+            const float distance = segmentDistance(a, b, sender.a, sender.b);
+            if (distance < radius + sender.radius) {
+                touching = true;
+                // 1 with the sender reaching the receiver's middle, 0 at its edge
+                closeness = glm::max(closeness, 1.0f - glm::clamp((distance - sender.radius) / radius, 0.0f, 1.0f));
+            }
+        }
+        const float value = contact.type == 2 ? closeness
+                          : contact.type == 1 ? (touching && !contact.touching ? 1.0f : 0.0f)
+                                              : (touching ? 1.0f : 0.0f);
+        contact.touching = touching;
+        assign(_parameters[contact.parameter], value);
     }
 }
 

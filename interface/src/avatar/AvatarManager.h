@@ -120,6 +120,9 @@ public:
     float getAvatarSimulationTime() const { return _avatarSimulationTime; }
 
     void updateMyAvatar(float deltaTime);
+
+    // every avatar's contact receivers against everyone's senders (Avatar::updateContacts)
+    void updateContacts();
     void updateOtherAvatars(float deltaTime);
 
     void setMyAvatarDataPacketsPaused(bool puase);

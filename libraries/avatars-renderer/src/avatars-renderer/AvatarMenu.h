@@ -11,6 +11,7 @@
 #ifndef hifi_AvatarMenu_h
 #define hifi_AvatarMenu_h
 
+#include <functional>
 #include <mutex>
 #include <vector>
 
@@ -19,6 +20,8 @@
 #include <QJsonObject>
 #include <QSet>
 #include <QString>
+#include <QStringList>
+#include <QUuid>
 #include <QVariantList>
 
 #include <glm/glm.hpp>
@@ -65,6 +68,23 @@ public:
 
     // Follows the layers' transitions; true when what the avatar shows changed since the last call.
     bool update(float deltaTime);
+    // Touches: an avatar's contact receivers set their parameters when someone's sender overlaps them (unity-import's
+    // AvatarMenuImport.h has the data). Senders are spheres or capsules in the world, each with its avatar.
+    struct ContactSender {
+        QUuid owner;
+        glm::vec3 a, b;  // a capsule's ends; one point for a sphere
+        float radius { 0.0f };
+        QStringList tags;
+    };
+    using JointWorld = std::function<bool(int joint, glm::vec3& position, glm::quat& rotation)>;
+    void setLocal(bool local);  // the owner's own avatar runs what only its owner runs; set before setup
+    bool hasContactReceivers() const;
+    // the avatar's own senders and its receivers, from its joints in the world; scale turns its meters into the world's
+    void addContactSenders(const QUuid& owner, float scale, const JointWorld& jointWorld,
+                           std::vector<ContactSender>& senders) const;
+    void updateContacts(const QUuid& owner, float scale, const JointWorld& jointWorld,
+                        const std::vector<ContactSender>& senders);
+
     QSet<int> getHiddenParts() const;
     QHash<int, float> getOwnBlendshapes() const;           // index into the model's own blend shapes -> 0 to 1
     QHash<int, JointPose> getJointPoses() const;           // skeleton joint -> the parts the layers set
@@ -87,10 +107,26 @@ private:
         std::vector<std::pair<int, float>> blendshapes;      // own blend shape -> weight
         std::vector<std::pair<int, JointPose>> joints;       // joint -> parts set
     };
+    struct Drive {  // what a state sets on entering
+        int type { 0 };  // 0 set, 1 add, 2 random, 3 copy
+        int parameter { -1 };
+        int source { -1 };
+        float value { 0.0f };
+        float min { 0.0f };
+        float max { 0.0f };
+        float chance { 0.0f };
+        bool convertRange { false };
+        float sourceMin { 0.0f };
+        float sourceMax { 0.0f };
+        float destMin { 0.0f };
+        float destMax { 0.0f };
+        bool localOnly { false };
+    };
     struct State {
         bool writeDefaults { false };
         Effect effect;
         std::vector<Transition> transitions;
+        std::vector<Drive> drives;
     };
     struct Layer {
         int defaultState { -1 };
@@ -111,6 +147,24 @@ private:
         bool builtin { false };
     };
 
+    struct Contact {
+        bool receiver { true };
+        int joint { -1 };
+        glm::vec3 position;  // in the joint's frame, in the avatar's meters
+        glm::quat rotation;
+        bool capsule { false };
+        float radius { 0.0f };
+        float height { 0.0f };
+        QStringList tags;
+        bool allowSelf { true };
+        bool allowOthers { true };
+        bool localOnly { false };
+        int type { 0 };  // 0 while touching, 1 on touching, 2 by how close to the middle
+        int parameter { -1 };
+        bool touching { false };
+    };
+    static bool placeContact(const Contact& contact, float scale, const JointWorld& jointWorld, glm::vec3& a, glm::vec3& b,
+                             float& radius);
     static bool isSynced(const Parameter& parameter);
     void assign(Parameter& parameter, float value);  // with its type's rounding and range; the caller holds the lock
     bool holds(const Transition& transition, float timeInState) const;
@@ -142,6 +196,8 @@ private:
     };
     QHash<int, Fade> _objectFades, _blendshapeFades, _jointFades;
     float _fadeDuration { 0.0f };  // the duration of the transition being entered
+    std::vector<Contact> _contacts;
+    bool _local { true };
     bool _changed { false };
     bool _parametersChanged { false };
 };

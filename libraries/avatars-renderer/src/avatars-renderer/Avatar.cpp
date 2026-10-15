@@ -2060,6 +2060,63 @@ void Avatar::removeMaterial(graphics::MaterialPointer material, const std::strin
     }
 }
 
+void Avatar::collectContactSenders(std::vector<AvatarMenu::ContactSender>& senders) const {
+    if (!_skeletonModel || !_skeletonModel->isLoaded()) {
+        return;
+    }
+    struct BuiltIn {
+        QString joint;
+        QString toward;  // a hand's sits halfway to the middle finger's base, on the palm
+        float radius;    // at the default avatar height
+        QStringList tags;
+    };
+    static const std::vector<BuiltIn> BUILT_IN {
+        { "Head", "", 0.11f, { "Head" } },
+        { "Spine2", "", 0.15f, { "Torso" } },
+        { "LeftHand", "LeftHandMiddle1", 0.06f, { "Hand", "HandL" } },
+        { "RightHand", "RightHandMiddle1", 0.06f, { "Hand", "HandR" } },
+        { "LeftHandIndex3", "", 0.02f, { "Finger", "FingerL", "FingerIndex", "FingerIndexL" } },
+        { "RightHandIndex3", "", 0.02f, { "Finger", "FingerR", "FingerIndex", "FingerIndexR" } },
+        { "LeftFoot", "", 0.07f, { "Foot", "FootL" } },
+        { "RightFoot", "", 0.07f, { "Foot", "FootR" } },
+    };
+    const Rig& rig = _skeletonModel->getRig();
+    const float size = glm::clamp(getHeight() / DEFAULT_AVATAR_HEIGHT, 0.25f, 4.0f);
+    for (const BuiltIn& builtIn : BUILT_IN) {
+        glm::vec3 position, toward;
+        if (!_skeletonModel->getJointPositionInWorldFrame(rig.indexOfJoint(builtIn.joint), position)) {
+            continue;
+        }
+        if (!builtIn.toward.isEmpty() &&
+            _skeletonModel->getJointPositionInWorldFrame(rig.indexOfJoint(builtIn.toward), toward)) {
+            position = 0.5f * (position + toward);
+        }
+        AvatarMenu::ContactSender sender;
+        sender.owner = getSessionUUID();
+        sender.a = sender.b = position;
+        sender.radius = builtIn.radius * size;
+        sender.tags = builtIn.tags;
+        senders.push_back(sender);
+    }
+    auto jointWorld = [this](int joint, glm::vec3& position, glm::quat& rotation) {
+        return _skeletonModel->getJointPositionInWorldFrame(joint, position) &&
+               _skeletonModel->getJointRotationInWorldFrame(joint, rotation);
+    };
+    _avatarMenu.addContactSenders(getSessionUUID(), rig.getModelOffsetPose().scale().x, jointWorld, senders);
+}
+
+void Avatar::updateContacts(const std::vector<AvatarMenu::ContactSender>& senders) {
+    if (!_skeletonModel || !_skeletonModel->isLoaded() || !_avatarMenu.hasContactReceivers()) {
+        return;
+    }
+    auto jointWorld = [this](int joint, glm::vec3& position, glm::quat& rotation) {
+        return _skeletonModel->getJointPositionInWorldFrame(joint, position) &&
+               _skeletonModel->getJointRotationInWorldFrame(joint, rotation);
+    };
+    // the rig is in the world's size already; the avatar's own meters scale by the avatar's scale
+    _avatarMenu.updateContacts(getSessionUUID(), _skeletonModel->getRig().getModelOffsetPose().scale().x, jointWorld, senders);
+}
+
 void Avatar::updateAvatarMenu(float deltaTime) {
     if (!_skeletonModel || !_skeletonModel->isLoaded() || !_skeletonModel->getRig().getAnimSkeleton()) {
         return;
@@ -2074,6 +2131,7 @@ void Avatar::updateAvatarMenu(float deltaTime) {
             _avatarMenuHiddenParts.clear();
         }
         const HFMModel& model = _skeletonModel->getHFMModel();
+        _avatarMenu.setLocal(isMyAvatar());
         _avatarMenu.setup(model.humanoid.avatarMenu, model, *_skeletonModel->getRig().getAnimSkeleton());
         if (!isMyAvatar()) {
             _avatarMenu.setParameter("IsLocal", 0.0f);

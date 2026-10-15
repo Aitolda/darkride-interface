@@ -574,6 +574,12 @@ public:
     AvatarMenu& avatarMenu() { return _avatarMenu; }
     const AvatarMenu& avatarMenu() const { return _avatarMenu; }
 
+    // Touches (AvatarMenu): this avatar's contact senders in the world, the built-in ones on its head, chest, hands, index
+    // fingers and feet and any its menu data gives, and its receivers run against everyone's.
+    bool hasContactReceivers() const { return _avatarMenu.hasContactReceivers(); }
+    void collectContactSenders(std::vector<AvatarMenu::ContactSender>& senders) const;
+    void updateContacts(const std::vector<AvatarMenu::ContactSender>& senders);
+
 signals:
     /**jsdoc
      * Triggered when the avatar's menu (an imported avatar's menu and parameters) is set up for a newly
