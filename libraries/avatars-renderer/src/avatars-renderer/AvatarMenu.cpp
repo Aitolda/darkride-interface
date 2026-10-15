@@ -64,6 +64,7 @@ bool samePose(const AvatarMenu::JointPose& a, const AvatarMenu::JointPose& b) {
 void AvatarMenu::clear() {
     std::lock_guard<std::mutex> lock(_mutex);
     _menu = QJsonObject();
+    _emotes = QJsonArray();
     _parameters.clear();
     _parameterIndex.clear();
     _layers.clear();
@@ -90,6 +91,7 @@ void AvatarMenu::setup(const QJsonObject& data, const hfm::Model& model, const A
     }
     std::lock_guard<std::mutex> lock(_mutex);
     _menu = data.value("menu").toObject();
+    _emotes = data.value("emotes").toArray();
     for (const QJsonValue& entry : data.value("parameters").toArray()) {
         const QJsonObject p = entry.toObject();
         Parameter parameter;
@@ -219,6 +221,11 @@ void AvatarMenu::setup(const QJsonObject& data, const hfm::Model& model, const A
 QJsonObject AvatarMenu::getMenu() const {
     std::lock_guard<std::mutex> lock(_mutex);
     return _menu;
+}
+
+QJsonArray AvatarMenu::getEmotes() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _emotes;
 }
 
 QVariantList AvatarMenu::getParameters() const {

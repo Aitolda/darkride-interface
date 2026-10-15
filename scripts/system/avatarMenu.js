@@ -11,7 +11,7 @@
 //  Distributed under the MIT License.
 //  See the accompanying file LICENSE-MIT or https://opensource.org/licenses/MIT
 
-/* globals Script, Tablet, MyAvatar, Settings */
+/* globals Script, Tablet, MyAvatar, Settings, AnimationCache, Messages */
 
 (function () {
     var APP_BASE = "html/AvatarMenuApp.html";
@@ -41,6 +41,78 @@
         return menuData && menuData.menu && menuData.menu.controls && menuData.menu.controls.length > 0;
     }
 
+    // Emotes: the avatar's emote layer picks one by a parameter's value (MyAvatar.getAvatarMenu().emotes). Its stock
+    // animations aren't in the package, so the Emote app's clips stand in, matched by the state's name; the avatar's own
+    // emote clips aren't played yet. Others see the emote in the avatar's joints, and hear of it on emote.js's channel.
+    var EMOTE_CLIPS = [["wave", "Waving"], ["clap", "Clapping"], ["point", "Pointing"], ["cheer", "Cheering"],
+        ["danc", "Dancing"], ["die", "Fall"], ["fall", "Fall"], ["cry", "Crying"], ["surprise", "Surprised"]];
+    var EMOTE_FPS = 60;
+    var EMOTE_CHANNEL = "tivoli.emote";
+    var playing = null;  // {emote, timer}
+    var emotes = [];  // the avatar's standing emotes with stock clips
+    var emoteValues = {};  // parameter -> the value last seen
+    function clipURL(clip) {
+        return Script.resolvePath("assets/animations/" + clip + ".fbx");
+    }
+    EMOTE_CLIPS.forEach(function (entry) {
+        AnimationCache.prefetch(clipURL(entry[1]));
+    });
+    function clipFor(emote) {
+        var name = emote.name.toLowerCase();
+        for (var i = 0; i < EMOTE_CLIPS.length; i++) {
+            if (name.indexOf(EMOTE_CLIPS[i][0]) !== -1) {
+                return EMOTE_CLIPS[i][1];
+            }
+        }
+        return null;  // none of ours yet (a backflip, a sad kick)
+    }
+    function announce(clip, seconds) {
+        Messages.sendMessage(EMOTE_CHANNEL, JSON.stringify({ emote: clip, seconds: seconds }), false);
+    }
+    function stopEmote() {
+        if (playing) {
+            if (playing.timer) {
+                Script.clearTimeout(playing.timer);
+            }
+            playing = null;
+            MyAvatar.restoreAnimation();
+            announce(null, 0);
+        }
+    }
+    function emoteParameterSet(name, value) {
+        if (value === 0) {  // a toggle switched off, or a button let go: loops and held poses end, one-shots finish
+            if (playing && (playing.emote.loop || playing.emote.hold)) {
+                stopEmote();
+            }
+            return;
+        }
+        var emote = emotes.filter(function (e) {
+            return e.parameter === name && e.value === value;
+        })[0];
+        var clip = emote && clipFor(emote);
+        var animation = clip && AnimationCache.getAnimation(clipURL(clip));
+        var frames = animation && animation.frames ? animation.frames.length : 0;
+        if (!frames) {
+            return;
+        }
+        if (playing && playing.timer) {
+            Script.clearTimeout(playing.timer);
+        }
+        MyAvatar.overrideAnimation(clipURL(clip), EMOTE_FPS, emote.loop, 0, frames - 1);
+        var seconds = emote.loop || emote.hold ? null : frames / EMOTE_FPS;  // a hold keeps the last pose until let go
+        announce(clip, seconds);
+        playing = { emote: emote, timer: null };
+        if (seconds !== null) {
+            var mine = playing;
+            playing.timer = Script.setTimeout(function () {
+                if (playing === mine) {
+                    playing = null;
+                    MyAvatar.restoreAnimation();
+                }
+            }, seconds * 1000);
+        }
+    }
+
     function sendState() {
         var menuData = MyAvatar.getAvatarMenu();
         var url = MyAvatar.skeletonModelURL;
@@ -62,8 +134,28 @@
         }
     }
 
+    // The emote parameters are watched as well as set from the menu page, so whatever sets them plays the emote; the
+    // page's own presses are taken at once, since a quick tap can come and go between two looks.
+    var emoteWatch = Script.setInterval(function () {
+        Object.keys(emoteValues).forEach(function (name) {
+            var value = MyAvatar.getAvatarParameter(name);
+            if (value !== emoteValues[name]) {
+                emoteValues[name] = value;
+                emoteParameterSet(name, value);
+            }
+        });
+    }, 50);
+
     function onAvatarMenuChanged() {
+        stopEmote();
         var menuData = MyAvatar.getAvatarMenu();
+        emotes = (menuData.emotes || []).filter(function (emote) {
+            return !emote.seated && !emote.own;
+        });
+        emoteValues = {};
+        emotes.forEach(function (emote) {
+            emoteValues[emote.parameter] = MyAvatar.getAvatarParameter(emote.parameter);
+        });
         if (hasMenu(menuData)) {
             var saved = savedValues();
             menuData.parameters.forEach(function (parameter) {
@@ -115,6 +207,10 @@
             sendState();
         } else if (event.type === "set") {
             MyAvatar.setAvatarParameter(event.name, event.value);
+            if (emoteValues[event.name] !== undefined) {
+                emoteValues[event.name] = MyAvatar.getAvatarParameter(event.name);
+                emoteParameterSet(event.name, emoteValues[event.name]);
+            }
             var parameter = MyAvatar.getAvatarMenu().parameters.filter(function (p) {
                 return p.name === event.name;
             })[0];
@@ -132,6 +228,8 @@
         MyAvatar.avatarMenuChanged.disconnect(onAvatarMenuChanged);
         tablet.screenChanged.disconnect(onScreenChanged);
         tablet.webEventReceived.disconnect(onWebEventReceived);
+        Script.clearInterval(emoteWatch);
+        stopEmote();
         if (onScreen) {
             tablet.gotoHomeScreen();
         }

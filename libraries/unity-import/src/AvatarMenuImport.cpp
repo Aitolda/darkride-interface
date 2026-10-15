@@ -10,6 +10,8 @@
 
 #include "AvatarMenuImport.h"
 
+#include <functional>
+
 #include <QJsonArray>
 #include <QJsonDocument>
 
@@ -400,12 +402,93 @@ AvatarMenuData avatarMenuData(const unity::Package& package, const QVariantMap& 
         data.notes << QString("the effects layer moves %1 objects the model does not have").arg(unknownPaths.size());
     }
     Q_UNUSED(otherCurves);
+
+    // Emotes: the emote layer's states that a whole-number parameter set from the menu picks, one per value, standing
+    // and seated apart. Their clips are often stock ones the package doesn't carry; the engine's own emote animations
+    // stand in for those, by name.
+    QString actionController;
+    for (const QVariant& entry : descriptor.value("baseAnimationLayers").toList()) {
+        const QVariantMap layer = entry.toMap();
+        if ((int)unity::toNumber(layer.value("type")) == 4 && unity::toNumber(layer.value("isDefault")) == 0.0) {
+            actionController = unity::guidOf(layer.value("animatorController"));
+        }
+    }
+    QJsonArray emotes;
+    if (!actionController.isEmpty()) {
+        QSet<QString> menuParameters;
+        std::function<void(const QJsonArray&)> collect = [&](const QJsonArray& controls) {
+            for (const QJsonValue& value : controls) {
+                menuParameters.insert(value.toObject().value("parameter").toString());
+                collect(value.toObject().value("controls").toArray());
+            }
+        };
+        collect(menu.value("controls").toArray());
+        QHash<qint64, const unity::YamlObject*> byID;
+        QHash<qint64, QString> leaving;  // transition -> the state it leaves
+        for (const auto& object : package.objects(actionController)) {
+            byID.insert(object.fileID, &object);
+            if (object.classID == 1102) {
+                for (const QVariant& transition : object.fields.value("m_Transitions").toList()) {
+                    leaving.insert(unity::fileIDOf(transition), object.fields.value("m_Name").toString());
+                }
+            }
+        }
+        std::vector<QJsonObject> found;
+        QSet<QString> seen;
+        int own = 0;
+        for (const auto& object : package.objects(actionController)) {
+            const unity::YamlObject* state = object.classID == 1101 ? byID.value(unity::fileIDOf(object.fields.value("m_DstState"))) : nullptr;
+            if (!state || state->classID != 1102) {
+                continue;
+            }
+            for (const QVariant& c : object.fields.value("m_Conditions").toList()) {
+                const QVariantMap condition = c.toMap();
+                const QString parameter = condition.value("m_ConditionEvent").toString();
+                if ((int)unity::toNumber(condition.value("m_ConditionMode")) != 6 || !menuParameters.contains(parameter)) {
+                    continue;  // only "equals" on a parameter the menu sets
+                }
+                const int value = (int)unity::toNumber(condition.value("m_EventTreshold"));
+                const QString name = state->fields.value("m_Name").toString();
+                const bool seated = name.contains("seated", Qt::CaseInsensitive) ||
+                                    leaving.value(object.fileID).contains("sit", Qt::CaseInsensitive);
+                const QString key = QString("%1/%2/%3").arg(parameter).arg(value).arg(seated);
+                if (seen.contains(key)) {
+                    continue;
+                }
+                seen.insert(key);
+                const QString clipGuid = unity::guidOf(state->fields.value("m_Motion"));
+                const unity::YamlObject* clip = clipGuid.isEmpty() ? nullptr : firstObject(package, clipGuid, 74);
+                bool loop = name.contains("loop", Qt::CaseInsensitive);
+                if (clip) {
+                    loop = unity::toNumber(clip->fields.value("m_AnimationClipSettings").toMap().value("m_LoopTime")) != 0.0;
+                    own++;
+                }
+                found.push_back(QJsonObject {
+                    { "parameter", parameter }, { "value", value }, { "name", name }, { "seated", seated }, { "loop", loop },
+                    { "hold", name.contains("hold", Qt::CaseInsensitive) }, { "own", clip != nullptr },
+                });
+            }
+        }
+        std::sort(found.begin(), found.end(), [](const QJsonObject& a, const QJsonObject& b) {
+            return a.value("seated").toBool() != b.value("seated").toBool() ? !a.value("seated").toBool()
+                                                                            : a.value("value").toInt() < b.value("value").toInt();
+        });
+        for (const QJsonObject& emote : found) {
+            emotes.append(emote);
+        }
+        if (!found.empty()) {
+            data.notes << QString("emotes: %1 in the emote layer; %2 use the avatar's own animations (not played yet), the "
+                                  "rest the engine's own where it has one").arg(found.size()).arg(own);
+        }
+    }
+
     data.json = QJsonObject {
         { "version", 1 },
         { "parameters", parameters },
         { "menu", menu },
         { "objects", objects },
         { "layers", layers },
+        { "emotes", emotes },
         { "base", QJsonObject { { "blendshapes", baseBlendshapes }, { "joints", baseJoints } } },
     };
     return data;

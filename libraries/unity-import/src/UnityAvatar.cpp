@@ -1043,7 +1043,7 @@ WrittenAvatar writeAvatar(const unity::Package& package, const AvatarSource& ava
         notes << "no blink shape key found";
     }
 
-    notes << "not yet: the animator's other layers (Base, Action, Gesture: emotes, sitting, AFK)";
+    notes << "not yet: the animator's other layers (walking, hand gestures, sitting, AFK; the emotes the menu picks play the engine's own animations)";
 
     // The .fst.
     QJsonArray materialMap { materials };  // later entries win

@@ -15,6 +15,7 @@
 #include <vector>
 
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QSet>
 #include <QString>
@@ -51,6 +52,7 @@ public:
 
     // For scripts and the menu: the menu as the data has it, and each parameter with its value.
     QJsonObject getMenu() const;
+    QJsonArray getEmotes() const;  // the emote layer's emotes the menu picks (unity-import's AvatarMenuImport.h)
     QVariantList getParameters() const;
     bool setParameter(const QString& name, float value);
     float getParameter(const QString& name, float fallback = 0.0f) const;
@@ -115,6 +117,7 @@ private:
 
     mutable std::mutex _mutex;
     QJsonObject _menu;
+    QJsonArray _emotes;
     std::vector<Parameter> _parameters;
     QHash<QString, int> _parameterIndex;
     std::vector<Layer> _layers;

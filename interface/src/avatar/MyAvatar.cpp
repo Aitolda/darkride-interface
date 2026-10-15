@@ -1227,7 +1227,8 @@ void MyAvatar::restoreAnimation() {
 }
 
 QVariantMap MyAvatar::getAvatarMenu() const {
-    return QVariantMap { { "menu", _avatarMenu.getMenu().toVariantMap() }, { "parameters", _avatarMenu.getParameters() } };
+    return QVariantMap { { "menu", _avatarMenu.getMenu().toVariantMap() }, { "parameters", _avatarMenu.getParameters() },
+                         { "emotes", _avatarMenu.getEmotes().toVariantList() } };
 }
 
 bool MyAvatar::setAvatarParameter(const QString& name, float value) {

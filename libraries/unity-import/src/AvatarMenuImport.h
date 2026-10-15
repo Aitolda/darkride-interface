@@ -44,6 +44,9 @@ namespace avatarimport {
 //   {"active": [[object, bool]], "blendshapes": {name: 0 to 1}, "joints": {name: {"translation", "rotation",
 //   "scale"}}} (only the parts it animates, in the engine's frame).
 // - base: each property's value before any layer writes (for states that write defaults).
+// - emotes: the emote layer's states a menu parameter picks: {"parameter", "value", "name" (the state's), "seated",
+//   "loop", "hold" (keeps its last pose), "own" (its clip is in the package; otherwise a stock one the engine's own
+//   emote animations stand in for, by name)}.
 // Joints are named as the avatar names them (after jointMap); blend shapes as the engine keeps the model's own.
 struct AvatarMenuData {
     QJsonObject json;

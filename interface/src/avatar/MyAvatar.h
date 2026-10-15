@@ -759,11 +759,11 @@ public:
     Q_INVOKABLE void restoreHandAnimation(bool isLeft);
 
     /**jsdoc
-     * Gets the avatar's menu: an imported avatar's menu, and the parameters its menu and its animator
-     * use, each with its type, value and default. Both are empty when the avatar has none.
+     * Gets the avatar's menu: an imported avatar's menu, the parameters its menu and its animator use, each with its
+     * type, value and default, and the emotes its menu picks. All are empty when the avatar has none.
      * @function MyAvatar.getAvatarMenu
      * @returns {object} <code>{menu: {controls: [...]}, parameters: [{name, type, value, default, saved, synced,
-     *     builtin}]}</code>
+     *     builtin}], emotes: [{parameter, value, name, seated, loop, hold, own}]}</code>
      */
     Q_INVOKABLE QVariantMap getAvatarMenu() const;
 
