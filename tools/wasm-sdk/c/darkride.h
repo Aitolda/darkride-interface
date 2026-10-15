@@ -179,6 +179,32 @@ void dr_print(const char* text);
 void dr_printf(const char* format, ...);
 void dr_logf(int32_t level, const char* format, ...);
 
+/* --- the entity-script contract ------------------------------------------------------------------------------------
+   A module that runs as an entity script (an entity's `script` or `serverScripts` property naming a .wasm URL)
+   exports, beside the usual ones: entity_load(ptr, len) -> i64, entity_unload(ptr, len), entity_has(ptr, len)
+   -> i32 and entity_call(ptr, len) -> i64. Each takes one CBOR map the host placed in the module's memory
+   (the module's to free): {"entity": id, "url": url} for load, {"entity": id} for unload, {"entity": id,
+   "method": name} for has, and {"entity": id, "method": name, "args": [...], "remoteCallerID"?: id} for call.
+   entity_load returns null or an error record, entity_call the method's result or 0, both packed as a host
+   function's result is (the host frees them). One instance of the module serves every entity that runs it;
+   the entity's id (text, "{...}") is the key of whatever state the module keeps per entity. The host calls
+   preload after load and unload before unload through entity_call, as it calls every method. */
+
+typedef struct {
+    char entity[64];      /* the entity's id */
+    char url[1024];       /* entity_load: the module's URL */
+    char method[128];     /* entity_has, entity_call */
+    char remoteCaller[64];/* entity_call: the caller's id, empty when local */
+    cbor_reader args;     /* entity_call: positioned on the "args" array's head (cr_next reads it); p NULL when absent */
+} dr_entity_payload;
+
+/* Reads a contract payload; the payload bytes stay the caller's to free after the reader is done. */
+bool dr_entity_payload_read(const uint8_t* payload, int32_t length, dr_entity_payload* out);
+/* A value packed for the host as a result: the bytes of a writer copied into memory the host frees. */
+int64_t dr_pack_result(const cbor_writer* w);
+/* An error record packed for the host: {"@error": {"type", "message"}}. */
+int64_t dr_pack_error(const char* type, const char* message);
+
 /* --- implementation --------------------------------------------------------------------------------------------- */
 
 #ifdef DARKRIDE_IMPLEMENTATION
@@ -517,6 +543,63 @@ bool cr_vec3(cbor_reader* r, dr_vec3* out) {
         }
     }
     return true;
+}
+
+bool dr_entity_payload_read(const uint8_t* payload, int32_t length, dr_entity_payload* out) {
+    memset(out, 0, sizeof(*out));
+    cbor_reader r = cr_from_memory(payload, (size_t)length);
+    cbor_item head;
+    if (!cr_next(&r, &head) || head.type != CBOR_MAP) {
+        return false;
+    }
+    for (size_t i = 0; i < head.n; ++i) {
+        cbor_item key;
+        if (!cr_next(&r, &key) || key.type != CBOR_TEXT) {
+            return false;
+        }
+        if (key.n == 6 && memcmp(key.s, "entity", 6) == 0) {
+            cbor_item v; if (!cr_next(&r, &v)) return false; cr_text(&v, out->entity, sizeof(out->entity));
+        } else if (key.n == 3 && memcmp(key.s, "url", 3) == 0) {
+            cbor_item v; if (!cr_next(&r, &v)) return false; cr_text(&v, out->url, sizeof(out->url));
+        } else if (key.n == 6 && memcmp(key.s, "method", 6) == 0) {
+            cbor_item v; if (!cr_next(&r, &v)) return false; cr_text(&v, out->method, sizeof(out->method));
+        } else if (key.n == 14 && memcmp(key.s, "remoteCallerID", 14) == 0) {
+            cbor_item v; if (!cr_next(&r, &v)) return false; cr_text(&v, out->remoteCaller, sizeof(out->remoteCaller));
+        } else if (key.n == 4 && memcmp(key.s, "args", 4) == 0) {
+            out->args = r;  /* positioned on the array's head */
+            if (!cr_skip(&r)) return false;
+        } else {
+            if (!cr_skip(&r)) return false;
+        }
+    }
+    return out->entity[0] != 0;
+}
+
+int64_t dr_pack_result(const cbor_writer* w) {
+    if (!w || w->length == 0) {
+        return 0;
+    }
+    uint8_t* out = (uint8_t*)malloc(w->length);
+    if (!out) {
+        return 0;
+    }
+    memcpy(out, w->data, w->length);
+    return ((int64_t)(uint32_t)(uintptr_t)out << 32) | (int64_t)(uint32_t)w->length;
+}
+
+int64_t dr_pack_error(const char* type, const char* message) {
+    cbor_writer w;
+    cw_init(&w);
+    cw_map(&w, 1);
+    cw_key(&w, "@error");
+    cw_map(&w, 2);
+    cw_key(&w, "type");
+    cw_text(&w, type ? type : "Error");
+    cw_key(&w, "message");
+    cw_text(&w, message ? message : "");
+    int64_t packed = dr_pack_result(&w);
+    cw_free(&w);
+    return packed;
 }
 
 #define DR_MAX_GLOBALS 256

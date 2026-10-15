@@ -44,6 +44,10 @@ static JSValue hookOnSignal = JS_UNDEFINED;         /* (connection, args) */
 static JSValue hookOnCallback = JS_UNDEFINED;       /* (id, args) */
 static JSValue hookStart = JS_UNDEFINED;            /* () */
 static JSValue hookStop = JS_UNDEFINED;             /* () */
+static JSValue hookEntityLoad = JS_UNDEFINED;       /* (payload) -> null or an error record */
+static JSValue hookEntityUnload = JS_UNDEFINED;     /* (payload) */
+static JSValue hookEntityHas = JS_UNDEFINED;        /* (payload) -> 0 or 1 */
+static JSValue hookEntityCall = JS_UNDEFINED;       /* (payload) -> the method's result */
 
 /* --- logging and errors ---------------------------------------------------------------------------------------- */
 
@@ -758,7 +762,12 @@ static void teardown(void) {
     JS_FreeValue(ctx, hookOnCallback);
     JS_FreeValue(ctx, hookStart);
     JS_FreeValue(ctx, hookStop);
+    JS_FreeValue(ctx, hookEntityLoad);
+    JS_FreeValue(ctx, hookEntityUnload);
+    JS_FreeValue(ctx, hookEntityHas);
+    JS_FreeValue(ctx, hookEntityCall);
     hookWrapObject = hookRegisterCallback = hookOnSignal = hookOnCallback = hookStart = hookStop = JS_UNDEFINED;
+    hookEntityLoad = hookEntityUnload = hookEntityHas = hookEntityCall = JS_UNDEFINED;
     JS_FreeContext(ctx);
     JS_FreeRuntime(rt);
     ctx = NULL;
@@ -824,6 +833,10 @@ void script_start(void) {
     hookOnCallback = take_hook(hooks, "onCallback");
     hookStart = take_hook(hooks, "start");
     hookStop = take_hook(hooks, "stop");
+    hookEntityLoad = take_hook(hooks, "entityLoad");
+    hookEntityUnload = take_hook(hooks, "entityUnload");
+    hookEntityHas = take_hook(hooks, "entityHas");
+    hookEntityCall = take_hook(hooks, "entityCall");
     JS_FreeValue(ctx, hooks);
 
     JSValue started = JS_Call(ctx, hookStart, JS_UNDEFINED, 0, NULL);
@@ -890,6 +903,92 @@ void on_callback(int32_t callback, uint8_t* payload, int32_t length) {
     dispatch(hookOnCallback, callback, payload, length, "a callback");
 }
 
+/* The entity-script contract: each export takes one CBOR map the host placed in memory (the module's to
+   free), hands it to the shim's function, and returns what the host expects: a packed result (freed by the
+   host), an i32, or nothing. */
+static int64_t pack_result(JSValueConst result) {
+    if (JS_IsUndefined(result)) {
+        return 0;
+    }
+    cbor_writer w;
+    cw_init(&w);
+    int64_t packed = 0;
+    if (encode_value(&w, result, 0)) {
+        uint8_t* out = (uint8_t*)malloc(w.length ? w.length : 1);
+        if (out) {
+            memcpy(out, w.data, w.length);
+            packed = ((int64_t)(uint32_t)(uintptr_t)out << 32) | (int64_t)(uint32_t)w.length;
+        }
+    } else {
+        report_exception("a result for the host");
+    }
+    cw_free(&w);
+    return packed;
+}
+
+static JSValue call_with_payload(JSValueConst hook, uint8_t* payload, int32_t length, const char* what) {
+    if (!ctx || !JS_IsFunction(ctx, hook)) {
+        free(payload);
+        return JS_UNDEFINED;
+    }
+    JS_UpdateStackTop(rt);
+    JSValue arg;
+    if (payload && length > 0) {
+        cbor_reader r = cr_from_memory(payload, (size_t)length);
+        arg = decode_next(&r);
+    } else {
+        arg = JS_NewObject(ctx);
+    }
+    free(payload);
+    if (JS_IsException(arg)) {
+        report_exception(what);
+        return JS_UNDEFINED;
+    }
+    JSValue result = JS_Call(ctx, hook, JS_UNDEFINED, 1, &arg);
+    JS_FreeValue(ctx, arg);
+    if (JS_IsException(result)) {
+        report_exception(what);
+        result = JS_UNDEFINED;
+    }
+    run_pending_jobs();
+    return result;
+}
+
+int64_t entity_load(uint8_t* payload, int32_t length) DARKRIDE_EXPORT("entity_load");
+int64_t entity_load(uint8_t* payload, int32_t length) {
+    JSValue result = call_with_payload(hookEntityLoad, payload, length, "an entity script's load");
+    int64_t packed = pack_result(result);
+    JS_FreeValue(ctx, result);
+    return packed;
+}
+
+void entity_unload(uint8_t* payload, int32_t length) DARKRIDE_EXPORT("entity_unload");
+void entity_unload(uint8_t* payload, int32_t length) {
+    JSValue result = call_with_payload(hookEntityUnload, payload, length, "an entity script's unload");
+    JS_FreeValue(ctx, result);
+}
+
+int32_t entity_has(uint8_t* payload, int32_t length) DARKRIDE_EXPORT("entity_has");
+int32_t entity_has(uint8_t* payload, int32_t length) {
+    JSValue result = call_with_payload(hookEntityHas, payload, length, "an entity script's lookup");
+    int32_t has = 0;
+    if (JS_IsNumber(result)) {
+        JS_ToInt32(ctx, &has, result);
+    } else if (JS_IsBool(result)) {
+        has = JS_VALUE_GET_BOOL(result) ? 1 : 0;
+    }
+    JS_FreeValue(ctx, result);
+    return has;
+}
+
+int64_t entity_call(uint8_t* payload, int32_t length) DARKRIDE_EXPORT("entity_call");
+int64_t entity_call(uint8_t* payload, int32_t length) {
+    JSValue result = call_with_payload(hookEntityCall, payload, length, "an entity script's method");
+    int64_t packed = pack_result(result);
+    JS_FreeValue(ctx, result);
+    return packed;
+}
+
 /* As on_callback, with the function's result encoded, placed in memory for the host and returned packed
    (0 when there is none); the host frees it. */
 int64_t call_callback(int32_t callback, uint8_t* payload, int32_t length) DARKRIDE_EXPORT("call_callback");
@@ -917,20 +1016,9 @@ int64_t call_callback(int32_t callback, uint8_t* payload, int32_t length) {
     int64_t packed = 0;
     if (JS_IsException(result)) {
         report_exception("a callback");
-    } else if (!JS_IsUndefined(result)) {
-        cbor_writer w;
-        cw_init(&w);
-        if (encode_value(&w, result, 0)) {
-            uint8_t* out = (uint8_t*)malloc(w.length ? w.length : 1);
-            if (out) {
-                memcpy(out, w.data, w.length);
-                packed = ((int64_t)(uint32_t)(uintptr_t)out << 32) | (int64_t)(uint32_t)w.length;
-            }
-        } else {
-            report_exception("a callback's result");
-        }
-        cw_free(&w);
+        result = JS_UNDEFINED;
     }
+    packed = pack_result(result);
     JS_FreeValue(ctx, result);
     run_pending_jobs();
     return packed;

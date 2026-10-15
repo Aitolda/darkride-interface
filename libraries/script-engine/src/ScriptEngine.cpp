@@ -194,10 +194,12 @@ ScriptEnginePointer scriptEngineFactory(ScriptEngine::Context context,
                                                  const QString& fileNameString) {
     // a WebAssembly module runs on the engine beside this one; it is told from the file name's suffix, which
     // ScriptEngines::loadScript puts in the name before the content is fetched. A JavaScript client script
-    // goes there too when the setting says so (entity scripts and agents stay on this engine for now).
+    // and the entities engines (the client's, the entity script server's) go there too when the setting says
+    // so; agents stay on this engine until their owners say otherwise.
+    const bool isEntitiesEngine = context == ScriptEngine::ENTITY_CLIENT_SCRIPT || context == ScriptEngine::ENTITY_SERVER_SCRIPT;
     const bool onWebAssembly = WasmScriptEngine::isWasmScript(fileNameString) ||
-        (context == ScriptEngine::CLIENT_SCRIPT && WasmScriptEngine::isJavaScriptFile(fileNameString) &&
-         WasmScriptEngine::runJavaScriptOnWebAssembly());
+        (WasmScriptEngine::runJavaScriptOnWebAssembly() &&
+         ((context == ScriptEngine::CLIENT_SCRIPT && WasmScriptEngine::isJavaScriptFile(fileNameString)) || isEntitiesEngine));
     ScriptEngine* engine = onWebAssembly ? new WasmScriptEngine(context, scriptContents, fileNameString)
                                          : new ScriptEngine(context, scriptContents, fileNameString);
     ScriptEnginePointer engineSP = ScriptEnginePointer(engine, &QObject::deleteLater);
@@ -2386,6 +2388,14 @@ void ScriptEngine::loadEntityScript(const EntityItemID& entityID, const QString&
 
     EntityScriptDetails newDetails;
     newDetails.scriptText = entityScript;
+    if (WasmScriptEngine::isWasmScript(entityScript)) {
+        // a module runs on the WebAssembly engine; this engine cannot host it
+        newDetails.status = EntityScriptStatus::ERROR_LOADING_SCRIPT;
+        newDetails.errorInfo = "a WebAssembly entity script needs the entities engine on WebAssembly (Developer > Scripting > Run JavaScript on WebAssembly)";
+        setEntityScriptDetails(entityID, newDetails);
+        scriptWarningMessage(QString("entity script %1 (%2): %3").arg(entityScript, entityID.toString(), newDetails.errorInfo));
+        return;
+    }
     newDetails.status = EntityScriptStatus::LOADING;
     newDetails.definingSandboxURL = currentSandboxURL;
     setEntityScriptDetails(entityID, newDetails);

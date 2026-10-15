@@ -99,6 +99,7 @@ private slots:
     void testErrorsAreReportedNotFatal();
     void testApiDump();
     void testManyCalls();
+    void testEntityScripts();
 };
 
 #endif // hifi_JavaScriptGuestTests_h

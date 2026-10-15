@@ -138,7 +138,8 @@ int64_t HostInterface::writeResult(const QVariant& value) {
     QString error;
     int64_t packed = writeToGuest(value, error);
     if (packed == 0 && !error.isEmpty()) {
-        log(Error, "cannot return a value to the module: " + error);
+        // a stop requested while the module was inside a call makes its alloc trap: expected, not an error
+        log(error.contains("was stopped") ? Debug : Error, "cannot return a value to the module: " + error);
     }
     return packed;
 }
@@ -296,6 +297,47 @@ bool HostInterface::callGuest(const QString& name, int32_t id, const QVariant& p
         return false;
     }
     return true;
+}
+
+bool HostInterface::callWithPayload(const QString& name, const QVariant& payload, QVariant& result, QString& error) {
+    result = QVariant();
+    int64_t packed = writeToGuest(payload, error);
+    if (packed == 0 && !error.isEmpty()) {
+        fail(name, error);
+        return false;
+    }
+    std::vector<WasmValue> results;
+    int32_t pointer = int32_t(uint32_t(uint64_t(packed) >> 32));
+    int32_t length = int32_t(uint32_t(uint64_t(packed) & 0xffffffffu));
+    if (!_instance.call(name, { pointer, length }, results, error)) {
+        fail(name, error);
+        return false;
+    }
+    if (results.empty()) {
+        return true;
+    }
+    if (std::holds_alternative<int32_t>(results[0])) {
+        result = QVariant(std::get<int32_t>(results[0]));
+        return true;
+    }
+    if (!std::holds_alternative<int64_t>(results[0])) {
+        return true;
+    }
+    int64_t resultPacked = std::get<int64_t>(results[0]);
+    if (resultPacked == 0) {
+        return true;
+    }
+    int32_t resultPointer = int32_t(uint32_t(uint64_t(resultPacked) >> 32));
+    int32_t resultLength = int32_t(uint32_t(uint64_t(resultPacked) & 0xffffffffu));
+    QByteArray bytes = readBytes(resultPointer, resultLength, error);
+    std::vector<WasmValue> ignored;
+    QString freeError;
+    _instance.call(FREE_EXPORT, { resultPointer, resultLength }, ignored, freeError);
+    if (!error.isEmpty()) {
+        return false;
+    }
+    _statistics.bytesFromGuest += uint64_t(bytes.size());
+    return _codec.decode(bytes, result, error);
 }
 
 bool HostInterface::deliverSignal(int connection, const QVariantList& arguments, QString& error) {

@@ -2,22 +2,25 @@
 //  WasmScriptEngine.h
 //  libraries/script-engine/src
 //
-//  The script engine that runs a WebAssembly module. It derives from ScriptEngine for the transition: the
+//  The script engine that runs WebAssembly modules. It derives from ScriptEngine for the transition: the
 //  application, the agent and the entity script server register their objects on a ScriptEnginePointer with
-//  registerGlobalObject, and this engine records them in its object table instead of a QScriptValue. The
+//  registerGlobalObject, and this engine records them in its object table instead of a QScriptValue. A
 //  module reaches them through the host interface (libraries/wasm-scripting) by reflection. The QScriptEngine
 //  this class carries through its base is never run as a script engine; it serves as the serializer for the
 //  types that only have QtScript conversions, until those get QVariant ones.
 //
-//  Two kinds of script run here: a module (a .wasm file, run as it is) and a JavaScript file, which runs
-//  inside the JavaScript guest (tools/wasm-js, darkride-js.wasm: QuickJS-NG plus a shim that gives the
-//  script the objects it had on QtScript). Which engine a .js file loads on is the setting
-//  runJavaScriptOnWebAssembly (Developer > Scripting in the client); .wasm files always load here.
+//  What runs here: a module (a .wasm file, run as it is); a JavaScript file, inside the JavaScript guest
+//  (tools/wasm-js, darkride-js.wasm: QuickJS-NG plus a shim that gives the script the objects it had on
+//  QtScript); and, in an entities engine (the client's and the entity script server's), the entity scripts:
+//  JavaScript ones inside the guest, .wasm ones each as an instance of its module, one per URL however many
+//  entities run it, every instance in this engine's thread and object table. Which engine a .js file or an
+//  entities engine loads on is the setting runJavaScriptOnWebAssembly (Developer > Scripting in the client);
+//  .wasm files always load here.
 //
 //  Lifecycle, as the QtScript engine's: loadURL fetches the script; scriptLoaded makes ScriptEngines run the
 //  initializers (the registrations) and runInThread; run() on the engine's thread registers the standard
 //  globals, instantiates the module, calls its script_start and loops at SCRIPT_FPS, emitting update and
-//  processing events (signals, timers) until stop(); then scriptEnding, script_stop, finished.
+//  processing events (signals, timers, entity loads) until stop(); then scriptEnding, script_stop, finished.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -49,8 +52,24 @@ class WebSocketFactory;
 class WasmScriptEngine : public ScriptEngine {
     Q_OBJECT
 public:
-    /// A .wasm name runs as a module; any other name is a JavaScript file for the guest. The contents, when
-    /// given, are the script (an agent hands them over); otherwise loadURL fetches them.
+    /// A module running in this engine: the script's own (the JavaScript guest for a .js file or an entities
+    /// engine), or a .wasm entity script's. Each has its instance, its host interface and its codec (so that
+    /// a callback knows its instance); all share the engine's object table, signal relay and thread.
+    struct ModuleInstance {
+        QString name;
+        std::shared_ptr<WasmModule> module;
+        std::unique_ptr<WasmInstance> instance;
+        std::unique_ptr<ValueCodec> codec;
+        std::shared_ptr<CallbackTarget> target;
+        std::unique_ptr<HostInterface> host;
+        bool running { false };
+        ~ModuleInstance();
+    };
+    using ModuleInstancePointer = std::shared_ptr<ModuleInstance>;
+
+    /// A .wasm name runs as a module; any other name is JavaScript for the guest (a file's text, or none for an
+    /// entities engine). The contents, when given, are the script (an agent hands them over); otherwise
+    /// loadURL fetches them.
     WasmScriptEngine(Context context, const QString& scriptContents, const QString& fileNameString);
     ~WasmScriptEngine() override;
 
@@ -61,16 +80,17 @@ public:
     /// The runtime every module of this process is compiled by.
     static std::shared_ptr<WasmRuntime> runtime();
 
-    /// The setting: JavaScript client scripts load on this engine instead of the QtScript one.
+    /// The setting: JavaScript client scripts and the entities engines load on this engine instead of the
+    /// QtScript one.
     static bool runJavaScriptOnWebAssembly();
     static void setRunJavaScriptOnWebAssembly(bool on);
-    /// Where the JavaScript guest module is: $DARKRIDE_JS_WASM, else resources/wasm/darkride-js.wasm beside
-    /// the executable (Contents/Resources/wasm on macOS).
+    /// Where the JavaScript guest module is: $DARKRIDE_JS_WASM, else wasm/darkride-js.wasm under the
+    /// resources beside the executable (Contents/Resources on macOS, resources/ elsewhere).
     static QString javascriptGuestPath();
 
     bool runsJavaScript() const { return _runsJavaScript; }
 
-    /// The module's bytes, when they do not come through loadURL (tests, an agent).
+    /// The module's bytes, when they do not come through loadURL (tests).
     void setModuleBytes(const QByteArray& bytes) { _moduleBytes = bytes; }
     void setLimits(const WasmInstance::Limits& limits) { _limits = limits; }
     const WasmInstance::Limits& limits() const { return _limits; }
@@ -89,6 +109,23 @@ public:
     void stop(bool marshal = false) override;
     void waitTillDoneRunning() override;
 
+    // The entity-script contract, for an entities engine: a JavaScript entity script runs in the guest, a
+    // .wasm one in an instance of its module (one per URL), reached through the module's entity_* exports.
+    void loadEntityScript(const EntityItemID& entityID, const QString& entityScript, bool forceRedownload) override;
+    void unloadEntityScript(const EntityItemID& entityID, bool shouldRemoveFromMap = false) override;
+    void unloadAllEntityScripts(bool blockingCall = false) override;
+    void callEntityScriptMethod(const EntityItemID& entityID, const QString& methodName,
+                                const QStringList& params = QStringList(), const QUuid& remoteCallerID = QUuid()) override;
+    void callEntityScriptMethod(const EntityItemID& entityID, const QString& methodName, const PointerEvent& event) override;
+    void callEntityScriptMethod(const EntityItemID& entityID, const QString& methodName, const EntityItemID& otherID,
+                                const Collision& collision) override;
+
+    // Script.addEventHandler and removeEventHandler for a module: a guest function as the handler.
+    Q_INVOKABLE void addEventHandler(const EntityItemID& entityID, const QString& eventName, const ScriptCallback& handler);
+    Q_INVOKABLE void removeEventHandler(const EntityItemID& entityID, const QString& eventName, const ScriptCallback& handler);
+    using ScriptEngine::addEventHandler;
+    using ScriptEngine::removeEventHandler;
+
     // The Script API a module uses for timers: a guest function as the callback, a timer id back.
     Q_INVOKABLE int setTimeout(const ScriptCallback& callback, int timeoutMS);
     Q_INVOKABLE int setInterval(const ScriptCallback& callback, int intervalMS);
@@ -100,7 +137,8 @@ public:
     using ScriptEngine::clearInterval;
 
     // The Script API the JavaScript shim builds its include, require and resolvePath on (a native module may
-    // use them too). Paths are resolved against the parent URL the caller tracks (the file whose code runs).
+    // use them too). Paths are resolved against the parent URL the caller tracks (the file whose code runs),
+    // and an entity script's sandbox URL bounds what a local file may include.
     /// The script itself: {"fileName", "source"}.
     Q_INVOKABLE QVariantMap scriptSource() const;
     /// The plain-value objects the hosts put on the global object (DriveKeys, PickType): name to map.
@@ -108,49 +146,63 @@ public:
     /// Script.resolvePath with the parent given.
     Q_INVOKABLE QString resolvePathFrom(const QString& path, const QString& parentUrl) const;
     /// Script.include's rules: {"url"} or {"reason"} when the file is not to be included.
-    Q_INVOKABLE QVariantMap resolveInclude(const QString& file, const QString& parentUrl) const;
+    Q_INVOKABLE QVariantMap resolveInclude(const QString& file, const QString& parentUrl, const QString& sandboxUrl = QString()) const;
     /// Script.require.resolve's rules: {"url"} or {"error", "type"}.
-    Q_INVOKABLE QVariantMap resolveModule(const QString& moduleId, const QString& relativeTo, const QString& parentUrl) const;
+    Q_INVOKABLE QVariantMap resolveModule(const QString& moduleId, const QString& relativeTo, const QString& parentUrl,
+                                          const QString& sandboxUrl = QString()) const;
     /// A script's text through the script cache, synchronously: {"url", "status", "success", "contents"}.
     Q_INVOKABLE QVariantMap fetchScript(const QString& url, bool forceDownload);
     /// Script.dumpApi for this engine: the globals record the guest composed, written under the usual root.
     Q_INVOKABLE bool dumpApi(const QString& path, const QVariantMap& globals);
     using ScriptEngine::dumpApi;
 
-    /// What the engine has done: host calls, bytes crossed, frames, the module's memory.
+    /// What the engine has done: host calls, bytes crossed, frames, the modules' memory.
     Q_INVOKABLE QVariantMap statistics() const;
 
     /// A guest function called with arguments, on this thread, for its result (what a ScriptCallback's call
     /// comes to); postCallback queues one without a result, from any thread.
-    bool invokeCallback(int32_t callback, const QVariantList& arguments, QVariant& result, QString& error);
-    Q_INVOKABLE void postCallback(int callback, const QVariantList& arguments);
+    bool invokeCallback(const ModuleInstancePointer& instance, int32_t callback, const QVariantList& arguments,
+                        QVariant& result, QString& error);
+    void postCallback(const ModuleInstancePointer& instance, int32_t callback, const QVariantList& arguments);
 
 private:
     void adoptScriptGlobals();
-    bool startModule();
-    void stopModule();
+    bool fetchModuleBytes();
+    ModuleInstancePointer makeInstance(const QString& name, const std::shared_ptr<WasmModule>& module,
+                                       const WasmInstance::Limits& limits, QString& error);
+    bool startMain();
+    void stopInstance(const ModuleInstancePointer& instance);
+    void stopAll();
     void loop();
-    void onModuleFailure(const QString& entry, const QString& error);
-    void installSerializer();
+    void onModuleFailure(const ModuleInstancePointer& instance, const QString& entry, const QString& error);
+    void installSerializer(ValueCodec& codec);
     int addTimer(const ScriptCallback& callback, int intervalMS, bool singleShot);
     void removeTimer(int id);
     void stopTimers();
     static std::shared_ptr<WasmModule> javascriptGuestModule(QString& error);
 
+    // entity scripts
+    void entityScriptReady(const EntityItemID& entityID, const QString& url, const QVariant& sourceOrBytes, bool success,
+                           const QString& status);
+    ModuleInstancePointer entityModuleInstance(const QString& url, const QByteArray& bytes, QString& error);
+    ModuleInstancePointer instanceForEntity(const EntityItemID& entityID) const;
+    void callEntityMethod(const EntityItemID& entityID, const QString& methodName, const QVariantList& arguments,
+                          const QUuid& remoteCallerID = QUuid());
+    void connectEntityEventSignals();
+    void forwardEntityEvent(const EntityItemID& entityID, const QString& eventName, const QVariantList& arguments);
+
     bool _runsJavaScript { false };
+    bool _isEntitiesEngine { false };
     QByteArray _moduleBytes;
     WasmInstance::Limits _limits;
     std::unique_ptr<ObjectTable> _objects;
-    std::unique_ptr<ValueCodec> _codec;
-    std::shared_ptr<CallbackTarget> _callbackTarget;
     SignalRelay* _relay { nullptr };  // a child, so it moves to the engine's thread with it
     HttpRequestFactory* _http { nullptr };
     WebSocketFactory* _sockets { nullptr };
-    std::shared_ptr<WasmModule> _module;
-    std::unique_ptr<WasmInstance> _instance;
-    std::unique_ptr<HostInterface> _host;
-    std::mutex _instanceMutex;  // guards _instance against requestStop from another thread
-    std::atomic<bool> _moduleRunning { false };
+    std::mutex _instancesMutex;  // guards the set of instances against requestStop from another thread
+    ModuleInstancePointer _main;
+    QHash<QString, ModuleInstancePointer> _entityModules;              // .wasm entity scripts by URL
+    QHash<EntityItemID, std::weak_ptr<ModuleInstance>> _entityHosts;  // which instance runs each entity's script
     std::atomic<int> _callDepth { 0 };
 
     struct Timer {
@@ -160,6 +212,9 @@ private:
     };
     QHash<int, Timer> _timers;
     int _nextTimer { 1 };
+
+    QHash<EntityItemID, QHash<QString, QList<ScriptCallback>>> _callbackHandlers;
+    bool _entityEventSignalsConnected { false };
 
     uint64_t _frames { 0 };
     double _updateMicroseconds { 0.0 };

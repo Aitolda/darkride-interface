@@ -32,11 +32,11 @@ QObject* MappingBuilderProxy::from(const QScriptValue& source) {
     return from(sourceEndpoint);
 }
 
-QObject* MappingBuilderProxy::from(const QVariant& source) {
+QObject* MappingBuilderProxy::fromValue(const QVariant& source) {
     return from(_parent.endpointFor(source));
 }
 
-QObject* MappingBuilderProxy::makeAxis(const QVariant& source1, const QVariant& source2) {
+QObject* MappingBuilderProxy::makeAxisFromValues(const QVariant& source1, const QVariant& source2) {
     auto source1Endpoint = _parent.endpointFor(source1);
     auto source2Endpoint = _parent.endpointFor(source2);
     return from(_parent.compositeEndpointFor(source1Endpoint, source2Endpoint));

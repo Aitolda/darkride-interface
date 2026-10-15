@@ -203,6 +203,13 @@
         }
     }
 
+    // Methods whose QtScript form takes a QScriptValue have a twin under another name that takes a plain value;
+    // the script keeps calling the name it knows.
+    var methodTwins = {
+        "controller::MappingBuilderProxy": { from: "fromValue", makeAxis: "makeAxisFromValues" },
+        "controller::RouteBuilderProxy": { to: "toValue", when: "whenValue" }
+    };
+
     // What the QtScript engine added to an object as native functions, which the description cannot list
     var extraMembers = {
         "EntityScriptingInterface": function (entities) {
@@ -233,6 +240,12 @@
         className = description["class"];
         object = host.newHostObject(handle, prototypeFor(className, description));
         defineMembers(object, className, description);
+        var twins = methodTwins[className];
+        if (twins) {
+            Object.keys(twins).forEach(function (name) {
+                Object.defineProperty(object, name, { value: makeMethod(twins[name]), writable: true, enumerable: true, configurable: true });
+            });
+        }
         if (extraMembers[className]) {
             extraMembers[className](object);
         }
@@ -340,6 +353,8 @@
     // --- Script: the engine's API that was QtScript-specific --------------------------------------------------------
     var timers = new Map(); // timer id -> callback id
 
+    var timerEntities = new Map(); // timer id -> the entity script that set it ("" for the script itself)
+
     function makeTimer(method, fn, ms) {
         if (typeof fn !== "function") {
             throw new TypeError("Script." + method + ": the first argument must be a function");
@@ -348,6 +363,7 @@
         var timer = host.call(Script, method, [{ "@callback": callbackId }, ms | 0]);
         if (timer) {
             timers.set(timer, callbackId);
+            timerEntities.set(timer, currentEntity);
         }
         return timer;
     }
@@ -356,10 +372,17 @@
         if (!timer) { return; }
         var callbackId = timers.get(timer);
         timers.delete(timer);
+        timerEntities.delete(timer);
         host.call(Script, "clearTimeout", [timer]);
         if (callbackId !== undefined) {
             unregisterCallback(callbackId);
         }
+    }
+
+    function clearTimersOf(entity) {
+        var toClear = [];
+        timerEntities.forEach(function (owner, timer) { if (owner === entity) { toClear.push(timer); } });
+        toClear.forEach(clearTimer);
     }
 
     function define(object, name, value) {
@@ -491,8 +514,13 @@
         }
     }
 
+    // The entity script whose code is running, for the sandbox rules of include and require, and for the
+    // timers it sets (cleared when it unloads); empty outside entity scripts.
+    var currentEntity = "";
+    var currentSandbox = "";
+
     function includeOne(file) {
-        var resolved = host.call(Script, "resolveInclude", [String(file), currentParent()]);
+        var resolved = host.call(Script, "resolveInclude", [String(file), currentParent(), currentSandbox]);
         if (!resolved || !resolved.url) {
             if (resolved && resolved.reason) {
                 host.log(LOG_WARNING, "Script.include() -- skipping " + file + " -- " + resolved.reason);
@@ -535,7 +563,7 @@
         var list = Array.isArray(files) ? files : [files];
         var text = "";
         for (var i = 0; i < list.length; i++) {
-            var resolved = host.call(Script, "resolveInclude", [String(list[i]), fromUrl]);
+            var resolved = host.call(Script, "resolveInclude", [String(list[i]), fromUrl, currentSandbox]);
             if (!resolved || !resolved.url) {
                 if (resolved && resolved.reason) {
                     host.log(LOG_WARNING, "Script.include() -- skipping " + list[i] + " -- " + resolved.reason);
@@ -613,7 +641,7 @@
     }
 
     function requireResolve(moduleId, relativeTo, fromUrl) {
-        var result = host.call(Script, "resolveModule", [String(moduleId), relativeTo === undefined ? "" : String(relativeTo), fromUrl === undefined ? currentParent() : fromUrl]);
+        var result = host.call(Script, "resolveModule", [String(moduleId), relativeTo === undefined ? "" : String(relativeTo), fromUrl === undefined ? currentParent() : fromUrl, currentSandbox]);
         if (!result || result.error) {
             var error = new Error(result ? result.error : "Cannot find module '" + moduleId + "'");
             if (result && result.type) { error.name = result.type; }
@@ -941,10 +969,100 @@
         return host.call(Script, "dumpApi", [String(path), globals]);
     });
 
+    // --- entity scripts: the contract the engine drives through the module's entity_* exports ---------------------
+    // A script is "(function () { this.preload = function (id) {...}; ... })": evaluated as a file of its own, it
+    // must give a function, which is constructed once per entity; the methods are called with the entity's id
+    // first, as the QtScript engine called them. One object per entity; the code is shared by its URL.
+    var entityScripts = new Map(); // entity id -> { object, url }
+
+    function withEntity(entity, url, fn) {
+        var previousEntity = currentEntity, previousSandbox = currentSandbox;
+        currentEntity = entity;
+        currentSandbox = url;
+        try {
+            return fn();
+        } finally {
+            currentEntity = previousEntity;
+            currentSandbox = previousSandbox;
+        }
+    }
+
+    function errorRecord(e) {
+        return { "@error": { type: (e && e.name) ? String(e.name) : "Error", message: describeError(e) } };
+    }
+
+    function entityLoad(payload) {
+        var entity = String(payload.entity), url = String(payload.url), source = payload.source;
+        if (typeof source !== "string") {
+            return errorRecord(new Error("no source for " + url));
+        }
+        try {
+            return withEntity(entity, url, function () {
+                var constructor = host.evaluate(instrument(source, url), url);
+                if (typeof constructor !== "function") {
+                    var type = constructor === null ? "null" : typeof constructor;
+                    throw new Error("failed to load entity script -- expected a function, got " + type);
+                }
+                var object = new constructor();
+                entityScripts.set(entity, { object: object, url: url });
+                return null;
+            });
+        } catch (e) {
+            return errorRecord(e);
+        }
+    }
+
+    function entityUnload(payload) {
+        var entity = String(payload.entity);
+        entityScripts.delete(entity);
+        clearTimersOf(entity);
+    }
+
+    function entityHas(payload) {
+        var record = entityScripts.get(String(payload.entity));
+        return record && typeof record.object[String(payload.method)] === "function" ? 1 : 0;
+    }
+
+    function entityCall(payload) {
+        var entity = String(payload.entity), method = String(payload.method);
+        var record = entityScripts.get(entity);
+        if (!record) {
+            return undefined;
+        }
+        var object = record.object;
+        if (payload.remoteCallerID) {
+            // a call from another client or the server: only what the script lists as remotelyCallable
+            var callable = Array.isArray(object.remotelyCallable) && object.remotelyCallable.indexOf(method) >= 0;
+            if (!callable) {
+                host.log(LOG_PRINT, "Method [ " + method + " ] not remotely callable.");
+                return undefined;
+            }
+        }
+        if (typeof object[method] !== "function") {
+            return undefined;
+        }
+        var args = Array.isArray(payload.args) ? payload.args.slice() : [];
+        args.unshift(entity);
+        var previousCaller = Script.remoteCallerID;
+        Script.remoteCallerID = payload.remoteCallerID ? String(payload.remoteCallerID) : undefined;
+        try {
+            return withEntity(entity, record.url, function () { return object[method].apply(object, args); });
+        } catch (e) {
+            reportError("in " + method + " of entity script " + record.url + " (" + entity + ")", e);
+            return undefined;
+        } finally {
+            Script.remoteCallerID = previousCaller;
+        }
+    }
+    Object.defineProperty(Script, "remoteCallerID", { value: undefined, writable: true, enumerable: false, configurable: true });
+
     // --- start and stop -------------------------------------------------------------------------------------------------
     function start() {
         var program = host.call(Script, "scriptSource", []);
         fileName = program.fileName;
+        if (!program.source) {
+            return; // an entities engine: the scripts arrive through entityLoad
+        }
         try {
             host.evaluate(instrument(program.source, fileName), fileName);
         } catch (e) {
@@ -964,6 +1082,10 @@
         onSignal: onSignal,
         onCallback: onCallback,
         start: start,
-        stop: stop
+        stop: stop,
+        entityLoad: entityLoad,
+        entityUnload: entityUnload,
+        entityHas: entityHas,
+        entityCall: entityCall
     };
 })

@@ -577,7 +577,7 @@ public:
      * @param {boolean} forceRedownload - Force re-download.
      * @deprecated This function is deprecated and will be removed.
      */
-    Q_INVOKABLE void loadEntityScript(const EntityItemID& entityID, const QString& entityScript, bool forceRedownload);
+    Q_INVOKABLE virtual void loadEntityScript(const EntityItemID& entityID, const QString& entityScript, bool forceRedownload);
 
     /**jsdoc
      * @function Script.unloadEntityScript
@@ -585,14 +585,14 @@ public:
      * @param {boolean} [shouldRemoveFromMap=false] - Should remove from map.
      * @deprecated This function is deprecated and will be removed.
      */
-    Q_INVOKABLE void unloadEntityScript(const EntityItemID& entityID, bool shouldRemoveFromMap = false); // will call unload method
+    Q_INVOKABLE virtual void unloadEntityScript(const EntityItemID& entityID, bool shouldRemoveFromMap = false); // will call unload method
 
     /**jsdoc
      * @function Script.unloadAllEntityScripts
      * @param {boolean} [blockingCall=false] - Wait for completion if call moved to another thread.
      * @deprecated This function is deprecated and will be removed.
      */
-    Q_INVOKABLE void unloadAllEntityScripts(bool blockingCall = false);
+    Q_INVOKABLE virtual void unloadAllEntityScripts(bool blockingCall = false);
 
     /**jsdoc
      * Calls a method in an entity script.
@@ -614,7 +614,7 @@ public:
      * @param {PointerEvent} event - Pointer event.
      * @deprecated This function is deprecated and will be removed.
      */
-    Q_INVOKABLE void callEntityScriptMethod(const EntityItemID& entityID, const QString& methodName, const PointerEvent& event);
+    Q_INVOKABLE virtual void callEntityScriptMethod(const EntityItemID& entityID, const QString& methodName, const PointerEvent& event);
 
     /**jsdoc
      * Calls a method in an entity script.
@@ -625,7 +625,7 @@ public:
      * @param {Collision} collision - Collision.
      * @deprecated This function is deprecated and will be removed.
      */
-    Q_INVOKABLE void callEntityScriptMethod(const EntityItemID& entityID, const QString& methodName, const EntityItemID& otherID, const Collision& collision);
+    Q_INVOKABLE virtual void callEntityScriptMethod(const EntityItemID& entityID, const QString& methodName, const EntityItemID& otherID, const Collision& collision);
 
     /**jsdoc
      * Manually runs the JavaScript garbage collector which reclaims memory by disposing of objects that are no longer 

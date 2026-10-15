@@ -297,4 +297,78 @@ void JavaScriptGuestTests::testManyCalls() {
     guest.stop();
 }
 
+// The entity-script contract: a script loaded for two entities (one object each, the code shared), its
+// methods called with the entity's id first, a remote call filtered by remotelyCallable, timers cleared at
+// unload, and a script that is not a function refused with an error record.
+void JavaScriptGuestTests::testEntityScripts() {
+    Guest guest;
+    START_OR_SKIP(guest, "");
+    QString error;
+    const QString script = R"((function () {
+        var self = this;
+        this.remotelyCallable = ["ping"];
+        this.preload = function (id) { self.id = id; Probe.carry("preload " + id); Script.setTimeout(function () { Probe.carry("timer of " + id); }, 10); };
+        this.ping = function (id, params) { Probe.carry("ping " + id + " " + params.join(",") + " from " + Script.remoteCallerID); return "pong"; };
+        this.secret = function (id) { Probe.carry("secret " + id); };
+        this.unload = function (id) { Probe.carry("unload " + id); };
+    }))";
+    auto payload = [](const QString& entity, const QString& method, const QVariantList& args, const QString& caller = QString()) {
+        QVariantMap map;
+        map["entity"] = entity;
+        map["method"] = method;
+        map["args"] = args;
+        if (!caller.isEmpty()) {
+            map["remoteCallerID"] = caller;
+        }
+        return map;
+    };
+    QVariant result;
+    for (const QString& entity : { "{aaaaaaaa-0000-0000-0000-000000000001}", "{aaaaaaaa-0000-0000-0000-000000000002}" }) {
+        QVariantMap load;
+        load["entity"] = entity;
+        load["url"] = "file:///test/entity.js";
+        load["source"] = script;
+        QVERIFY2(guest.host->callWithPayload("entity_load", load, result, error), qPrintable(error));
+        QVERIFY2(!HostInterface::isErrorRecord(result), qPrintable(result.toString()));
+        QVERIFY(guest.host->callWithPayload("entity_call", payload(entity, "preload", QVariantList()), result, error));
+    }
+    QCOMPARE(guest.carried.size(), 2);
+    QCOMPARE(guest.carried[0].toString(), QString("preload {aaaaaaaa-0000-0000-0000-000000000001}"));
+    QCOMPARE(guest.script.timers.size(), 2);
+    // has: a method that exists, one that does not
+    QVERIFY(guest.host->callWithPayload("entity_has", payload("{aaaaaaaa-0000-0000-0000-000000000001}", "ping", QVariantList()), result, error));
+    QCOMPARE(result.toInt(), 1);
+    QVERIFY(guest.host->callWithPayload("entity_has", payload("{aaaaaaaa-0000-0000-0000-000000000001}", "nothing", QVariantList()), result, error));
+    QCOMPARE(result.toInt(), 0);
+    // a remote call of a remotely callable method, with the string list the server hands over, and of one that is not
+    QVERIFY(guest.host->callWithPayload("entity_call", payload("{aaaaaaaa-0000-0000-0000-000000000002}", "ping", QVariantList { QStringList { "a", "b" } },
+                                                              "{cccccccc-0000-0000-0000-000000000003}"), result, error));
+    QCOMPARE(result.toString(), QString("pong"));
+    QCOMPARE(guest.carried.last().toString(), QString("ping {aaaaaaaa-0000-0000-0000-000000000002} a,b from {cccccccc-0000-0000-0000-000000000003}"));
+    QVERIFY(guest.host->callWithPayload("entity_call", payload("{aaaaaaaa-0000-0000-0000-000000000002}", "secret", QVariantList(), "{cccccccc-0000-0000-0000-000000000003}"), result, error));
+    QCOMPARE(guest.carried.size(), 3);  // not called
+    QVERIFY(guest.logged.last().contains("not remotely callable"));
+    // a local call of it is fine
+    QVERIFY(guest.host->callWithPayload("entity_call", payload("{aaaaaaaa-0000-0000-0000-000000000002}", "secret", QVariantList()), result, error));
+    QCOMPARE(guest.carried.last().toString(), QString("secret {aaaaaaaa-0000-0000-0000-000000000002}"));
+    // unload: the method, then the record and the timers of that entity go
+    QVERIFY(guest.host->callWithPayload("entity_call", payload("{aaaaaaaa-0000-0000-0000-000000000001}", "unload", QVariantList()), result, error));
+    QVariantMap unload;
+    unload["entity"] = "{aaaaaaaa-0000-0000-0000-000000000001}";
+    QVERIFY(guest.host->callWithPayload("entity_unload", unload, result, error));
+    QCOMPARE(guest.carried.last().toString(), QString("unload {aaaaaaaa-0000-0000-0000-000000000001}"));
+    QCOMPARE(guest.script.timers.size(), 1);
+    QVERIFY(guest.host->callWithPayload("entity_has", payload("{aaaaaaaa-0000-0000-0000-000000000001}", "ping", QVariantList()), result, error));
+    QCOMPARE(result.toInt(), 0);
+    // a script that is not a function
+    QVariantMap bad;
+    bad["entity"] = "{aaaaaaaa-0000-0000-0000-000000000009}";
+    bad["url"] = "file:///test/bad.js";
+    bad["source"] = "var x = 1;";
+    QVERIFY(guest.host->callWithPayload("entity_load", bad, result, error));
+    QVERIFY(HostInterface::isErrorRecord(result));
+    QVERIFY2(result.toMap()["@error"].toMap()["message"].toString().contains("expected a function"), qPrintable(result.toMap()["@error"].toMap()["message"].toString()));
+    guest.stop();
+}
+
 #include "moc_TestObjects.cpp"

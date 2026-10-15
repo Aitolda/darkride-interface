@@ -27,9 +27,11 @@
 
 #include <AddressManager.h>
 #include <EntityScriptingInterface.h>
+#include <EntityTree.h>
 #include <LocationScriptingInterface.h>
 #include <NumericalConstants.h>
 #include <PathUtils.h>
+#include <PointerEvent.h>
 #include <ResourceManager.h>
 #include <SettingHandle.h>
 #include <SharedUtil.h>
@@ -56,15 +58,22 @@ const int MAX_SCRIPT_QUITTING_TIME_MS = 500;
 const int MAX_MODULE_ID_LENGTH = 4096;
 const int MAX_DEBUG_VALUE_LENGTH = 80;
 
+const QString ENTITY_LOAD_EXPORT = QStringLiteral("entity_load");
+const QString ENTITY_UNLOAD_EXPORT = QStringLiteral("entity_unload");
+const QString ENTITY_HAS_EXPORT = QStringLiteral("entity_has");
+const QString ENTITY_CALL_EXPORT = QStringLiteral("entity_call");
+
 Setting::Handle<bool> runJavaScriptOnWebAssemblySetting { "scripting/runJavaScriptOnWebAssembly", false };
 
-// The engine as a callback target: a callback decoded by its codec calls back through it. It outlives the
-// engine as a weak reference in the callbacks; a dead engine answers nothing.
-class EngineCallbackTarget : public CallbackTarget {
+// An instance as a callback target: a callback decoded by the instance's codec calls back through it. It
+// outlives the instance as a weak reference in the callbacks; a gone instance answers nothing.
+class InstanceCallbackTarget : public CallbackTarget {
 public:
-    explicit EngineCallbackTarget(WasmScriptEngine* engine) : _engine(engine) {}
+    InstanceCallbackTarget(WasmScriptEngine* engine, const std::weak_ptr<WasmScriptEngine::ModuleInstance>& instance) :
+        _engine(engine), _instance(instance) {}
     bool invoke(int32_t callback, const QVariantList& arguments, QVariant& result, QString& error) override {
-        if (!_engine) {
+        auto instance = _instance.lock();
+        if (!_engine || !instance) {
             error = "the script engine is gone";
             return false;
         }
@@ -72,15 +81,23 @@ public:
             error = "a callback can only be called for its result on the script's thread";
             return false;
         }
-        return _engine->invokeCallback(callback, arguments, result, error);
+        return _engine->invokeCallback(instance, callback, arguments, result, error);
     }
     void post(int32_t callback, const QVariantList& arguments) override {
-        if (_engine) {
-            QMetaObject::invokeMethod(_engine, "postCallback", Qt::QueuedConnection, Q_ARG(int, int(callback)), Q_ARG(QVariantList, arguments));
+        QPointer<WasmScriptEngine> engine = _engine;
+        auto instance = _instance;
+        if (engine) {
+            QMetaObject::invokeMethod(engine, [engine, instance, callback, arguments] {
+                auto strong = instance.lock();
+                if (engine && strong) {
+                    engine->postCallback(strong, callback, arguments);
+                }
+            }, Qt::QueuedConnection);
         }
     }
 private:
     QPointer<WasmScriptEngine> _engine;
+    std::weak_ptr<WasmScriptEngine::ModuleInstance> _instance;
 };
 
 QString suffixOf(const QString& fileNameOrUrl) {
@@ -89,19 +106,29 @@ QString suffixOf(const QString& fileNameOrUrl) {
     return QFileInfo(path).suffix().toLower();
 }
 
+QString errorRecordMessage(const QVariant& value) {
+    QVariantMap record = value.toMap().value(HostInterface::ERROR_KEY).toMap();
+    QString type = record.value("type").toString();
+    QString message = record.value("message").toString();
+    return type.isEmpty() ? message : type + ": " + message;
+}
+
 } // namespace
+
+WasmScriptEngine::ModuleInstance::~ModuleInstance() {
+    host.reset();
+    instance.reset();
+}
 
 WasmScriptEngine::WasmScriptEngine(Context context, const QString& scriptContents, const QString& fileNameString) :
     ScriptEngine(context, scriptContents, fileNameString),
     _runsJavaScript(!isWasmScript(fileNameString)),
+    _isEntitiesEngine(context == ENTITY_CLIENT_SCRIPT || context == ENTITY_SERVER_SCRIPT),
     _objects(new ObjectTable()),
-    _codec(new ValueCodec(_objects.get())),
     _relay(new SignalRelay(this)),
     _http(new HttpRequestFactory(this)),
     _sockets(new WebSocketFactory(this)) {
-    _callbackTarget = std::make_shared<EngineCallbackTarget>(this);
-    _codec->setCallbackTarget(_callbackTarget);
-    if (context == ENTITY_CLIENT_SCRIPT || context == ENTITY_SERVER_SCRIPT) {
+    if (_isEntitiesEngine) {
         // an entities engine hosts every entity script of the world: more room
         _limits.memoryBytes = int64_t(1024) * 1024 * 1024;
     }
@@ -113,9 +140,9 @@ WasmScriptEngine::WasmScriptEngine(Context context, const QString& scriptContent
 
 WasmScriptEngine::~WasmScriptEngine() {
     stopTimers();
-    _host.reset();
-    std::lock_guard<std::mutex> lock(_instanceMutex);
-    _instance.reset();
+    std::lock_guard<std::mutex> lock(_instancesMutex);
+    _entityModules.clear();
+    _main.reset();
 }
 
 bool WasmScriptEngine::isWasmScript(const QString& fileNameOrUrl) {
@@ -132,7 +159,7 @@ std::shared_ptr<WasmRuntime> WasmScriptEngine::runtime() {
 }
 
 bool WasmScriptEngine::runJavaScriptOnWebAssembly() {
-    // DARKRIDE_RUN_JS_ON_WASM=1 in the environment turns the setting on for one client (test runs)
+    // DARKRIDE_RUN_JS_ON_WASM=1 in the environment turns the setting on for one process (test runs, a server)
     if (qEnvironmentVariableIsSet("DARKRIDE_RUN_JS_ON_WASM")) {
         return qEnvironmentVariable("DARKRIDE_RUN_JS_ON_WASM") == "1";
     }
@@ -148,11 +175,17 @@ QString WasmScriptEngine::javascriptGuestPath() {
     if (!fromEnvironment.isEmpty()) {
         return fromEnvironment;
     }
-#if defined(Q_OS_MAC)
-    return QCoreApplication::applicationDirPath() + "/../Resources/wasm/darkride-js.wasm";
-#else
-    return QCoreApplication::applicationDirPath() + "/resources/wasm/darkride-js.wasm";
-#endif
+    const QString applicationDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates {
+        applicationDir + "/../Resources/wasm/darkride-js.wasm",  // an application bundle
+        applicationDir + "/resources/wasm/darkride-js.wasm"      // a plain executable (the servers, Linux, Windows)
+    };
+    for (const QString& candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return QFileInfo(candidate).absoluteFilePath();
+        }
+    }
+    return candidates.last();
 }
 
 // The guest is one module for every JavaScript script of the process: compiled once, shared.
@@ -272,6 +305,34 @@ void WasmScriptEngine::loadURL(const QUrl& scriptURL, bool reload) {
     }, reload, maxRetries);
 }
 
+// An agent is handed its script as text by the assignment client; a module needs its bytes, fetched here from
+// the script's URL, waited for on this thread.
+bool WasmScriptEngine::fetchModuleBytes() {
+    QUrl url(_fileNameString);
+    if (!url.isValid() || url.scheme().isEmpty()) {
+        return false;
+    }
+    bool done = false;
+    bool ok = false;
+    QString failure;
+    auto scriptCache = DependencyManager::get<ScriptCache>();
+    scriptCache->getScriptBytes(url.toString(), [this, &done, &ok, &failure](const QString&, const QByteArray& bytes, bool success, const QString& status) {
+        done = true;
+        ok = success && !bytes.isEmpty();
+        failure = status;
+        if (ok) {
+            _moduleBytes = bytes;
+        }
+    }, false, 0);
+    while (!done && !isStopping()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    }
+    if (!ok) {
+        scriptErrorMessage("ERROR Loading module (" + failure + "):" + _fileNameString);
+    }
+    return ok;
+}
+
 // --- running ----------------------------------------------------------------------------------------------------
 
 void WasmScriptEngine::run() {
@@ -290,7 +351,6 @@ void WasmScriptEngine::run() {
         init();
     }
     adoptScriptGlobals();
-    installSerializer();
     // the network objects XMLHttpRequest and WebSocket are built on in the guest
     registerGlobalObject("Http", _http);
     registerGlobalObject("Sockets", _sockets);
@@ -298,10 +358,10 @@ void WasmScriptEngine::run() {
     _isRunning = true;
     emit runningStateChanged();
 
-    if (startModule()) {
+    if (startMain()) {
         loop();
     }
-    stopModule();
+    stopAll();
 
     emit finished(_fileNameString, qSharedPointerCast<ScriptEngine>(sharedFromThis()));
     hifi::scripting::setLocalAccessSafeThread(false);
@@ -331,35 +391,21 @@ void WasmScriptEngine::adoptScriptGlobals() {
     qCDebug(scriptengine) << "WasmScriptEngine:" << _objects->globalNames().size() << "globals for the module," << adopted << "adopted from the QtScript global object";
 }
 
-bool WasmScriptEngine::startModule() {
-    QString error;
-    if (_runsJavaScript) {
-        if (_scriptContents.isEmpty()) {
-            scriptErrorMessage("No script to run: " + _fileNameString);
-            return false;
-        }
-        _module = javascriptGuestModule(error);
-        if (!_module) {
-            scriptErrorMessage("Cannot run " + getFilename() + " on WebAssembly: " + error);
-            return false;
-        }
-    } else {
-        if (_moduleBytes.isEmpty()) {
-            scriptErrorMessage("No module to run: " + _fileNameString);
-            return false;
-        }
-        _module = runtime()->compile(_moduleBytes, error);
-        if (!_module) {
-            scriptErrorMessage("Cannot compile " + getFilename() + ": " + error);
-            return false;
-        }
-    }
-    {
-        std::lock_guard<std::mutex> lock(_instanceMutex);
-        _instance = std::make_unique<WasmInstance>(_module, _limits);
-    }
-    _host = std::make_unique<HostInterface>(*_instance, *_objects, *_codec, *_relay);
-    _host->setLogger([this](int level, const QString& text) {
+// An instance of a module in this engine: its codec (with this engine's table, the serializer and the
+// instance as the callback target), its host interface (logging into this script's log, failures stopping
+// what they must), instantiated with WASI, its C runtime initialised, its script_start called.
+WasmScriptEngine::ModuleInstancePointer WasmScriptEngine::makeInstance(const QString& name, const std::shared_ptr<WasmModule>& module,
+                                                                       const WasmInstance::Limits& limits, QString& error) {
+    auto instance = std::make_shared<ModuleInstance>();
+    instance->name = name;
+    instance->module = module;
+    instance->codec = std::make_unique<ValueCodec>(_objects.get());
+    installSerializer(*instance->codec);
+    instance->target = std::make_shared<InstanceCallbackTarget>(this, instance);
+    instance->codec->setCallbackTarget(instance->target);
+    instance->instance = std::make_unique<WasmInstance>(module, limits);
+    instance->host = std::make_unique<HostInterface>(*instance->instance, *_objects, *instance->codec, *_relay);
+    instance->host->setLogger([this](int level, const QString& text) {
         switch (level) {
             case HostInterface::Print:
                 scriptPrintedMessage(text);
@@ -378,35 +424,78 @@ bool WasmScriptEngine::startModule() {
                 break;
         }
     });
-    _host->setFailureHandler([this](const QString& entry, const QString& failure) { onModuleFailure(entry, failure); });
-    _host->install();
-    _instance->enableWasi();
-    if (!_instance->instantiate(error)) {
-        scriptErrorMessage("Cannot instantiate " + getFilename() + ": " + error);
-        return false;
+    std::weak_ptr<ModuleInstance> weak = instance;
+    instance->host->setFailureHandler([this, weak](const QString& entry, const QString& failure) {
+        onModuleFailure(weak.lock(), entry, failure);
+    });
+    instance->host->install();
+    instance->instance->enableWasi();
+    if (!instance->instance->instantiate(error)) {
+        error = "cannot instantiate " + name + ": " + error;
+        return nullptr;
     }
     for (const char* required : { "alloc", "script_start" }) {
-        if (!_instance->hasExport(required)) {
-            scriptErrorMessage(QString("%1 does not export %2, which a script module must").arg(getFilename(), required));
-            return false;
+        if (!instance->instance->hasExport(required)) {
+            error = QString("%1 does not export %2, which a script module must").arg(name, required);
+            return nullptr;
         }
     }
-    if (_instance->hasExport("_initialize")) {
+    if (instance->instance->hasExport("_initialize")) {
         // a reactor's initializer (its C runtime's constructors), before anything else is called
         std::vector<WasmValue> results;
         ++_callDepth;
-        bool initialized = _instance->call("_initialize", {}, results, error);
+        bool initialized = instance->instance->call("_initialize", {}, results, error);
         --_callDepth;
         if (!initialized) {
-            scriptErrorMessage(getFilename() + " failed to initialize: " + error);
+            error = name + " failed to initialize: " + error;
+            return nullptr;
+        }
+    }
+    instance->running = true;
+    ++_callDepth;
+    bool started = instance->host->callScriptStart(error);
+    --_callDepth;
+    if (!started) {
+        instance->running = false;
+        return nullptr;
+    }
+    return instance;
+}
+
+bool WasmScriptEngine::startMain() {
+    QString error;
+    std::shared_ptr<WasmModule> module;
+    if (_runsJavaScript) {
+        if (_scriptContents.isEmpty() && !_isEntitiesEngine) {
+            scriptErrorMessage("No script to run: " + _fileNameString);
+            return false;
+        }
+        module = javascriptGuestModule(error);
+        if (!module) {
+            scriptErrorMessage("Cannot run " + getFilename() + " on WebAssembly: " + error);
+            return false;
+        }
+    } else {
+        if (_moduleBytes.isEmpty() && !fetchModuleBytes()) {
+            scriptErrorMessage("No module to run: " + _fileNameString);
+            return false;
+        }
+        module = runtime()->compile(_moduleBytes, error);
+        if (!module) {
+            scriptErrorMessage("Cannot compile " + getFilename() + ": " + error);
             return false;
         }
     }
-    _moduleRunning = true;
-    ++_callDepth;
-    bool started = _host->callScriptStart(error);
-    --_callDepth;
-    return started && !_isFinished;
+    ModuleInstancePointer main = makeInstance(getFilename(), module, _limits, error);
+    if (!main) {
+        scriptErrorMessage(error);
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(_instancesMutex);
+        _main = main;
+    }
+    return !_isFinished;
 }
 
 void WasmScriptEngine::loop() {
@@ -466,31 +555,59 @@ void WasmScriptEngine::loop() {
     }
 }
 
-void WasmScriptEngine::stopModule() {
+void WasmScriptEngine::stopInstance(const ModuleInstancePointer& instance) {
+    if (instance && instance->running && instance->host) {
+        QString error;
+        ++_callDepth;
+        instance->host->callScriptStop(error);
+        --_callDepth;
+    }
+    if (instance) {
+        instance->running = false;
+    }
+}
+
+void WasmScriptEngine::stopAll() {
     scriptInfoMessage("WebAssembly script engine stopping:" + getFilename());
     stopTimers();
-    // the signal first, while the module can still answer it; then its own stop
+    // the signal first, while the modules can still answer it; then their own stops; the entity scripts'
+    // modules before the main one, which may host them
     ++_callDepth;
     emit scriptEnding();
     --_callDepth;
-    if (_moduleRunning && _host) {
-        QString error;
-        ++_callDepth;
-        _host->callScriptStop(error);
-        --_callDepth;
+    for (const ModuleInstancePointer& instance : _entityModules) {
+        stopInstance(instance);
     }
-    _moduleRunning = false;
+    stopInstance(_main);
     _relay->disconnectAll();
-    _host.reset();
+    _callbackHandlers.clear();
+    _entityHosts.clear();
     {
-        std::lock_guard<std::mutex> lock(_instanceMutex);
-        _instance.reset();
+        std::lock_guard<std::mutex> lock(_instancesMutex);
+        _entityModules.clear();
+        _main.reset();
     }
-    _module.reset();
 }
 
-void WasmScriptEngine::onModuleFailure(const QString& entry, const QString& error) {
-    scriptErrorMessage(QString("%1 failed in %2: %3 (the script is stopped)").arg(getFilename(), entry, error));
+void WasmScriptEngine::onModuleFailure(const ModuleInstancePointer& instance, const QString& entry, const QString& error) {
+    const QString name = instance ? instance->name : getFilename();
+    if (error.contains("the script was stopped")) {
+        // a stop requested from another thread interrupted a call: what was asked for, not a failure
+        qCDebug(scriptengine) << name << "interrupted in" << entry << "by a stop";
+        _isStopping = true;
+        if (!_isFinished) {
+            _isFinished = true;
+            emit runningStateChanged();
+        }
+        return;
+    }
+    if (instance && instance != _main) {
+        // an entity script's module failed: that module stops, the engine and the other scripts run on
+        scriptErrorMessage(QString("%1 failed in %2: %3 (its entity scripts are stopped)").arg(name, entry, error));
+        instance->running = false;
+        return;
+    }
+    scriptErrorMessage(QString("%1 failed in %2: %3 (the script is stopped)").arg(name, entry, error));
     _isStopping = true;
     if (!_isFinished) {
         _isFinished = true;
@@ -509,10 +626,15 @@ void WasmScriptEngine::stop(bool marshal) {
         emit runningStateChanged();
     }
     if (QThread::currentThread() != thread() && _callDepth > 0) {
-        // the module is inside a call: make it return now rather than at its own pace
-        std::lock_guard<std::mutex> lock(_instanceMutex);
-        if (_instance) {
-            _instance->requestStop();
+        // a module is inside a call: make it return now rather than at its own pace
+        std::lock_guard<std::mutex> lock(_instancesMutex);
+        if (_main && _main->instance) {
+            _main->instance->requestStop();
+        }
+        for (const ModuleInstancePointer& instance : _entityModules) {
+            if (instance->instance) {
+                instance->instance->requestStop();
+            }
         }
     }
 }
@@ -528,9 +650,14 @@ void WasmScriptEngine::waitTillDoneRunning() {
         workerThread->quit();
         if (!workerThread->wait(MAX_SCRIPT_QUITTING_TIME_MS)) {
             {
-                std::lock_guard<std::mutex> lock(_instanceMutex);
-                if (_instance) {
-                    _instance->requestStop();
+                std::lock_guard<std::mutex> lock(_instancesMutex);
+                if (_main && _main->instance) {
+                    _main->instance->requestStop();
+                }
+                for (const ModuleInstancePointer& instance : _entityModules) {
+                    if (instance->instance) {
+                        instance->instance->requestStop();
+                    }
                 }
             }
             if (!workerThread->wait(MAX_SCRIPT_QUITTING_TIME_MS)) {
@@ -544,10 +671,10 @@ void WasmScriptEngine::waitTillDoneRunning() {
 
 // --- the serializer: QtScript's conversions for the types that have no QVariant ones yet ----------------------
 
-void WasmScriptEngine::installSerializer() {
+void WasmScriptEngine::installSerializer(ValueCodec& codec) {
     const int scriptValueType = QMetaType::type("QScriptValue");  // registered by QtScript at run time
-    _codec->setFallback(
-        [this, scriptValueType](const QVariant& value, QCborValue& out) {
+    codec.setFallback(
+        [this, &codec, scriptValueType](const QVariant& value, QCborValue& out) {
             const int type = value.userType();
             if (type == scriptValueType) {
                 return false;
@@ -560,14 +687,14 @@ void WasmScriptEngine::installSerializer() {
             if (plain.userType() == type) {
                 return false;  // no conversion registered: QtScript wrapped the value as it was
             }
-            out = _codec->toCbor(plain);
+            out = codec.toCbor(plain);
             return true;
         },
-        [this, scriptValueType](const QCborValue& value, int targetType, QVariant& out) {
+        [this, &codec, scriptValueType](const QCborValue& value, int targetType, QVariant& out) {
             if (targetType == scriptValueType) {
                 return false;
             }
-            QVariant plain = _codec->fromCbor(value);
+            QVariant plain = codec.fromCbor(value);
             QScriptValue scriptValue = qScriptValueFromValue_helper(this, plain.userType(), plain.constData());
             if (!scriptValue.isValid()) {
                 return false;
@@ -613,11 +740,14 @@ int WasmScriptEngine::addTimer(const ScriptCallback& callback, int intervalMS, b
             _timers.erase(found);
             entry.timer->deleteLater();
         }
-        if (_host && _moduleRunning && !_isFinished) {
-            QString error;
-            ++_callDepth;
-            _host->deliverCallback(entry.callback.id, QVariantList(), error);
-            --_callDepth;
+        if (!_isFinished) {
+            // the callback knows its instance; it is called on this thread, the engine's
+            auto target = entry.callback.target.lock();
+            if (target) {
+                QVariant result;
+                QString error;
+                target->invoke(entry.callback.id, QVariantList(), result, error);
+            }
         }
     });
     _timers.insert(id, Timer { timer, callback, singleShot });
@@ -656,6 +786,368 @@ void WasmScriptEngine::clearTimeout(int timer) {
 
 void WasmScriptEngine::clearInterval(int timer) {
     removeTimer(timer);
+}
+
+// --- callbacks called from the host side -----------------------------------------------------------------------------
+
+bool WasmScriptEngine::invokeCallback(const ModuleInstancePointer& instance, int32_t callback, const QVariantList& arguments,
+                                      QVariant& result, QString& error) {
+    if (!instance || !instance->running || !instance->host || _isFinished) {
+        error = "the script is not running";
+        return false;
+    }
+    ++_callDepth;
+    bool ok = instance->host->callCallback(callback, arguments, result, error);
+    --_callDepth;
+    return ok;
+}
+
+void WasmScriptEngine::postCallback(const ModuleInstancePointer& instance, int32_t callback, const QVariantList& arguments) {
+    if (instance && instance->running && instance->host && !_isFinished) {
+        QString error;
+        ++_callDepth;
+        instance->host->deliverCallback(callback, arguments, error);
+        --_callDepth;
+    }
+}
+
+// --- entity scripts -------------------------------------------------------------------------------------------------
+
+void WasmScriptEngine::loadEntityScript(const EntityItemID& entityID, const QString& entityScript, bool forceRedownload) {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "loadEntityScript", Q_ARG(const EntityItemID&, entityID),
+                                  Q_ARG(const QString&, entityScript), Q_ARG(bool, forceRedownload));
+        return;
+    }
+    QSharedPointer<ScriptEngines> scriptEngines(_scriptEngines);
+    if (isStopping() || !scriptEngines || scriptEngines->isStopped()) {
+        return;
+    }
+    if (!hasEntityScriptDetails(entityID)) {
+        updateEntityScriptStatus(entityID, EntityScriptStatus::PENDING, "...pending...");
+    }
+    EntityScriptDetails newDetails;
+    newDetails.scriptText = entityScript;
+    newDetails.status = EntityScriptStatus::LOADING;
+    newDetails.definingSandboxURL = currentSandboxURL;
+    setEntityScriptDetails(entityID, newDetails);
+
+    auto scriptCache = DependencyManager::get<ScriptCache>();
+    QWeakPointer<BaseScriptEngine> weakRef(sharedFromThis());
+    if (isWasmScript(entityScript)) {
+        scriptCache->getScriptBytes(entityScript, [this, weakRef, entityID](const QString& url, const QByteArray& bytes, bool success, const QString& status) {
+            QSharedPointer<BaseScriptEngine> strongRef(weakRef);
+            if (!strongRef || isStopping()) {
+                return;
+            }
+            executeOnScriptThread([=] { entityScriptReady(entityID, url, bytes, success, status); });
+        }, forceRedownload);
+    } else {
+        scriptCache->getScriptContents(entityScript, [this, weakRef, entityID](const QString& url, const QString& contents, bool isURL, bool success, const QString& status) {
+            QSharedPointer<BaseScriptEngine> strongRef(weakRef);
+            if (!strongRef || isStopping()) {
+                return;
+            }
+            // an embedded script (the text itself as the "URL") is named as the QtScript engine names it
+            const QString name = isURL ? url : QString("about:EmbeddedEntityScript");
+            executeOnScriptThread([=] { entityScriptReady(entityID, name, contents, success, status); });
+        }, forceRedownload);
+    }
+}
+
+// The script's module or text has arrived: a .wasm entity script gets (or shares) the instance of its module;
+// a JavaScript one goes to the guest with its source. Then the contract's entity_load, preload, and the
+// status for the entity's record.
+void WasmScriptEngine::entityScriptReady(const EntityItemID& entityID, const QString& url, const QVariant& sourceOrBytes,
+                                         bool success, const QString& status) {
+    if (isStopping() || !hasEntityScriptDetails(entityID)) {
+        return;
+    }
+    EntityScriptDetails newDetails;
+    {
+        EntityScriptDetails current;
+        getEntityScriptDetails(entityID, current);
+        newDetails.scriptText = current.scriptText;
+    }
+    auto setError = [&](const QString& errorInfo, EntityScriptStatus failure) {
+        newDetails.errorInfo = errorInfo;
+        newDetails.status = failure;
+        setEntityScriptDetails(entityID, newDetails);
+        scriptErrorMessage(QString("entity script %1 (%2): %3").arg(url, entityID.toString(), errorInfo));
+    };
+    if (!success) {
+        setError("Failed to load script (" + status + ")", EntityScriptStatus::ERROR_LOADING_SCRIPT);
+        return;
+    }
+    ModuleInstancePointer host;
+    QVariantMap payload;
+    payload["entity"] = entityID.toString();
+    payload["url"] = url;
+    QString error;
+    if (sourceOrBytes.type() == QVariant::ByteArray) {
+        host = entityModuleInstance(url, sourceOrBytes.toByteArray(), error);
+        if (!host) {
+            setError(error, EntityScriptStatus::ERROR_RUNNING_SCRIPT);
+            return;
+        }
+    } else {
+        host = _main;
+        payload["source"] = sourceOrBytes.toString();
+    }
+    if (!host || !host->running || !host->host || !host->instance->hasExport(ENTITY_LOAD_EXPORT)) {
+        setError(QString("%1 does not host entity scripts (no %2 export)").arg(host ? host->name : getFilename(), ENTITY_LOAD_EXPORT),
+                 EntityScriptStatus::ERROR_RUNNING_SCRIPT);
+        return;
+    }
+    QVariant result;
+    ++_callDepth;
+    bool ok = host->host->callWithPayload(ENTITY_LOAD_EXPORT, payload, result, error);
+    --_callDepth;
+    if (!ok) {
+        setError(error, EntityScriptStatus::ERROR_RUNNING_SCRIPT);
+        return;
+    }
+    if (HostInterface::isErrorRecord(result)) {
+        setError(errorRecordMessage(result), EntityScriptStatus::ERROR_RUNNING_SCRIPT);
+        return;
+    }
+    newDetails.status = EntityScriptStatus::RUNNING;
+    newDetails.definingSandboxURL = currentSandboxURL.isEmpty() ? QUrl(url) : currentSandboxURL;
+    setEntityScriptDetails(entityID, newDetails);
+    _entityHosts[entityID] = host;
+    callEntityScriptMethod(entityID, "preload");
+    emit entityScriptPreloadFinished(entityID);
+}
+
+// The instance of a .wasm entity script's module: one per URL, shared by the entities that run it.
+WasmScriptEngine::ModuleInstancePointer WasmScriptEngine::entityModuleInstance(const QString& url, const QByteArray& bytes, QString& error) {
+    auto found = _entityModules.find(url);
+    if (found != _entityModules.end() && found.value()->running) {
+        return found.value();
+    }
+    std::shared_ptr<WasmModule> module = runtime()->compile(bytes, error);
+    if (!module) {
+        error = "cannot compile " + url + ": " + error;
+        return nullptr;
+    }
+    WasmInstance::Limits limits;  // a module's own limits, not the engine's (the guest hosts many scripts; a module hosts its own)
+    ModuleInstancePointer instance = makeInstance(url, module, limits, error);
+    if (!instance) {
+        return nullptr;
+    }
+    {
+        std::lock_guard<std::mutex> lock(_instancesMutex);
+        _entityModules[url] = instance;
+    }
+    return instance;
+}
+
+WasmScriptEngine::ModuleInstancePointer WasmScriptEngine::instanceForEntity(const EntityItemID& entityID) const {
+    auto found = _entityHosts.find(entityID);
+    return found == _entityHosts.end() ? nullptr : found.value().lock();
+}
+
+void WasmScriptEngine::unloadEntityScript(const EntityItemID& entityID, bool shouldRemoveFromMap) {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "unloadEntityScript", Q_ARG(const EntityItemID&, entityID), Q_ARG(bool, shouldRemoveFromMap));
+        return;
+    }
+    EntityScriptDetails oldDetails;
+    if (!getEntityScriptDetails(entityID, oldDetails)) {
+        return;
+    }
+    if (isEntityScriptRunning(entityID)) {
+        callEntityScriptMethod(entityID, "unload");
+        ModuleInstancePointer host = instanceForEntity(entityID);
+        if (host && host->running && host->host && host->instance->hasExport(ENTITY_UNLOAD_EXPORT)) {
+            QVariantMap payload;
+            payload["entity"] = entityID.toString();
+            QVariant result;
+            QString error;
+            ++_callDepth;
+            host->host->callWithPayload(ENTITY_UNLOAD_EXPORT, payload, result, error);
+            --_callDepth;
+        }
+    }
+    _entityHosts.remove(entityID);
+    if (shouldRemoveFromMap) {
+        {
+            QWriteLocker locker { &_entityScriptsLock };
+            _entityScripts.remove(entityID);
+        }
+        emit entityScriptDetailsUpdated();
+    } else if (oldDetails.status != EntityScriptStatus::UNLOADED) {
+        EntityScriptDetails newDetails;
+        newDetails.status = EntityScriptStatus::UNLOADED;
+        newDetails.lastModified = QDateTime::currentMSecsSinceEpoch();
+        newDetails.scriptText = oldDetails.scriptText;
+        setEntityScriptDetails(entityID, newDetails);
+    }
+}
+
+void WasmScriptEngine::unloadAllEntityScripts(bool blockingCall) {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "unloadAllEntityScripts", blockingCall ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                                  Q_ARG(bool, blockingCall));
+        return;
+    }
+    QList<EntityItemID> keys;
+    {
+        QReadLocker locker { &_entityScriptsLock };
+        keys = _entityScripts.keys();
+    }
+    for (const EntityItemID& entityID : keys) {
+        unloadEntityScript(entityID);
+    }
+    {
+        QWriteLocker locker { &_entityScriptsLock };
+        _entityScripts.clear();
+    }
+    _entityHosts.clear();
+    emit entityScriptDetailsUpdated();
+}
+
+// A method of an entity's script, through the contract's entity_call: the arguments are the entity's id and
+// what the caller gives (a list of strings, a pointer event, another entity and a collision).
+void WasmScriptEngine::callEntityMethod(const EntityItemID& entityID, const QString& methodName, const QVariantList& arguments,
+                                        const QUuid& remoteCallerID) {
+    if (!isEntityScriptRunning(entityID)) {
+        return;
+    }
+    ModuleInstancePointer host = instanceForEntity(entityID);
+    if (!host || !host->running || !host->host || !host->instance->hasExport(ENTITY_CALL_EXPORT)) {
+        return;
+    }
+    QVariantMap payload;
+    payload["entity"] = entityID.toString();
+    payload["method"] = methodName;
+    payload["args"] = arguments;
+    if (!remoteCallerID.isNull()) {
+        payload["remoteCallerID"] = remoteCallerID.toString();
+    }
+    QVariant result;
+    QString error;
+    ++_callDepth;
+    host->host->callWithPayload(ENTITY_CALL_EXPORT, payload, result, error);
+    --_callDepth;
+}
+
+void WasmScriptEngine::callEntityScriptMethod(const EntityItemID& entityID, const QString& methodName, const QStringList& params,
+                                              const QUuid& remoteCallerID) {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "callEntityScriptMethod", Q_ARG(const EntityItemID&, entityID), Q_ARG(const QString&, methodName),
+                                  Q_ARG(const QStringList&, params), Q_ARG(const QUuid&, remoteCallerID));
+        return;
+    }
+    callEntityMethod(entityID, methodName, QVariantList { params }, remoteCallerID);
+}
+
+void WasmScriptEngine::callEntityScriptMethod(const EntityItemID& entityID, const QString& methodName, const PointerEvent& event) {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "callEntityScriptMethod", Q_ARG(const EntityItemID&, entityID), Q_ARG(const QString&, methodName),
+                                  Q_ARG(const PointerEvent&, event));
+        return;
+    }
+    callEntityMethod(entityID, methodName, QVariantList { QVariant::fromValue(event) });
+}
+
+void WasmScriptEngine::callEntityScriptMethod(const EntityItemID& entityID, const QString& methodName, const EntityItemID& otherID,
+                                              const Collision& collision) {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "callEntityScriptMethod", Q_ARG(const EntityItemID&, entityID), Q_ARG(const QString&, methodName),
+                                  Q_ARG(const EntityItemID&, otherID), Q_ARG(const Collision&, collision));
+        return;
+    }
+    callEntityMethod(entityID, methodName, QVariantList { QVariant::fromValue(otherID), QVariant::fromValue(collision) });
+}
+
+// --- Script.addEventHandler for a module: the entity signals forwarded to guest functions ---------------------------
+
+void WasmScriptEngine::connectEntityEventSignals() {
+    if (_entityEventSignalsConnected) {
+        return;
+    }
+    _entityEventSignalsConnected = true;
+    auto entities = DependencyManager::get<EntityScriptingInterface>();
+    connect(entities.data(), &EntityScriptingInterface::deletingEntity, this, [this](const EntityItemID& entityID) {
+        _callbackHandlers.remove(entityID);
+    });
+    auto single = [this](const QString& eventName) {
+        return [this, eventName](const EntityItemID& entityID) {
+            forwardEntityEvent(entityID, eventName, QVariantList { QVariant::fromValue(entityID) });
+        };
+    };
+    auto pointer = [this](const QString& eventName) {
+        return [this, eventName](const EntityItemID& entityID, const PointerEvent& event) {
+            if (!EntityTree::areEntityClicksCaptured()) {
+                forwardEntityEvent(entityID, eventName, QVariantList { QVariant::fromValue(entityID), QVariant::fromValue(event) });
+            }
+        };
+    };
+    connect(entities.data(), &EntityScriptingInterface::enterEntity, this, single("enterEntity"));
+    connect(entities.data(), &EntityScriptingInterface::leaveEntity, this, single("leaveEntity"));
+    connect(entities.data(), &EntityScriptingInterface::mousePressOnEntity, this, pointer("mousePressOnEntity"));
+    connect(entities.data(), &EntityScriptingInterface::mouseMoveOnEntity, this, pointer("mouseMoveOnEntity"));
+    connect(entities.data(), &EntityScriptingInterface::mouseReleaseOnEntity, this, pointer("mouseReleaseOnEntity"));
+    connect(entities.data(), &EntityScriptingInterface::clickDownOnEntity, this, pointer("clickDownOnEntity"));
+    connect(entities.data(), &EntityScriptingInterface::holdingClickOnEntity, this, pointer("holdingClickOnEntity"));
+    connect(entities.data(), &EntityScriptingInterface::clickReleaseOnEntity, this, pointer("clickReleaseOnEntity"));
+    connect(entities.data(), &EntityScriptingInterface::hoverEnterEntity, this, pointer("hoverEnterEntity"));
+    connect(entities.data(), &EntityScriptingInterface::hoverOverEntity, this, pointer("hoverOverEntity"));
+    connect(entities.data(), &EntityScriptingInterface::hoverLeaveEntity, this, pointer("hoverLeaveEntity"));
+    connect(entities.data(), &EntityScriptingInterface::collisionWithEntity, this,
+            [this](const EntityItemID& idA, const EntityItemID& idB, const Collision& collision) {
+                forwardEntityEvent(idA, "collisionWithEntity",
+                                   QVariantList { QVariant::fromValue(idA), QVariant::fromValue(idB), QVariant::fromValue(collision) });
+            });
+}
+
+void WasmScriptEngine::forwardEntityEvent(const EntityItemID& entityID, const QString& eventName, const QVariantList& arguments) {
+    auto handlers = _callbackHandlers.find(entityID);
+    if (handlers == _callbackHandlers.end()) {
+        return;
+    }
+    const QList<ScriptCallback> callbacks = handlers.value().value(eventName);
+    for (const ScriptCallback& callback : callbacks) {
+        auto target = callback.target.lock();
+        if (target) {
+            QVariant result;
+            QString error;
+            target->invoke(callback.id, arguments, result, error);
+        }
+    }
+}
+
+void WasmScriptEngine::addEventHandler(const EntityItemID& entityID, const QString& eventName, const ScriptCallback& handler) {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "addEventHandler", Q_ARG(const EntityItemID&, entityID), Q_ARG(const QString&, eventName),
+                                  Q_ARG(const ScriptCallback&, handler));
+        return;
+    }
+    if (!handler.isValid()) {
+        return;
+    }
+    connectEntityEventSignals();
+    _callbackHandlers[entityID][eventName].append(handler);
+}
+
+void WasmScriptEngine::removeEventHandler(const EntityItemID& entityID, const QString& eventName, const ScriptCallback& handler) {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "removeEventHandler", Q_ARG(const EntityItemID&, entityID), Q_ARG(const QString&, eventName),
+                                  Q_ARG(const ScriptCallback&, handler));
+        return;
+    }
+    auto handlers = _callbackHandlers.find(entityID);
+    if (handlers == _callbackHandlers.end()) {
+        return;
+    }
+    QList<ScriptCallback>& list = handlers.value()[eventName];
+    for (int i = 0; i < list.size(); ++i) {
+        if (list[i].id == handler.id && list[i].target.lock() == handler.target.lock()) {
+            list.removeAt(i);
+            return;
+        }
+    }
 }
 
 // --- the Script API the JavaScript shim builds on -------------------------------------------------------------------
@@ -718,8 +1210,9 @@ QString WasmScriptEngine::resolvePathFrom(const QString& path, const QString& pa
     return expandScriptUrl(parentURL.resolved(url)).toString();
 }
 
-QVariantMap WasmScriptEngine::resolveInclude(const QString& file, const QString& parentUrl) const {
+QVariantMap WasmScriptEngine::resolveInclude(const QString& file, const QString& parentUrl, const QString& sandboxUrl) const {
     QVariantMap result;
+    const QUrl sandbox = sandboxUrl.isEmpty() ? currentSandboxURL : QUrl(sandboxUrl);
     QString normalized = DependencyManager::get<ResourceManager>()->normalizeURL(file);
     QUrl thisURL;
     bool isStandardLibrary = false;
@@ -733,9 +1226,9 @@ QVariantMap WasmScriptEngine::resolveInclude(const QString& file, const QString&
     } else {
         thisURL = QUrl(resolvePathFrom(normalized, parentUrl));
     }
-    bool disallowOutsideFiles = thisURL.isLocalFile() && !isStandardLibrary && !currentSandboxURL.isLocalFile();
-    if (disallowOutsideFiles && !PathUtils::isDescendantOf(thisURL, currentSandboxURL)) {
-        result["reason"] = "outside of original entity script " + currentSandboxURL.toString();
+    bool disallowOutsideFiles = thisURL.isLocalFile() && !isStandardLibrary && !sandbox.isLocalFile();
+    if (disallowOutsideFiles && !PathUtils::isDescendantOf(thisURL, sandbox)) {
+        result["reason"] = "outside of original entity script " + sandbox.toString();
         return result;
     }
     result["url"] = thisURL.toString();
@@ -744,8 +1237,10 @@ QVariantMap WasmScriptEngine::resolveInclude(const QString& file, const QString&
 
 // Script.require.resolve's rules, as the QtScript engine's _requireResolve has them, with the error returned
 // in the record (the guest throws it).
-QVariantMap WasmScriptEngine::resolveModule(const QString& moduleId, const QString& relativeTo, const QString& parentUrl) const {
+QVariantMap WasmScriptEngine::resolveModule(const QString& moduleId, const QString& relativeTo, const QString& parentUrl,
+                                            const QString& sandboxUrl) const {
     QVariantMap result;
+    const QUrl sandbox = sandboxUrl.isEmpty() ? currentSandboxURL : QUrl(sandboxUrl);
     QString displayId = moduleId.length() > MAX_DEBUG_VALUE_LENGTH ? moduleId.left(MAX_DEBUG_VALUE_LENGTH) + "..." : moduleId;
     auto fail = [&](const QString& details, const QString& type = QString("Error")) {
         result["error"] = QString("Cannot find module '%1' (%2)").arg(displayId, details);
@@ -787,10 +1282,10 @@ QVariantMap WasmScriptEngine::resolveModule(const QString& moduleId, const QStri
         if (file.exists()) {
             canonical.setPath(file.canonicalFilePath());
         }
-        bool disallowOutsideFiles = !defaultScriptsLoc.isParentOf(canonical) && !currentSandboxURL.isLocalFile();
-        if (disallowOutsideFiles && !PathUtils::isDescendantOf(canonical, currentSandboxURL)) {
+        bool disallowOutsideFiles = !defaultScriptsLoc.isParentOf(canonical) && !sandbox.isLocalFile();
+        if (disallowOutsideFiles && !PathUtils::isDescendantOf(canonical, sandbox)) {
             return fail(QString("path '%1' outside of origin script '%2' '%3'")
-                            .arg(PathUtils::stripFilename(url), PathUtils::stripFilename(currentSandboxURL), canonical.toString()));
+                            .arg(PathUtils::stripFilename(url), PathUtils::stripFilename(sandbox), canonical.toString()));
         }
         if (!file.exists()) {
             return fail("path does not exist: " + url.toLocalFile());
@@ -863,28 +1358,6 @@ bool WasmScriptEngine::dumpApi(const QString& path, const QVariantMap& globals) 
     return true;
 }
 
-// --- callbacks called from the host side -----------------------------------------------------------------------------
-
-bool WasmScriptEngine::invokeCallback(int32_t callback, const QVariantList& arguments, QVariant& result, QString& error) {
-    if (!_host || !_moduleRunning || _isFinished) {
-        error = "the script is not running";
-        return false;
-    }
-    ++_callDepth;
-    bool ok = _host->callCallback(callback, arguments, result, error);
-    --_callDepth;
-    return ok;
-}
-
-void WasmScriptEngine::postCallback(int callback, const QVariantList& arguments) {
-    if (_host && _moduleRunning && !_isFinished) {
-        QString error;
-        ++_callDepth;
-        _host->deliverCallback(int32_t(callback), arguments, error);
-        --_callDepth;
-    }
-}
-
 // --- statistics -----------------------------------------------------------------------------------------------------
 
 QVariantMap WasmScriptEngine::statistics() const {
@@ -894,8 +1367,10 @@ QVariantMap WasmScriptEngine::statistics() const {
     stats["timers"] = _timers.size();
     stats["objects"] = _objects->size();
     stats["connections"] = _relay->connectionCount();
-    if (_host) {
-        const auto& host = _host->statistics();
+    stats["entityModules"] = _entityModules.size();
+    stats["entityScripts"] = _entityHosts.size();
+    if (_main && _main->host) {
+        const auto& host = _main->host->statistics();
         stats["calls"] = qulonglong(host.calls);
         stats["gets"] = qulonglong(host.gets);
         stats["sets"] = qulonglong(host.sets);
@@ -904,8 +1379,8 @@ QVariantMap WasmScriptEngine::statistics() const {
         stats["bytesToGuest"] = qulonglong(host.bytesToGuest);
         stats["bytesFromGuest"] = qulonglong(host.bytesFromGuest);
     }
-    if (_instance) {
-        stats["memoryBytes"] = qulonglong(_instance->memorySize());
+    if (_main && _main->instance) {
+        stats["memoryBytes"] = qulonglong(_main->instance->memorySize());
     }
     return stats;
 }

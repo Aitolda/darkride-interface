@@ -116,8 +116,9 @@ class RouteBuilderProxy : public QObject {
          *     Controller.disableMapping(MAPPING_NAME);
          * });
          */
-        /// To a plain value (the WebAssembly engine's form of the argument); declared before the QScriptValue one on purpose.
-    Q_INVOKABLE void to(const QVariant& destination);
+        /// To a plain value, for the WebAssembly engine (an action id, a script callback, or a list of those); its own
+    /// name, because QtScript finds a same-named QVariant overload ambiguous with the QScriptValue one.
+    Q_INVOKABLE void toValue(const QVariant& destination);
     Q_INVOKABLE void to(const QScriptValue& destination);
 
         /**jsdoc
@@ -196,7 +197,7 @@ class RouteBuilderProxy : public QObject {
          *     Controller.disableMapping(MAPPING_NAME);
          * });
          */
-        Q_INVOKABLE QObject* when(const QVariant& expression);
+        Q_INVOKABLE QObject* whenValue(const QVariant& expression);
     Q_INVOKABLE QObject* when(const QScriptValue& expression);
 
         /**jsdoc

@@ -35,6 +35,15 @@
 //                                                        (optional; the host frees the result through free)
 //    (the arguments are placed through the guest's alloc and are the guest's to free)
 //
+//    the entity-script contract, exported by a module that hosts entity scripts (optional; each takes one
+//    CBOR map placed through alloc, the module's to free):
+//      entity_load(ptr, len) -> i64       {"entity": id, "url": url, "source": text or absent}; null, or an
+//                                         error record, packed (the host frees it through free)
+//      entity_unload(ptr, len)            {"entity": id}
+//      entity_has(ptr, len) -> i32        {"entity": id, "method": name}: 1 when the method exists
+//      entity_call(ptr, len) -> i64       {"entity": id, "method": name, "args": [...], "remoteCallerID"?: id};
+//                                         the method's result packed, or 0
+//
 //  A method is named by its name ("getEntityProperties"; the overloads are tried in order, the first whose
 //  arguments convert wins), its signature ("add(int,int)") or its index from the description ("#12").
 //
@@ -99,6 +108,11 @@ public:
     bool callCallback(int32_t callback, const QVariantList& arguments, QVariant& result, QString& error);
     /// An export taking (id, ptr, len): the payload encoded, allocated in the guest, the call made.
     bool callGuest(const QString& name, int32_t id, const QVariant& payload, QString& error);
+    /// An export taking (ptr, len) and returning a packed result (an i64, 0 for none) or an i32 or nothing:
+    /// the payload placed through alloc (the guest's to free), the call made, a packed result read back,
+    /// freed through the guest's free and decoded into `result` (invalid when there is none; an i32 result
+    /// is given as an int). Failures reach the failure handler.
+    bool callWithPayload(const QString& name, const QVariant& payload, QVariant& result, QString& error);
 
     // --- the operations behind the imports, also usable from C++ ------------------------------------------
     /// The registered globals: name to handle.

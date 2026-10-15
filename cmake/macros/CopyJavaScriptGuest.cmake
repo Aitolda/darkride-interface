@@ -7,8 +7,8 @@
 #  engine looks for it at resources/wasm/darkride-js.wasm (Contents/Resources/wasm on macOS), or where
 #  $DARKRIDE_JS_WASM points.
 #
-#  The module is taken from, in this order: $ENV{DARKRIDE_JS_WASM}; ../downloads/darkride-js-<version>.wasm
-#  beside the checkout (a published build); tools/wasm-js/build/darkride-js.wasm (a local build.sh). When
+#  The module is taken from, in this order: $ENV{DARKRIDE_JS_WASM}; tools/wasm-js/build/darkride-js.wasm (a local
+#  build.sh); ../downloads/darkride-js-<version>.wasm beside the checkout (a published build). When
 #  none exists at configure time the client builds without it and JavaScript stays on the QtScript engine,
 #  with a warning here.
 #
@@ -20,8 +20,8 @@ macro(COPY_JAVASCRIPT_GUEST DESTINATION_DIR)
     set(JAVASCRIPT_GUEST "")
     foreach(JAVASCRIPT_GUEST_CANDIDATE
             "$ENV{DARKRIDE_JS_WASM}"
-            "${CMAKE_SOURCE_DIR}/../downloads/darkride-js-${JAVASCRIPT_GUEST_VERSION}.wasm"
-            "${CMAKE_SOURCE_DIR}/tools/wasm-js/build/darkride-js.wasm")
+            "${CMAKE_SOURCE_DIR}/tools/wasm-js/build/darkride-js.wasm"
+            "${CMAKE_SOURCE_DIR}/../downloads/darkride-js-${JAVASCRIPT_GUEST_VERSION}.wasm")
         if (NOT "${JAVASCRIPT_GUEST_CANDIDATE}" STREQUAL "" AND EXISTS "${JAVASCRIPT_GUEST_CANDIDATE}" AND "${JAVASCRIPT_GUEST}" STREQUAL "")
             set(JAVASCRIPT_GUEST "${JAVASCRIPT_GUEST_CANDIDATE}")
         endif()
