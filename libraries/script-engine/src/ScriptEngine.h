@@ -641,6 +641,17 @@ public:
      */
     Q_INVOKABLE QUuid generateUUID() { return QUuid::createUuid(); }
 
+    /**jsdoc
+     * Writes a description of every global object this script sees to a JSON file: for an object from the engine, its
+     * class and the methods, properties, signals and enums of its meta-object, with parameter and return types; for
+     * anything else, its kind and members. A developer tool: the file is the machine-readable form of the API in this
+     * script's context.
+     * @function Script.dumpApi
+     * @param {string} path - The file to write.
+     * @returns {boolean} <code>true</code> if the file was written.
+     */
+    Q_INVOKABLE bool dumpApi(const QString& path);
+
     void setType(Type type) { _type = type; };
     Type getType() { return _type; };
     QString getTypeAsString() const;

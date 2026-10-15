@@ -19,6 +19,14 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QTimer>
 #include <QtCore/QThread>
+#include <QtCore/QFile>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
+#include <QtCore/QMetaEnum>
+#include <QtCore/QMetaMethod>
+#include <QtCore/QMetaProperty>
+#include <QtScript/QScriptValueIterator>
 #include <QtCore/QRegularExpression>
 
 #include <QtCore/QFuture>
@@ -1657,6 +1665,125 @@ QUrl ScriptEngine::resolvePath(const QString& include) const {
 
 QUrl ScriptEngine::resourcesPath() const {
     return QUrl(PathUtils::resourcesUrl());
+}
+
+// The meta-object of an object the engine exposes, as JSON: what QtScript's newQObject turns into functions,
+// properties and signals (public methods only, as QtScript exposes them). The declaring class is kept so that
+// QObject's own members can be told from the object's.
+static QJsonObject describeMetaObject(const QMetaObject* meta) {
+    QJsonObject description;
+    description["class"] = QString::fromUtf8(meta->className());
+    QJsonArray methods, signalList, properties, enums;
+    for (int i = 0; i < meta->methodCount(); ++i) {
+        QMetaMethod method = meta->method(i);
+        if (method.access() != QMetaMethod::Public || method.methodType() == QMetaMethod::Constructor) {
+            continue;
+        }
+        QJsonObject entry;
+        entry["name"] = QString::fromUtf8(method.name());
+        entry["signature"] = QString::fromUtf8(method.methodSignature());
+        entry["returns"] = QString::fromUtf8(method.typeName());
+        entry["declaringClass"] = QString::fromUtf8(method.enclosingMetaObject()->className());
+        QJsonArray parameters;
+        auto types = method.parameterTypes();
+        auto names = method.parameterNames();
+        for (int p = 0; p < types.size(); ++p) {
+            QJsonObject parameter;
+            parameter["type"] = QString::fromUtf8(types[p]);
+            parameter["name"] = QString::fromUtf8(names.value(p));
+            parameters.append(parameter);
+        }
+        entry["parameters"] = parameters;
+        if (method.methodType() == QMetaMethod::Signal) {
+            signalList.append(entry);
+        } else {
+            entry["kind"] = method.methodType() == QMetaMethod::Slot ? "slot" : "invokable";
+            methods.append(entry);
+        }
+    }
+    for (int i = 0; i < meta->propertyCount(); ++i) {
+        QMetaProperty property = meta->property(i);
+        QJsonObject entry;
+        entry["name"] = QString::fromUtf8(property.name());
+        entry["type"] = QString::fromUtf8(property.typeName());
+        entry["readable"] = property.isReadable();
+        entry["writable"] = property.isWritable();
+        entry["constant"] = property.isConstant();
+        entry["declaringClass"] = QString::fromUtf8(property.enclosingMetaObject()->className());
+        if (property.hasNotifySignal()) {
+            entry["notify"] = QString::fromUtf8(property.notifySignal().name());
+        }
+        if (property.isEnumType()) {
+            entry["enum"] = QString::fromUtf8(property.enumerator().name());
+        }
+        properties.append(entry);
+    }
+    for (int i = 0; i < meta->enumeratorCount(); ++i) {
+        QMetaEnum enumerator = meta->enumerator(i);
+        QJsonObject entry;
+        entry["name"] = QString::fromUtf8(enumerator.name());
+        QJsonObject values;
+        for (int k = 0; k < enumerator.keyCount(); ++k) {
+            values[QString::fromUtf8(enumerator.key(k))] = enumerator.value(k);
+        }
+        entry["values"] = values;
+        enums.append(entry);
+    }
+    description["methods"] = methods;
+    description["signals"] = signalList;
+    description["properties"] = properties;
+    description["enums"] = enums;
+    return description;
+}
+
+bool ScriptEngine::dumpApi(const QString& path) {
+    QJsonObject root;
+    root["context"] = getContext();
+    root["type"] = getTypeAsString();
+    root["fileName"] = _fileNameString;
+    QJsonObject globals;
+    QScriptValueIterator it(globalObject());
+    while (it.hasNext()) {
+        it.next();
+        QScriptValue value = it.value();
+        QJsonObject entry;
+        if (value.isQObject()) {
+            QObject* object = value.toQObject();
+            if (object) {
+                entry["kind"] = "qobject";
+                entry["meta"] = describeMetaObject(object->metaObject());
+            } else {
+                entry["kind"] = "qobject (null)";
+            }
+        } else if (value.isFunction()) {
+            entry["kind"] = "function";
+        } else if (value.isArray()) {
+            entry["kind"] = "array";
+        } else if (value.isObject()) {
+            entry["kind"] = "object";
+            QJsonObject members;
+            QScriptValueIterator members_it(value);
+            while (members_it.hasNext()) {
+                members_it.next();
+                QScriptValue member = members_it.value();
+                members[members_it.name()] = member.isFunction() ? QString("function") :
+                                             member.isQObject() ? QString("qobject ") + member.toQObject()->metaObject()->className() :
+                                             member.isObject() ? QString("object") : QString::fromUtf8(member.toVariant().typeName());
+            }
+            entry["members"] = members;
+        } else {
+            entry["kind"] = value.isUndefined() ? QString("undefined") : QString::fromUtf8(value.toVariant().typeName());
+        }
+        globals[it.name()] = entry;
+    }
+    root["globals"] = globals;
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        scriptWarningMessage("Script.dumpApi: cannot write " + path);
+        return false;
+    }
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    return true;
 }
 
 void ScriptEngine::print(const QString& message) {
