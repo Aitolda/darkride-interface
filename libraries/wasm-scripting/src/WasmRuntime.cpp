@@ -226,32 +226,6 @@ struct HostFunctionEntry {
     WasmSignature signature;
 };
 
-// What the module calls when it calls a host function.
-wasm_trap_t* hostFunctionTrampoline(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t argCount,
-                                    wasmtime_val_t* results, size_t resultCount) {
-    Q_UNUSED(caller);
-    auto entry = static_cast<HostFunctionEntry*>(env);
-    std::vector<WasmValue> in;
-    in.reserve(argCount);
-    for (size_t i = 0; i < argCount; ++i) {
-        in.push_back(fromVal(args[i]));
-    }
-    std::vector<WasmValue> out;
-    QString error = entry->function(*entry->instance, in, out);
-    if (!error.isEmpty()) {
-        QByteArray utf8 = error.toUtf8();
-        return wasmtime_trap_new(utf8.constData(), static_cast<size_t>(utf8.size()));
-    }
-    if (out.size() != resultCount) {
-        QByteArray utf8 = QString("host function returned %1 results, %2 expected").arg(out.size()).arg(resultCount).toUtf8();
-        return wasmtime_trap_new(utf8.constData(), static_cast<size_t>(utf8.size()));
-    }
-    for (size_t i = 0; i < resultCount; ++i) {
-        results[i] = toVal(out[i]);
-    }
-    return nullptr;
-}
-
 } // namespace
 
 struct WasmInstance::Impl {
@@ -267,11 +241,24 @@ struct WasmInstance::Impl {
     std::atomic<bool> stopRequested { false };
     std::chrono::steady_clock::time_point callStarted;
     std::chrono::milliseconds callTimeout { 0 };
+    int callDepth { 0 };
 
-    // Every call sets the deadline one tick out; at each tick the runtime asks whether to go on.
+    // The outermost call sets the deadline one tick out and starts the clock; at each tick the runtime asks
+    // whether to go on. A call made from inside a host function (reentrant) runs under the outer call's limit.
     void beginCall() {
-        callStarted = std::chrono::steady_clock::now();
-        wasmtime_context_set_epoch_deadline(context, 1);
+        if (callDepth == 0) {
+            callStarted = std::chrono::steady_clock::now();
+            wasmtime_context_set_epoch_deadline(context, 1);
+        }
+    }
+
+    template <typename Function>
+    QString withCallerContext(wasmtime_caller_t* caller, Function function) {
+        wasmtime_context_t* outer = context;
+        context = wasmtime_caller_context(caller);
+        QString result = function();
+        context = outer;
+        return result;
     }
 
     static wasmtime_error_t* onDeadline(wasmtime_context_t* context, void* data, uint64_t* delta,
@@ -296,6 +283,37 @@ struct WasmInstance::Impl {
         return instantiated && wasmtime_instance_export_get(context, &instance, utf8.constData(), static_cast<size_t>(utf8.size()), &item);
     }
 };
+
+namespace {
+
+// What the module calls when it calls a host function.
+wasm_trap_t* hostFunctionTrampoline(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t argCount,
+                                    wasmtime_val_t* results, size_t resultCount) {
+    auto entry = static_cast<HostFunctionEntry*>(env);
+    std::vector<WasmValue> in;
+    in.reserve(argCount);
+    for (size_t i = 0; i < argCount; ++i) {
+        in.push_back(fromVal(args[i]));
+    }
+    std::vector<WasmValue> out;
+    // While the host function runs, the instance works through the caller's context: a call back into the
+    // module (the guest's alloc, a callback) and its memory accesses go through it, as wasmtime requires.
+    QString error = entry->instance->impl().withCallerContext(caller, [&] { return entry->function(*entry->instance, in, out); });
+    if (!error.isEmpty()) {
+        QByteArray utf8 = error.toUtf8();
+        return wasmtime_trap_new(utf8.constData(), static_cast<size_t>(utf8.size()));
+    }
+    if (out.size() != resultCount) {
+        QByteArray utf8 = QString("host function returned %1 results, %2 expected").arg(out.size()).arg(resultCount).toUtf8();
+        return wasmtime_trap_new(utf8.constData(), static_cast<size_t>(utf8.size()));
+    }
+    for (size_t i = 0; i < resultCount; ++i) {
+        results[i] = toVal(out[i]);
+    }
+    return nullptr;
+}
+
+} // namespace
 
 WasmInstance::WasmInstance(std::shared_ptr<WasmModule> module) : WasmInstance(std::move(module), Limits()) {
 }
@@ -412,8 +430,10 @@ bool WasmInstance::call(const QString& name, const std::vector<WasmValue>& args,
     }
     std::vector<wasmtime_val_t> out(resultCount);
     _impl->beginCall();
+    ++_impl->callDepth;
     wasm_trap_t* trap = nullptr;
     auto result = wasmtime_func_call(_impl->context, &function, in.data(), in.size(), out.data(), out.size(), &trap);
+    --_impl->callDepth;
     if (result) {
         error = takeErrorText(result);
         return false;

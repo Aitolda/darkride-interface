@@ -27,6 +27,7 @@ private slots:
     void testMemoryReadWrite();
     void testWasiImports();
     void testImportsAndExports();
+    void testHostFunctionMayCallBackIn();
 };
 
 #endif // hifi_WasmRuntimeTests_h

@@ -270,3 +270,66 @@ void WasmRuntimeTests::testImportsAndExports() {
     QCOMPARE(module->imports(), QStringList({ "darkride.log", "darkride.now" }));
     QCOMPARE(module->exports(), QStringList({ "memory", "script_start", "alloc" }));
 }
+
+// A host function that calls an export of the module that called it (what the host interface does to have
+// the guest allocate the memory for a result), with the module's memory read and written on the way.
+void WasmRuntimeTests::testHostFunctionMayCallBackIn() {
+    auto runtime = makeRuntime();
+    QString error;
+    auto module = runtime->compileText(R"((module
+      (import "host" "ask" (func $ask (param i32) (result i32)))
+      (memory (export "memory") 1)
+      (global $next (mut i32) (i32.const 1024))
+      (func (export "alloc") (param $size i32) (result i32)
+        (local $ptr i32)
+        global.get $next
+        local.set $ptr
+        global.get $next
+        local.get $size
+        i32.add
+        global.set $next
+        local.get $ptr)
+      (func (export "run") (param i32) (result i32)
+        local.get 0
+        call $ask)
+      (func (export "loop") (result i32)
+        (loop $forever br $forever)
+        i32.const 0)))", error);
+    QVERIFY2(module, qPrintable(error));
+    WasmInstance::Limits limits;
+    limits.callTimeout = std::chrono::milliseconds(100);
+    WasmInstance instance(module, limits);
+    int depth = 0;
+    instance.defineHostFunction("host", "ask", { { WasmType::I32 }, { WasmType::I32 } },
+        [&](WasmInstance& self, const std::vector<WasmValue>& args, std::vector<WasmValue>& results) -> QString {
+            ++depth;
+            std::vector<WasmValue> out;
+            QString callError;
+            // the guest allocates, the host writes the answer there and returns the pointer
+            if (!self.call("alloc", { int32_t(4) }, out, callError)) {
+                return "alloc failed: " + callError;
+            }
+            int32_t pointer = std::get<int32_t>(out[0]);
+            int32_t value = std::get<int32_t>(args[0]) * 2;
+            self.writeMemory(uint64_t(pointer), QByteArray(reinterpret_cast<const char*>(&value), 4));
+            results.push_back(pointer);
+            return QString();
+        });
+    QVERIFY2(instance.instantiate(error), qPrintable(error));
+    std::vector<WasmValue> results;
+    QVERIFY2(instance.call("run", { int32_t(21) }, results, error), qPrintable(error));
+    int32_t pointer = std::get<int32_t>(results[0]);
+    QCOMPARE(pointer, 1024);
+    QByteArray answer = instance.readMemory(uint64_t(pointer), 4);
+    QCOMPARE(*reinterpret_cast<const int32_t*>(answer.constData()), 42);
+    QCOMPARE(depth, 1);
+    // a second call allocates after the first
+    QVERIFY(instance.call("run", { int32_t(5) }, results, error));
+    QCOMPARE(std::get<int32_t>(results[0]), 1028);
+    // the time limit still holds after reentrant calls
+    QElapsedTimer timer;
+    timer.start();
+    QVERIFY(!instance.call("loop", {}, results, error));
+    QVERIFY(timer.elapsed() < 1000);
+    QVERIFY(error.contains("limit"));
+}

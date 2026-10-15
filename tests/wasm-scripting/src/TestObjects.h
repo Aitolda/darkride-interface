@@ -15,6 +15,8 @@
 
 #include <QtCore/QObject>
 #include <QtCore/QString>
+#include <QtCore/QStringList>
+#include <QtCore/QUuid>
 #include <QtCore/QVariant>
 
 #include <RegisteredMetaTypes.h>
@@ -40,6 +42,12 @@ public:
     Q_INVOKABLE int add(int a, int b) { return a + b; }
     Q_INVOKABLE QString add(const QString& a, const QString& b) { return a + b; }
     Q_INVOKABLE glm::vec3 scale(const glm::vec3& v, float by) { return v * by; }
+    Q_INVOKABLE QObject* self() { return this; }
+    Q_INVOKABLE QVariant echo(const QVariant& value) { return value; }
+    Q_INVOKABLE QStringList join(const QStringList& names, const QString& extra) { return QStringList(names) << extra; }
+    Q_INVOKABLE QUuid uuidOf(const QString& text) { return QUuid(text); }
+    Q_INVOKABLE int countOf(QObject* object) { Probe* probe = qobject_cast<Probe*>(object); return probe ? probe->count() : -1; }
+    Q_INVOKABLE QVariantMap describeSelf() { QVariantMap m; m["count"] = _count; m["mode"] = int(_mode); return m; }
 
 public slots:
     void setPosition(const glm::vec3& position) {
