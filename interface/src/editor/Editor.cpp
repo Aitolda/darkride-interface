@@ -2518,14 +2518,10 @@ bool Editor::handleMouseDoubleClick(QMouseEvent* event) {
     if (!_active) {
         return false;
     }
-    if (event->button() == Qt::LeftButton && !event->modifiers().testFlag(Qt::AltModifier)) {
-        QUuid hit = pickAt(event->pos());
-        if (!hit.isNull()) {
-            _selection.set({ hit });
-            frameSelection();
-        }
-    }
-    return true;
+    // The second click of a double-click is a click like any other in the scene: it selects what it hits, or lays
+    // another terrain stroke. It used to frame the entity hit, which flung the camera away from the ground being
+    // edited; framing is on F, and on a double-click in the Hierarchy.
+    return handleMousePress(event);
 }
 
 bool Editor::handleWheel(QWheelEvent* event) {
