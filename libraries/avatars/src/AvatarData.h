@@ -52,6 +52,7 @@
 
 #include "AABox.h"
 #include "AvatarTraits.h"
+#include "GazeStyle.h"
 #include "HeadData.h"
 #include "PathUtils.h"
 
@@ -517,6 +518,10 @@ class AvatarData : public QObject, public SpatiallyNestable {
      *     mixer rather than Interface clients. The result is unique among all avatars present in the domain at the time.
      * @property {boolean} lookAtSnappingEnabled=true - <code>true</code> if the avatar's eyes snap to look at another avatar's
      *     eyes when the other avatar is in the line of sight and also has <code>lookAtSnappingEnabled == true</code>.
+     * @property {string} gazeStyle="calm" - How the avatar's eyes behave, for everyone to see: <code>"calm"</code>,
+     *     <code>"excited"</code>, <code>"shy"</code>, <code>"sleepy"</code> or <code>"intent"</code>. A style sets how often
+     *     and how far the eyes dart, where they rest and how much they meet other people's eyes, what the head does with
+     *     them, and how the lids blink.
      * @property {string} skeletonModelURL - The avatar's FST file.
      * @property {AttachmentData[]} attachmentData - Information on the avatar's attachments.
      *     <p class="important">Deprecated: This property is deprecated and will be removed. Use avatar entities instead.</p>
@@ -574,6 +579,7 @@ class AvatarData : public QObject, public SpatiallyNestable {
     // The result is unique among all avatars present at the time.
     Q_PROPERTY(QString sessionDisplayName READ getSessionDisplayName WRITE setSessionDisplayName NOTIFY sessionDisplayNameChanged)
     Q_PROPERTY(bool lookAtSnappingEnabled MEMBER _lookAtSnappingEnabled NOTIFY lookAtSnappingChanged)
+    Q_PROPERTY(QString gazeStyle READ getGazeStyle WRITE setGazeStyle NOTIFY gazeStyleChanged)
     Q_PROPERTY(QString skeletonModelURL READ getSkeletonModelURLFromScript WRITE setSkeletonModelURLFromScript NOTIFY skeletonModelURLChanged)
     Q_PROPERTY(QVector<AttachmentData> attachmentData READ getAttachmentData WRITE setAttachmentData)
 
@@ -1234,6 +1240,25 @@ public:
     void setAvatarMenuParameters(const QByteArray& parameters);  // the avatar's own client: sent when they change
     QByteArray getAvatarMenuParameters() const;
     bool takeAvatarMenuParametersChanged();  // true once after new parameters arrive from the network
+    QByteArray avatarMenuTraitPayload() const;  // what goes on the wire: the parameters with the gaze style beside them
+
+    // The avatar's gaze style (GazeStyle.h): its owner's choice of how its eyes behave, sent beside the menu parameters.
+    QString getGazeStyle() const;  // "calm" when none is worn
+
+    /**jsdoc
+     * Sets how the avatar's eyes behave, for everyone to see: the <code>gazeStyle</code> property.
+     * @function MyAvatar.setGazeStyle
+     * @param {string} name - One of the names {@link MyAvatar.getGazeStyles} returns; any other name is refused.
+     */
+    Q_INVOKABLE void setGazeStyle(const QString& name);
+
+    /**jsdoc
+     * Gets the names of the gaze styles an avatar can wear (the <code>gazeStyle</code> property).
+     * @function MyAvatar.getGazeStyles
+     * @returns {string[]} The names: <code>"calm"</code> (the default), <code>"excited"</code>, <code>"shy"</code>,
+     *     <code>"sleepy"</code> and <code>"intent"</code>.
+     */
+    Q_INVOKABLE QStringList getGazeStyles() const;
 
     QByteArray identityByteArray(bool setIsReplicated = false) const;
 
@@ -1597,6 +1622,13 @@ signals:
     void lookAtSnappingChanged(bool enabled);
 
     /**jsdoc
+     * Triggered when the avatar's gaze style changes (its <code>gazeStyle</code> property).
+     * @function MyAvatar.gazeStyleChanged
+     * @returns {Signal}
+     */
+    void gazeStyleChanged();
+
+    /**jsdoc
      * Triggered when the avatar's <code>sessionUUID</code> property value changes.
      * @function Avatar.sessionUUIDChanged
      * @returns {Signal}
@@ -1850,6 +1882,8 @@ protected:
     mutable ReadWriteLockable _avatarMenuParametersLock;
     QByteArray _avatarMenuParameters;
     bool _avatarMenuParametersChanged { false }; // by network
+    QString _gazeStyle;  // the worn gaze style, empty for the default; under _avatarMenuParametersLock
+    void markAvatarMenuTrait();  // the trait is updated, or deleted when there is nothing to send
 
     mutable ReadWriteLockable _avatarSkeletonDataLock;
     std::vector<AvatarSkeletonTrait::UnpackedJointData> _avatarSkeletonData;

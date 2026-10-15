@@ -2279,7 +2279,7 @@ QByteArray AvatarData::packTraitInstance(AvatarTraits::TraitType traitType, Avat
     } else if (traitType == AvatarTraits::Grab) {
         traitBinaryData = packGrabTraitInstance(traitInstanceID);
     } else if (traitType == AvatarTraits::AvatarMenuParameters) {
-        traitBinaryData = getAvatarMenuParameters();
+        traitBinaryData = avatarMenuTraitPayload();
     }
 
     return traitBinaryData;
@@ -2298,10 +2298,19 @@ void AvatarData::processTraitInstance(AvatarTraits::TraitType traitType,
     } else if (traitType == AvatarTraits::Grab) {
         updateAvatarGrabData(instanceID, traitBinaryData);
     } else if (traitType == AvatarTraits::AvatarMenuParameters) {
+        // the menu parameters, with the gaze style beside them under GazeStyle::traitKey()
+        const QString gazeStyle = QJsonDocument::fromJson(traitBinaryData).object().value(GazeStyle::traitKey()).toString();
+        bool gazeChanged = false;
         _avatarMenuParametersLock.withWriteLock([&] {
             _avatarMenuParameters = traitBinaryData;
             _avatarMenuParametersChanged = true;
+            const QString worn = GazeStyle::isKnown(gazeStyle) && gazeStyle != GazeStyle::defaultName() ? gazeStyle : QString();
+            gazeChanged = worn != _gazeStyle;
+            _gazeStyle = worn;
         });
+        if (gazeChanged) {
+            emit gazeStyleChanged();
+        }
     }
 }
 
@@ -2311,10 +2320,16 @@ void AvatarData::processDeletedTraitInstance(AvatarTraits::TraitType traitType, 
     } else if (traitType == AvatarTraits::Grab) {
         clearAvatarGrabData(instanceID);
     } else if (traitType == AvatarTraits::AvatarMenuParameters) {
+        bool gazeChanged = false;
         _avatarMenuParametersLock.withWriteLock([&] {
             _avatarMenuParameters = QByteArray();
             _avatarMenuParametersChanged = true;
+            gazeChanged = !_gazeStyle.isEmpty();
+            _gazeStyle = QString();
         });
+        if (gazeChanged) {
+            emit gazeStyleChanged();
+        }
     }
 }
 
@@ -2328,7 +2343,7 @@ void AvatarData::prepareResetTraitInstances() {
                 _clientTraitsHandler->markInstancedTraitUpdated(AvatarTraits::Grab, grabID);
             }
         });
-        if (!getAvatarMenuParameters().isEmpty()) {
+        if (!avatarMenuTraitPayload().isEmpty()) {
             _clientTraitsHandler->markInstancedTraitUpdated(AvatarTraits::AvatarMenuParameters,
                                                             AvatarTraits::AVATAR_MENU_PARAMETERS_ID);
         }
@@ -2343,15 +2358,67 @@ void AvatarData::setAvatarMenuParameters(const QByteArray& parameters) {
             changed = true;
         }
     });
-    if (changed && _clientTraitsHandler) {
-        if (parameters.isEmpty()) {
-            _clientTraitsHandler->markInstancedTraitDeleted(AvatarTraits::AvatarMenuParameters,
-                                                            AvatarTraits::AVATAR_MENU_PARAMETERS_ID);
-        } else {
-            _clientTraitsHandler->markInstancedTraitUpdated(AvatarTraits::AvatarMenuParameters,
-                                                            AvatarTraits::AVATAR_MENU_PARAMETERS_ID);
-        }
+    if (changed) {
+        markAvatarMenuTrait();
     }
+}
+
+// The AvatarMenuParameters trait's bytes: the menu parameters' JSON object, with the gaze style added under
+// GazeStyle::traitKey() when one is worn (a menu skips a key it doesn't know). An avatar with neither sends nothing.
+QByteArray AvatarData::avatarMenuTraitPayload() const {
+    QByteArray parameters;
+    QString gazeStyle;
+    _avatarMenuParametersLock.withReadLock([&] {
+        parameters = _avatarMenuParameters;
+        gazeStyle = _gazeStyle;
+    });
+    if (gazeStyle.isEmpty()) {
+        return parameters;
+    }
+    QJsonObject object = QJsonDocument::fromJson(parameters).object();
+    object.insert(GazeStyle::traitKey(), gazeStyle);
+    return QJsonDocument(object).toJson(QJsonDocument::Compact);
+}
+
+void AvatarData::markAvatarMenuTrait() {
+    if (!_clientTraitsHandler) {
+        return;
+    }
+    if (avatarMenuTraitPayload().isEmpty()) {
+        _clientTraitsHandler->markInstancedTraitDeleted(AvatarTraits::AvatarMenuParameters,
+                                                        AvatarTraits::AVATAR_MENU_PARAMETERS_ID);
+    } else {
+        _clientTraitsHandler->markInstancedTraitUpdated(AvatarTraits::AvatarMenuParameters,
+                                                        AvatarTraits::AVATAR_MENU_PARAMETERS_ID);
+    }
+}
+
+QString AvatarData::getGazeStyle() const {
+    const QString style = _avatarMenuParametersLock.resultWithReadLock<QString>([&] { return _gazeStyle; });
+    return style.isEmpty() ? GazeStyle::defaultName() : style;
+}
+
+// Any thread: the style is under the parameters' lock and the traits handler has its own, so a script reads back what
+// it just set.
+void AvatarData::setGazeStyle(const QString& name) {
+    if (!GazeStyle::isKnown(name)) {
+        qCWarning(avatars) << "setGazeStyle: no gaze style named" << name << "; the styles are" << GazeStyle::names();
+        return;
+    }
+    const QString style = name == GazeStyle::defaultName() ? QString() : name;
+    bool changed = false;
+    _avatarMenuParametersLock.withWriteLock([&] {
+        changed = style != _gazeStyle;
+        _gazeStyle = style;
+    });
+    if (changed) {
+        markAvatarMenuTrait();
+        emit gazeStyleChanged();
+    }
+}
+
+QStringList AvatarData::getGazeStyles() const {
+    return GazeStyle::names();
 }
 
 QByteArray AvatarData::getAvatarMenuParameters() const {

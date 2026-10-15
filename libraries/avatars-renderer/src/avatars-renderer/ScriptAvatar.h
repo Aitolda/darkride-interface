@@ -55,6 +55,9 @@
  *     removed.</span>
  * @property {boolean} lookAtSnappingEnabled - <code>true</code> if the avatar's eyes snap to look at another avatar's eyes
  *     when the other avatar is in the line of sight and also has <code>lookAtSnappingEnabled == true</code>.
+ * @property {string} gazeStyle - How the avatar's eyes behave, as its owner chose: <code>"calm"</code>,
+ *     <code>"excited"</code>, <code>"shy"</code>, <code>"sleepy"</code> or <code>"intent"</code>. See
+ *     {@link MyAvatar.getGazeStyles}.
  *
  * @property {string} skeletonModelURL - The avatar's FST file.
  * @property {AttachmentData[]} attachmentData - Information on the avatar's attachments.

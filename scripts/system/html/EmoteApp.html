@@ -89,6 +89,12 @@
             input[type=button][pressed=pressed] {
                 color: #00b4ef;
             }
+            input[type=button].gaze-button {
+                height: 50px;
+                min-width: 80px;
+                font-size: 16px;
+                margin-bottom: 6px;
+            }
 
         </style>
     </head>
@@ -108,11 +114,31 @@
                <input type="button" class="emote-button white" value="Clapping"></p>
             <p><input type="button" class="emote-button white" value="Sit">
                <input type="button" class="emote-button white" value="Love"></p>
+            <p>Eyes (how your gaze behaves, for everyone to see):<p>
+            <p><input type="button" class="gaze-button" value="calm">
+               <input type="button" class="gaze-button" value="excited">
+               <input type="button" class="gaze-button" value="shy">
+               <input type="button" class="gaze-button" value="sleepy">
+               <input type="button" class="gaze-button" value="intent"></p>
         </div>
 
         <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.1.1/jquery.min.js"></script>
         <script>
+            // Marks the Eyes button of the gaze style the avatar wears
+            function markGaze(name) {
+                $(".gaze-button").removeAttr("pressed");
+                $(".gaze-button[value='" + name + "']").attr("pressed", "pressed");
+            }
+
             function main() {
+                // emote.js answers "ready" with the gaze style worn
+                EventBridge.scriptEventReceived.connect(function(message) {
+                    var event = JSON.parse(message);
+                    if (event.type === "gaze") {
+                        markGaze(event.data);
+                    }
+                });
+
                 // Send an event to emote.js when the page loads and is ready to get things rolling
                 console.log("document ready");
                 var readyEvent = {
@@ -129,6 +155,12 @@
                         "data": this.value
                     };
                     EventBridge.emitWebEvent(JSON.stringify(clickEvent));
+                });
+
+                // An Eyes button: the gaze style to wear
+                $(".gaze-button").click(function(){
+                    EventBridge.emitWebEvent(JSON.stringify({ "type": "gaze", "data": this.value }));
+                    markGaze(this.value);
                 });
             }
 

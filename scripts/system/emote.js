@@ -83,6 +83,18 @@ function onWebEventReceived(event) {
         event = JSON.parse(event);
     }
 
+    if (event.type === "ready") {
+        // the page marks the gaze style the avatar wears
+        tablet.emitScriptEvent(JSON.stringify({ type: "gaze", data: MyAvatar.gazeStyle }));
+        return;
+    }
+
+    if (event.type === "gaze") {
+        // one of the Eyes buttons: how the avatar's eyes behave, for everyone to see
+        MyAvatar.gazeStyle = event.data;
+        return;
+    }
+
     if (event.type === "click") {
         
         // Allow for a random sitting animation when a user selects sit
