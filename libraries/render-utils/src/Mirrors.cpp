@@ -76,6 +76,21 @@ uint32_t Mirrors::generation(const QUuid& id) const {
     return found == _entries.end() ? 0 : found->second.generation;
 }
 
+bool Mirrors::screenFor(const QUuid& id, gpu::TexturePointer& picture, glm::vec4& region) const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto found = _entries.find(id);
+    if (found == _entries.end() || found->second.surface.mode != Mode::Screen) {
+        return false;
+    }
+    int slot = found->second.slot;
+    if (slot < 0 || _slots[slot].mirror != id || !_slots[slot].active || !_slots[slot].framebuffer) {
+        return false;
+    }
+    picture = _slots[slot].framebuffer->getRenderBuffer(0);
+    region = _slots[slot].region;
+    return true;
+}
+
 const gpu::FramebufferPointer& Mirrors::idleFramebuffer() {
     if (!_idle) {
         _idle = gpu::FramebufferPointer(gpu::Framebuffer::create("mirrorIdle", gpu::Element::COLOR_SRGBA_32, 8, 8));
@@ -83,8 +98,13 @@ const gpu::FramebufferPointer& Mirrors::idleFramebuffer() {
     return _idle;
 }
 
-bool Mirrors::cameraFor(const Surface& surface, const ViewFrustum& view, const glm::ivec2& viewport, ViewFrustum& camera,
-                        glm::ivec2& pixels, float& area) const {
+namespace {
+    // a mirror smaller than this on screen (in pixels of area) shows its colour: a view's fixed cost (the sun's
+    // shadow maps, the lighting passes) is not worth a thumbnail
+    const float MIN_AREA = 32.0f * 32.0f;
+}
+
+bool Mirrors::cameraFor(const Surface& surface, const ViewFrustum& view, const glm::ivec4& viewport, Want& want) const {
     glm::vec2 half(surface.dimensions.x * 0.5f, surface.dimensions.y * 0.5f);
     float front = surface.dimensions.z * 0.5f;   // the face's distance from the entity's centre, along +Z
     if (half.x <= 0.0f || half.y <= 0.0f) {
@@ -104,33 +124,41 @@ bool Mirrors::cameraFor(const Surface& surface, const ViewFrustum& view, const g
         return false;
     }
 
-    // its size on screen: the face's corners projected; a corner behind the eye makes it the whole view
+    // its rectangle on screen: the face's corners projected, clipped to the view; a corner behind the eye makes it
+    // the whole view
     glm::mat4 cameraFromWorld = glm::inverse(glm::translate(view.getPosition()) * glm::mat4_cast(view.getOrientation()));
     glm::mat4 clipFromMirror = view.getProjection() * cameraFromWorld * worldFromMirror;
     glm::vec3 corners[4] = { { -half.x, -half.y, front }, { half.x, -half.y, front }, { half.x, half.y, front }, { -half.x, half.y, front } };
     glm::vec2 low(1.0f);
     glm::vec2 high(-1.0f);
-    bool behind = false;
     for (const auto& corner : corners) {
         glm::vec4 clip = clipFromMirror * glm::vec4(corner, 1.0f);
         if (clip.w <= 0.001f) {
-            behind = true;
+            low = glm::vec2(-1.0f);
+            high = glm::vec2(1.0f);
             break;
         }
         glm::vec2 ndc = glm::clamp(glm::vec2(clip) / clip.w, glm::vec2(-1.0f), glm::vec2(1.0f));
         low = glm::min(low, ndc);
         high = glm::max(high, ndc);
     }
-    glm::vec2 sizeOnScreen = behind ? glm::vec2(viewport) : glm::max(high - low, glm::vec2(0.0f)) * 0.5f * glm::vec2(viewport);
-    area = sizeOnScreen.x * sizeOnScreen.y;
-    if (area < 4.0f) {
+    // to whole pixels, from the viewport's low corner
+    glm::ivec2 viewportSize(viewport.z, viewport.w);
+    glm::ivec2 pixelLow = glm::clamp(glm::ivec2(glm::floor((low + 1.0f) * 0.5f * glm::vec2(viewportSize))), glm::ivec2(0), viewportSize);
+    glm::ivec2 pixelHigh = glm::clamp(glm::ivec2(glm::ceil((high + 1.0f) * 0.5f * glm::vec2(viewportSize))), pixelLow, viewportSize);
+    glm::ivec2 rectPixels = pixelHigh - pixelLow;
+    want.area = (float)rectPixels.x * (float)rectPixels.y;
+    if (want.area < MIN_AREA) {
         return false;
     }
+    want.mode = surface.mode;
+
     if (surface.mode == Mode::Screen) {
-        // the main view reflected in the face's plane: the picture is the whole view, a pixel a pixel. The
-        // reflected camera's axes are reflected too, which makes a left-handed camera; its right is turned round to
-        // keep a proper one, and the glass flips the picture back across when it shows it. The near plane is moved
-        // onto the glass, so nothing behind the mirror is drawn.
+        // the main view reflected in the face's plane, a pixel a pixel: the picture covers the glass's rectangle
+        // on screen (cropScreenCamera() fits the projection once the picture has its size). The reflected camera's
+        // axes are reflected too, which makes a left-handed camera; its right is turned round to keep a proper
+        // one, and the glass flips the picture back across when it shows it. The near plane is moved onto the
+        // glass, so nothing behind the mirror is drawn.
         glm::vec3 normal = surface.orientation * glm::vec3(0.0f, 0.0f, 1.0f);
         glm::vec3 onFace = surface.position + normal * front;
         auto reflectPoint = [&](const glm::vec3& p) { return p - 2.0f * glm::dot(p - onFace, normal) * normal; };
@@ -138,28 +166,27 @@ bool Mirrors::cameraFor(const Surface& surface, const ViewFrustum& view, const g
         glm::vec3 forward = reflectDirection(view.getDirection());
         glm::vec3 up = reflectDirection(view.getUp());
         glm::vec3 right = glm::cross(forward, up);
+        ViewFrustum& camera = want.camera;
         camera.setPosition(reflectPoint(view.getPosition()));
         camera.setOrientation(glm::quat_cast(glm::mat3(right, up, -forward)));
-        glm::mat4 cameraFromWorld = glm::inverse(glm::translate(camera.getPosition()) * glm::mat4_cast(camera.getOrientation()));
-        glm::vec3 normalInCamera = glm::normalize(glm::mat3(cameraFromWorld) * normal);
-        glm::vec3 onFaceInCamera = glm::vec3(cameraFromWorld * glm::vec4(onFace, 1.0f));
-        glm::vec4 plane(normalInCamera, -glm::dot(normalInCamera, onFaceInCamera));   // the viewer's side is positive
-        // the planes, near and far from the view's own projection (the oblique one's far corners land behind the
-        // eye); the oblique projection only to draw with
-        camera.setProjection(view.getProjection());
-        camera.calculate();
-        camera.setObliqueProjection(obliqueProjection(view.getProjection(), plane));
-        pixels = viewport;
+        glm::mat4 reflectedFromWorld = glm::inverse(glm::translate(camera.getPosition()) * glm::mat4_cast(camera.getOrientation()));
+        glm::vec3 normalInCamera = glm::normalize(glm::mat3(reflectedFromWorld) * normal);
+        glm::vec3 onFaceInCamera = glm::vec3(reflectedFromWorld * glm::vec4(onFace, 1.0f));
+        want.plane = glm::vec4(normalInCamera, -glm::dot(normalInCamera, onFaceInCamera));   // the viewer's side is positive
+        camera.setProjection(view.getProjection());   // the view's own, to crop
+        want.rectOrigin = pixelLow;
+        want.pixels = glm::max(glm::ivec2(glm::ceil(glm::vec2(rectPixels) * _resolutionScale)), glm::ivec2(1));
         return true;
     }
 
     // the picture: the mirror's size on screen (scaled), a texel a pixel, within bounds
-    glm::vec2 wanted = glm::clamp(sizeOnScreen * _resolutionScale, glm::vec2(32.0f), glm::vec2((float)_maxPixels));
-    pixels = glm::ivec2(glm::round(wanted));
+    glm::vec2 wanted = glm::clamp(glm::vec2(rectPixels) * _resolutionScale, glm::vec2(32.0f), glm::vec2((float)_maxPixels));
+    want.pixels = glm::ivec2(glm::round(wanted));
 
     // the camera: the viewer reflected in the face, looking back through it, with the face's rectangle as its near
     // plane; it is turned half round so that its right is the face's -X, which keeps the image a proper one (no
     // mirrored winding to draw with); the material flips it across to show it as a mirror does
+    ViewFrustum& camera = want.camera;
     glm::vec3 eye(viewer.x, viewer.y, 2.0f * front - viewer.z);
     camera.setPosition(glm::vec3(worldFromMirror * glm::vec4(eye, 1.0f)));
     camera.setOrientation(surface.orientation * glm::angleAxis(glm::pi<float>(), glm::vec3(0.0f, 1.0f, 0.0f)));
@@ -173,19 +200,40 @@ bool Mirrors::cameraFor(const Surface& surface, const ViewFrustum& view, const g
     return true;
 }
 
-void Mirrors::plan(const ViewFrustum& view, const glm::ivec2& viewport) {
+void Mirrors::cropScreenCamera(Want& want, const glm::ivec2& pictureSize, const glm::ivec4& viewport, Slot& slot) const {
+    // the region of the screen the picture covers: from the glass's low corner, the picture's size at the screen's
+    // own pixel density (so it stays a pixel a pixel, and may reach past the glass and past the screen's edge)
+    glm::vec2 viewportSize(viewport.z, viewport.w);
+    glm::vec2 regionPixels = glm::vec2(pictureSize) / _resolutionScale;
+    glm::vec2 low = glm::vec2(want.rectOrigin) / viewportSize * 2.0f - 1.0f;
+    glm::vec2 high = (glm::vec2(want.rectOrigin) + regionPixels) / viewportSize * 2.0f - 1.0f;
+    slot.region = glm::vec4(low, high);
+
+    // the crop maps the region onto the whole clip square, in x and y only (the w row is untouched, so the oblique
+    // near plane applies as before). A point on the glass lands in the reflected camera at the same y and the
+    // opposite x (its right was turned round), so the region it sees is the mirror image: [-high.x, -low.x].
+    glm::vec2 scale = 2.0f / glm::max(high - low, glm::vec2(1.0e-4f));
+    glm::vec2 center = (low + high) * 0.5f;
+    glm::mat4 crop(1.0f);
+    crop[0][0] = scale.x;
+    crop[1][1] = scale.y;
+    crop[3][0] = center.x * scale.x;    // x' = (x + center.x) * scale.x
+    crop[3][1] = -center.y * scale.y;   // y' = (y - center.y) * scale.y
+    glm::mat4 projection = crop * want.camera.getProjection();
+    // the planes, near and far from the cropped projection (a sub-frustum, so culling is tighter too; the oblique
+    // one's far corners land behind the eye); the oblique projection only to draw with
+    want.camera.setProjection(projection);
+    want.camera.calculate();
+    want.camera.setObliqueProjection(obliqueProjection(projection, want.plane));
+}
+
+void Mirrors::plan(const ViewFrustum& view, const glm::ivec4& viewport) {
     std::lock_guard<std::mutex> lock(_mutex);
-    struct Want {
-        QUuid id;
-        ViewFrustum camera;
-        glm::ivec2 pixels;
-        float area;
-    };
     std::vector<Want> wants;
-    if (_enabled && _maxActive > 0) {
+    if (_enabled && _maxActive > 0 && viewport.z > 0 && viewport.w > 0) {
         for (const auto& entry : _entries) {
             Want want;
-            if (cameraFor(entry.second.surface, view, viewport, want.camera, want.pixels, want.area)) {
+            if (cameraFor(entry.second.surface, view, viewport, want)) {
                 want.id = entry.first;
                 wants.push_back(want);
             }
@@ -218,7 +266,7 @@ void Mirrors::plan(const ViewFrustum& view, const glm::ivec2& viewport) {
         }
         _slots[i].active = false;
     }
-    for (const auto& want : wants) {
+    for (auto& want : wants) {
         Entry& entry = _entries[want.id];
         if (entry.slot < 0 || _slots[entry.slot].mirror != want.id) {
             int free = (int)(std::find(taken.begin(), taken.end(), false) - taken.begin());
@@ -232,28 +280,42 @@ void Mirrors::plan(const ViewFrustum& view, const glm::ivec2& viewport) {
         }
         Slot& slot = _slots[entry.slot];
         slot.active = true;
-        slot.frustum = want.camera;
-        // the picture is made again only when its size on screen has moved by more than a tenth either way, so
-        // a slow approach doesn't make it every frame; in between, the texel stays near a pixel
+
+        // the picture's size. Picture mode: made again only when its size on screen has moved by more than a tenth
+        // either way, so a slow approach doesn't make it every frame; in between, the texel stays near a pixel.
+        // Screen mode: it must hold the glass's rectangle, so it is made again when the rectangle outgrows it, or
+        // shrinks below seven tenths of its area, each time with a tenth to spare
+        glm::ivec2 size = want.pixels;
         bool resize = !slot.framebuffer;
         if (slot.framebuffer) {
-            float width = (float)slot.framebuffer->getWidth();
-            float height = (float)slot.framebuffer->getHeight();
-            resize = glm::abs(want.pixels.x - width) > 0.1f * width || glm::abs(want.pixels.y - height) > 0.1f * height;
+            glm::ivec2 have(slot.framebuffer->getWidth(), slot.framebuffer->getHeight());
+            if (want.mode == Mode::Screen) {
+                resize = have.x < size.x || have.y < size.y || (float)have.x * (float)have.y * 0.7f > (float)size.x * (float)size.y;
+            } else {
+                resize = glm::abs(size.x - have.x) > 0.1f * have.x || glm::abs(size.y - have.y) > 0.1f * have.y;
+            }
         }
         if (resize) {
-            // sampled linearly: the picture is often smaller than the mirror on screen, and point sampling would
-            // show it blocky
-            auto picture = gpu::TexturePointer(gpu::Texture::createRenderBuffer(gpu::Element::COLOR_SRGBA_32, want.pixels.x, want.pixels.y,
+            if (want.mode == Mode::Screen) {
+                glm::ivec2 most = glm::max(glm::ivec2(glm::ceil(glm::vec2(viewport.z, viewport.w) * _resolutionScale)), glm::ivec2(1));
+                size = glm::min(glm::ivec2(glm::ceil(glm::vec2(size) * 1.1f)), most);
+            }
+            // sampled linearly: a Picture is often smaller than the mirror on screen, and point sampling would
+            // show it blocky; a Screen picture at the screen's density reads texel for pixel either way
+            auto picture = gpu::TexturePointer(gpu::Texture::createRenderBuffer(gpu::Element::COLOR_SRGBA_32, size.x, size.y,
                 gpu::Texture::SINGLE_MIP, gpu::Sampler(gpu::Sampler::FILTER_MIN_MAG_LINEAR, gpu::Sampler::WRAP_CLAMP)));
             picture->setSource("mirror" + std::to_string(entry.slot));
             slot.framebuffer = gpu::FramebufferPointer(gpu::Framebuffer::create("mirror" + std::to_string(entry.slot)));
             slot.framebuffer->setRenderBuffer(0, picture);
             ++entry.generation;
-            qCDebug(renderutils) << "Mirror" << want.id << "in slot" << entry.slot << "draws" << want.pixels.x << "x" << want.pixels.y
-                                 << "for" << (int)want.area << "pixels on screen; camera at" << want.camera.getPosition()
-                                 << "near" << want.camera.getNearClip() << "far" << want.camera.getFarClip();
+            qCDebug(renderutils) << "Mirror" << want.id << "in slot" << entry.slot << (want.mode == Mode::Screen ? "(screen)" : "(picture)")
+                                 << "draws" << size.x << "x" << size.y << "for" << (int)want.area << "pixels on screen; camera at"
+                                 << want.camera.getPosition();
         }
+        if (want.mode == Mode::Screen) {
+            cropScreenCamera(want, glm::ivec2(slot.framebuffer->getWidth(), slot.framebuffer->getHeight()), viewport, slot);
+        }
+        slot.frustum = want.camera;
     }
     // only the slots in use draw their view
     for (int i = 0; i < SLOT_COUNT; ++i) {

@@ -26,7 +26,7 @@ namespace {
 
         void run(const render::RenderContextPointer& renderContext) {
             auto args = renderContext->args;
-            Mirrors::instance().plan(args->getViewFrustum(), glm::ivec2(args->_viewport.z, args->_viewport.w));
+            Mirrors::instance().plan(args->getViewFrustum(), args->_viewport);
         }
     };
 
@@ -50,6 +50,11 @@ namespace {
             _cachedArgsPointer->_stencilMaskMode = args->_stencilMaskMode;
 
             gpu::FramebufferPointer target = slot.active && slot.framebuffer ? slot.framebuffer : mirrors.idleFramebuffer();
+            if (slot.active && slot.framebuffer) {
+                // for Statistics: the mirrors drawn this frame and the pixels their views add up to
+                args->_details._mirrorsDrawn++;
+                args->_details._mirrorPixels += (int)target->getWidth() * (int)target->getHeight();
+            }
             args->_blitFramebuffer = target;
             args->_viewport = glm::ivec4(0, 0, target->getWidth(), target->getHeight());
             args->_displayMode = RenderArgs::MONO;

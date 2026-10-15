@@ -19,7 +19,10 @@
 #define ENTITIES_TEXTURE_POLYVOX_YMAP 1
 #define ENTITIES_TEXTURE_POLYVOX_ZMAP 2
 
+// Mirror glass (mirror_screen.slf, a pipeline of its own): the picture, and the region of the screen it covers at
+// the material buffer slot, which the glass's draw has no material for (the next item binds its own there)
 #define ENTITIES_TEXTURE_MIRROR_PICTURE 0
+#define ENTITIES_BUFFER_MIRROR 1
 
 // Terrain: the layers' colour textures take the material texture slots, the chunk's paint map tiles (layers 0 to 3
 // and 4 to 7 of the weights) the two after them, the layers' normal and mask arrays (a slice per layer) at 12 and
@@ -55,6 +58,7 @@ enum Texture {
     PolyvoxXMap = ENTITIES_TEXTURE_POLYVOX_XMAP,
     PolyvoxYMap = ENTITIES_TEXTURE_POLYVOX_YMAP,
     PolyvoxZMap = ENTITIES_TEXTURE_POLYVOX_ZMAP,
+    MirrorPicture = ENTITIES_TEXTURE_MIRROR_PICTURE,
     TerrainLayer0 = ENTITIES_TEXTURE_TERRAIN_LAYER0,
     TerrainPaint0 = ENTITIES_TEXTURE_TERRAIN_PAINT0,
     TerrainNormals = ENTITIES_TEXTURE_TERRAIN_NORMALS,
@@ -64,6 +68,7 @@ enum Texture {
 
 namespace buffer {
 enum Buffer {
+    Mirror = ENTITIES_BUFFER_MIRROR,
     TerrainLayers = ENTITIES_BUFFER_TERRAIN_LAYERS,
     TerrainChunk = ENTITIES_BUFFER_TERRAIN_CHUNK,
     TerrainMaps = ENTITIES_BUFFER_TERRAIN_MAPS,

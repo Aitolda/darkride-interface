@@ -48,6 +48,9 @@ namespace render {
         int _localShadowMaps = 0;
         int _localShadowMapsDrawn = 0;
         int _localShadowStaticMapsDrawn = 0;
+        // mirrors drawn this frame (a view each, render-utils Mirrors.h) and the pixels their pictures add up to
+        int _mirrorsDrawn = 0;
+        int _mirrorPixels = 0;
 
         Item _item;
         Item _shadow;

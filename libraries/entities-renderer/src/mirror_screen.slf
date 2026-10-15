@@ -4,24 +4,35 @@
 //
 //  mirror_screen.slf
 //  The glass of a screen-mode mirror (Mirrors.h): its picture was drawn from the viewer's reflection with the
-//  main view's own projection, so it lies pixel for pixel under the glass; it is read by screen position, flipped
-//  across (the reflected camera was turned into a proper one), and written unlit, as light of its own.
+//  main view's own projection, cropped to the region of the screen that holds the glass, so it lies pixel for
+//  pixel under the glass; it is read by screen position within that region, flipped across (the reflected camera
+//  was turned into a proper one), and written unlit, as light of its own.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
 //
 
+<@include gpu/Transform.slh@>
+<$declareStandardCameraTransform()$>
 <@include DeferredBufferWrite.slh@>
 <@include render-utils/ShaderConstants.h@>
 <@include entities-renderer/ShaderConstants.h@>
 
 LAYOUT(binding=ENTITIES_TEXTURE_MIRROR_PICTURE) uniform sampler2D mirrorPicture;
 
+// the region of the main view the picture covers: its low corner (xy) and high corner (zw), in the view's
+// normalized device coordinates
+LAYOUT_STD140(binding=ENTITIES_BUFFER_MIRROR) uniform mirrorBuffer {
+    vec4 mirrorRegion;
+};
+
 layout(location=RENDER_UTILS_ATTR_NORMAL_WS) in vec3 _normalWS;
 
 void main(void) {
-    vec2 size = vec2(textureSize(mirrorPicture, 0));
-    vec2 uv = vec2(1.0 - gl_FragCoord.x / size.x, gl_FragCoord.y / size.y);
+    TransformCamera cam = getTransformCamera();
+    vec2 ndc = (gl_FragCoord.xy - cam._viewport.xy) / cam._viewport.zw * 2.0 - 1.0;
+    vec2 uv = (ndc - mirrorRegion.xy) / (mirrorRegion.zw - mirrorRegion.xy);
+    uv.x = 1.0 - uv.x;
     vec3 color = texture(mirrorPicture, uv).rgb;
     packDeferredFragmentUnlit(normalize(_normalWS), 1.0, color);
 }

@@ -57,14 +57,16 @@ private:
     glm::vec3 _dimensions;
     glm::quat _orientation;
 
-    // a mirror (userData "mirror": true): registered with Mirrors, its picture shown as an unlit albedo map
+    // a mirror (userData "mirror": "picture" or "screen"): registered with Mirrors (render-utils). Picture mode shows
+    // its picture as an emissive map; Screen mode draws the glass itself (doRender) with the picture of the frame
     bool _mirror { false };
     bool _mirrorScreen { false };  // screen mode: the glass draws its picture by screen position (else as a map)
-    bool _mirrorShown { false };   // it has a picture this frame (else it shows its colour)
+    bool _mirrorShown { false };   // Picture mode: it has a picture this frame (else it shows its colour)
     QUuid _mirrorId;
     uint32_t _mirrorGeneration { 0 };
     gpu::TextureSourcePointer _mirrorSource;
     gpu::TexturePointer _mirrorPicture;
+    gpu::BufferPointer _mirrorRegion;  // Screen mode: the region of the screen the picture covers, for the glass shader
 };
 
 } } 

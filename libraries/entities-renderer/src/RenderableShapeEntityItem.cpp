@@ -93,8 +93,8 @@ bool ShapeEntityRenderer::needsRenderUpdateFromTypedEntity(const TypedEntityPoin
     if (_proceduralData != entity->getUserData()) {
         return true;
     }
-    if (_mirror && Mirrors::instance().generation(_mirrorId) != _mirrorGeneration) {
-        return true;   // its picture has changed hands or size
+    if (_mirror && !_mirrorScreen && Mirrors::instance().generation(_mirrorId) != _mirrorGeneration) {
+        return true;   // its picture has changed hands or size (Screen mode takes the frame's picture when it draws)
     }
 
     return false;
@@ -145,7 +145,9 @@ void ShapeEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPoint
         glm::vec3 color = toGlm(entity->getColor());
         if (_color != color) {
             _color = color;
-            _material->setAlbedo(_mirrorShown ? glm::vec3(0.0f) : color);   // a mirror shows its picture as light, nothing lit
+            // a Picture mirror shows its picture as light over black, nothing lit; a Screen mirror keeps its colour
+            // for when it has no picture (a mirror's view, forward rendering, no slot)
+            _material->setAlbedo(_mirrorShown && !_mirrorScreen ? glm::vec3(0.0f) : color);
             materialChanged = true;
         }
 
@@ -355,7 +357,7 @@ Item::Bound ShapeEntityRenderer::getBound() {
 }
 
 void ShapeEntityRenderer::doRender(RenderArgs* args) {
-    if (_mirror && Mirrors::instance().generation(_mirrorId) != _mirrorGeneration) {
+    if (_mirror && !_mirrorScreen && Mirrors::instance().generation(_mirrorId) != _mirrorGeneration) {
         // its picture has changed hands or size: the update takes the new one (nothing polls for that, so it is
         // asked for from here, where the mirror is drawn every frame it is seen)
         emit requestRenderUpdate();
@@ -406,18 +408,30 @@ void ShapeEntityRenderer::doRender(RenderArgs* args) {
     }
 
     // a screen-mode mirror in the main view draws its picture by screen position with a pipeline of its own; in a
-    // mirror's view, or in forward rendering, it is a plain shape of its colour
-    if (_mirrorScreen && _mirrorShown && _mirrorPicture && args->_renderMethod == render::Args::DEFERRED
-            && args->_renderMode == RenderArgs::DEFAULT_RENDER_MODE && _primitiveMode != PrimitiveMode::LINES) {
-        auto previous = args->_shapePipeline;
-        batch.setPipeline(screenMirrorPipeline());
-        batch.setResourceTexture(ENTITIES_TEXTURE_MIRROR_PICTURE, _mirrorPicture);
-        geometryCache->renderShape(batch, geometryShape);
-        if (previous && previous->pipeline) {
-            batch.setPipeline(previous->pipeline);   // the items after this one expect theirs
+    // mirror's view, in forward rendering, or without a slot this frame, it is a plain shape of its colour
+    if (_mirrorScreen && args->_renderMethod == render::Args::DEFERRED
+            && args->_renderMode == RenderArgs::DEFAULT_RENDER_MODE && primitiveMode != PrimitiveMode::LINES) {
+        gpu::TexturePointer picture;
+        glm::vec4 region;
+        if (Mirrors::instance().screenFor(_mirrorId, picture, region)) {
+            // the picture and the region of the screen it covers are the frame's own (the planner's, run before
+            // the mirror views), so the glass never shows a picture against last frame's region
+            if (!_mirrorRegion) {
+                _mirrorRegion = std::make_shared<gpu::Buffer>(sizeof(glm::vec4), (const gpu::Byte*)&region);
+            } else {
+                _mirrorRegion->setSubData(0, region);
+            }
+            auto previous = args->_shapePipeline;
+            batch.setPipeline(screenMirrorPipeline());
+            batch.setResourceTexture(ENTITIES_TEXTURE_MIRROR_PICTURE, picture);
+            batch.setUniformBuffer(ENTITIES_BUFFER_MIRROR, _mirrorRegion, 0, sizeof(glm::vec4));
+            geometryCache->renderShape(batch, geometryShape);
+            if (previous && previous->pipeline) {
+                batch.setPipeline(previous->pipeline);   // the items after this one expect theirs
+            }
+            args->_details._trianglesRendered += (int)geometryCache->getShapeTriangleCount(geometryShape);
+            return;
         }
-        args->_details._trianglesRendered += (int)geometryCache->getShapeTriangleCount(geometryShape);
-        return;
     }
 
     if (pipelineType == Pipeline::PROCEDURAL) {
