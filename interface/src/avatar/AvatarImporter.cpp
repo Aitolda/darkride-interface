@@ -214,6 +214,10 @@ using SharePointer = std::shared_ptr<Share>;
 void wearOnceItReadsBack(const SharePointer& share, const QString& url) {
     QNetworkRequest request { QUrl(url) };
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    // A check, so it neither reads nor writes the disk cache: Qt unpacks the gzip itself here and would cache the
+    // unpacked body under the gzip label, which the avatar's own load (HTTPResourceRequest) then fails to unpack.
+    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
+    request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
     QNetworkReply* reply = NetworkAccessManager::getInstance().get(request);
     QObject::connect(reply, &QNetworkReply::finished, reply, [reply, share, url]() {
         reply->deleteLater();
