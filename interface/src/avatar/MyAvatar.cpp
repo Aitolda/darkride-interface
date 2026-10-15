@@ -2185,6 +2185,7 @@ static float lookAtCostFunction(const glm::vec3& myForward, const glm::vec3& myP
 
     const float GREATEST_LOOKING_AT_DISTANCE = 10.0f;  // meters
     const float MAX_MY_ANGLE = PI / 8.0f; // 22.5 degrees, Don't look too far away from the head facing.
+    const float MAX_UP_DOWN_ANGLE = PI / 3.0f;  // 60 degrees: a small avatar looks up at a tall one close by, and back
     const float MAX_OTHER_ANGLE = (3.0f * PI) / 4.0f;  // 135 degrees, Don't stare at the back of another avatars head.
 
     glm::vec3 d = otherPosition - myPosition;
@@ -2192,8 +2193,14 @@ static float lookAtCostFunction(const glm::vec3& myForward, const glm::vec3& myP
     glm::vec3 dUnit = d / distance;
     float myAngle = acosf(glm::dot(myForward, dUnit));
     float otherAngle = acosf(glm::dot(otherForward, -dUnit));
+    // the head's facing limits the angle side to side; up and down has its own, looser limit (myForward is level)
+    const glm::vec3 level(d.x, 0.0f, d.z);
+    const float levelDistance = glm::length(level);
+    const float sideAngle = levelDistance > EPSILON ? acosf(glm::clamp(glm::dot(myForward, level / levelDistance), -1.0f, 1.0f)) : 0.0f;
+    const float upDownAngle = fabsf(atan2f(d.y, levelDistance));
 
-    if (distance > GREATEST_LOOKING_AT_DISTANCE || myAngle > MAX_MY_ANGLE || otherAngle > MAX_OTHER_ANGLE) {
+    if (distance > GREATEST_LOOKING_AT_DISTANCE || sideAngle > MAX_MY_ANGLE || upDownAngle > MAX_UP_DOWN_ANGLE ||
+        otherAngle > MAX_OTHER_ANGLE) {
         return FLT_MAX;
     } else {
         return (DISTANCE_FACTOR * distance +
