@@ -27,6 +27,8 @@ const QString HostInterface::ERROR_KEY = QStringLiteral("@error");
 namespace {
 
 const QString ALLOC_EXPORT = QStringLiteral("alloc");
+const QString FREE_EXPORT = QStringLiteral("free");
+const QString CALL_CALLBACK_EXPORT = QStringLiteral("call_callback");
 const int MAX_INVOKE_ARGUMENTS = 10;  // QMetaMethod::invoke's limit
 
 int64_t pack(int32_t pointer, int32_t length) {
@@ -301,6 +303,44 @@ bool HostInterface::deliverSignal(int connection, const QVariantList& arguments,
     return callGuest("on_signal", int32_t(connection), arguments, error);
 }
 
+bool HostInterface::callCallback(int32_t callback, const QVariantList& arguments, QVariant& result, QString& error) {
+    result = QVariant();
+    if (!hasGuestExport(CALL_CALLBACK_EXPORT)) {
+        return deliverCallback(callback, arguments, error);
+    }
+    ++_statistics.callbacksDelivered;
+    int64_t packed = writeToGuest(arguments, error);
+    if (packed == 0 && !error.isEmpty()) {
+        fail(CALL_CALLBACK_EXPORT, error);
+        return false;
+    }
+    std::vector<WasmValue> results;
+    int32_t pointer = int32_t(uint32_t(uint64_t(packed) >> 32));
+    int32_t length = int32_t(uint32_t(uint64_t(packed) & 0xffffffffu));
+    if (!_instance.call(CALL_CALLBACK_EXPORT, { callback, pointer, length }, results, error)) {
+        fail(CALL_CALLBACK_EXPORT, error);
+        return false;
+    }
+    if (results.empty() || !std::holds_alternative<int64_t>(results[0])) {
+        return true;  // no result
+    }
+    int64_t resultPacked = std::get<int64_t>(results[0]);
+    if (resultPacked == 0) {
+        return true;
+    }
+    int32_t resultPointer = int32_t(uint32_t(uint64_t(resultPacked) >> 32));
+    int32_t resultLength = int32_t(uint32_t(uint64_t(resultPacked) & 0xffffffffu));
+    QByteArray bytes = readBytes(resultPointer, resultLength, error);
+    std::vector<WasmValue> ignored;
+    QString freeError;
+    _instance.call(FREE_EXPORT, { resultPointer, resultLength }, ignored, freeError);
+    if (!error.isEmpty()) {
+        return false;
+    }
+    _statistics.bytesFromGuest += uint64_t(bytes.size());
+    return _codec.decode(bytes, result, error);
+}
+
 bool HostInterface::deliverCallback(int32_t callback, const QVariantList& arguments, QString& error) {
     ++_statistics.callbacksDelivered;
     return callGuest("on_callback", callback, arguments, error);
@@ -367,6 +407,8 @@ bool isFloatingType(int type) {
     return type == QMetaType::Double || type == QMetaType::Float;
 }
 
+const int SURPLUS_ARGUMENT_COST = 3;  // an argument an overload ignores costs as much as the worst coercion
+
 // How far a value is from a parameter's type: 0 for the type itself or its family, more for a coercion.
 // With overloads, the one whose arguments cost least is called, as QtScript scores its candidates.
 int conversionCost(const QVariant& value, int type) {
@@ -416,6 +458,8 @@ bool HostInterface::convertArguments(const QMetaMethod& method, const QVariantLi
         error = QString("%1 takes %2 arguments, %3 given").arg(QString::fromUtf8(method.methodSignature())).arg(count).arg(arguments.size());
         return false;
     }
+    // surplus arguments are dropped, as QtScript drops them, but an overload that takes them all is preferred
+    cost = SURPLUS_ARGUMENT_COST * (arguments.size() - count);
     converted.reserve(count);
     for (int i = 0; i < count; ++i) {
         const int type = parameterTypeOf(method, i);

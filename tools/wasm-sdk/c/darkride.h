@@ -8,7 +8,9 @@
  *  source file before including it.
  *
  *  A script module exports script_start (called once the host has registered its objects), on_signal (a
- *  subscribed signal fired), on_callback (a function the module gave the host is called), script_stop, and
+ *  subscribed signal fired; the arguments are a CBOR array the host placed in the module's memory through
+ *  alloc, and the module frees them), on_callback (a function the module gave the host is called; the same
+ *  for its arguments), script_stop, and
  *  alloc and free for the host to place results in the module's memory. Every value crosses as CBOR; a
  *  returned i64 packs (pointer << 32) | length of CBOR bytes the module owns and frees.
  *

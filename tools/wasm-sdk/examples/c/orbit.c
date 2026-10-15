@@ -105,9 +105,8 @@ void script_start(void) {
     }
     dr_printf("orbit: starting at (%.2f, %.2f, %.2f), radius %.1f m, one turn in %.0f s", center.x, center.y, center.z, RADIUS, TURN_SECONDS);
 
-    addEntity();
-
-    /* a timer: the host calls on_callback(TIMER_CALLBACK) once, a second from now */
+    /* a timer: the host calls on_callback(TIMER_CALLBACK) once, a second from now; the entity is added then,
+       when the world has loaded (an entity added before that is refused) */
     cbor_writer args;
     cw_init(&args);
     cw_array(&args, 2);
@@ -129,15 +128,16 @@ void script_start(void) {
 
 void on_signal(int32_t connection, const uint8_t* args, int32_t length) DARKRIDE_EXPORT("on_signal");
 void on_signal(int32_t connection, const uint8_t* args, int32_t length) {
-    if (connection != updateConnection) {
-        return;
-    }
-    /* update(deltaTime): the arguments are [deltaTime] */
+    /* update(deltaTime): the arguments are [deltaTime]; they are the module's to free */
     cbor_reader r = cr_from_memory(args, (size_t)length);
     cbor_item head, dt;
     double deltaTime = 0.0;
     if (cr_next(&r, &head) && head.type == CBOR_ARRAY && head.n >= 1 && cr_next(&r, &dt)) {
         deltaTime = cr_number(&dt);
+    }
+    free((void*)args);
+    if (connection != updateConnection) {
+        return;
     }
     elapsed += deltaTime;
     angle += deltaTime * (2.0 * M_PI / TURN_SECONDS);
@@ -176,10 +176,11 @@ void on_signal(int32_t connection, const uint8_t* args, int32_t length) {
 
 void on_callback(int32_t callback, const uint8_t* args, int32_t length) DARKRIDE_EXPORT("on_callback");
 void on_callback(int32_t callback, const uint8_t* args, int32_t length) {
-    (void)args;
     (void)length;
+    free((void*)args);
     if (callback == TIMER_CALLBACK) {
         dr_printf("orbit: the timer fired after %.2f s", elapsed);
+        addEntity();
     }
 }
 

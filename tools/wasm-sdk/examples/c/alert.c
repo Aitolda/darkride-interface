@@ -39,13 +39,13 @@ void script_start(void) {
 void on_signal(int32_t connection, const uint8_t* args, int32_t length) DARKRIDE_EXPORT("on_signal");
 void on_signal(int32_t connection, const uint8_t* args, int32_t length) {
     (void)connection;
-    (void)args;
     (void)length;
+    free((void*)args);  /* the arguments are the module's to free */
 }
 
 void on_callback(int32_t callback, const uint8_t* args, int32_t length) DARKRIDE_EXPORT("on_callback");
 void on_callback(int32_t callback, const uint8_t* args, int32_t length) {
     (void)callback;
-    (void)args;
     (void)length;
+    free((void*)args);  /* the arguments are the module's to free */
 }

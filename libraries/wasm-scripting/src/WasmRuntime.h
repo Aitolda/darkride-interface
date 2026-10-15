@@ -101,7 +101,8 @@ public:
     struct Limits {
         /// The most linear memory the instance may have; growth past it fails inside the module.
         int64_t memoryBytes { 256 * 1024 * 1024 };
-        /// A call into the instance that runs longer than this traps.
+        /// A call into the instance that runs longer than this traps; zero is no limit (a requested stop still
+        /// interrupts the call).
         std::chrono::milliseconds callTimeout { 5000 };
     };
 

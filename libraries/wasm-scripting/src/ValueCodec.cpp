@@ -44,6 +44,26 @@ const QString ValueCodec::OBJECT_KEY = QStringLiteral("@object");
 const QString ValueCodec::CLASS_KEY = QStringLiteral("@class");
 const QString ValueCodec::CALLBACK_KEY = QStringLiteral("@callback");
 
+QVariant ScriptCallback::call(const QVariantList& arguments) const {
+    auto engine = target.lock();
+    if (!engine || !isValid()) {
+        return QVariant();
+    }
+    QVariant result;
+    QString error;
+    if (!engine->invoke(id, arguments, result, error)) {
+        return QVariant();
+    }
+    return result;
+}
+
+void ScriptCallback::post(const QVariantList& arguments) const {
+    auto engine = target.lock();
+    if (engine && isValid()) {
+        engine->post(id, arguments);
+    }
+}
+
 namespace {
 
 struct RegisteredType {
@@ -292,10 +312,47 @@ QCborValue ValueCodec::encodeSequence(const QVariant& value) const {
 }
 
 QCborValue ValueCodec::encodeAssociative(const QVariant& value) const {
-    QCborMap map;
+    QVariantMap items;
     auto iterable = value.value<QAssociativeIterable>();
     for (auto it = iterable.begin(); it != iterable.end(); ++it) {
-        map.insert(it.key().toString(), toCbor(it.value()));
+        items.insert(it.key().toString(), it.value());
+    }
+    return encodeVariantMap(items);
+}
+
+// A QVariantMap is sorted by key, so a colour that came through one reads {blue, green, red}. The shapes
+// scripts know by their member order are written in it: {x, y, z}, {x, y, z, w}, {red, green, blue}.
+QCborValue ValueCodec::encodeVariantMap(const QVariantMap& items) const {
+    static const QStringList VEC2 { "x", "y" };
+    static const QStringList VEC3 { "x", "y", "z" };
+    static const QStringList QUAT { "x", "y", "z", "w" };
+    static const QStringList COLOR { "red", "green", "blue" };
+    QCborMap map;
+    const QStringList* order = nullptr;
+    const int count = items.size();
+    if (count == 2 && items.contains("x") && items.contains("y")) {
+        order = &VEC2;
+    } else if (count == 3 && items.contains("x") && items.contains("z")) {
+        order = &VEC3;
+    } else if (count == 4 && items.contains("w") && items.contains("x")) {
+        order = &QUAT;
+    } else if (count == 3 && items.contains("red") && items.contains("blue")) {
+        order = &COLOR;
+    }
+    if (order) {
+        bool complete = true;
+        for (const QString& key : *order) {
+            complete = complete && items.contains(key);
+        }
+        if (complete) {
+            for (const QString& key : *order) {
+                map.insert(key, toCbor(items.value(key)));
+            }
+            return map;
+        }
+    }
+    for (auto it = items.constBegin(); it != items.constEnd(); ++it) {
+        map.insert(it.key(), toCbor(it.value()));
     }
     return map;
 }
@@ -362,14 +419,8 @@ QCborValue ValueCodec::toCbor(const QVariant& value) const {
             }
             return array;
         }
-        case QMetaType::QVariantMap: {
-            QCborMap map;
-            const QVariantMap items = value.toMap();
-            for (auto it = items.constBegin(); it != items.constEnd(); ++it) {
-                map.insert(it.key(), toCbor(it.value()));
-            }
-            return map;
-        }
+        case QMetaType::QVariantMap:
+            return encodeVariantMap(value.toMap());
         case QMetaType::QVariantHash: {
             QCborMap map;
             const QVariantHash items = value.toHash();
@@ -579,7 +630,7 @@ QVariant ValueCodec::fromCbor(const QCborValue& value) const {
             }
             QCborValue callback = map.value(CALLBACK_KEY);
             if (callback.isInteger()) {
-                return QVariant::fromValue(ScriptCallback { int32_t(callback.toInteger()) });
+                return QVariant::fromValue(ScriptCallback { int32_t(callback.toInteger()), _callbackTarget });
             }
             QVariantMap out;
             for (auto it = map.constBegin(); it != map.constEnd(); ++it) {
@@ -984,8 +1035,8 @@ QVariant ValueCodec::decodeTyped(const QCborValue& value, int targetType, bool& 
             QCborMap map = value.toMap();
             v = glm::vec3(float(number(member(map, { "x", "r", "red" }))), float(number(member(map, { "y", "g", "green" }))),
                           float(number(member(map, { "z", "b", "blue" }))));
-        } else {
-            ok = false;
+        } else if (!value.isNull() && !value.isUndefined()) {
+            ok = false;  // undefined and null read as zeros, as they did on QtScript
         }
         return QVariant::fromValue(v);
     }
@@ -998,8 +1049,8 @@ QVariant ValueCodec::decodeTyped(const QCborValue& value, int targetType, bool& 
         } else if (value.isArray() && value.toArray().size() == 4) {
             QCborArray array = value.toArray();
             q = glm::quat(float(number(array[3])), float(number(array[0])), float(number(array[1])), float(number(array[2])));
-        } else {
-            ok = false;
+        } else if (!value.isNull() && !value.isUndefined()) {
+            ok = false;  // undefined and null read as the identity, as they did on QtScript
         }
         // enforce a unit quaternion, as the conversion does today
         float length = glm::length(q);
@@ -1016,7 +1067,7 @@ QVariant ValueCodec::decodeTyped(const QCborValue& value, int targetType, bool& 
         } else if (value.isMap()) {
             QCborMap map = value.toMap();
             v = glm::vec2(float(number(member(map, { "x", "u" }))), float(number(member(map, { "y", "v" }))));
-        } else {
+        } else if (!value.isNull() && !value.isUndefined()) {
             ok = false;
         }
         return QVariant::fromValue(v);
@@ -1079,6 +1130,7 @@ QVariant ValueCodec::decodeTyped(const QCborValue& value, int targetType, bool& 
     }
     if (targetType == qMetaTypeId<ScriptCallback>()) {
         ScriptCallback callback;
+        callback.target = _callbackTarget;
         if (value.isMap()) {
             QCborValue id = value.toMap().value(CALLBACK_KEY);
             if (id.isInteger()) {

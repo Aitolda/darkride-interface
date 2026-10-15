@@ -30,6 +30,10 @@
 //      script_start(), script_stop()
 //      on_signal(connection, args_ptr, args_len)         a subscribed signal fired
 //      on_callback(callback, args_ptr, args_len)         a guest function the host was given is called
+//      call_callback(callback, args_ptr, args_len) -> i64
+//                                                        the same, with the function's result returned packed
+//                                                        (optional; the host frees the result through free)
+//    (the arguments are placed through the guest's alloc and are the guest's to free)
 //
 //  A method is named by its name ("getEntityProperties"; the overloads are tried in order, the first whose
 //  arguments convert wins), its signature ("add(int,int)") or its index from the description ("#12").
@@ -90,6 +94,9 @@ public:
     /// on_signal and on_callback. Failures also reach the failure handler.
     bool deliverSignal(int connection, const QVariantList& arguments, QString& error);
     bool deliverCallback(int32_t callback, const QVariantList& arguments, QString& error);
+    /// on_callback with the function's result, through the module's call_callback export when it has one
+    /// (the result is undefined otherwise).
+    bool callCallback(int32_t callback, const QVariantList& arguments, QVariant& result, QString& error);
     /// An export taking (id, ptr, len): the payload encoded, allocated in the guest, the call made.
     bool callGuest(const QString& name, int32_t id, const QVariant& payload, QString& error);
 

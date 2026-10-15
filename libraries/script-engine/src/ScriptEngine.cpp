@@ -193,9 +193,13 @@ ScriptEnginePointer scriptEngineFactory(ScriptEngine::Context context,
                                                  const QString& scriptContents,
                                                  const QString& fileNameString) {
     // a WebAssembly module runs on the engine beside this one; it is told from the file name's suffix, which
-    // ScriptEngines::loadScript puts in the name before the content is fetched
-    ScriptEngine* engine = WasmScriptEngine::isWasmScript(fileNameString) ? new WasmScriptEngine(context, fileNameString)
-                                                                         : new ScriptEngine(context, scriptContents, fileNameString);
+    // ScriptEngines::loadScript puts in the name before the content is fetched. A JavaScript client script
+    // goes there too when the setting says so (entity scripts and agents stay on this engine for now).
+    const bool onWebAssembly = WasmScriptEngine::isWasmScript(fileNameString) ||
+        (context == ScriptEngine::CLIENT_SCRIPT && WasmScriptEngine::isJavaScriptFile(fileNameString) &&
+         WasmScriptEngine::runJavaScriptOnWebAssembly());
+    ScriptEngine* engine = onWebAssembly ? new WasmScriptEngine(context, scriptContents, fileNameString)
+                                         : new ScriptEngine(context, scriptContents, fileNameString);
     ScriptEnginePointer engineSP = ScriptEnginePointer(engine, &QObject::deleteLater);
     auto scriptEngines = DependencyManager::get<ScriptEngines>();
     scriptEngines->addScriptEngine(qSharedPointerCast<ScriptEngine>(engineSP));

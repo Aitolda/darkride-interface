@@ -1,4 +1,4 @@
-results/api-*.json
-results/dump-api.log
-results/dump-api-home/
-results/wasm-run/
+# a run's logs, settings, data and raw numbers stay here; the dated measurement files are kept
+results/*
+!results/*-2026-*.json
+!results/*-2026-*.txt

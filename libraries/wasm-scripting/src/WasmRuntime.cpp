@@ -133,6 +133,7 @@ WasmRuntime::WasmRuntime() : WasmRuntime(Settings()) {
 WasmRuntime::WasmRuntime(const Settings& settings) : _settings(settings), _impl(new Impl) {
     wasm_config_t* config = wasm_config_new();
     wasmtime_config_epoch_interruption_set(config, true);
+    wasmtime_config_cranelift_opt_level_set(config, WASMTIME_OPT_LEVEL_SPEED);
     _impl->engine = wasm_engine_new_with_config(config); // takes the config
     // The epoch is the clock every instance's time limit is measured in; one thread advances it for all.
     wasm_engine_t* engine = _impl->engine;
@@ -269,7 +270,7 @@ struct WasmInstance::Impl {
             return wasmtime_error_new("the script was stopped");
         }
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - self->callStarted);
-        if (elapsed > self->callTimeout) {
+        if (self->callTimeout.count() > 0 && elapsed > self->callTimeout) {
             QByteArray text = QString("a call into the script ran longer than its limit of %1 ms").arg(self->callTimeout.count()).toUtf8();
             return wasmtime_error_new(text.constData());
         }
