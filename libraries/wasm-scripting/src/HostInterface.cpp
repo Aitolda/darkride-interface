@@ -41,13 +41,17 @@ QString typeNameOf(int typeId) {
 }
 
 // A parameter's type id. moc leaves an enum declared with its unqualified name ("Mode") unresolved; the
-// registered name is the qualified one ("Probe::Mode"), so that is tried with the method's class scope.
+// registered name is the qualified one ("Probe::Mode"), so that is tried with the method's class scope. A
+// pointer to a const object ("const AudioEffectOptions*") is registered, if at all, without the const.
 int parameterTypeOf(const QMetaMethod& method, int index) {
     int type = method.parameterType(index);
     if (type != QMetaType::UnknownType) {
         return type;
     }
     QByteArray name = method.parameterTypes().at(index);
+    if (name.startsWith("const ") && name.endsWith('*')) {
+        name = name.mid(6);
+    }
     type = QMetaType::type(name.constData());
     if (type == QMetaType::UnknownType && !name.contains("::") && method.enclosingMetaObject()) {
         type = QMetaType::type((QByteArray(method.enclosingMetaObject()->className()) + "::" + name).constData());

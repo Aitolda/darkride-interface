@@ -16,6 +16,7 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QMetaEnum>
 #include <QtCore/QPointer>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QThread>
@@ -26,12 +27,14 @@
 #include <QtScript/QScriptValueIterator>
 
 #include <AddressManager.h>
+#include <AudioEffectOptions.h>
 #include <EntityScriptingInterface.h>
 #include <EntityTree.h>
 #include <LocationScriptingInterface.h>
 #include <NumericalConstants.h>
 #include <PathUtils.h>
 #include <PointerEvent.h>
+#include <ResourceCache.h>
 #include <ResourceManager.h>
 #include <SettingHandle.h>
 #include <SharedUtil.h>
@@ -142,7 +145,9 @@ WasmScriptEngine::WasmScriptEngine(Context context, const QString& scriptContent
     _objects(new ObjectTable()),
     _relay(new SignalRelay(this)),
     _http(new HttpRequestFactory(this)),
-    _sockets(new WebSocketFactory(this)) {
+    _sockets(new WebSocketFactory(this)),
+    _audioEffectOptions(new AudioEffectOptionsFactory(this)),
+    _resourceStates(new ResourceStates(this)) {
     if (_isEntitiesEngine) {
         // an entities engine hosts every entity script of the world: more room
         _limits.memoryBytes = int64_t(1024) * 1024 * 1024;
@@ -369,6 +374,9 @@ void WasmScriptEngine::run() {
     // the network objects XMLHttpRequest and WebSocket are built on in the guest
     registerGlobalObject("Http", _http);
     registerGlobalObject("Sockets", _sockets);
+    // two globals the QtScript engine gives as a native constructor and a plain object
+    registerGlobalObject("AudioEffectOptions", _audioEffectOptions);
+    registerGlobalObject("Resource", _resourceStates);
 
     _isRunning = true;
     emit runningStateChanged();
@@ -1398,4 +1406,48 @@ QVariantMap WasmScriptEngine::statistics() const {
         stats["memoryBytes"] = qulonglong(_main->instance->memorySize());
     }
     return stats;
+}
+
+// --- the globals the QtScript engine gives as a native constructor or a plain object ------------------------------
+
+AudioEffectOptionsFactory::AudioEffectOptionsFactory(QObject* parent) : QObject(parent) {
+    // Audio.setReverbOptions takes a const AudioEffectOptions*: the host interface finds it by this name
+    qRegisterMetaType<AudioEffectOptions*>();
+}
+
+QObject* AudioEffectOptionsFactory::create(const QVariantMap& properties) {
+    auto isNumber = [](const QVariant& value) {
+        switch (value.userType()) {
+            case QMetaType::Int:
+            case QMetaType::UInt:
+            case QMetaType::LongLong:
+            case QMetaType::ULongLong:
+            case QMetaType::Float:
+            case QMetaType::Double:
+                return true;
+            default:
+                return false;
+        }
+    };
+    // as the QtScript constructor reads its argument: the defaults, then each known option that is a number
+    auto options = new AudioEffectOptions();
+    options->setParent(this);
+    const QMetaObject* meta = options->metaObject();
+    for (auto it = properties.constBegin(); it != properties.constEnd(); ++it) {
+        const QByteArray name = it.key().toUtf8();
+        if (meta->indexOfProperty(name.constData()) >= 0 && isNumber(it.value())) {
+            options->setProperty(name.constData(), it.value());
+        }
+    }
+    return options;
+}
+
+QVariantMap ResourceStates::getState() const {
+    // the keys and values of ScriptableResource::State, as the QtScript engine's Resource.State has them
+    QVariantMap states;
+    const QMetaEnum metaEnum = QMetaEnum::fromType<ScriptableResource::State>();
+    for (int i = 0; i < metaEnum.keyCount(); ++i) {
+        states[QString::fromUtf8(metaEnum.key(i))] = metaEnum.value(i);
+    }
+    return states;
 }

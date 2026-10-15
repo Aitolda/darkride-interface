@@ -208,7 +208,8 @@
     var methodTwins = {
         "controller::MappingBuilderProxy": { from: "fromValue", makeAxis: "makeAxisFromValues" },
         "controller::RouteBuilderProxy": { to: "toValue", when: "whenValue" },
-        "MyAvatar": { addAnimationStateHandler: "addAnimationStateCallback", removeAnimationStateHandler: "removeAnimationStateCallback" }
+        "MyAvatar": { addAnimationStateHandler: "addAnimationStateCallback", removeAnimationStateHandler: "removeAnimationStateCallback" },
+        "HMDScriptingInterface": { getHUDLookAtPosition2D: "getHUDLookAtPosition2DValue", getHUDLookAtPosition3D: "getHUDLookAtPosition3DValue" }
     };
 
     // What the QtScript engine added to an object as native functions, which the description cannot list
@@ -934,6 +935,22 @@
         };
         Object.defineProperty(global, name, { value: constructor, writable: true, enumerable: false, configurable: true });
     });
+
+    // --- new AudioEffectOptions(options): a constructor over the factory the engine registers under the name ----------
+    (function () {
+        var handle = globalHandles.AudioEffectOptions;
+        if (handle === undefined) {
+            return;
+        }
+        var factory = null;
+        var constructor = function (options) {
+            if (!factory) {
+                factory = wrapObject(handle, undefined);
+            }
+            return factory.create((options !== null && typeof options === "object") ? options : {});
+        };
+        Object.defineProperty(global, "AudioEffectOptions", { value: constructor, writable: true, enumerable: false, configurable: true });
+    }());
 
     // --- odds and ends of the old global object ------------------------------------------------------------------------
     global.gc = function () { host.gc(); };

@@ -42,10 +42,12 @@
 
 #include "ScriptEngine.h"
 
+class AudioEffectOptionsFactory;
 class HostInterface;
 class HttpRequestFactory;
 class ObjectTable;
 class QTimer;
+class ResourceStates;
 class SignalRelay;
 class WebSocketFactory;
 
@@ -199,6 +201,8 @@ private:
     SignalRelay* _relay { nullptr };  // a child, so it moves to the engine's thread with it
     HttpRequestFactory* _http { nullptr };
     WebSocketFactory* _sockets { nullptr };
+    AudioEffectOptionsFactory* _audioEffectOptions { nullptr };
+    ResourceStates* _resourceStates { nullptr };
     std::mutex _instancesMutex;  // guards the set of instances against requestStop from another thread
     ModuleInstancePointer _main;
     QHash<QString, ModuleInstancePointer> _entityModules;              // .wasm entity scripts by URL
@@ -218,6 +222,29 @@ private:
 
     uint64_t _frames { 0 };
     double _updateMicroseconds { 0.0 };
+};
+
+/// `new AudioEffectOptions(properties)` on the WebAssembly engine. The QtScript engine gives a native constructor,
+/// which a module cannot call; the engine registers this factory under the name instead (the JavaScript guest
+/// wraps it back into a constructor). The options it makes live as long as the engine.
+class AudioEffectOptionsFactory : public QObject {
+    Q_OBJECT
+public:
+    explicit AudioEffectOptionsFactory(QObject* parent = nullptr);
+
+    /// Options with the defaults, then each known option given as a number (bandwidth, preDelay, reverbTime...).
+    Q_INVOKABLE QObject* create(const QVariantMap& properties);
+};
+
+/// The `Resource` global on the WebAssembly engine: `Resource.State`, the loading states of a resource by name,
+/// which the QtScript engine gives as a plain object.
+class ResourceStates : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantMap State READ getState CONSTANT)
+public:
+    explicit ResourceStates(QObject* parent = nullptr) : QObject(parent) {}
+
+    QVariantMap getState() const;
 };
 
 #endif // hifi_WasmScriptEngine_h

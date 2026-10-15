@@ -281,9 +281,12 @@ void HostInterfaceTests::testCall() {
     handleRecord[ValueCodec::OBJECT_KEY] = f.objects.handleFor(&f.probe);
     QCOMPARE(f.call(probe, "countOf", { handleRecord }), QVariant(9));
     QCOMPARE(f.call(probe, "countOf", { QVariant::fromValue(nullptr) }), QVariant(-1));
+    // a pointer to a const object, its class registered without the const (as Audio.setReverbOptions takes one)
+    qRegisterMetaType<Probe*>();
+    QCOMPARE(f.call(probe, "countOfProbe", { handleRecord }), QVariant(9));
     // extra arguments are ignored, as in JavaScript
     QCOMPARE(f.call(probe, "add", { 1, 2, 3 }), QVariant(3));
-    QCOMPARE(f.host->statistics().calls, uint64_t(15));
+    QCOMPARE(f.host->statistics().calls, uint64_t(16));
 }
 
 void HostInterfaceTests::testCallErrors() {
@@ -316,6 +319,8 @@ void HostInterfaceTests::testCallErrors() {
     QVariantMap record;
     record[ValueCodec::OBJECT_KEY] = f.objects.handleFor(&other);
     QCOMPARE(f.call(probe, "countOf", { record }), QVariant(-1));  // countOf takes any QObject*, casts inside
+    qRegisterMetaType<Probe*>();
+    QVERIFY(errorMessage(f.call(probe, "countOfProbe", { record })).contains("converted"));  // a const Probe* only
     // malformed bytes for the arguments trap the call itself
     auto name = f.placeText("add");
     std::vector<WasmValue> results;

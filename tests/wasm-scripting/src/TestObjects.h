@@ -47,6 +47,7 @@ public:
     Q_INVOKABLE QStringList join(const QStringList& names, const QString& extra) { return QStringList(names) << extra; }
     Q_INVOKABLE QUuid uuidOf(const QString& text) { return QUuid(text); }
     Q_INVOKABLE int countOf(QObject* object) { Probe* probe = qobject_cast<Probe*>(object); return probe ? probe->count() : -1; }
+    Q_INVOKABLE int countOfProbe(const Probe* probe) { return probe ? probe->count() : -1; }
     Q_INVOKABLE QVariantMap describeSelf() { QVariantMap m; m["count"] = _count; m["mode"] = int(_mode); return m; }
 
 public slots:

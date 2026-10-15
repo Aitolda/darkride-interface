@@ -147,6 +147,12 @@
         attempt("console.log type", function () { return typeof console.log; });
         attempt("typeof Resource", function () { return typeof Resource; });
         attempt("typeof AudioEffectOptions", function () { return typeof AudioEffectOptions; });
+        attempt("Resource.State values", function () { var s = Resource.State; return [s.QUEUED, s.LOADING, s.LOADED, s.FINISHED, s.FAILED]; });
+        attempt("new AudioEffectOptions", function () { var o = new AudioEffectOptions({ bandwidth: 5000, reverbTime: 3, roomSize: "big", unknown: 1 }); return [typeof o, o.bandwidth, o.reverbTime, o.roomSize, o.wetDryMix, o.unknown]; });
+        attempt("new AudioEffectOptions defaults", function () { var o = new AudioEffectOptions(); return [o.bandwidth, o.preDelay, o.bassMult, o.highGain]; });
+        attempt("Audio.setReverbOptions", function () { Audio.setReverbOptions(new AudioEffectOptions({ reverbTime: 1 })); return "ok"; });
+        attempt("HMD.getHUDLookAtPosition2D", function () { return HMD.getHUDLookAtPosition2D(); });
+        attempt("HMD.getHUDLookAtPosition3D", function () { return HMD.getHUDLookAtPosition3D(); });
         attempt("typeof OverlayWebWindow", function () { return typeof OverlayWebWindow; });
         attempt("typeof QmlFragment", function () { return typeof QmlFragment; });
         attempt("DriveKeys.TRANSLATE_X", function () { return DriveKeys.TRANSLATE_X; });
