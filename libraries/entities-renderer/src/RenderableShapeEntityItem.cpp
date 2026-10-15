@@ -18,6 +18,7 @@
 #include "entities-renderer/ShaderConstants.h"
 #include "EntitiesRendererLogging.h"
 #include <Transform.h>
+#include <shared/Shapes.h>
 #include <graphics/TextureMap.h>
 #include <PerfStat.h>
 
@@ -35,6 +36,43 @@ ShapeEntityRenderer::ShapeEntityRenderer(const EntityItemPointer& entity) : Pare
 }
 
 namespace {
+    // where a Picture mirror's glass reads its picture. A box's faces share one texture laid out as a cross
+    // (geometry::cube(), a cell a face; Quad is the same box flattened), so the +Z face's cell is stretched over the
+    // whole picture, flipped across (the picture's left is the face's right, as in a mirror) and over (the cell's
+    // rows run top-down, a rendered picture's bottom-up). Without the stretch the glass showed a quarter of the
+    // picture's width and a third of its height, magnified and off to the right.
+    Transform mirrorPictureTransform() {
+        const auto& cube = geometry::cube();
+        const size_t N = 4;   // corners a face
+        glm::vec2 topLeft(0.0f);
+        glm::vec2 bottomRight(1.0f);
+        for (size_t f = 0; f < cube.faces.size(); ++f) {
+            const auto& face = cube.faces[f];
+            bool front = true;
+            for (size_t i = 0; i < N; ++i) {
+                front = front && cube.vertices[face[i]].z > 0.0f;
+            }
+            if (!front) {
+                continue;
+            }
+            for (size_t i = 0; i < N; ++i) {
+                const glm::vec3& corner = cube.vertices[face[i]];
+                if (corner.x < 0.0f && corner.y > 0.0f) {
+                    topLeft = cube.texCoords[f * N + i];
+                } else if (corner.x > 0.0f && corner.y < 0.0f) {
+                    bottomRight = cube.texCoords[f * N + i];
+                }
+            }
+            break;
+        }
+        // the picture's (u, v) = (1 - across, 1 - down), across and down running 0 to 1 over the cell from its top left
+        glm::vec2 size = bottomRight - topLeft;
+        Transform transform;
+        transform.setScale(glm::vec3(-1.0f / size.x, -1.0f / size.y, 1.0f));
+        transform.setTranslation(glm::vec3(1.0f + topLeft.x / size.x, 1.0f + topLeft.y / size.y, 0.0f));
+        return transform;
+    }
+
     // the glass of a screen-mode mirror: its picture by screen position, unlit, into the G-buffer
     gpu::PipelinePointer screenMirrorPipeline() {
         static gpu::PipelinePointer pipeline;
@@ -220,11 +258,8 @@ void ShapeEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPoint
                     _mirrorSource->resetTexture(picture);
                     auto map = std::make_shared<graphics::TextureMap>();
                     map->setTextureSource(_mirrorSource);
-                    // across, as a mirror does (the picture's left is the face's right), and over, since the face's
-                    // texture rows run top-down and a rendered picture's bottom-up
-                    Transform flip;
-                    flip.setScale(glm::vec3(-1.0f, -1.0f, 1.0f));
-                    flip.setTranslation(glm::vec3(1.0f, 1.0f, 0.0f));
+                    // the +Z face's cell of the box's texture over the whole picture, across and over (see above)
+                    static const Transform flip = mirrorPictureTransform();
                     map->setTextureTransform(flip);
                     // the picture is the surface's light: an emissive map over a black albedo, so no lighting touches
                     // it and it needs no unlit path
