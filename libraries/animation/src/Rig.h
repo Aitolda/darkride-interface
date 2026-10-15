@@ -26,6 +26,7 @@
 #include "SimpleMovingAverage.h"
 #include "AnimUtil.h"
 #include "Flow.h"
+#include "SpringBones.h"
 #include "AvatarConstants.h"
 
 class Rig;
@@ -249,6 +250,9 @@ public:
     const AnimContext::DebugStateMachineMap& getStateMachineMap() const { return _lastContext.getStateMachineMap(); }
     void initFlow(bool isActive);
     Flow& getFlow() { return _internalFlow; }
+    // the spring bones of an imported avatar (the .fst's springBones data); `lengthScale` takes its metres to rig units
+    bool initSpringBones(const QJsonObject& data, float lengthScale);
+    springbones::Solver& getSpringBones() { return _springBones; }
 
     float getUnscaledEyeHeight() const;
     void buildAbsoluteRigPoses(const AnimPoseVec& relativePoses, AnimPoseVec& absolutePosesOut) const;
@@ -478,6 +482,7 @@ protected:
     SnapshotBlendPoseHelper _hipsBlendHelper;
     ControllerParameters _previousControllerParameters;
     Flow _internalFlow;
+    springbones::Solver _springBones;
 };
 
 #endif /* defined(__hifi__Rig__) */

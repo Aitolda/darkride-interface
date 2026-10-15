@@ -11,6 +11,9 @@
 
 #include "MyAvatar.h"
 
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonParseError>
+
 #include <algorithm>
 #include <vector>
 
@@ -2506,6 +2509,7 @@ void MyAvatar::setSkeletonModelURL(const QUrl& skeletonModelURL) {
             _fstAnimGraphOverrideUrl = _skeletonModel->getNetworkModel()->getAnimGraphOverrideUrl();
             initAnimGraph();
             if (getFlowEnabled()) initFlowFromFST();
+            initSpringBonesFromFST();
         }
         QObject::disconnect(*skeletonConnection);
     });
@@ -6667,6 +6671,33 @@ void MyAvatar::useFlow(bool isActive, bool isCollidable, const QVariantMap& phys
  * @property {number} offset - Offset of the collision sphere from the joint.
  * @property {number} jointIndex - The index of the joint the options are applied to.
  */
+QVariantMap MyAvatar::getSpringBoneData() {
+    QVariantMap result;
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "getSpringBoneData", Q_RETURN_ARG(QVariantMap, result));
+        return result;
+    }
+    if (!_skeletonModel->isLoaded()) {
+        return result;
+    }
+    auto& solver = _skeletonModel->getRig().getSpringBones();
+    result.insert("initialized", solver.isInitialized());
+    result.insert("active", solver.getActive());
+    result.insert("colliders", (int)solver.getData().colliders.size());
+    QVariantMap chains;
+    for (const auto& chain : solver.getChains()) {
+        QVariantList joints;
+        for (const auto& particle : chain.particles) {
+            if (particle.joint >= 0) {
+                joints.append(particle.joint);
+            }
+        }
+        chains.insert(chain.spec->root, joints);
+    }
+    result.insert("chains", chains);
+    return result;
+}
+
 QVariantMap MyAvatar::getFlowData() {
     QVariantMap result;
     if (QThread::currentThread() != thread()) {
@@ -6783,6 +6814,29 @@ bool MyAvatar::getNetworkGraphActive() const {
     } else {
         return false;
     }
+}
+
+void MyAvatar::initSpringBonesFromFST() {
+    if (!_skeletonModel->isLoaded() || !_skeletonModel->getNetworkModel()) {
+        return;
+    }
+    auto& rig = _skeletonModel->getRig();
+    const auto& mapping = _skeletonModel->getNetworkModel()->getMapping();
+    static const QString SPRING_BONES_FIELD = "springBones";
+    static const QString SCALE_FIELD = "scale";
+    if (!getFlowEnabled() || !mapping.contains(SPRING_BONES_FIELD)) {
+        rig.getSpringBones().cleanUp();
+        return;
+    }
+    QJsonParseError error;
+    auto document = QJsonDocument::fromJson(mapping.value(SPRING_BONES_FIELD).toByteArray(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject()) {
+        qCWarning(interfaceapp) << "springBones in the avatar's .fst is not a JSON object:" << error.errorString();
+        rig.getSpringBones().cleanUp();
+        return;
+    }
+    float scale = mapping.contains(SCALE_FIELD) ? mapping.value(SCALE_FIELD).toFloat() : 1.0f;
+    rig.initSpringBones(document.object(), scale > 0.0f ? scale : 1.0f);
 }
 
 void MyAvatar::initFlowFromFST() {

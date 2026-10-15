@@ -1999,6 +1999,14 @@ public:
      */
     Q_INVOKABLE QVariantMap getFlowData();
 
+    /*@jsdoc
+     * Gets the state of the spring bones of an imported avatar (the .fst's springBones data): whether the solver is
+     * initialized and active, each chain's joint indices by its root joint's name, and the collider count.
+     * @function MyAvatar.getSpringBoneData
+     * @returns {object} The spring-bone state.
+     */
+    Q_INVOKABLE QVariantMap getSpringBoneData();
+
     /**jsdoc
      * Gets the indexes of currently colliding flow joints.
      * @function MyAvatar.getCollidingFlowJoints
@@ -2879,6 +2887,8 @@ private:
     void initHeadBones();
     void initAnimGraph();
     void initFlowFromFST();
+    // the spring bones of an imported avatar, from the .fst's springBones line (and its scale)
+    void initSpringBonesFromFST();
     void updateHeadLookAt(float deltaTime);
     void resetHeadLookAt();
     void resetLookAtRotation(const glm::vec3& avatarPosition, const glm::quat& avatarOrientation);
