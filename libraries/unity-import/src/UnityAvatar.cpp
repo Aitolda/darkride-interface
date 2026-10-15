@@ -1051,17 +1051,30 @@ WrittenAvatar writeAvatar(const unity::Package& package, const AvatarSource& ava
     if (!viseme(14).isEmpty()) {
         faceLines << QString("bs = LipsFunnel = %1 = 0.7").arg(viseme(14));  // ou
     }
-    const QString blinkLeft = findShape(shapes, { "vrcblinkleft", "blinkleft", "blinkl", "eyeblinkleft", "eyeblinkl",
-                                                  "eyecloseleft", "eyeclosel", "closeleft" });
-    const QString blinkRight = findShape(shapes, { "vrcblinkright", "blinkright", "blinkr", "eyeblinkright", "eyeblinkr",
-                                                   "eyecloseright", "eyecloser", "closeright" });
-    const QString blinkBoth = findShape(shapes, { "blink", "eyeblink", "eyeclose", "blinkboth" });
+    // The blink only as the avatar's own platform gives it: with eye look on and eyelids that are shape keys, the shape
+    // keys found by name; with eye look off, only the older avatars' vrc.blink_left and vrc.blink_right. An avatar whose
+    // creator gave it no blink gets none: its own face animations close its eyes, and a blink on top would undo them.
+    const bool eyeLook = unity::toNumber(avatar.descriptor.value("enableEyeLook")) != 0.0;
+    const int eyelidType = (int)unity::toNumber(avatar.descriptor.value("customEyeLookSettings").toMap().value("eyelidType"));
+    QString blinkLeft, blinkRight, blinkBoth;
+    if (eyeLook && eyelidType == 1) {
+        blinkLeft = findShape(shapes, { "vrcblinkleft", "blinkleft", "blinkl", "eyeblinkleft", "eyeblinkl", "eyecloseleft",
+                                        "eyeclosel", "closeleft" });
+        blinkRight = findShape(shapes, { "vrcblinkright", "blinkright", "blinkr", "eyeblinkright", "eyeblinkr",
+                                         "eyecloseright", "eyecloser", "closeright" });
+        blinkBoth = findShape(shapes, { "blink", "eyeblink", "eyeclose", "blinkboth" });
+    } else if (!eyeLook) {
+        blinkLeft = findShape(shapes, { "vrcblinkleft" });
+        blinkRight = findShape(shapes, { "vrcblinkright" });
+    }
     if (!blinkLeft.isEmpty() && !blinkRight.isEmpty()) {
         faceLines << QString("bs = EyeBlink_L = %1 = 1").arg(blinkLeft) << QString("bs = EyeBlink_R = %1 = 1").arg(blinkRight);
     } else if (!blinkBoth.isEmpty()) {
         faceLines << QString("bs = EyeBlink_L = %1 = 0.5").arg(blinkBoth) << QString("bs = EyeBlink_R = %1 = 0.5").arg(blinkBoth);
+    } else if (eyeLook && eyelidType == 2) {
+        notes << "not yet: eyelids that blink with bones";
     } else {
-        notes << "no blink shape key found";
+        notes << "no automatic blink: its creator gave it none";
     }
 
     notes << "not yet: the animator's other layers (walking, hand gestures, sitting, AFK; the emotes the menu picks play the engine's own animations)";
