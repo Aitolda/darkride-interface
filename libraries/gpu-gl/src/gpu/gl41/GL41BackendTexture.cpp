@@ -318,6 +318,7 @@ GL41VariableAllocationTexture::GL41VariableAllocationTexture(const std::weak_ptr
     allocateStorage(allocatedMip);
     copyMipsFromTexture();
     syncSampler();
+    _gpuObject.setResidentMip(_populatedMip);
 }
 
 GL41VariableAllocationTexture::~GL41VariableAllocationTexture() {
@@ -550,7 +551,7 @@ size_t GL41VariableAllocationTexture::demote() {
     uint16_t oldAllocatedMip = _allocatedMip;
     allocateStorage(_allocatedMip + 1);
     _populatedMip = std::max(_populatedMip, _allocatedMip);
-
+    _gpuObject.setResidentMip(_populatedMip);
 
     // copy pre-existing mips
     copyTextureMipsInGPUMem(oldId, _id, oldAllocatedMip, _allocatedMip, _populatedMip);
@@ -622,6 +623,7 @@ void GL41VariableAllocationTexture::populateTransferQueue(TransferQueue& pending
         // queue up the sampler and populated mip change for after the transfer has completed
         pendingTransfers.emplace(new TransferJob(sourceMip, [=] {
             _populatedMip = sourceMip;
+            _gpuObject.setResidentMip(sourceMip);
             incrementPopulatedSize(_gpuObject.evalMipSize(sourceMip));
             sanityCheck();
             syncSampler();

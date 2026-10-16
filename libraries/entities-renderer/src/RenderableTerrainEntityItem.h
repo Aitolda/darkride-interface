@@ -206,21 +206,26 @@ private:
 
 namespace render { namespace entities {
 
-// A terrain's layers as its chunk items draw them: the colour textures and the parameter buffer the terrain shader
-// reads (TERRAIN.md section 5), shared by every chunk item of one entity. Made on the main thread, which starts the
+// A terrain's layers as its chunk items draw them: the parameter buffer the terrain shader reads (TERRAIN.md
+// section 5) and three texture arrays with a slice per slot, so the eight layers take three sampler slots: the
+// colours (sRGB), the normals (the map's xyz, 0 to 1; flat for a slot without one) and the masks (r roughness,
+// g occlusion, b height); shared by every chunk item of one entity. Made on the main thread, which starts the
 // texture fetches, handed to the items through the scene's transaction, and used on the render thread from then on.
-// The layers' other maps, normal, roughness, occlusion and height, are kept in two texture arrays with a slice per
-// slot, so the eight layers take two sampler slots for them: the normals (the map's xyz, 0 to 1; flat for a slot
-// without one) and the masks (r roughness, g occlusion, b height). The maps come in through the texture cache as
-// the colour textures do; as each arrives its slice is drawn from it on the GPU (terrain_layer_maps.slf, a quad over
-// the slice, which also scales the map to the slice), since the macOS GL backend takes no array slice from memory,
-// in a batch of its own that the frame runs before the pass being recorded. A set made for a changed stack takes
-// over the arrays and the drawn slices of the set it replaces, so a slider's scrub draws no slice again.
+// The textures come in through the texture cache; as each arrives its slice is drawn from it on the GPU
+// (terrain_layer_maps.slf, a quad over the slice, which also scales the map to the slice), since the macOS GL
+// backend takes no array slice from memory, in a batch of its own that the frame runs before the pass being
+// recorded; and drawn again as more of the texture reaches the GPU (the backend uploads a texture's mips a few at a
+// time, smallest first, and gpu::Texture's residency stamp says when), so the slice ends up as sharp as the texture.
+// The colour array's slices are as large as the largest colour texture, within bounds, grown as the textures arrive.
+// A set made for a changed stack takes over the arrays and the drawn slices of the set it replaces, so a slider's
+// scrub draws no slice again.
 class TerrainLayerSet {
 public:
     using Pointer = std::shared_ptr<TerrainLayerSet>;
     static const int LAYER_COUNT = TerrainEntityItem::MAX_TERRAIN_LAYERS;
-    static const int MAP_SIZE = 512;   // a side of a slice of the arrays: a map is scaled to it
+    static const int MAP_SIZE = 512;          // a side of a slice of the normal and mask arrays: a map is scaled to it
+    static const int ALBEDO_MIN_SIZE = 512;   // of the colour array: the largest colour texture's side, within these
+    static const int ALBEDO_MAX_SIZE = 2048;
 
     // previous: the set this one replaces, whose arrays it takes over
     explicit TerrainLayerSet(const terrain::LayerStack& stack, const Pointer& previous = nullptr);
@@ -231,8 +236,7 @@ public:
     // Draws the slices whose maps have arrived, or changed, since they were drawn, if any: in a batch of its own that
     // the frame runs before the one being recorded. Called from a chunk's render; nothing to do most frames.
     void drawMapsDue(RenderArgs* args);
-    // Binds the textures that have arrived (white for the rest, which draw as plain colours), the arrays and the
-    // parameters.
+    // Binds the arrays and the parameters.
     void bind(gpu::Batch& batch);
 
 private:
@@ -243,16 +247,26 @@ private:
         NetworkTexturePointer roughnessMap;
         NetworkTexturePointer occlusionMap;
         NetworkTexturePointer heightMap;
-        bool textured { false };
-        bool present { false };   // in the stack; a slot without a layer draws a plain colour of its own
+        bool textured { false };   // the colour array's slice holds its texture (the plain colour draws until then)
+        bool present { false };    // in the stack; a slot without a layer draws a plain colour of its own
     };
-    using Sources = std::array<gpu::TexturePointer, 3>;   // what a slice is drawn from: the normal map; or the roughness, occlusion and height maps
+    // What a slice holds, as terrain_layer_maps.slf is told.
+    enum class Map { Normal = 0, Mask = 1, Albedo = 2 };
+    using Sources = std::array<gpu::TexturePointer, 3>;   // what a slice is drawn from: the colour texture; the normal map; or the roughness, occlusion and height maps
+    using Stamps = std::array<gpu::Stamp, 3>;             // the sources' residency stamps when the slice was drawn
     // One slice of an array: what it was last drawn from, to draw it again when that changes.
     struct Slice {
         bool drawn { false };
         Sources sources;
+        Stamps stamps {};
     };
+    using Slices = std::array<Slice, LAYER_COUNT>;
+    static gpu::TexturePointer makeArray(const char* name, const gpu::Element& format, int size,
+                                         std::vector<gpu::FramebufferPointer>& targets);
+    static Stamps stampsOf(const Sources& sources);
     void makeArrays();
+    void makeAlbedoArray(int size);
+    Sources albedoSources(int slot) const;
     Sources normalSources(int slot) const;
     Sources maskSources(int slot) const;
     void updateParams();
@@ -263,13 +277,17 @@ private:
     gpu::BufferPointer _params;
     bool _paramsDirty { true };
 
-    gpu::TexturePointer _normals;                            // the array of the layers' normal maps
+    gpu::TexturePointer _albedos;                            // the array of the layers' colour textures
+    gpu::TexturePointer _normals;                            // the array of their normal maps
     gpu::TexturePointer _masks;                              // the array of their masks
-    std::vector<gpu::FramebufferPointer> _normalTargets;     // a framebuffer on each slice
+    int _albedoSize { ALBEDO_MIN_SIZE };                     // a side of the colour array's slices
+    std::vector<gpu::FramebufferPointer> _albedoTargets;     // a framebuffer on each slice
+    std::vector<gpu::FramebufferPointer> _normalTargets;
     std::vector<gpu::FramebufferPointer> _maskTargets;
-    std::array<Slice, LAYER_COUNT> _normalSlices;
-    std::array<Slice, LAYER_COUNT> _maskSlices;
-    std::mutex _mapsMutex;   // the slices: drawn on the render thread, taken over by the next set on the main thread
+    Slices _albedoSlices;
+    Slices _normalSlices;
+    Slices _maskSlices;
+    std::mutex _mapsMutex;   // the arrays and slices: drawn on the render thread, taken over by the next set on the main thread
 };
 
 // One column's tile of the paint map (PaintMap::fillTile: a level-0 chunk column's, or a coarser node's wider one) as

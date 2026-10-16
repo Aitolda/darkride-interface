@@ -18,6 +18,7 @@
 #include <QUrl>
 
 #include <functional>
+#include <atomic>
 #include <shared/Storage.h>
 #include <shared/FileCache.h>
 #include <RegisteredMetaTypes.h>
@@ -398,6 +399,17 @@ public:
     // After the texture has been created, it should be defined
     bool isDefined() const { return _defined; }
 
+    // How much of the texture the backend has on the GPU: the most detailed mip populated so far (0 once every mip
+    // is; a texture the backend uploads whole is 0 from the start), and a stamp that changes with it, so that
+    // whatever copies the texture elsewhere (a terrain's layer arrays, the lights' cookies) can copy it again as more
+    // of it arrives. The backend sets it as it transfers; readable from any thread.
+    uint16 getResidentMip() const { return _residentMip.load(std::memory_order_relaxed); }
+    Stamp getResidencyStamp() const { return _residencyStamp.load(std::memory_order_acquire); }
+    void setResidentMip(uint16 mip) const {
+        _residentMip.store(mip, std::memory_order_relaxed);
+        _residencyStamp.fetch_add(1, std::memory_order_release);
+    }
+
     Texture(TextureUsageType usageType);
     ~Texture();
 
@@ -632,6 +644,8 @@ protected:
     bool _autoGenerateMips = false;
     bool _isIrradianceValid = false;
     bool _defined = false;
+    mutable std::atomic<uint16> _residentMip { 0 };
+    mutable std::atomic<Stamp> _residencyStamp { 0 };
    
     static TexturePointer create(TextureUsageType usageType, Type type, const Element& texelFormat, uint16 width, uint16 height, uint16 depth, uint16 numSamples, uint16 numSlices, uint16 numMips, const Sampler& sampler);
 

@@ -24,28 +24,24 @@
 #define ENTITIES_TEXTURE_MIRROR_PICTURE 0
 #define ENTITIES_BUFFER_MIRROR 1
 
-// Terrain: the layers' colour textures take the material texture slots, the chunk's paint map tiles (layers 0 to 3
-// and 4 to 7 of the weights) the two after them, the layers' normal and mask arrays (a slice per layer) at 12 and
-// 13 (the forward variant's lighting takes 11 and 14), the terrain's parameters the material buffer slot and the chunk's own (where its tile is read) the
-// slot after, both of which the terrain's own pipeline leaves free (the backend has fourteen buffer slots, 0 to 13;
-// shadow passes bind their parameters at 2 with a pipeline of their own); an item with a material binds its own
-// there before it draws, so a terrain chunk's leftover never reaches one. The slot after is the parameters of the
-// draw that fills a slice of the arrays (terrain_layer_maps.slf, a pipeline of its own).
-#define ENTITIES_TEXTURE_TERRAIN_LAYER0 0
-#define ENTITIES_TEXTURE_TERRAIN_LAYER1 1
-#define ENTITIES_TEXTURE_TERRAIN_LAYER2 2
-#define ENTITIES_TEXTURE_TERRAIN_LAYER3 3
-#define ENTITIES_TEXTURE_TERRAIN_LAYER4 4
-#define ENTITIES_TEXTURE_TERRAIN_LAYER5 5
-#define ENTITIES_TEXTURE_TERRAIN_LAYER6 6
-#define ENTITIES_TEXTURE_TERRAIN_LAYER7 7
-#define ENTITIES_TEXTURE_TERRAIN_PAINT0 8
-#define ENTITIES_TEXTURE_TERRAIN_PAINT1 9
-#define ENTITIES_TEXTURE_TERRAIN_TOP 10      // the chunk column's heights of the ground the sky sees (TopSurface.h)
-#define ENTITIES_TEXTURE_TERRAIN_NORMALS 12   // past the forward variant's skybox (11); its ambient LUT is at 14
-#define ENTITIES_TEXTURE_TERRAIN_MASKS 13
+// Terrain: the layers' colour textures in one array (a slice per layer, as their normal and mask maps are kept), the
+// chunk's paint map tiles (layers 0 to 3 and 4 to 7 of the weights), the column's top surface heights and the two
+// map arrays take the first six texture units; the forward variant's lighting has the rest (the skybox at 11, the
+// sun's shadow at 12, the local shadow atlas at 13, the ambient LUT at 14, the cookies at 15 and the shadow table as
+// resource buffer 1). The terrain's parameters take the material buffer slot, which its own pipeline leaves free (an
+// item with a material binds its own there before it draws, so a terrain chunk's leftover never reaches one), and
+// the chunk's own (where its tile is read) the last of the backend's fourteen slots (0 to 13), past the lighting's
+// (the shadow parameters at 2, the lighting model at 3, the lights at 4 to 7, the clusters at 10 to 12). The slot
+// after the parameters is for the draw that fills a slice of the arrays (terrain_layer_maps.slf, a pipeline of its
+// own, which binds nothing else).
+#define ENTITIES_TEXTURE_TERRAIN_LAYERS 0     // the colour array: a slice per slot, sRGB
+#define ENTITIES_TEXTURE_TERRAIN_PAINT0 1
+#define ENTITIES_TEXTURE_TERRAIN_PAINT1 2
+#define ENTITIES_TEXTURE_TERRAIN_TOP 3        // the chunk column's heights of the ground the sky sees (TopSurface.h)
+#define ENTITIES_TEXTURE_TERRAIN_NORMALS 4
+#define ENTITIES_TEXTURE_TERRAIN_MASKS 5
 #define ENTITIES_BUFFER_TERRAIN_LAYERS 1
-#define ENTITIES_BUFFER_TERRAIN_CHUNK 2
+#define ENTITIES_BUFFER_TERRAIN_CHUNK 13
 #define ENTITIES_BUFFER_TERRAIN_MAPS 3
 
 
@@ -60,7 +56,7 @@ enum Texture {
     PolyvoxYMap = ENTITIES_TEXTURE_POLYVOX_YMAP,
     PolyvoxZMap = ENTITIES_TEXTURE_POLYVOX_ZMAP,
     MirrorPicture = ENTITIES_TEXTURE_MIRROR_PICTURE,
-    TerrainLayer0 = ENTITIES_TEXTURE_TERRAIN_LAYER0,
+    TerrainLayers = ENTITIES_TEXTURE_TERRAIN_LAYERS,
     TerrainPaint0 = ENTITIES_TEXTURE_TERRAIN_PAINT0,
     TerrainTop = ENTITIES_TEXTURE_TERRAIN_TOP,
     TerrainNormals = ENTITIES_TEXTURE_TERRAIN_NORMALS,

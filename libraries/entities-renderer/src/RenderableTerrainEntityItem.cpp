@@ -57,7 +57,7 @@ struct TerrainLayerParams {
 };
 // The parameters of a draw that fills a slice of the arrays (terrain_layer_maps.slf).
 struct TerrainMapParams {
-    glm::ivec4 which;   // x: 0 the normal slice, 1 the mask slice; y, z, w: whether the first, second and third source is bound
+    glm::ivec4 which;   // x: 0 the normal slice, 1 the mask slice, 2 the colour slice; y, z, w: whether the first, second and third source is bound
     glm::vec4 plain;    // x: roughness, y: occlusion, z: height, written for a source that is not bound
 };
 const float PLAIN_ROUGHNESS = 0.9f;   // what a layer without a roughness map is, as the whole terrain was before maps
@@ -604,41 +604,77 @@ TerrainLayerSet::TerrainLayerSet(const terrain::LayerStack& stack, const Pointer
     _params = std::make_shared<gpu::Buffer>(sizeof(TerrainParams), nullptr);
     if (previous) {
         std::lock_guard<std::mutex> lock(previous->_mapsMutex);
+        _albedos = previous->_albedos;
         _normals = previous->_normals;
         _masks = previous->_masks;
+        _albedoSize = previous->_albedoSize;
+        _albedoTargets = previous->_albedoTargets;
         _normalTargets = previous->_normalTargets;
         _maskTargets = previous->_maskTargets;
+        _albedoSlices = previous->_albedoSlices;
         _normalSlices = previous->_normalSlices;
         _maskSlices = previous->_maskSlices;
+        // the slices drawn from a texture stand for the slots' textures until the first render finds otherwise
+        for (int slot = 0; slot < LAYER_COUNT; ++slot) {
+            _layers[slot].textured = _albedoSlices[slot].drawn && _albedoSlices[slot].sources[0] != nullptr;
+        }
     }
-    if (!_normals || !_masks) {
+    if (!_albedos || !_normals || !_masks) {
         makeArrays();
     }
 }
 
-void TerrainLayerSet::makeArrays() {
+gpu::TexturePointer TerrainLayerSet::makeArray(const char* name, const gpu::Element& format, int size,
+                                               std::vector<gpu::FramebufferPointer>& targets) {
     gpu::Sampler::Desc samplerDesc;
     samplerDesc._filter = gpu::Sampler::FILTER_ANISOTROPIC;
     samplerDesc._wrapModeU = gpu::Sampler::WRAP_REPEAT;
     samplerDesc._wrapModeV = gpu::Sampler::WRAP_REPEAT;
     samplerDesc._maxAnisotropy = 8;
-    auto make = [&](const char* name, std::vector<gpu::FramebufferPointer>& targets) {
-        // linear 8 bits a channel, drawn into, with mips for the ground further off
-        auto array = gpu::Texture::createRenderBufferArray(gpu::Element::COLOR_RGBA_32, MAP_SIZE, MAP_SIZE, LAYER_COUNT,
-                                                           gpu::Texture::MAX_NUM_MIPS, gpu::Sampler(samplerDesc));
-        array->setSource(name);
-        targets.clear();
-        for (int slice = 0; slice < LAYER_COUNT; ++slice) {
-            auto framebuffer = gpu::FramebufferPointer(gpu::Framebuffer::create(name));
-            framebuffer->setRenderBuffer(0, array, slice);
-            targets.push_back(framebuffer);
-        }
-        return array;
-    };
-    _normals = make("terrain layer normals", _normalTargets);
-    _masks = make("terrain layer masks", _maskTargets);
+    // drawn into, with mips for the ground further off
+    auto array = gpu::Texture::createRenderBufferArray(format, (uint16_t)size, (uint16_t)size, LAYER_COUNT,
+                                                       gpu::Texture::MAX_NUM_MIPS, gpu::Sampler(samplerDesc));
+    array->setSource(name);
+    targets.clear();
+    for (int slice = 0; slice < LAYER_COUNT; ++slice) {
+        auto framebuffer = gpu::FramebufferPointer(gpu::Framebuffer::create(name));
+        framebuffer->setRenderBuffer(0, array, slice);
+        targets.push_back(framebuffer);
+    }
+    return array;
+}
+
+void TerrainLayerSet::makeArrays() {
+    // linear 8 bits a channel for the normals and the masks
+    _normals = makeArray("terrain layer normals", gpu::Element::COLOR_RGBA_32, MAP_SIZE, _normalTargets);
+    _masks = makeArray("terrain layer masks", gpu::Element::COLOR_RGBA_32, MAP_SIZE, _maskTargets);
     _normalSlices = {};
     _maskSlices = {};
+    makeAlbedoArray(ALBEDO_MIN_SIZE);
+}
+
+void TerrainLayerSet::makeAlbedoArray(int size) {
+    // sRGB, like the textures
+    _albedos = makeArray("terrain layer colours", gpu::Element::COLOR_SRGBA_32, size, _albedoTargets);
+    _albedoSize = size;
+    _albedoSlices = {};
+    for (Layer& layer : _layers) {
+        layer.textured = false;
+    }
+    _paramsDirty = true;
+}
+
+TerrainLayerSet::Stamps TerrainLayerSet::stampsOf(const Sources& sources) {
+    Stamps stamps {};
+    for (size_t i = 0; i < sources.size(); ++i) {
+        stamps[i] = sources[i] ? sources[i]->getResidencyStamp() : 0;
+    }
+    return stamps;
+}
+
+TerrainLayerSet::Sources TerrainLayerSet::albedoSources(int slot) const {
+    const Layer& layer = _layers[slot];
+    return { layer.texture ? layer.texture->getGPUTexture() : nullptr, nullptr, nullptr };
 }
 
 TerrainLayerSet::Sources TerrainLayerSet::normalSources(int slot) const {
@@ -656,24 +692,47 @@ TerrainLayerSet::Sources TerrainLayerSet::maskSources(int slot) const {
 void TerrainLayerSet::drawMapsDue(RenderArgs* args) {
     struct Due {
         int slot;
-        bool masks;
+        Map map;
         Sources sources;
     };
     std::vector<Due> due;
     {
         std::lock_guard<std::mutex> lock(_mapsMutex);
+        // the colour array grows to the largest colour texture, within its bounds; its slices are then drawn again
+        int wanted = _albedoSize;
         for (int slot = 0; slot < LAYER_COUNT; ++slot) {
-            const Sources normal = normalSources(slot);
-            if (!_normalSlices[slot].drawn || _normalSlices[slot].sources != normal) {
-                _normalSlices[slot].drawn = true;
-                _normalSlices[slot].sources = normal;
-                due.push_back({ slot, false, normal });
+            const auto texture = albedoSources(slot)[0];
+            if (texture) {
+                const auto dimensions = texture->getDimensions();
+                const int side = (int)std::max(dimensions.x, dimensions.y);
+                while (wanted < side && wanted < ALBEDO_MAX_SIZE) {
+                    wanted *= 2;
+                }
             }
-            const Sources masks = maskSources(slot);
-            if (!_maskSlices[slot].drawn || _maskSlices[slot].sources != masks) {
-                _maskSlices[slot].drawn = true;
-                _maskSlices[slot].sources = masks;
-                due.push_back({ slot, true, masks });
+        }
+        if (wanted != _albedoSize) {
+            makeAlbedoArray(wanted);
+        }
+        // a slice is drawn when it has not been, when its sources change, and when more of a source has reached the
+        // GPU since (its residency stamp): a few draws per texture as its mips come in, smallest first
+        auto check = [&](Map map, Slices& slices, int slot, const Sources& sources) {
+            Slice& slice = slices[slot];
+            const Stamps stamps = stampsOf(sources);
+            if (!slice.drawn || slice.sources != sources || slice.stamps != stamps) {
+                slice.drawn = true;
+                slice.sources = sources;
+                slice.stamps = stamps;
+                due.push_back({ slot, map, sources });
+            }
+        };
+        for (int slot = 0; slot < LAYER_COUNT; ++slot) {
+            check(Map::Albedo, _albedoSlices, slot, albedoSources(slot));
+            check(Map::Normal, _normalSlices, slot, normalSources(slot));
+            check(Map::Mask, _maskSlices, slot, maskSources(slot));
+            const bool textured = _albedoSlices[slot].sources[0] != nullptr;   // the plain colour until the texture has arrived
+            if (textured != _layers[slot].textured) {
+                _layers[slot].textured = textured;
+                _paramsDirty = true;
             }
         }
     }
@@ -687,30 +746,34 @@ void TerrainLayerSet::drawMapsDue(RenderArgs* args) {
     gpu::doInBatch("TerrainLayerSet::drawMapsDue", args->_context, [&](gpu::Batch& batch) {
         batch.enableStereo(false);
         batch.setPipeline(mapPipeline());
-        batch.setViewportTransform(glm::ivec4(0, 0, MAP_SIZE, MAP_SIZE));
-        bool normalsDrawn = false;
-        bool masksDrawn = false;
+        bool drawn[3] = { false, false, false };
         for (const Due& d : due) {
             TerrainMapParams params;
-            params.which = glm::ivec4(d.masks ? 1 : 0, d.sources[0] ? 1 : 0, d.sources[1] ? 1 : 0, d.sources[2] ? 1 : 0);
+            params.which = glm::ivec4((int)d.map, d.sources[0] ? 1 : 0, d.sources[1] ? 1 : 0, d.sources[2] ? 1 : 0);
             params.plain = glm::vec4(PLAIN_ROUGHNESS, PLAIN_OCCLUSION, PLAIN_HEIGHT, 0.0f);
             // a buffer per draw: the batch reads its buffers when it runs, so one shared would hold the last draw's
             auto buffer = std::make_shared<gpu::Buffer>(sizeof(TerrainMapParams), (const gpu::Byte*)&params);
             batch.setUniformBuffer(ENTITIES_BUFFER_TERRAIN_MAPS, buffer, 0, sizeof(TerrainMapParams));
-            batch.setFramebuffer(d.masks ? _maskTargets[d.slot] : _normalTargets[d.slot]);
+            const int size = d.map == Map::Albedo ? _albedoSize : MAP_SIZE;
+            batch.setViewportTransform(glm::ivec4(0, 0, size, size));
+            batch.setFramebuffer(d.map == Map::Albedo ? _albedoTargets[d.slot]
+                                                      : d.map == Map::Mask ? _maskTargets[d.slot] : _normalTargets[d.slot]);
             for (int i = 0; i < 3; ++i) {
                 batch.setResourceTexture(i, d.sources[i] ? d.sources[i] : white);
             }
             batch.draw(gpu::TRIANGLE_STRIP, 4);
-            (d.masks ? masksDrawn : normalsDrawn) = true;
+            drawn[(int)d.map] = true;
         }
         for (int i = 0; i < 3; ++i) {
             batch.setResourceTexture(i, nullptr);
         }
-        if (normalsDrawn) {
+        if (drawn[(int)Map::Albedo]) {
+            batch.generateTextureMips(_albedos);
+        }
+        if (drawn[(int)Map::Normal]) {
             batch.generateTextureMips(_normals);
         }
-        if (masksDrawn) {
+        if (drawn[(int)Map::Mask]) {
             batch.generateTextureMips(_masks);
         }
     });
@@ -744,17 +807,7 @@ void TerrainLayerSet::updateParams() {
 }
 
 void TerrainLayerSet::bind(gpu::Batch& batch) {
-    auto textureCache = DependencyManager::get<TextureCache>();
-    for (int i = 0; i < LAYER_COUNT; ++i) {
-        Layer& layer = _layers[i];
-        gpu::TexturePointer texture = layer.texture ? layer.texture->getGPUTexture() : nullptr;
-        const bool textured = texture != nullptr;   // the plain colour until the texture has arrived
-        if (textured != layer.textured) {
-            layer.textured = textured;
-            _paramsDirty = true;
-        }
-        batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_LAYER0 + i, textured ? texture : textureCache->getWhiteTexture());
-    }
+    batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_LAYERS, _albedos);
     batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_NORMALS, _normals);
     batch.setResourceTexture(ENTITIES_TEXTURE_TERRAIN_MASKS, _masks);
     if (_paramsDirty) {

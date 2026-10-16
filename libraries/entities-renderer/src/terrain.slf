@@ -8,8 +8,8 @@
 //  squarely the surface faces each axis, so slopes and cliffs do not stretch; a layer without a texture is a plain
 //  colour with a faint metre checker. A layer may also have a normal map, tilting the ground's normal in each
 //  projection's tangent frame (a whiteout blend, as Ben Golus describes for triplanar normal mapping), and masks:
-//  roughness, occlusion and a height the Height blend reads; these come from two texture arrays with a slice per
-//  layer (TerrainLayerSet). Two things say which layers show where. The voxels' materials: a triangle's three
+//  roughness, occlusion and a height the Height blend reads; the colour, the normals and the masks come from three
+//  texture arrays with a slice per layer (TerrainLayerSet). Two things say which layers show where. The voxels' materials: a triangle's three
 //  vertices may hold three, and the fragment blends them by its barycentric weights, so materials fade into each
 //  other across a cell rather than cut along triangle edges. And the paint map (PaintMap.h), read from the chunk's
 //  tile by the position within the chunk wherever the ground faces up: its eight layer weights lay their layers
@@ -17,7 +17,8 @@
 //  ground turns to face sideways or down, on cliffs and in anything dug. The map is a picture seen from the sky, so
 //  it lies on the ground the sky sees alone (TopSurface.h): a fragment further below the top surface's height than
 //  a voxel, on a cave's floor or under an overhang, shows its voxel material. The fragment is shaded like any opaque
-//  material (deferred), or lit in place on the forward path.
+//  material (deferred), or lit in place on the forward path as a model is (model.slf): the sun with its shadow
+//  cascades, the ambient, and the point and spot lights of the fragment's cluster with their shadows and cookies.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -33,6 +34,8 @@
     <@include DefaultMaterials.slh@>
 
     <@include GlobalLight.slh@>
+    <@include Shadow.slh@>
+    <@include LightLocal.slh@>
     <$declareEvalSkyboxGlobalColor(_SCRIBE_NULL, HIFI_USE_FORWARD)$>
 
     <@include gpu/Transform.slh@>
@@ -79,14 +82,7 @@ LAYOUT_STD140(binding=ENTITIES_BUFFER_TERRAIN_CHUNK) uniform terrainChunkBuffer 
     TerrainChunkParams chunk;
 };
 
-LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER0) uniform sampler2D layerMap0;
-LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER1) uniform sampler2D layerMap1;
-LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER2) uniform sampler2D layerMap2;
-LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER3) uniform sampler2D layerMap3;
-LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER4) uniform sampler2D layerMap4;
-LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER5) uniform sampler2D layerMap5;
-LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER6) uniform sampler2D layerMap6;
-LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYER7) uniform sampler2D layerMap7;
+LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_LAYERS) uniform sampler2DArray layerAlbedos;   // a slice per slot: the colour texture (sRGB)
 LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_PAINT0) uniform sampler2D paintMap0;   // the chunk's tile: weights of layers 0 to 3
 LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_PAINT1) uniform sampler2D paintMap1;   // and of layers 4 to 7
 LAYOUT(binding=ENTITIES_TEXTURE_TERRAIN_TOP) uniform sampler2D topHeights;      // the column's top surface heights, grid voxels
@@ -126,16 +122,7 @@ struct Surface {
 
 // The layer's colour texture at uv, with the gradients of uv.
 vec4 sampleLayer(int layer, vec2 uv, vec2 dx, vec2 dy) {
-    switch (layer) {
-        case 0: return textureGrad(layerMap0, uv, dx, dy);
-        case 1: return textureGrad(layerMap1, uv, dx, dy);
-        case 2: return textureGrad(layerMap2, uv, dx, dy);
-        case 3: return textureGrad(layerMap3, uv, dx, dy);
-        case 4: return textureGrad(layerMap4, uv, dx, dy);
-        case 5: return textureGrad(layerMap5, uv, dx, dy);
-        case 6: return textureGrad(layerMap6, uv, dx, dy);
-        default: return textureGrad(layerMap7, uv, dx, dy);
-    }
+    return textureGrad(layerAlbedos, vec3(uv, float(layer)), dx, dy);
 }
 
 // The layer's normal map at uv, tangent space, its strength applied.
@@ -373,16 +360,39 @@ void main(void) {
         DEFAULT_SCATTERING);
 <@else@>
     TransformCamera cam = getTransformCamera();
+    vec3 fragPositionWS = _positionWS.xyz;
+    vec3 fresnel = DEFAULT_FRESNEL;
+
+    // the sun's shadow, from its cascades, when the frame has them (a count of 0 with shadows off, or none drawn)
+    float shadowAttenuation = 1.0;
+    if (getShadowCascadeCount() > 0) {
+        shadowAttenuation = evalShadowAttenuation(getLightDirection(getKeyLight()), _positionWS, -_positionES.z, shadingNormal);
+    }
+    // the point and spot lights of the cluster the fragment falls in, with their shadows and cookies; the
+    // derivatives are for the cookies, taken here where control flow is uniform
+    vec3 fragPositionWSDx = dFdx(fragPositionWS);
+    vec3 fragPositionWSDy = dFdy(fragPositionWS);
+    vec3 fragToEyeDirWS = normalize(cam._viewInverse[3].xyz - fragPositionWS);
+    SurfaceData surfaceWS = initSurfaceData(surface.roughness, shadingNormal, fragToEyeDirWS);
+
+    vec4 localLighting = vec4(0.0);
+    <$fetchClusterInfo(_positionWS)$>;
+    if (hasLocalLights(numLights, clusterPos, dims)) {
+        localLighting = evalLocalLighting(cluster, numLights, fragPositionWS, fragPositionWSDx, fragPositionWSDy, surfaceWS,
+                                          DEFAULT_METALLIC, fresnel, surface.albedo, 0.0,
+                                          vec4(0), vec4(0), 1.0);
+    }
     _fragColor0 = vec4(evalSkyboxGlobalColor(
         cam._viewInverse,
-        1.0,
+        shadowAttenuation,
         surface.occlusion,
         _positionES.xyz,
-        shadingNormal,
         surface.albedo,
-        DEFAULT_FRESNEL,
+        fresnel,
         DEFAULT_METALLIC,
-        surface.roughness),
+        DEFAULT_EMISSIVE,
+        surfaceWS,
+        localLighting.rgb),
         1.0);
 <@endif@>
 }

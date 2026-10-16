@@ -98,6 +98,7 @@ GL45ResourceTexture::GL45ResourceTexture(const std::weak_ptr<GLBackend>& backend
     allocateStorage(allocatedMip);
     copyMipsFromTexture();
     syncSampler();
+    _gpuObject.setResidentMip(_populatedMip);
 }
 
 void GL45ResourceTexture::allocateStorage(uint16 allocatedMip) {
@@ -205,6 +206,7 @@ size_t GL45ResourceTexture::demote() {
     uint16_t oldAllocatedMip = _allocatedMip;
     allocateStorage(_allocatedMip + 1);
     _populatedMip = std::max(_populatedMip, _allocatedMip);
+    _gpuObject.setResidentMip(_populatedMip);
 
     // copy pre-existing mips
     copyTextureMipsInGPUMem(oldId, _id, oldAllocatedMip, _allocatedMip, _populatedMip);
@@ -283,6 +285,7 @@ void GL45ResourceTexture::populateTransferQueue(TransferQueue& pendingTransfers)
         // queue up the sampler and populated mip change for after the transfer has completed
         pendingTransfers.emplace(new TransferJob(sourceMip, [=] {
             _populatedMip = sourceMip;
+            _gpuObject.setResidentMip(sourceMip);
             incrementPopulatedSize(_gpuObject.evalMipSize(sourceMip));
             sanityCheck();
             syncSampler();
@@ -512,6 +515,7 @@ void GL45Texture::startTransfer() {
     Parent::startTransfer();
     _sparseInfo.update();
     _populatedMip = _maxMip + 1;
+    _gpuObject.setResidentMip(_populatedMip);
 }
 
 bool GL45Texture::continueTransfer() {
@@ -550,6 +554,7 @@ bool GL45Texture::continueTransfer() {
         }
     }
     _populatedMip = targetMip;
+    _gpuObject.setResidentMip(_populatedMip);
     return _populatedMip != _minMip;
 }
 
