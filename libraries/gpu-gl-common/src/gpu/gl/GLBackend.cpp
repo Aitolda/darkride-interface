@@ -136,6 +136,7 @@ void GLBackend::init() {
         GLint maxSamples = 0;
         glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
         Backend::maxSamples = maxSamples;
+        Backend::maxUniformBlockSize = MAX_UNIFORM_BLOCK_SIZE;
 
         LOG_GL_CONTEXT_INFO(gpugllogging, contextInfo);
         GPUIdent* gpu = GPUIdent::getInstance(vendor, renderer); 

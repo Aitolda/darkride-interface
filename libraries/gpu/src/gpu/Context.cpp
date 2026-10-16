@@ -266,6 +266,7 @@ Backend::TransformCamera Backend::TransformCamera::getMonoCamera(const Transform
 
 ContextMetricSize  Backend::freeGPUMemSize;
 int Backend::maxSamples{ 0 };
+int Backend::maxUniformBlockSize{ 0 };
 
 ContextMetricCount Backend::bufferCount;
 ContextMetricSize  Backend::bufferGPUMemSize;
@@ -288,6 +289,10 @@ ContextMetricSize  Backend::textureResourceIdealGPUMemSize;
 
 int Context::getMaxSamples() {
     return Backend::maxSamples;
+}
+
+int Context::getMaxUniformBlockSize() {
+    return Backend::maxUniformBlockSize;
 }
 
 Size Context::getFreeGPUMemSize() {

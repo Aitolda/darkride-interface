@@ -106,9 +106,9 @@ void ShapePlumber::addPipeline(const Filter& filter, const gpu::ShaderPointer& p
     locations->fadeObjectParameterBufferUnit = reflection.validUniformBuffer(render_utils::slot::buffer::FadeObjectParameters);
     locations->hazeParameterBufferUnit = reflection.validUniformBuffer(graphics::slot::buffer::HazeParams);
     if (key.isTranslucent()) {
-        locations->lightClusterGridBufferUnit = reflection.validUniformBuffer(render_utils::slot::buffer::LightClusterGrid);
-        locations->lightClusterContentBufferUnit = reflection.validUniformBuffer(render_utils::slot::buffer::LightClusterContent);
-        locations->lightClusterFrustumBufferUnit = reflection.validUniformBuffer(render_utils::slot::buffer::LightClusterFrustumGrid);
+        locations->lightClusterParamsBufferUnit = reflection.validUniformBuffer(render_utils::slot::buffer::LightClusterParams);
+        locations->lightClusterTilesBufferUnit = reflection.validUniformBuffer(render_utils::slot::buffer::LightClusterTiles);
+        locations->lightClusterBinsBufferUnit = reflection.validUniformBuffer(render_utils::slot::buffer::LightClusterBins);
     }
 
     {

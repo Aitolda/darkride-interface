@@ -68,9 +68,10 @@
 // spot lights' cookies, one picture to a layer of a texture array; the same table says which light has which
 #define RENDER_UTILS_TEXTURE_LOCAL_COOKIES 15
 
-#define RENDER_UTILS_BUFFER_LIGHT_CLUSTER_FRUSTUM_GRID 10
-#define RENDER_UTILS_BUFFER_LIGHT_CLUSTER_GRID 11
-#define RENDER_UTILS_BUFFER_LIGHT_CLUSTER_CONTENT 12
+// the frame's light culling (LightClusterGrid.slh): its parameters and light list, the screen tiles' bits, the depth bins'
+#define RENDER_UTILS_BUFFER_LIGHT_CLUSTER_PARAMS 10
+#define RENDER_UTILS_BUFFER_LIGHT_CLUSTER_TILES 11
+#define RENDER_UTILS_BUFFER_LIGHT_CLUSTER_BINS 12
 
 // Haze
 #define RENDER_UTILS_TEXTURE_HAZE_COLOR 0
@@ -149,9 +150,9 @@ enum Buffer {
     AmbientLight = RENDER_UTILS_BUFFER_AMBIENT_LIGHT,
     FadeParameters = RENDER_UTILS_BUFFER_FADE_PARAMS,
     FadeObjectParameters = RENDER_UTILS_BUFFER_FADE_OBJECT_PARAMS,
-    LightClusterFrustumGrid = RENDER_UTILS_BUFFER_LIGHT_CLUSTER_FRUSTUM_GRID,
-    LightClusterGrid = RENDER_UTILS_BUFFER_LIGHT_CLUSTER_GRID,
-    LightClusterContent = RENDER_UTILS_BUFFER_LIGHT_CLUSTER_CONTENT,
+    LightClusterParams = RENDER_UTILS_BUFFER_LIGHT_CLUSTER_PARAMS,
+    LightClusterTiles = RENDER_UTILS_BUFFER_LIGHT_CLUSTER_TILES,
+    LightClusterBins = RENDER_UTILS_BUFFER_LIGHT_CLUSTER_BINS,
     SsscParams = RENDER_UTILS_BUFFER_SSSC_PARAMS,
     SsaoParams = RENDER_UTILS_BUFFER_SSAO_PARAMS,
     SsaoFrameParams = RENDER_UTILS_BUFFER_SSAO_FRAME_PARAMS,

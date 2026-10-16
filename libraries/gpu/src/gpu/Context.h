@@ -102,6 +102,8 @@ public:
     // the most samples a pixel a multisampled texture may have on this GPU (GL_MAX_SAMPLES), set by the backend at
     // its init; 0 until then
     static int maxSamples;
+    // GL_MAX_UNIFORM_BLOCK_SIZE: what a uniform block may hold (the light culling sizes its list by it)
+    static int maxUniformBlockSize;
 
     static ContextMetricCount bufferCount;
     static ContextMetricSize bufferGPUMemSize;
@@ -237,6 +239,7 @@ public:
 
     static Size getFreeGPUMemSize();
     static int getMaxSamples();
+    static int getMaxUniformBlockSize();
     static Size getUsedGPUMemSize();
 
     static uint32_t getBufferGPUCount();

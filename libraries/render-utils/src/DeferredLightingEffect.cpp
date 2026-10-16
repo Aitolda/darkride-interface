@@ -97,9 +97,9 @@ void DeferredLightingEffect::setupLocalLightsBatch(gpu::Batch& batch, const Ligh
     // Bind the global list of lights and the visible lights this frame
     batch.setUniformBuffer(gr::Buffer::Light, lightClusters->_lightStage->getLightArrayBuffer());
 
-    batch.setUniformBuffer(ru::Buffer::LightClusterFrustumGrid, lightClusters->_frustumGridBuffer);
-    batch.setUniformBuffer(ru::Buffer::LightClusterGrid, lightClusters->_clusterGridBuffer);
-    batch.setUniformBuffer(ru::Buffer::LightClusterContent, lightClusters->_clusterContentBuffer);
+    batch.setUniformBuffer(ru::Buffer::LightClusterParams, lightClusters->_paramsBuffer);
+    batch.setUniformBuffer(ru::Buffer::LightClusterTiles, lightClusters->_tilesBuffer);
+    batch.setUniformBuffer(ru::Buffer::LightClusterBins, lightClusters->_binsBuffer);
 
     // spot lights' shadow maps and cookies; with none, a table in which no light has either, so the shaders never
     // read an empty slot
@@ -109,14 +109,9 @@ void DeferredLightingEffect::setupLocalLightsBatch(gpu::Batch& batch, const Ligh
         localShadows ? localShadows->getTable() : LocalShadows::getEmptyTable());
 }
 
-// a grid of one empty cluster, for the forward pipelines before any view has published its clusters
+// a culling with no light, for the forward pipelines before any view has published its clusters
 static const LightClustersPointer& getEmptyLightClusters() {
-    static const LightClustersPointer EMPTY_CLUSTERS = [] {
-        auto clusters = std::make_shared<LightClusters>();
-        clusters->setDimensions(glm::uvec3(1, 1, 1), 1);
-        clusters->updateClusterResource();
-        return clusters;
-    }();
+    static const LightClustersPointer EMPTY_CLUSTERS = std::make_shared<LightClusters>();
     return EMPTY_CLUSTERS;
 }
 
@@ -144,9 +139,9 @@ void DeferredLightingEffect::setupFrameLightingBatch(gpu::Batch& batch, const Re
     if (lightStage) {
         batch.setUniformBuffer(gr::Buffer::Light, lightStage->getLightArrayBuffer());
     }
-    batch.setUniformBuffer(ru::Buffer::LightClusterFrustumGrid, lightClusters->_frustumGridBuffer);
-    batch.setUniformBuffer(ru::Buffer::LightClusterGrid, lightClusters->_clusterGridBuffer);
-    batch.setUniformBuffer(ru::Buffer::LightClusterContent, lightClusters->_clusterContentBuffer);
+    batch.setUniformBuffer(ru::Buffer::LightClusterParams, lightClusters->_paramsBuffer);
+    batch.setUniformBuffer(ru::Buffer::LightClusterTiles, lightClusters->_tilesBuffer);
+    batch.setUniformBuffer(ru::Buffer::LightClusterBins, lightClusters->_binsBuffer);
 
     // the lights' shadow maps and cookies; with none, a table in which no light has either
     const auto localShadows = _frameShadowFrame ? _frameShadowFrame->_localShadows : LocalShadowsPointer();
@@ -175,9 +170,9 @@ void SetFrameLighting::run(const render::RenderContextPointer& renderContext, co
 
 void DeferredLightingEffect::unsetLocalLightsBatch(gpu::Batch& batch) {
     batch.setUniformBuffer(gr::Buffer::Light, nullptr);
-    batch.setUniformBuffer(ru::Buffer::LightClusterGrid, nullptr);
-    batch.setUniformBuffer(ru::Buffer::LightClusterContent, nullptr);
-    batch.setUniformBuffer(ru::Buffer::LightClusterFrustumGrid, nullptr);
+    batch.setUniformBuffer(ru::Buffer::LightClusterParams, nullptr);
+    batch.setUniformBuffer(ru::Buffer::LightClusterTiles, nullptr);
+    batch.setUniformBuffer(ru::Buffer::LightClusterBins, nullptr);
     batch.setResourceTexture(ru::Texture::LocalShadow, nullptr);
     batch.setResourceTexture(ru::Texture::LocalCookies, nullptr);
     batch.setResourceBuffer(RENDER_UTILS_RESOURCE_BUFFER_LOCAL_SHADOW_TABLE, nullptr);
@@ -562,8 +557,7 @@ void RenderDeferredLocals::run(const render::RenderContextPointer& renderContext
         batch.setViewportTransform(viewport);
         batch.setStateScissorRect(viewport);
 
-        auto& lightIndices = lightClusters->_visibleLightIndices;
-        if (!lightIndices.empty() && lightIndices[0] > 0) {
+        if (lightClusters->getNumLights() > 0) {
             deferredLightingEffect->setupLocalLightsBatch(batch, lightClusters, shadowFrame ? shadowFrame->_localShadows : nullptr);
 
             // Local light pipeline
@@ -602,9 +596,9 @@ void RenderDeferredCleanup::run(const render::RenderContextPointer& renderContex
         //     batch.setUniformBuffer(LIGHTING_MODEL_BUFFER_SLOT, nullptr);
         batch.setUniformBuffer(ru::Buffer::DeferredFrameTransform, nullptr);
 
-        batch.setUniformBuffer(ru::Buffer::LightClusterFrustumGrid, nullptr);
-        batch.setUniformBuffer(ru::Buffer::LightClusterGrid, nullptr);
-        batch.setUniformBuffer(ru::Buffer::LightClusterContent, nullptr);
+        batch.setUniformBuffer(ru::Buffer::LightClusterParams, nullptr);
+        batch.setUniformBuffer(ru::Buffer::LightClusterTiles, nullptr);
+        batch.setUniformBuffer(ru::Buffer::LightClusterBins, nullptr);
 
         batch.setResourceTexture(ru::Texture::LocalShadow, nullptr);
         batch.setResourceTexture(ru::Texture::LocalCookies, nullptr);

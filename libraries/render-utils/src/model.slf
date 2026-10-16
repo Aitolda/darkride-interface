@@ -231,8 +231,8 @@ void main(void) {
 
             vec4 localLighting = vec4(0.0);
             <$fetchClusterInfo(_positionWS)$>;
-            if (hasLocalLights(numLights, clusterPos, dims)) {
-                localLighting = evalLocalLighting(cluster, numLights, fragPositionWS, fragPositionWSDx, fragPositionWSDy, surfaceWS,
+            if (hasLocalLights(cluster)) {
+                localLighting = evalLocalLighting(cluster, fragPositionWS, fragPositionWSDx, fragPositionWSDy, surfaceWS,
                                                   metallic, fresnel, albedo, 0.0,
                                                   vec4(0), vec4(0), opacity);
             }
@@ -330,8 +330,8 @@ void main(void) {
 
                 vec4 localLighting = vec4(0.0);
                 <$fetchClusterInfo(_positionWS)$>;
-                if (hasLocalLights(numLights, clusterPos, dims)) {
-                    localLighting = evalLocalLighting(cluster, numLights, fragPositionWS, fragPositionWSDx, fragPositionWSDy, surfaceWS,
+                if (hasLocalLights(cluster)) {
+                    localLighting = evalLocalLighting(cluster, fragPositionWS, fragPositionWSDx, fragPositionWSDy, surfaceWS,
                                                       metallic, fresnel, albedo, 0.0,
                                                       vec4(0), vec4(0), opacity);
                 }
