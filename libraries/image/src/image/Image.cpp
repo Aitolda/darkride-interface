@@ -108,7 +108,7 @@ Image Image::getScaled(glm::uvec2 dstSize, AspectRatioMode ratioMode, Transforma
         auto srcAlphaIt = reinterpret_cast<const float*>(surface.channel(3));
 
         if (_format == Format_RGBAF) {
-            Image output(_dims.x, _dims.y, _format);
+            Image output(dstSize.x, dstSize.y, _format);
             auto dstPixelIt = output._floatData.begin();
             auto dstPixelEnd = output._floatData.end();
 

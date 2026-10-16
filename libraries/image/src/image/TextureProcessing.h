@@ -110,6 +110,9 @@ gpu::TexturePointer createLightmapTextureFromImage(Image&& image, const std::str
                                                    bool compress, gpu::BackendTarget target, const std::atomic<bool>& abortProcessing); 
 gpu::TexturePointer process2DTextureColorFromImage(Image&& srcImage, const std::string& srcImageName, bool compress,
                                                    gpu::BackendTarget target, bool isStrict, const std::atomic<bool>& abortProcessing);
+// a linear HDR picture (an EXR) kept at half precision, with mips: lightmaps (LIGHTMAPS.md)
+gpu::TexturePointer process2DTextureHDRFromImage(Image&& srcImage, const std::string& srcImageName,
+                                                 gpu::BackendTarget target, const std::atomic<bool>& abortProcessing);
 gpu::TexturePointer process2DTextureNormalMapFromImage(Image&& srcImage, const std::string& srcImageName, bool compress,
                                                        gpu::BackendTarget target, bool isBumpMap, const std::atomic<bool>& abortProcessing);
 gpu::TexturePointer process2DTextureGrayscaleFromImage(Image&& srcImage, const std::string& srcImageName, bool compress,

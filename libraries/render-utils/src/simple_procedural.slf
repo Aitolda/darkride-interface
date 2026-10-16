@@ -160,13 +160,15 @@ void main(void) {
             diffuse);
     } else {
         if (emissiveAmount > 0.0) {
+            // the procedural emissive goes in as a full-bake lightmap (the lighting starts as emissive times diffuse)
             packDeferredFragmentLightmap(
                 normal,
                 1.0,
                 diffuse,
                 roughness,
                 metallic,
-                emissive);
+                emissive,
+                vec3(0.0));
         } else {
             packDeferredFragment(
                 normal,

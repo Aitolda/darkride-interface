@@ -214,6 +214,8 @@ public:
     Texture scatteringTexture;
     Texture lightmapTexture;
     glm::vec2 lightmapParams { 0.0f, 1.0f };
+    // what the lightmap holds (LIGHTMAPS.md): Unity's Baked Indirect unless the reader says full (FBX bakes)
+    graphics::MaterialKey::LightmapMode lightmapMode { graphics::MaterialKey::LIGHTMAP_INDIRECT };
 
 
     bool isPBSMaterial { false };

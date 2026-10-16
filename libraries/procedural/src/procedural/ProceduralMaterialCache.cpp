@@ -248,7 +248,11 @@ NetworkMaterialResource::ParsedMaterials NetworkMaterialResource::parseJSONMater
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
  * @property {Mat4|string} texCoordTransform1 - The transform to use for <code>occlusionMap</code> and <code>lightMap</code>. 
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
- * @property {string} lightmapParams - Parameters for controlling how <code>lightMap</code> is used. 
+ * @property {number[]|string} lightmapParams - The light map's <code>[offset, scale]</code>: light = offset + scale * the
+ *     map's value. <code>"fallthrough"</code> takes the material below's.
+ * @property {string} lightmapMode - What the light map holds: <code>"indirect"</code> (the default: Unity's Baked
+ *     Indirect, the baked light replacing the ambient light while the sun and the local lights run as usual) or
+ *     <code>"full"</code> (the whole diffuse lighting, as High Fidelity's bakes). See LIGHTMAPS.md.
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only. 
  *     <p><em>Currently not used.</em></p>
  * @property {string} materialParams - Parameters for controlling the material projection and repetition. 
@@ -273,6 +277,8 @@ std::pair<std::string, std::shared_ptr<NetworkMaterial>> NetworkMaterialResource
     }
 
     std::array<glm::mat4, graphics::Material::NUM_TEXCOORD_TRANSFORMS> texcoordTransforms;
+    glm::vec2 lightmapParams;
+    bool hasLightmapParams = false;
 
     const QString FALLTHROUGH("fallthrough");
     if (modelString == graphics::Material::HIFI_PBR) {
@@ -597,8 +603,23 @@ std::pair<std::string, std::shared_ptr<NetworkMaterial>> NetworkMaterialResource
                     if (valueString == FALLTHROUGH) {
                         material->setPropertyDoesFallthrough(graphics::Material::ExtraFlagBit::LIGHTMAP_PARAMS);
                     }
+                } else if (value.isArray()) {
+                    // [offset, scale], applied after the maps are set (setTextureMap of the light map resets them)
+                    auto array = value.toArray();
+                    if (array.size() == 2 && array[0].isDouble() && array[1].isDouble()) {
+                        lightmapParams = glm::vec2(array[0].toDouble(), array[1].toDouble());
+                        hasLightmapParams = true;
+                    }
                 }
-                // TODO: implement lightmapParams and update JSDoc
+            } else if (key == "lightmapMode") {
+                // goes with the light map, so it has no fallthrough of its own
+                auto value = materialJSON.value(key);
+                if (value.isString()) {
+                    graphics::MaterialKey::LightmapMode mode;
+                    if (graphics::MaterialKey::getLightmapModeFromName(value.toString().toStdString(), mode)) {
+                        material->setLightmapMode(mode);
+                    }
+                }
             } else if (key == "materialParams") {
                 auto value = materialJSON.value(key);
                 if (value.isString()) {
@@ -626,6 +647,9 @@ std::pair<std::string, std::shared_ptr<NetworkMaterial>> NetworkMaterialResource
             if (newTransform != mat4() || newTransform != material->getTexCoordTransform(i)) {
                 material->setTexCoordTransform(i, newTransform);
             }
+        }
+        if (hasLightmapParams) {
+            material->setLightmapParams(lightmapParams);
         }
         networkMaterial = material;
     } else if (modelString == graphics::Material::HIFI_SHADER_SIMPLE) {
@@ -904,6 +928,7 @@ NetworkMaterial::NetworkMaterial(const HFMMaterial& material, const QUrl& textur
             map->setLightmapOffsetScale(_lightmapParams.x, _lightmapParams.y);
         }
         setTextureMap(MapChannel::LIGHT_MAP, map);
+        setLightmapMode(material.lightmapMode);
     }
 }
 

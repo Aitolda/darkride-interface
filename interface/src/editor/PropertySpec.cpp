@@ -447,6 +447,87 @@ namespace {
                 setUserDataEntry(p, "mirror", mode == "off" ? QString() : mode);
             }
         });
+        // a model's lightmap, the entry "lightmap" (LIGHTMAPS.md §3.2): { "url", "scaleOffset": [sx, sy, ox, oy],
+        // "mode": "indirect" | "full", "params": [offset, scale] }, shown as the Lightmap section's fields; clearing
+        // the picture removes the entry
+        auto lightmapEntry = [](const EP& p) {
+            return QJsonDocument::fromJson(p.getUserData().toUtf8()).object().value("lightmap").toObject();
+        };
+        auto setLightmapEntry = [](EP& p, const QJsonObject& lightmap) {
+            QString text = p.getUserData();
+            QJsonDocument document = QJsonDocument::fromJson(text.toUtf8());
+            if (!text.trimmed().isEmpty() && !document.isObject()) {
+                return;
+            }
+            QJsonObject object = document.object();
+            if (lightmap.isEmpty()) {
+                object.remove("lightmap");
+            } else {
+                object.insert("lightmap", lightmap);
+            }
+            p.setUserData(object.isEmpty() ? QString() : JsonOrder::write(object, JsonOrder::scan(text)));
+        };
+        auto lightmapScaleOffset = [](const QJsonObject& lightmap) {
+            QJsonArray array = lightmap.value("scaleOffset").toArray();
+            return array.size() == 4 ? glm::vec4(array[0].toDouble(), array[1].toDouble(), array[2].toDouble(), array[3].toDouble())
+                                     : glm::vec4(1.0f, 1.0f, 0.0f, 0.0f);
+        };
+        auto setLightmapScaleOffset = [=](EP& p, const glm::vec4& scaleOffset) {
+            QJsonObject lightmap = lightmapEntry(p);
+            auto number = [](double c) { return std::round(c * 10000.0) / 10000.0; };
+            lightmap.insert("scaleOffset", QJsonArray { number(scaleOffset.x), number(scaleOffset.y), number(scaleOffset.z), number(scaleOffset.w) });
+            setLightmapEntry(p, lightmap);
+        };
+        add("userData:lightmap:url",
+            [=](const EP& p) { return QVariant(lightmapEntry(p).value("url").toString()); },
+            [=](EP& p, const QVariant& v) {
+                QJsonObject lightmap = lightmapEntry(p);
+                QString url = v.toString();
+                if (url.isEmpty()) {
+                    setLightmapEntry(p, QJsonObject());
+                } else {
+                    lightmap.insert("url", url);
+                    setLightmapEntry(p, lightmap);
+                }
+            });
+        add("userData:lightmap:scale",
+            [=](const EP& p) { glm::vec4 so = lightmapScaleOffset(lightmapEntry(p)); return QVariant(toQ(glm::vec2(so.x, so.y))); },
+            [=](EP& p, const QVariant& v) {
+                glm::vec4 so = lightmapScaleOffset(lightmapEntry(p));
+                glm::vec2 scale = fromQ(v.value<QVector2D>());
+                setLightmapScaleOffset(p, glm::vec4(scale.x, scale.y, so.z, so.w));
+            });
+        add("userData:lightmap:offset",
+            [=](const EP& p) { glm::vec4 so = lightmapScaleOffset(lightmapEntry(p)); return QVariant(toQ(glm::vec2(so.z, so.w))); },
+            [=](EP& p, const QVariant& v) {
+                glm::vec4 so = lightmapScaleOffset(lightmapEntry(p));
+                glm::vec2 offset = fromQ(v.value<QVector2D>());
+                setLightmapScaleOffset(p, glm::vec4(so.x, so.y, offset.x, offset.y));
+            });
+        add("userData:lightmap:mode",
+            [=](const EP& p) { return QVariant(lightmapEntry(p).value("mode").toString() == "full" ? "full" : "indirect"); },
+            [=](EP& p, const QVariant& v) {
+                QJsonObject lightmap = lightmapEntry(p);
+                if (v.toString() == "full") {
+                    lightmap.insert("mode", "full");
+                } else {
+                    lightmap.remove("mode");
+                }
+                setLightmapEntry(p, lightmap);
+            });
+        // the params' scale (light = offset + scale * map); the offset stays in the JSON
+        add("userData:lightmap:brightness",
+            [=](const EP& p) {
+                QJsonArray params = lightmapEntry(p).value("params").toArray();
+                return QVariant(params.size() == 2 && params[1].isDouble() ? params[1].toDouble() : 1.0);
+            },
+            [=](EP& p, const QVariant& v) {
+                QJsonObject lightmap = lightmapEntry(p);
+                QJsonArray params = lightmap.value("params").toArray();
+                double offset = params.size() == 2 && params[0].isDouble() ? params[0].toDouble() : 0.0;
+                lightmap.insert("params", QJsonArray { offset, std::round(v.toDouble() * 10000.0) / 10000.0 });
+                setLightmapEntry(p, lightmap);
+            });
         // a light's Shadows: Off is Cast Shadows off; Normal and Important cast, and Important, the entry "shadows"
         // set to "important", goes before the other lights when more cast shadows than there are maps
         a.insert(SHADOWS_KEY, Accessor {
@@ -532,6 +613,8 @@ namespace {
             { "emissiveMap", Entry::Text, "", false },
             // no emission, or with an Emission Map, the map as it is
             { "emissive", Entry::Color, QJsonArray { 0.0, 0.0, 0.0 }, false, "emissiveMap", QJsonArray { 1.0, 1.0, 1.0 } },
+            { "lightMap", Entry::Text, "", false },
+            { "lightmapMode", Entry::Text, "indirect", false },
             { "opacity", Entry::Number, graphics::Material::DEFAULT_OPACITY, false },
             { "opacityCutoff", Entry::Number, graphics::Material::DEFAULT_OPACITY_CUTOFF, false }
         };
@@ -627,6 +710,19 @@ namespace {
         add("materialData:alphaClipping",
             [=](const EP& p) { return QVariant(isClipping(modeOf(p))); },
             [=](EP& p, const QVariant& v) { setMode(p, isTransparent(modeOf(p)), v.toBool()); });
+        // the light map's scale, lightmapParams[1] (light = offset + scale * map); the offset stays in the JSON
+        add("materialData:lightmapScale",
+            [=](const EP& p) {
+                QJsonArray params = firstMaterial(p).value("lightmapParams").toArray();
+                return QVariant(params.size() == 2 && params[1].isDouble() ? params[1].toDouble() : 1.0);
+            },
+            [=](EP& p, const QVariant& v) {
+                editMaterials(p, false, [&](QJsonObject& material) {
+                    QJsonArray params = material.value("lightmapParams").toArray();
+                    double offset = params.size() == 2 && params[0].isDouble() ? params[0].toDouble() : 0.0;
+                    material.insert("lightmapParams", QJsonArray { offset, std::round(v.toDouble() * 10000.0) / 10000.0 });
+                });
+            });
         return a;
     }
 
@@ -784,6 +880,16 @@ namespace {
         stepping(add(spec("animation.lastFrame", "Last Frame", K::Float, "model")), 1, 0);
         stepping(add(spec("animation.fps", "FPS", K::Float, "model")), 1, 1);
         add(spec("textures", "Textures", K::Json, "model"));
+
+        // a model's lightmap (LIGHTMAPS.md §3.2): the picture, the second texture coordinates' scale and offset (Unity's
+        // lightmapScaleOffset), how it lights, and a brightness (the params' scale)
+        add(spec("userData:lightmap:url", "Lightmap", K::Image, "lightmap"));
+        with(stepping(add(spec("userData:lightmap:scale", "Scale", K::Vec2, "lightmap")), 0.01, 4), "userData:lightmap:url!=");
+        with(stepping(add(spec("userData:lightmap:offset", "Offset", K::Vec2, "lightmap")), 0.01, 4), "userData:lightmap:url!=");
+        en("userData:lightmap:mode", "Mode", "lightmap", { "indirect:Indirect (Baked Indirect)", "full:Full Bake" },
+            "userData:lightmap:url!=");
+        with(range(add(spec("userData:lightmap:brightness", "Brightness", K::Float, "lightmap")), 0, 16, 0.01, 2),
+            "userData:lightmap:url!=");
         add(spec("groupCulled", "Group Culled", K::Bool, "model"));
 
         // image
@@ -881,6 +987,13 @@ namespace {
         input("materialData:emissiveMap", "Emission Map", K::Image, OWN_DATA);
         input("materialData:emissive", "Emission Color", K::Color, OWN_DATA);
         input("materialData:opacity", "Opacity", K::Slider, OWN_DATA);
+        // a baked lightmap over the second texture coordinates (LIGHTMAPS.md): Indirect is Unity's Baked Indirect (the
+        // baked light in place of the ambient, the lights as usual), Full Bake High Fidelity's (the whole lighting)
+        input("materialData:lightMap", "Lightmap", K::Image, OWN_DATA);
+        en("materialData:lightmapMode", "Lightmap Mode", "material_inputs", { "indirect:Indirect (Baked Indirect)",
+            "full:Full Bake" }, OWN_DATA " and materialData:lightMap!=");
+        with(range(add(spec("materialData:lightmapScale", "Lightmap Scale", K::Float, "material_inputs")), 0, 16, 0.01, 2),
+            OWN_DATA " and materialData:lightMap!=");
 #undef OWN_DATA
 #undef PACKING_KEY
         // all of it as JSON, for scripters and for what has no field of its own
@@ -983,6 +1096,7 @@ namespace {
         { "text", "Text", false },
         { "zone", "Zone", false },
         { "model", "Model", false },
+        { "lightmap", "Lightmap", true },
         { "image", "Image", false },
         { "web", "Web", false },
         { "light", "Light", false },
@@ -1057,7 +1171,7 @@ static QStringList typeSections(EntityTypes::EntityType type, bool multiple) {
         case EntityTypes::Zone:
             return { "base", "spatial", "zone", "behavior", "physics" };
         case EntityTypes::Model:
-            return { "base", "spatial", "model", "behavior", "collision", "physics" };
+            return { "base", "spatial", "model", "lightmap", "behavior", "collision", "physics" };
         case EntityTypes::Image:
             return { "base", "spatial", "image", "behavior", "collision", "physics" };
         case EntityTypes::Web:

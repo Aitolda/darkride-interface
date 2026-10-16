@@ -45,6 +45,7 @@ const Element Element::DEPTH24_STENCIL8 { SCALAR, UINT32, DEPTH_STENCIL };
 const Element Element::VEC2NU8_XY{ VEC2, NUINT8, XY };
 
 const Element Element::COLOR_R11G11B10{ SCALAR, FLOAT, R11G11B10 };
+const Element Element::COLOR_RGBA16F{ VEC4, HALF, RGBA };
 const Element Element::COLOR_RGB9E5{ SCALAR, FLOAT, RGB9E5 };
 const Element Element::VEC4F_COLOR_RGBA{ VEC4, FLOAT, RGBA };
 const Element Element::VEC2F_UV{ VEC2, FLOAT, UV };

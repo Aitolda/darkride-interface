@@ -65,6 +65,8 @@ namespace scriptable {
         QString bumpMap;
         QString occlusionMap;
         QString lightMap;
+        QString lightmapMode;       // "indirect" or "full" (LIGHTMAPS.md)
+        glm::vec2 lightmapParams { 0.0f, 1.0f };    // offset, scale
         QString scatteringMap;
         std::array<glm::mat4, graphics::Material::NUM_TEXCOORD_TRANSFORMS> texCoordTransforms;
         QString cullFaceMode;

@@ -395,7 +395,8 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
                     i != graphics::MaterialKey::OPACITY_TRANSLUCENT_MAP_BIT &&
                     i != graphics::MaterialKey::OPACITY_MAP_MODE_BIT &&
                     i != graphics::MaterialKey::ROUGHNESS_FROM_SMOOTHNESS_BIT &&
-                    i != graphics::MaterialKey::OCCLUSION_TEXCOORD0_BIT) {
+                    i != graphics::MaterialKey::OCCLUSION_TEXCOORD0_BIT &&
+                    i != graphics::MaterialKey::LIGHTMAP_FULL_BIT) {
                 allFlags.insert(i);
             }
         }
@@ -591,12 +592,11 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
                     }
                     break;
                 case graphics::MaterialKey::EMISSIVE_MAP_BIT:
-                    // Lightmap takes precendence over emissive map for legacy reasons
-                    if (materialKey.isEmissiveMap() && !materialKey.isLightMap()) {
+                    if (materialKey.isEmissiveMap()) {
                         auto itr = textureMaps.find(graphics::MaterialKey::EMISSIVE_MAP);
                         if (itr != textureMaps.end()) {
                             if (itr->second->isDefined()) {
-                                drawMaterialTextures->setTexture(gr::Texture::MaterialEmissiveLightmap, itr->second->getTextureView());
+                                drawMaterialTextures->setTexture(gr::Texture::MaterialEmissive, itr->second->getTextureView());
                                 wasSet = true;
                             } else {
                                 multiMaterial.setTexturesLoading(true);
@@ -606,17 +606,15 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
                             forceDefault = true;
                         }
                         schemaKey.setEmissiveMap(true);
-                    } else if (materialKey.isLightMap()) {
-                        // We'll set this later when we check the lightmap
-                        wasSet = true;
                     }
                     break;
                 case graphics::MaterialKey::LIGHT_MAP_BIT:
+                    // the lightmap has a slot of its own (LIGHTMAPS.md); its mode comes with it
                     if (materialKey.isLightMap()) {
                         auto itr = textureMaps.find(graphics::MaterialKey::LIGHT_MAP);
                         if (itr != textureMaps.end()) {
                             if (itr->second->isDefined()) {
-                                drawMaterialTextures->setTexture(gr::Texture::MaterialEmissiveLightmap, itr->second->getTextureView());
+                                drawMaterialTextures->setTexture(gr::Texture::MaterialLightmap, itr->second->getTextureView());
                                 wasSet = true;
                             } else {
                                 multiMaterial.setTexturesLoading(true);
@@ -626,6 +624,7 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
                             forceDefault = true;
                         }
                         schemaKey.setLightMap(true);
+                        schemaKey.setLightmapFull(materialKey.isLightmapFull());
                     }
                     break;
                 case graphics::Material::TEXCOORDTRANSFORM0:
@@ -733,13 +732,13 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
                 }
                 break;
             case graphics::MaterialKey::EMISSIVE_MAP_BIT:
-                if (schemaKey.isEmissiveMap() && !schemaKey.isLightMap()) {
-                    drawMaterialTextures->setTexture(gr::Texture::MaterialEmissiveLightmap, textureCache->getGrayTexture());
+                if (schemaKey.isEmissiveMap()) {
+                    drawMaterialTextures->setTexture(gr::Texture::MaterialEmissive, textureCache->getGrayTexture());
                 }
                 break;
             case graphics::MaterialKey::LIGHT_MAP_BIT:
                 if (schemaKey.isLightMap()) {
-                    drawMaterialTextures->setTexture(gr::Texture::MaterialEmissiveLightmap, textureCache->getBlackTexture());
+                    drawMaterialTextures->setTexture(gr::Texture::MaterialLightmap, textureCache->getBlackTexture());
                 }
                 break;
             default:
@@ -774,7 +773,8 @@ bool RenderPipelines::bindMaterials(graphics::MultiMaterial& multiMaterial, gpu:
         defaultMaterialTextures->setTexture(gr::Texture::MaterialNormal, textureCache->getBlueTexture());
         defaultMaterialTextures->setTexture(gr::Texture::MaterialOcclusion, textureCache->getWhiteTexture());
         defaultMaterialTextures->setTexture(gr::Texture::MaterialScattering, textureCache->getWhiteTexture());
-        // MaterialEmissiveLightmap has to be set later
+        defaultMaterialTextures->setTexture(gr::Texture::MaterialEmissive, textureCache->getGrayTexture());
+        defaultMaterialTextures->setTexture(gr::Texture::MaterialLightmap, textureCache->getBlackTexture());
     });
 
     // For shadows, we only need opacity mask information
@@ -785,14 +785,6 @@ bool RenderPipelines::bindMaterials(graphics::MultiMaterial& multiMaterial, gpu:
         if (enableTextures) {
             batch.setResourceTextureTable(multiMaterial.getTextureTable());
         } else {
-            if (renderMode != render::Args::RenderMode::SHADOW_RENDER_MODE) {
-                if (key.isLightMap()) {
-                    defaultMaterialTextures->setTexture(gr::Texture::MaterialEmissiveLightmap, textureCache->getBlackTexture());
-                } else if (key.isEmissiveMap()) {
-                    defaultMaterialTextures->setTexture(gr::Texture::MaterialEmissiveLightmap, textureCache->getGrayTexture());
-                }
-            }
-
             batch.setResourceTextureTable(defaultMaterialTextures);
         }
         return true;

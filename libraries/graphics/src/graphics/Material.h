@@ -64,6 +64,10 @@ public:
                                         // scale, combined as Unity's URP/Lit does: 1 - smoothness scale * smoothness map
         OCCLUSION_TEXCOORD0_BIT,        // the occlusion map is read with the first texture coordinates, as the other
                                         // maps are, rather than the second (lightmap) ones
+        LIGHTMAP_FULL_BIT,              // the lightmap is a full bake (High Fidelity's): the whole diffuse lighting,
+                                        // dimmed by the sun's shadow. Without it the lightmap holds the baked light
+                                        // only and replaces the ambient diffuse term, the sun and the local lights
+                                        // running as usual (Unity's Baked Indirect; LIGHTMAPS.md). Goes with the map
 
         NUM_FLAGS,
     };
@@ -102,6 +106,16 @@ public:
     };
     static std::string getCullFaceModeName(CullFaceMode mode);
     static bool getCullFaceModeFromName(const std::string& modeName, CullFaceMode& mode);
+
+    // what the lightmap holds (see LIGHTMAP_FULL_BIT): "indirect" is Unity's Baked Indirect, "full" the legacy bake
+    enum LightmapMode {
+        LIGHTMAP_INDIRECT = 0,
+        LIGHTMAP_FULL,
+
+        NUM_LIGHTMAP_MODES
+    };
+    static std::string getLightmapModeName(LightmapMode mode);
+    static bool getLightmapModeFromName(const std::string& modeName, LightmapMode& mode);
 
     // The signature is the Flags
     Flags _flags;
@@ -226,6 +240,9 @@ public:
 
     void setOcclusionTexcoord0(bool value) { _flags.set(OCCLUSION_TEXCOORD0_BIT, value); }
     bool isOcclusionTexcoord0() const { return _flags[OCCLUSION_TEXCOORD0_BIT]; }
+
+    void setLightmapFull(bool value) { _flags.set(LIGHTMAP_FULL_BIT, value); }
+    bool isLightmapFull() const { return _flags[LIGHTMAP_FULL_BIT]; }
 
     void setMapChannel(MapChannel channel, bool value) { _flags.set(EMISSIVE_MAP_BIT + channel, value); }
     bool isMapChannel(MapChannel channel) const { return _flags[EMISSIVE_MAP_BIT + channel]; }
@@ -391,6 +408,15 @@ public:
     static const MaterialKey::CullFaceMode DEFAULT_CULL_FACE_MODE;
     void setCullFaceMode(MaterialKey::CullFaceMode cullFaceMode) { _cullFaceMode = cullFaceMode; }
     MaterialKey::CullFaceMode getCullFaceMode() const { return _cullFaceMode; }
+
+    // how the lightmap lights the surface (MaterialKey::LIGHTMAP_FULL_BIT); a key bit, so it travels with the map
+    static const MaterialKey::LightmapMode DEFAULT_LIGHTMAP_MODE;
+    void setLightmapMode(MaterialKey::LightmapMode mode) { _key.setLightmapFull(mode == MaterialKey::LIGHTMAP_FULL); }
+    MaterialKey::LightmapMode getLightmapMode() const {
+        return _key.isLightmapFull() ? MaterialKey::LIGHTMAP_FULL : MaterialKey::LIGHTMAP_INDIRECT;
+    }
+    // the lightmap's offset and scale: light = offset + scale * the map's value
+    void setLightmapParams(const glm::vec2& params);
 
     void setUnlit(bool value);
     bool isUnlit() const { return _key.isUnlit(); }

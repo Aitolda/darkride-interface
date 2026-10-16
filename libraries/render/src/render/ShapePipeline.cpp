@@ -92,7 +92,7 @@ void ShapePlumber::addPipeline(const Filter& filter, const gpu::ShaderPointer& p
     locations->roughnessTextureUnit = reflection.validTexture(graphics::slot::texture::MaterialRoughness);
     locations->normalTextureUnit = reflection.validTexture(graphics::slot::texture::MaterialNormal);
     locations->metallicTextureUnit = reflection.validTexture(graphics::slot::texture::MaterialMetallic);
-    locations->emissiveTextureUnit = reflection.validTexture(graphics::slot::texture::MaterialEmissiveLightmap);
+    locations->emissiveTextureUnit = reflection.validTexture(graphics::slot::texture::MaterialEmissive);
     locations->occlusionTextureUnit = reflection.validTexture(graphics::slot::texture::MaterialOcclusion);
     locations->lightingModelBufferUnit = reflection.validUniformBuffer(render_utils::slot::buffer::LightModel);
     locations->skinClusterBufferUnit = reflection.validUniformBuffer(graphics::slot::buffer::Skinning);

@@ -27,10 +27,11 @@ TextureTable(0, matTex);
     ALBEDO = 0,
     NORMAL, 1
     METALLIC, 2
-    EMISSIVE_LIGHTMAP, 3
+    EMISSIVE, 3
     ROUGHNESS, 4
     OCCLUSION, 5
     SCATTERING, 6
+    LIGHTMAP, 7
 !>
 
 <@if withAlbedo@>
@@ -123,7 +124,7 @@ float fetchMetallicMap(vec2 uv) {
 <@endif@>
 
 <@if withEmissive@>
-LAYOUT(binding=GRAPHICS_TEXTURE_MATERIAL_EMISSIVE_LIGHTMAP) uniform sampler2D emissiveMap;
+LAYOUT(binding=GRAPHICS_TEXTURE_MATERIAL_EMISSIVE) uniform sampler2D emissiveMap;
 vec3 fetchEmissiveMap(vec2 uv) {
     return texture(emissiveMap, uv, TAA_TEXTURE_LOD_BIAS).rgb;
 }
@@ -188,10 +189,11 @@ float fetchScatteringMap(vec2 uv) {
 
 <$declareMaterialTexMapArrayBuffer()$>
 
-LAYOUT(binding=GRAPHICS_TEXTURE_MATERIAL_EMISSIVE_LIGHTMAP) uniform sampler2D emissiveMap;
+// the lightmap, in its own slot (LIGHTMAPS.md): linear light, scaled and offset by the material's lightmapParams
+LAYOUT(binding=GRAPHICS_TEXTURE_MATERIAL_LIGHTMAP) uniform sampler2D lightMap;
 vec3 fetchLightMap(vec2 uv) {
     vec2 lightmapParams = getTexMapArray()._lightmapParams;
-    return (vec3(lightmapParams.x) + lightmapParams.y * texture(emissiveMap, uv).rgb);
+    return (vec3(lightmapParams.x) + lightmapParams.y * texture(lightMap, uv).rgb);
 }
 <@endfunc@>
 

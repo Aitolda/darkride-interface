@@ -340,6 +340,7 @@ public:
     static const Element COLOR_SBGRA_32;
     static const Element COLOR_RGBA_2;
     static const Element COLOR_R11G11B10;
+    static const Element COLOR_RGBA16F;      // four half floats: linear HDR colour kept at half precision (lightmaps)
     static const Element COLOR_RGB9E5;
     static const Element COLOR_COMPRESSED_BCX_RED;
     static const Element COLOR_COMPRESSED_BCX_SRGB;

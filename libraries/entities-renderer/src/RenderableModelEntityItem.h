@@ -28,6 +28,8 @@
 class Model;
 class EntityTreeRenderer;
 
+class NetworkMaterial;
+
 namespace render { namespace entities {
 class ModelEntityRenderer;
 } }
@@ -202,6 +204,13 @@ private:
 
     void processMaterials();
     bool _allProceduralMaterialsLoaded { false };
+
+    // the lightmap the entity's userData assigns to the whole model (LIGHTMAPS.md §3.2): a material layer over all
+    // its parts, remade when the entry changes
+    void applyLightmap(const TypedEntityPointer& entity);
+    QString _userData;
+    QString _lightmapSpec;
+    std::shared_ptr<NetworkMaterial> _lightmapMaterial;
 
     static void metaBlendshapeOperator(render::ItemID renderItemID, int blendshapeNumber, const QVector<BlendshapeOffset>& blendshapeOffsets,
                                        const QVector<int>& blendedMeshSizes, const render::ItemIDs& subItemIDs);
