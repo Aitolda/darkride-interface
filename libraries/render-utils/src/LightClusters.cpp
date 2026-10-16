@@ -15,6 +15,8 @@
 #include <cstring>
 
 #include <glm/gtc/constants.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 #include <gpu/Context.h>
 #include <shaders/Shaders.h>
@@ -36,8 +38,11 @@ namespace gr {
     using graphics::slot::buffer::Buffer;
 }
 
+static_assert(LIGHT_CLUSTER_MAX_PROBES == ReflectionProbeStage::MAX_LAYERS, "the frame's probe list holds the array's layers");
+
 namespace {
     constexpr int MAX_LIGHTS = LIGHT_CLUSTER_MAX_LIGHTS;
+    constexpr int MAX_PROBES = LIGHT_CLUSTER_MAX_PROBES;
     constexpr int TILE_WORDS = LIGHT_CLUSTER_TILE_WORDS;
     constexpr int BIN_WORDS = LIGHT_CLUSTER_BIN_WORDS;
     constexpr int MIN_TILE_SIZE = 16;      // pixels; doubled until every eye's tiles fit their block
@@ -131,9 +136,17 @@ void LightClusters::updateLightFrame(const LightStage::FramePointer& lightFrame,
     }
 }
 
+const gpu::TexturePointer& LightClusters::getReflectionProbeArray() const {
+    if (_probeStage && _probeStage->getArray()) {
+        return _probeStage->getArray();
+    }
+    return ReflectionProbeStage::getEmptyArray();
+}
+
 LightClusters::Stats LightClusters::updateClusters(const RenderArgs* args) {
     Stats stats;
     _numLights = 0;
+    _numProbes = 0;
 
     const bool stereo = args->isStereo();
     const int numEyes = stereo ? 2 : 1;
@@ -162,6 +175,22 @@ LightClusters::Stats LightClusters::updateClusters(const RenderArgs* args) {
     }
     const float nearClip = std::max(_frustum.getNearClip(), 0.001f);
     const float farClip = std::max(_frustum.getFarClip(), nearClip * 2.0f);
+
+    // a candidate's screen bounds in each eye, from its sphere; false when off every eye's screen
+    auto projectCandidate = [&](Candidate& candidate) {
+        bool visible = false;
+        for (int eye = 0; eye < numEyes; eye++) {
+            const glm::vec3 eyeCenter = glm::vec3(eyeViews[eye] * (worldToEye * glm::vec4(candidate.center, 1.0f)));
+            const auto& projection = eyeProjections[eye];
+            const glm::vec2 xBounds = sphereNdcBounds(eyeCenter.x, eyeCenter.z, candidate.radius, projection[0][0], projection[2][0]);
+            const glm::vec2 yBounds = sphereNdcBounds(eyeCenter.y, eyeCenter.z, candidate.radius, projection[1][1], projection[2][1]);
+            candidate.eyeCenter[eye] = eyeCenter;
+            candidate.ndcBounds[eye] = glm::vec4(xBounds, yBounds);
+            candidate.visible[eye] = xBounds.x <= 1.0f && xBounds.y >= -1.0f && yBounds.x <= 1.0f && yBounds.y >= -1.0f;
+            visible = visible || candidate.visible[eye];
+        }
+        return visible;
+    };
 
     // 1. Each candidate's bounds: a sphere (a spot's cone's enclosing sphere), its depth range (a spot's cone's own)
     // and its screen bounds in each eye; one out of the depth range, or off every eye's screen, is left out
@@ -209,23 +238,58 @@ LightClusters::Stats LightClusters::updateClusters(const RenderArgs* args) {
         if (candidate.maxZ <= nearClip || candidate.minZ >= farClip) {
             continue;
         }
-
-        bool visible = false;
-        for (int eye = 0; eye < numEyes; eye++) {
-            const glm::vec3 eyeCenter = glm::vec3(eyeViews[eye] * (worldToEye * glm::vec4(candidate.center, 1.0f)));
-            const auto& projection = eyeProjections[eye];
-            const glm::vec2 xBounds = sphereNdcBounds(eyeCenter.x, eyeCenter.z, candidate.radius, projection[0][0], projection[2][0]);
-            const glm::vec2 yBounds = sphereNdcBounds(eyeCenter.y, eyeCenter.z, candidate.radius, projection[1][1], projection[2][1]);
-            candidate.eyeCenter[eye] = eyeCenter;
-            candidate.ndcBounds[eye] = glm::vec4(xBounds, yBounds);
-            candidate.visible[eye] = xBounds.x <= 1.0f && xBounds.y >= -1.0f && yBounds.x <= 1.0f && yBounds.y >= -1.0f;
-            visible = visible || candidate.visible[eye];
-        }
-        if (!visible) {
+        if (!projectCandidate(candidate)) {
             continue;
         }
         _candidates.push_back(candidate);
     }
+
+    // 1b. The reflection probes with a layer in the array: the sphere round each one's box, the same tests
+    _probeCandidates.clear();
+    if (_probeStage && _probeStage->getArray()) {
+        const int numAllocated = _probeStage->getNumAllocatedProbes();
+        for (int i = 0; i < numAllocated; i++) {
+            if (!_probeStage->checkProbeId(i)) {
+                continue;
+            }
+            auto probe = _probeStage->getProbe(i);
+            const int layer = _probeStage->getLayer(i);
+            if (!probe || layer < 0) {
+                continue;
+            }
+            stats.numInputProbes++;
+
+            Candidate candidate;
+            candidate.probe = probe;
+            candidate.layer = layer;
+            candidate.center = probe->getBoxCenter();
+            candidate.radius = probe->getBoxRadius();
+            const float depth = -(worldToEye * glm::vec4(candidate.center, 1.0f)).z;
+            candidate.minZ = depth - candidate.radius;
+            candidate.maxZ = depth + candidate.radius;
+            if (candidate.maxZ <= nearClip || candidate.minZ >= farClip) {
+                continue;
+            }
+            if (!projectCandidate(candidate)) {
+                continue;
+            }
+            _probeCandidates.push_back(candidate);
+        }
+        // by importance, the most important first, then the smallest first: the order a fragment blends them in,
+        // each taking the weight the ones before left (ReflectionProbe.slh); the least important go over the cap
+        std::sort(_probeCandidates.begin(), _probeCandidates.end(), [](const Candidate& a, const Candidate& b) {
+            if (a.probe->importance != b.probe->importance) {
+                return a.probe->importance > b.probe->importance;
+            }
+            return a.probe->getBoxVolume() < b.probe->getBoxVolume();
+        });
+        if ((int)_probeCandidates.size() > MAX_PROBES) {
+            _probeCandidates.resize(MAX_PROBES);
+        }
+    }
+    const int numProbes = (int)_probeCandidates.size();
+    _numProbes = numProbes;
+    stats.numProbes = numProbes;
 
     // 2. The list: sorted by where each light's depth range starts, so a bin's lights lie in a short run of it (which
     // its header names), and no longer than the cap: the farthest-starting lights go
@@ -238,10 +302,11 @@ LightClusters::Stats LightClusters::updateClusters(const RenderArgs* args) {
     _numLights = numLights;
     stats.numLights = numLights;
 
-    // 3. The layout: the words a tile or bin holds (one bit a light), the tile size (doubled from 16 px until every
-    // eye's tiles fit their block), the bins (as many as fit theirs, up to 1024, logarithmic from the near clip to the
-    // far: each holds the same ratio of depths)
-    const int wordsPerEntry = std::max(1, (numLights + 31) / 32);
+    // 3. The layout: the words a tile or bin holds (one bit a light, then from the next whole word one a probe), the
+    // tile size (doubled from 16 px until every eye's tiles fit their block), the bins (as many as fit theirs, up to
+    // 1024, logarithmic from the near clip to the far: each holds the same ratio of depths)
+    const int probeBase = (numProbes > 0) ? ((numLights + 31) / 32) * 32 : 0;
+    const int wordsPerEntry = std::max(1, (std::max(numLights, probeBase + numProbes) + 31) / 32);
     const int blockSize = gpu::Context::getMaxUniformBlockSize();
     const int tileWordBudget = (blockSize > 0) ? std::min(TILE_WORDS, blockSize / 4) : TILE_WORDS;
     int tileSize = MIN_TILE_SIZE;
@@ -253,7 +318,7 @@ LightClusters::Stats LightClusters::updateClusters(const RenderArgs* args) {
         }
     }
     const int tilesPerEye = tileCount.x * tileCount.y;
-    const int binStride = wordsPerEntry + 1;
+    const int binStride = wordsPerEntry + 2;   // two headers: the lights' and the probes'
     const int binCount = std::max(1, std::min(MAX_BINS, BIN_WORDS / binStride));
     const float binScale = (float)binCount / std::log2(farClip / nearClip);
     const float binOffset = -std::log2(nearClip) * binScale;
@@ -266,22 +331,28 @@ LightClusters::Stats LightClusters::updateClusters(const RenderArgs* args) {
     stats.binCount = binCount;
     stats.wordsPerEntry = wordsPerEntry;
 
-    // 4. The bins: a light's bit in every bin its depth range crosses, and the bin's header widened to it
+    // 4. The bins: a light's (or probe's) bit in every bin its depth range crosses, and the bin's header widened to it
     const int usedBinWords = binCount * binStride;
     std::fill(_bins.begin(), _bins.begin() + usedBinWords, 0u);
     for (int bin = 0; bin < binCount; bin++) {
         _bins[bin * binStride] = EMPTY_BIN_HEADER;
+        _bins[bin * binStride + 1] = EMPTY_BIN_HEADER;
     }
-    for (int i = 0; i < numLights; i++) {
-        const auto& candidate = _candidates[i];
-        const uint32_t bit = 1u << (i & 31);
-        const int word = 1 + (i >> 5);
+    auto binCandidate = [&](const Candidate& candidate, int entry, int headerWord) {
+        const uint32_t bit = 1u << (entry & 31);
+        const int word = 2 + (entry >> 5);
         const int lastBin = binOf(candidate.maxZ);
         for (int bin = binOf(candidate.minZ); bin <= lastBin; bin++) {
-            uint32_t& header = _bins[bin * binStride];
-            header = std::min(header & 0xFFFFu, (uint32_t)i) | (std::max(header >> 16, (uint32_t)i) << 16);
+            uint32_t& header = _bins[bin * binStride + headerWord];
+            header = std::min(header & 0xFFFFu, (uint32_t)entry) | (std::max(header >> 16, (uint32_t)entry) << 16);
             _bins[bin * binStride + word] |= bit;
         }
+    };
+    for (int i = 0; i < numLights; i++) {
+        binCandidate(_candidates[i], i, 0);
+    }
+    for (int i = 0; i < numProbes; i++) {
+        binCandidate(_probeCandidates[i], probeBase + i, 1);
     }
 
     // 5. The tiles, eye by eye: a light's rows and columns from its screen bounds, and within them, row by row, the
@@ -291,8 +362,6 @@ LightClusters::Stats LightClusters::updateClusters(const RenderArgs* args) {
     std::fill(_tiles.begin(), _tiles.begin() + usedTileWords, 0u);
     for (int eye = 0; eye < numEyes; eye++) {
         const auto& projection = eyeProjections[eye];
-        const float p00 = projection[0][0];
-        const float p20 = projection[2][0];
         const float p11 = projection[1][1];
         const float p21 = projection[2][1];
 
@@ -309,10 +378,9 @@ LightClusters::Stats LightClusters::updateClusters(const RenderArgs* args) {
             return (int)std::floor((ndc + 1.0f) * 0.5f * (float)eyeSize[axis] / (float)tileSize);
         };
 
-        for (int i = 0; i < numLights; i++) {
-            const auto& candidate = _candidates[i];
+        auto scanTiles = [&](const Candidate& candidate, int entry) {
             if (!candidate.visible[eye]) {
-                continue;
+                return;
             }
             const auto& bounds = candidate.ndcBounds[eye];
             const int xMin = glm::clamp(tileOfNdc(bounds.x, 0), 0, tileCount.x - 1);
@@ -325,8 +393,8 @@ LightClusters::Stats LightClusters::updateClusters(const RenderArgs* args) {
             const float centerDepth = std::max(std::abs(center.z), 1.0e-4f);
             const int centerY = glm::clamp(tileOfNdc(projectDirection(center.y, centerDepth, p11, p21), 1), yMin, yMax);
             const glm::vec4 sphere(center, candidate.radius);
-            const uint32_t bit = 1u << (i & 31);
-            const int word = i >> 5;
+            const uint32_t bit = 1u << (entry & 31);
+            const int word = entry >> 5;
 
             for (int y = yMin; y <= yMax; y++) {
                 glm::vec4 rowSphere = sphere;
@@ -358,6 +426,12 @@ LightClusters::Stats LightClusters::updateClusters(const RenderArgs* args) {
                 }
                 stats.numTileBits += x1 - x0 + 1;
             }
+        };
+        for (int i = 0; i < numLights; i++) {
+            scanTiles(_candidates[i], i);
+        }
+        for (int i = 0; i < numProbes; i++) {
+            scanTiles(_probeCandidates[i], probeBase + i);
         }
     }
 
@@ -366,11 +440,23 @@ LightClusters::Stats LightClusters::updateClusters(const RenderArgs* args) {
     params.tileInfo = glm::vec4(1.0f / (float)tileSize, 1.0f / (float)tileSize, (float)tileCount.x, (float)tileCount.y);
     params.binInfo = glm::vec4(binScale, binOffset, (float)(binCount - 1), 0.0f);
     params.counts = glm::ivec4(numLights, wordsPerEntry, tilesPerEye, stereo ? 1 : 0);
+    params.probeCounts = glm::ivec4(probeBase, numProbes, _probeStage ? _probeStage->getArrayNumMips() : 0, 0);
     params.viewports[0] = glm::vec4(eyeViewports[0]);
     params.viewports[1] = glm::vec4(eyeViewports[1]);
     params.worldToEye = worldToEye;
     for (int i = 0; i < numLights; i++) {
         params.lightIndices[i >> 2][i & 3] = _candidates[i].id;
+    }
+    for (int i = 0; i < numProbes; i++) {
+        const auto& probe = *_probeCandidates[i].probe;
+        auto& entry = params.probes[i];
+        // the box in the probe's frame, the probe at the origin; world to that frame = turn back, after moving back
+        const glm::vec3 halfSize = 0.5f * glm::max(probe.boxSize, glm::vec3(0.0f));
+        entry.position = glm::vec4(probe.position, (float)_probeCandidates[i].layer);
+        entry.boxMin = glm::vec4(probe.boxOffset - halfSize, std::max(probe.blendDistance, 1.0e-4f));
+        entry.boxMax = glm::vec4(probe.boxOffset + halfSize, probe.boxProjection ? 1.0f : 0.0f);
+        entry.params = glm::vec4(probe.intensity, 0.0f, 0.0f, 0.0f);
+        entry.worldToProbe = glm::toMat4(glm::inverse(probe.orientation)) * glm::translate(glm::mat4(1.0f), -probe.position);
     }
     _tilesBuffer._buffer->setSubData(0, usedTileWords * sizeof(uint32_t), (const gpu::Byte*)_tiles.data());
     _binsBuffer._buffer->setSubData(0, usedBinWords * sizeof(uint32_t), (const gpu::Byte*)_bins.data());
@@ -406,13 +492,21 @@ void LightClusteringPass::run(const render::RenderContextPointer& renderContext,
 
     // frozen, the last build stands while the view moves on
     if (!_freeze) {
+        // the scene's reflection probes and their cube map array, brought up to date first
+        auto probeStage = renderContext->_scene->getStage<ReflectionProbeStage>();
+        if (probeStage) {
+            probeStage->updateArray();
+        }
         _lightClusters->updateFrustum(args->getViewFrustum());
         _lightClusters->updateLightFrame(lightFrame, lightingModel->isPointLightEnabled(), lightingModel->isSpotLightEnabled());
+        _lightClusters->updateReflectionProbes(probeStage);
         const auto stats = _lightClusters->updateClusters(args);
 
         config->numInputLights = stats.numInputLights;
         config->numClusteredLights = stats.numLights;
         config->numClusteredLightReferences = stats.numTileBits;
+        config->numInputProbes = stats.numInputProbes;
+        config->numClusteredProbes = stats.numProbes;
         config->maxLights = LightClusters::getMaxLights();
         config->tileSize = stats.tileSize;
         config->tileCountX = stats.tileCountX;

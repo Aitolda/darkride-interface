@@ -12,6 +12,8 @@
 <@include DeferredBufferRead.slh@>
 <@include render-utils/ShaderConstants.h@>
 
+// the reflection probes' cube map array in the slot the deferred pass has free (ReflectionProbe.slh)
+<@def REFLECTION_PROBES_DEFERRED@>
 <@include GlobalLight.slh@>
 <@if HIFI_USE_AMBIENT@>
     <$declareEvalAmbientSphereGlobalColor(supportScattering)$>

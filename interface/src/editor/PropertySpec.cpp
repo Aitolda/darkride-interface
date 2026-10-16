@@ -447,6 +447,95 @@ namespace {
                 setUserDataEntry(p, "mirror", mode == "off" ? QString() : mode);
             }
         });
+        // a shape's reflection probe (LIGHTMAPS.md §7), the entry "reflectionProbe": { "url", "boxOffset": [x, y, z],
+        // "intensity", "importance", "blendDistance", "boxProjection" }; the Reflection Probe field makes or removes
+        // the entry, the others are its fields
+        auto probeEntry = [](const EP& p) {
+            return QJsonDocument::fromJson(p.getUserData().toUtf8()).object().value("reflectionProbe");
+        };
+        auto setProbeEntry = [](EP& p, const QJsonValue& probe) {
+            QString text = p.getUserData();
+            QJsonDocument document = QJsonDocument::fromJson(text.toUtf8());
+            if (!text.trimmed().isEmpty() && !document.isObject()) {
+                return;
+            }
+            QJsonObject object = document.object();
+            if (probe.isUndefined() || probe.isNull()) {
+                object.remove("reflectionProbe");
+            } else {
+                object.insert("reflectionProbe", probe);
+            }
+            p.setUserData(object.isEmpty() ? QString() : JsonOrder::write(object, JsonOrder::scan(text)));
+        };
+        auto probeObject = [=](const EP& p) {
+            QJsonValue entry = probeEntry(p);
+            return entry.isObject() ? entry.toObject() : QJsonObject();
+        };
+        add("userData:reflectionProbe",
+            [=](const EP& p) { QJsonValue entry = probeEntry(p); return QVariant(entry.isObject() || entry.toBool()); },
+            [=](EP& p, const QVariant& v) {
+                if (!v.toBool()) {
+                    setProbeEntry(p, QJsonValue());
+                } else if (!probeEntry(p).isObject()) {
+                    setProbeEntry(p, QJsonObject { { "intensity", 1.0 }, { "blendDistance", 1.0 }, { "boxProjection", true } });
+                }
+            });
+        add("userData:reflectionProbe:url",
+            [=](const EP& p) { return QVariant(probeObject(p).value("url").toString()); },
+            [=](EP& p, const QVariant& v) {
+                QJsonObject probe = probeObject(p);
+                QString url = v.toString().trimmed();
+                if (url.isEmpty()) {
+                    probe.remove("url");
+                } else {
+                    probe.insert("url", url);
+                }
+                setProbeEntry(p, probe);
+            });
+        add("userData:reflectionProbe:intensity",
+            [=](const EP& p) { return QVariant(probeObject(p).value("intensity").toDouble(1.0)); },
+            [=](EP& p, const QVariant& v) {
+                QJsonObject probe = probeObject(p);
+                probe.insert("intensity", std::round(v.toDouble() * 10000.0) / 10000.0);
+                setProbeEntry(p, probe);
+            });
+        add("userData:reflectionProbe:importance",
+            [=](const EP& p) { return QVariant(probeObject(p).value("importance").toInt(0)); },
+            [=](EP& p, const QVariant& v) {
+                QJsonObject probe = probeObject(p);
+                probe.insert("importance", v.toInt());
+                setProbeEntry(p, probe);
+            });
+        add("userData:reflectionProbe:blendDistance",
+            [=](const EP& p) { return QVariant(probeObject(p).value("blendDistance").toDouble(1.0)); },
+            [=](EP& p, const QVariant& v) {
+                QJsonObject probe = probeObject(p);
+                probe.insert("blendDistance", std::round(std::max(0.0, v.toDouble()) * 10000.0) / 10000.0);
+                setProbeEntry(p, probe);
+            });
+        add("userData:reflectionProbe:boxProjection",
+            [=](const EP& p) { return QVariant(probeObject(p).value("boxProjection").toBool(true)); },
+            [=](EP& p, const QVariant& v) {
+                QJsonObject probe = probeObject(p);
+                probe.insert("boxProjection", v.toBool());
+                setProbeEntry(p, probe);
+            });
+        add("userData:reflectionProbe:boxOffset",
+            [=](const EP& p) {
+                QJsonArray offset = probeObject(p).value("boxOffset").toArray();
+                return QVariant(toQ(offset.size() == 3 ? glm::vec3(offset[0].toDouble(), offset[1].toDouble(), offset[2].toDouble()) : glm::vec3(0.0f)));
+            },
+            [=](EP& p, const QVariant& v) {
+                QJsonObject probe = probeObject(p);
+                glm::vec3 offset = fromQ(v.value<QVector3D>());
+                auto rounded = [](float x) { return std::round(x * 10000.0) / 10000.0; };
+                if (offset == glm::vec3(0.0f)) {
+                    probe.remove("boxOffset");
+                } else {
+                    probe.insert("boxOffset", QJsonArray { rounded(offset.x), rounded(offset.y), rounded(offset.z) });
+                }
+                setProbeEntry(p, probe);
+            });
         // a model's lightmap, the entry "lightmap" (LIGHTMAPS.md §3.2): { "url", "scaleOffset": [sx, sy, ox, oy],
         // "mode": "indirect" | "full", "params": [offset, scale] }, shown as the Lightmap section's fields; clearing
         // the picture removes the entry
@@ -822,6 +911,19 @@ namespace {
         // onto the face; Screen draws the reflection pixel for pixel where the face is on screen
         en("userData:mirror", "Mirror", "shape", { "off:Off", "picture:Picture", "screen:Screen" });
 
+        // a reflection probe (LIGHTMAPS.md §7): the shape is the box inside which surfaces reflect the probe's cube
+        // map (a 1:6 strip, as the zone's ambient map) instead of the zone's, the probe at the shape's position;
+        // Importance orders probes that overlap, Blend Distance fades the probe in from the box's faces, Box
+        // Projection reflects the box's faces from the right place (off: the cube map at infinity), Box Offset
+        // moves the box from the probe
+        add(spec("userData:reflectionProbe", "Reflection Probe", K::Bool, "reflectionProbe"));
+        with(add(spec("userData:reflectionProbe:url", "Cube Map", K::Image, "reflectionProbe")), "userData:reflectionProbe=true");
+        with(range(add(spec("userData:reflectionProbe:intensity", "Intensity", K::Float, "reflectionProbe")), 0, 16, 0.01, 2), "userData:reflectionProbe=true");
+        with(stepping(add(spec("userData:reflectionProbe:importance", "Importance", K::Int, "reflectionProbe")), 1, 0), "userData:reflectionProbe=true");
+        with(range(add(spec("userData:reflectionProbe:blendDistance", "Blend Distance", K::Float, "reflectionProbe")), 0, 100, 0.1, 2, "m"), "userData:reflectionProbe=true");
+        with(add(spec("userData:reflectionProbe:boxProjection", "Box Projection", K::Bool, "reflectionProbe")), "userData:reflectionProbe=true");
+        with(stepping(add(spec("userData:reflectionProbe:boxOffset", "Box Offset", K::Vec3, "reflectionProbe")), 0.1, 2, "m"), "userData:reflectionProbe=true");
+
         // text
         add(spec("text", "Text", K::String, "text"));
         add(spec("textColor", "Text Color", K::Color, "text"));
@@ -1109,6 +1211,7 @@ namespace {
         { "base", "", false },
         { "spatial", "Transform", false },
         { "shape", "Shape", false },
+        { "reflectionProbe", "Reflection Probe", true },
         { "text", "Text", false },
         { "zone", "Zone", false },
         { "model", "Model", false },
@@ -1181,7 +1284,7 @@ static QStringList typeSections(EntityTypes::EntityType type, bool multiple) {
         case EntityTypes::Box:
         case EntityTypes::Sphere:
         case EntityTypes::Shape:
-            return { "base", "spatial", "shape", "behavior", "collision", "physics" };
+            return { "base", "spatial", "shape", "reflectionProbe", "behavior", "collision", "physics" };
         case EntityTypes::Text:
             return { "base", "spatial", "text", "behavior", "collision", "physics" };
         case EntityTypes::Zone:

@@ -317,6 +317,8 @@ public:
 
         void setFormat(const Element& format) { _format = format; }
         Element getFormat() const { return _format; }
+        // the faces a mip holds (a cube map array's layers' faces, in layer order)
+        uint16 getNumFaces() const;
 
     private:
         Stamp _stamp { 0 };
@@ -389,6 +391,11 @@ public:
     static TexturePointer create2DArray(const Element& texelFormat, uint16 width, uint16 height, uint16 numSlices, uint16 numMips = SINGLE_MIP, const Sampler& sampler = Sampler());
     static TexturePointer create3D(const Element& texelFormat, uint16 width, uint16 height, uint16 depth, uint16 numMips = SINGLE_MIP, const Sampler& sampler = Sampler());
     static TexturePointer createCube(const Element& texelFormat, uint16 width, uint16 numMips = 1, const Sampler& sampler = Sampler());
+    // A cube map array (one strict resource texture, uploaded whole): numSlices cube maps of one size and format, a
+    // layer each, sampled with a samplerCubeArray by direction and layer. Its stored mips are assigned face by face
+    // with assignStoredMipFace(level, layer * 6 + face, ...), in layer order (the reflection probes' array,
+    // ReflectionProbeStage)
+    static TexturePointer createCubeArray(const Element& texelFormat, uint16 width, uint16 numSlices, uint16 numMips = 1, const Sampler& sampler = Sampler());
     static TexturePointer createRenderBuffer(const Element& texelFormat, uint16 width, uint16 height, uint16 numMips = SINGLE_MIP, const Sampler& sampler = Sampler());
     static TexturePointer createRenderBufferMultisample(const Element& texelFormat, uint16 width, uint16 height, uint16 numSamples, const Sampler& sampler = Sampler());
     static TexturePointer createRenderBufferArray(const Element& texelFormat, uint16 width, uint16 height, uint16 numSlices, uint16 numMips = SINGLE_MIP, const Sampler& sampler = Sampler());
@@ -439,6 +446,8 @@ public:
     // as if the height was NUM_FACES time bigger.
     static uint8 NUM_FACES_PER_TYPE[NUM_TYPES];
     uint8 getNumFaces() const { return NUM_FACES_PER_TYPE[getType()]; }
+    // the faces a stored mip holds: a cube map array's are its layers' faces, in layer order (a 2D array stores none)
+    uint16 getNumStoredFaces() const { return (uint16)getNumFaces() * (getType() == TEX_CUBE ? getNumSlices() : 1); }
 
     // The texture is an array if the _numSlices is not 0.
     // otherwise, if _numSLices is 0, then the texture is NOT an array

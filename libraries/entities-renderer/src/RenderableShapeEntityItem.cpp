@@ -99,6 +99,23 @@ ShapeEntityRenderer::~ShapeEntityRenderer() {
     }
 }
 
+void ShapeEntityRenderer::onRemoveFromSceneTyped(const TypedEntityPointer& entity) {
+    withWriteLock([&] {
+        removeReflectionProbe();
+    });
+}
+
+void ShapeEntityRenderer::removeReflectionProbe() {
+    if (_reflectionProbeStage && !ReflectionProbeStage::isIndexInvalid(_reflectionProbeIndex)) {
+        _reflectionProbeStage->removeProbe(_reflectionProbeIndex);
+    }
+    _reflectionProbeIndex = ReflectionProbeStage::INVALID_INDEX;
+    _reflectionProbe.reset();
+    _reflectionProbeTexture.reset();
+    _reflectionProbeURL.clear();
+    _reflectionProbePending = false;
+}
+
 bool ShapeEntityRenderer::needsRenderUpdate() const {
     if (_visible != wasPreviouslyVisible())
         return true;
@@ -114,6 +131,11 @@ bool ShapeEntityRenderer::needsRenderUpdate() const {
             }
 
             if (mat != _materials.end() && mat->second.shouldUpdate()) {
+                return true;
+            }
+
+            // the reflection probe's cube map has loaded: hand it over
+            if (_reflectionProbePending && _reflectionProbeTexture && _reflectionProbeTexture->isLoaded()) {
                 return true;
             }
 
@@ -148,6 +170,9 @@ void ShapeEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
     withWriteLock([&] {
         _shape = entity->getShape();
         _pulseProperties = entity->getPulseProperties();
+        if (!_reflectionProbeStage) {
+            _reflectionProbeStage = scene->getStage<ReflectionProbeStage>();
+        }
     });
 
     void* key = (void*)this;
@@ -165,6 +190,13 @@ void ShapeEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
             if (_mirror) {
                 Mirrors::instance().setSurface(entity->getID(), { _position, _orientation, entity->getScaledDimensions(),
                                                                   _mirrorScreen ? Mirrors::Mode::Screen : Mirrors::Mode::Picture });
+            }
+            if (_reflectionProbe) {
+                // the probe moves and its box resizes with the entity
+                _reflectionProbe->position = _position;
+                _reflectionProbe->orientation = _orientation;
+                _reflectionProbe->boxSize = entity->getScaledDimensions();
+                _reflectionProbe->touch();
             }
         });
     });
@@ -242,6 +274,51 @@ void ShapeEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPoint
                     Mirrors::instance().setSurface(_mirrorId, { entity->getWorldPosition(), entity->getWorldOrientation(), entity->getScaledDimensions(),
                                                                _mirrorScreen ? Mirrors::Mode::Screen : Mirrors::Mode::Picture });
                 }
+            }
+            // a reflection probe: the entry "reflectionProbe" { url, boxOffset [x, y, z], intensity, importance,
+            // blendDistance, boxProjection } (or true for one with the defaults); the entity is its box
+            QJsonValue probeEntry = userDataObject.value("reflectionProbe");
+            if (probeEntry.isObject() || probeEntry.toBool()) {
+                QJsonObject entry = probeEntry.toObject();
+                if (!_reflectionProbe) {
+                    _reflectionProbe = std::make_shared<graphics::ReflectionProbe>();
+                }
+                auto& probe = *_reflectionProbe;
+                probe.position = entity->getWorldPosition();
+                probe.orientation = entity->getWorldOrientation();
+                probe.boxSize = entity->getScaledDimensions();
+                QJsonArray offset = entry.value("boxOffset").toArray();
+                probe.boxOffset = offset.size() == 3 ? glm::vec3(offset[0].toDouble(), offset[1].toDouble(), offset[2].toDouble()) : glm::vec3(0.0f);
+                probe.intensity = (float)entry.value("intensity").toDouble(1.0);
+                probe.importance = entry.value("importance").toInt(0);
+                probe.blendDistance = (float)std::max(0.0, entry.value("blendDistance").toDouble(1.0));
+                probe.boxProjection = entry.value("boxProjection").toBool(true);
+                QString url = entry.value("url").toString();
+                if (url != _reflectionProbeURL) {
+                    _reflectionProbeURL = url;
+                    probe.cubemap.reset();
+                    _reflectionProbeTexture = url.isEmpty() ? NetworkTexturePointer() :
+                        DependencyManager::get<TextureCache>()->getTexture(QUrl(url), image::TextureUsage::AMBIENT_TEXTURE);
+                    _reflectionProbePending = (bool)_reflectionProbeTexture;
+                }
+                probe.touch();
+                if (_reflectionProbeStage && ReflectionProbeStage::isIndexInvalid(_reflectionProbeIndex)) {
+                    _reflectionProbeIndex = _reflectionProbeStage->addProbe(_reflectionProbe);
+                }
+            } else if (_reflectionProbe) {
+                removeReflectionProbe();
+            }
+        }
+
+        // the probe's cube map, once loaded
+        if (_reflectionProbePending && _reflectionProbeTexture && _reflectionProbeTexture->isLoaded()) {
+            _reflectionProbePending = false;
+            auto texture = _reflectionProbeTexture->getGPUTexture();
+            if (texture && _reflectionProbe) {
+                _reflectionProbe->cubemap = texture;
+                _reflectionProbe->touch();
+            } else {
+                qCDebug(entitiesrenderer) << "Failed to load the reflection probe's cube map:" << _reflectionProbeURL;
             }
         }
 

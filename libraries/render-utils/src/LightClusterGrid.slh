@@ -12,7 +12,8 @@
 //  logarithmic bins; a tile's words hold the lights whose footprint covers it, a bin's the lights whose depth range
 //  crosses it, and a bin's header the first and last light in it. A fragment finds its tile by its pixel and its bin
 //  by its eye depth, ANDs the two words and shades the lights whose bits survive. LightClusters (render-utils) builds
-//  it on the CPU every frame.
+//  it on the CPU every frame. The reflection probes in view are in the same list, their bits after the lights' from
+//  the next whole word, with a second header a bin (ReflectionProbe.slh reads them).
 !>
 <@if not RENDER_LIGHT_CLUSTER_GRID_SLH@>
 <@def RENDER_LIGHT_CLUSTER_GRID_SLH@>
@@ -48,21 +49,26 @@ int lightCluster_lightIndex(int entry) {
 }
 
 // Where a fragment reads: the first word of its tile, the first mask word of its bin, and the words to visit, from
-// the bin's header (the first and last light in the bin; with none, wordMin > wordMax)
+// the bin's headers (the first and last light in the bin, then the first and last reflection probe; with none,
+// wordMin > wordMax)
 struct LightCluster {
     int tileWord;
     int binWord;
     int wordMin;
     int wordMax;
+    int probeWordMin;
+    int probeWordMax;
 };
 
 LightCluster fetchLightCluster(vec4 fragWorldPos, vec2 fragCoord) {
     LightCluster cluster;
     cluster.tileWord = 0;
-    cluster.binWord = 1;
+    cluster.binWord = 2;
     cluster.wordMin = 1;
     cluster.wordMax = 0;
-    if (lightClusterParams.counts.x <= 0) {
+    cluster.probeWordMin = 1;
+    cluster.probeWordMax = 0;
+    if (lightClusterParams.counts.x <= 0 && lightClusterParams.probeCounts.y <= 0) {
         return cluster;
     }
     int wordsPerEntry = lightClusterParams.counts.y;
@@ -79,16 +85,23 @@ LightCluster fetchLightCluster(vec4 fragWorldPos, vec2 fragCoord) {
     float eyeDepth = -(lightClusterParams.worldToEye * fragWorldPos).z;
     int bin = clamp(int(floor(log2(max(eyeDepth, 1.0e-6)) * lightClusterParams.binInfo.x + lightClusterParams.binInfo.y)),
                     0, int(lightClusterParams.binInfo.z));
-    int binBase = bin * (wordsPerEntry + 1);
+    int binBase = bin * (wordsPerEntry + 2);
     uint header = lightCluster_binWord(binBase);
-    cluster.binWord = binBase + 1;
+    uint probeHeader = lightCluster_binWord(binBase + 1);
+    cluster.binWord = binBase + 2;
     cluster.wordMin = int(header & 0xFFFFu) >> 5;
     cluster.wordMax = int(header >> 16) >> 5;
+    cluster.probeWordMin = int(probeHeader & 0xFFFFu) >> 5;
+    cluster.probeWordMax = int(probeHeader >> 16) >> 5;
     return cluster;
 }
 
 bool hasLocalLights(LightCluster cluster) {
     return cluster.wordMin <= cluster.wordMax;
+}
+
+bool hasReflectionProbes(LightCluster cluster) {
+    return cluster.probeWordMin <= cluster.probeWordMax;
 }
 
 // One word of the list's bits: the lights of the fragment's tile that are in its bin too

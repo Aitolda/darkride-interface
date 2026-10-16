@@ -199,6 +199,14 @@ Size GLESTexture::copyMipFaceLinesFromTexture(uint16_t mip, uint8_t face, const 
         } else {
             glTexSubImage2D(target, mip, 0, yOffset, size.x, size.y, format, type, sourcePointer);
         }
+    } else if (GL_TEXTURE_CUBE_MAP_ARRAY == _target) {
+        // face is the layer-face (layer * 6 + face), the array's depth coordinate
+        if (isCompressedFormat(internalFormat)) {
+            glCompressedTexSubImage3D(_target, mip, 0, yOffset, face, size.x, size.y, 1, internalFormat,
+                                      static_cast<GLsizei>(sourceSize), sourcePointer);
+        } else {
+            glTexSubImage3D(_target, mip, 0, yOffset, face, size.x, size.y, 1, format, type, sourcePointer);
+        }
     } else {
         assert(false);
         amountCopied = 0;
@@ -272,7 +280,8 @@ GLsizei getCompressedImageSize(int width, int height, GLenum internalFormat) {
 void GLESFixedAllocationTexture::allocateStorage() const {
     const GLTexelFormat texelFormat = GLTexelFormat::evalGLTexelFormat(_gpuObject.getTexelFormat());
     const auto numMips = _gpuObject.getNumMips();
-    const auto numSlices = _gpuObject.getNumSlices();
+    // an array's depth: its slices, and for a cube map array its layers' faces
+    const auto numSlices = _gpuObject.getNumSlices() * getFaceCount(_target);
     const auto numSamples = _gpuObject.getNumSamples();
 
     // glTextureStorage2D(_id, mips, texelFormat.internalFormat, dimensions.x, dimensions.y);
@@ -346,7 +355,8 @@ GLESStrictResourceTexture::GLESStrictResourceTexture(const std::weak_ptr<GLBacke
         auto mipLevels = _gpuObject.getNumMips();
         for (uint16_t sourceMip = 0; sourceMip < mipLevels; sourceMip++) {
             uint16_t targetMip = sourceMip;
-            size_t maxFace = GLTexture::getFaceCount(_target);
+            // the stored faces: a cube map array's are its layers' faces, in layer order
+            size_t maxFace = _gpuObject.getNumStoredFaces();
             for (uint8_t face = 0; face < maxFace; face++) {
                 copyMipFaceFromTexture(sourceMip, targetMip, face);
             }

@@ -81,6 +81,8 @@ public:
     bool isAmbientOcclusionEnabled() const;
     void setShadow(bool enable);
     bool isShadowEnabled() const;
+    void setReflectionProbes(bool enable);
+    bool isReflectionProbesEnabled() const;
 
     UniformBufferView getParametersBuffer() const { return _parametersBuffer; }
     gpu::TexturePointer getAmbientFresnelLUT() const { return _ambientFresnelLUT; }
@@ -121,7 +123,7 @@ protected:
 
         float enableAmbientOcclusion{ 0.0f }; // false by default
         float enableShadow{ 1.0f };
-        float spare1{ 1.0f };
+        float enableReflectionProbes{ 1.0f };
         float spare2{ 1.0f };
 
         Parameters() {}
@@ -167,6 +169,7 @@ class MakeLightingModelConfig : public render::Job::Config {
 
     Q_PROPERTY(bool enableAmbientOcclusion READ isAmbientOcclusionEnabled WRITE setAmbientOcclusion NOTIFY dirty)
     Q_PROPERTY(bool enableShadow READ isShadowEnabled WRITE setShadow NOTIFY dirty)
+    Q_PROPERTY(bool enableReflectionProbes MEMBER enableReflectionProbes NOTIFY dirty)
 
 
 public:
@@ -177,6 +180,7 @@ public:
     bool enableLightmap{ true };
     bool enableBackground{ true };
     bool enableObscurance{ true };
+    bool enableReflectionProbes{ true };
 
     bool enableScattering{ true };
     bool enableDiffuse{ true };

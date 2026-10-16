@@ -128,7 +128,8 @@ public:
         const HazeStage::FramePointer& hazeFrame,
         const SurfaceGeometryFramebufferPointer& surfaceGeometryFramebuffer,
         const AmbientOcclusionFramebufferPointer& ambientOcclusionFramebuffer,
-        const SubsurfaceScatteringResourcePointer& subsurfaceScatteringResource);
+        const SubsurfaceScatteringResourcePointer& subsurfaceScatteringResource,
+        const LightClustersPointer& lightClusters);
 };
 
 class RenderDeferredLocals {

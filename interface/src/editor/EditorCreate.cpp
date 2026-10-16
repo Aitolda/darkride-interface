@@ -90,6 +90,7 @@ const QVector<EditorCreate::Item>& EditorCreate::items() {
         { "icosahedron", "Icosahedron", "Shape", EntityTypes::Shape },
         { "point", "Point Light", "Light", EntityTypes::Light },
         { "spot", "Spot Light", "Light", EntityTypes::Light },
+        { "probe", "Reflection Probe", "Light", EntityTypes::Shape },
         { "text", "Text", "", EntityTypes::Text, true },
         { "image", "Image", "", EntityTypes::Image },
         { "web", "Web Page", "", EntityTypes::Web },
@@ -121,6 +122,18 @@ EntityItemProperties EditorCreate::properties(const QString& key, const glm::vec
         p.setDimensions(glm::vec3(EMPTY_SIZE));
         p.setVisible(false);
         p.setCollisionless(true);
+        return p;
+    }
+    if (key == "probe") {
+        // a reflection probe (LIGHTMAPS.md §7): an invisible, collisionless box, the region whose surfaces reflect
+        // the probe's cube map (userData "reflectionProbe": the shape renderer and ReflectionProbeStage); a room's
+        // worth to start with, the probe at the entity's position
+        auto p = shape("Cube", position);
+        p.setName("Reflection Probe");
+        p.setDimensions(glm::vec3(5.0f, 3.0f, 5.0f));
+        p.setVisible(false);
+        p.setCollisionless(true);
+        p.setUserData("{\"reflectionProbe\": {\"intensity\": 1, \"blendDistance\": 1, \"boxProjection\": true}}");
         return p;
     }
     if (key == "cube") { return shape("Cube", position); }

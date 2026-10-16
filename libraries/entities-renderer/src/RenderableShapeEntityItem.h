@@ -13,7 +13,9 @@
 
 #include <gpu/Texture.h>
 #include <procedural/Procedural.h>
+#include <ReflectionProbeStage.h>
 #include <ShapeEntityItem.h>
+#include <TextureCache.h>
 
 namespace render { namespace entities { 
 
@@ -38,6 +40,7 @@ private:
     virtual void doRenderUpdateAsynchronousTyped(const TypedEntityPointer& entity) override;
     virtual void doRender(RenderArgs* args) override;
     virtual bool isTransparent() const override;
+    virtual void onRemoveFromSceneTyped(const TypedEntityPointer& entity) override;
 
     // bool _doZoneCull{ false };  // TIVOLI Zone Culling
 
@@ -67,6 +70,17 @@ private:
     gpu::TextureSourcePointer _mirrorSource;
     gpu::TexturePointer _mirrorPicture;
     gpu::BufferPointer _mirrorRegion;  // Screen mode: the region of the screen the picture covers, for the glass shader
+
+    // a reflection probe (userData "reflectionProbe", LIGHTMAPS.md §7): the entity is the probe's box, the probe at
+    // its position; registered with the scene's ReflectionProbeStage, its cube map (the entry's url, loaded as an
+    // ambient map) handed over once it has loaded
+    graphics::ReflectionProbePointer _reflectionProbe;
+    ReflectionProbeStagePointer _reflectionProbeStage;
+    ReflectionProbeStage::Index _reflectionProbeIndex { ReflectionProbeStage::INVALID_INDEX };
+    QString _reflectionProbeURL;
+    NetworkTexturePointer _reflectionProbeTexture;
+    bool _reflectionProbePending { false };
+    void removeReflectionProbe();
 };
 
 } } 

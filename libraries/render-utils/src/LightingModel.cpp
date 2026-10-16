@@ -282,6 +282,14 @@ void LightingModel::setShadow(bool enable) {
 bool LightingModel::isShadowEnabled() const {
     return (bool)_parametersBuffer.get<Parameters>().enableShadow;
 }
+void LightingModel::setReflectionProbes(bool enable) {
+    if (enable != isReflectionProbesEnabled()) {
+        _parametersBuffer.edit<Parameters>().enableReflectionProbes = (float)enable;
+    }
+}
+bool LightingModel::isReflectionProbesEnabled() const {
+    return (bool)_parametersBuffer.get<Parameters>().enableReflectionProbes;
+}
 
 MakeLightingModel::MakeLightingModel() {
     _lightingModel = std::make_shared<LightingModel>();
@@ -291,6 +299,7 @@ void MakeLightingModel::configure(const Config& config) {
     _lightingModel->setUnlit(config.enableUnlit);
     _lightingModel->setEmissive(config.enableEmissive);
     _lightingModel->setLightmap(config.enableLightmap);
+    _lightingModel->setReflectionProbes(config.enableReflectionProbes);
     _lightingModel->setBackground(config.enableBackground);
     _lightingModel->setHaze(config.enableHaze);
     _lightingModel->setBloom(config.enableBloom);

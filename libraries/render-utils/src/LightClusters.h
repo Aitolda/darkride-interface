@@ -15,6 +15,7 @@
 #include <gpu/Buffer.h>
 #include <render/Engine.h>
 #include "LightStage.h"
+#include "ReflectionProbeStage.h"
 #include "DeferredFrameTransform.h"
 #include "LightingModel.h"
 #include "SurfaceGeometryPass.h"
@@ -30,6 +31,10 @@
 //   lights whose sphere (a spot's cone's enclosing sphere) covers it on screen, found row by row with the sphere cut
 //   down to the row's nearer boundary plane, as the frustum grid of 2016 did; per eye in stereo, by each eye's own
 //   projection.
+// The reflection probes in view (ReflectionProbeStage) are in the same list, as Unity's: their bits after the
+// lights' from the next whole word, a bin's second header naming the first and last of them, sorted by importance
+// (then the smallest first) so a fragment blends them in that order; their data rides in the parameters block
+// (ReflectionProbe.slh).
 // Built on the CPU every frame (no depth buffer needed, so both render methods build it before they draw); the
 // shaders' side is LightClusterGrid.slh, the layout they share LightClusterGrid_shared.slh.
 class LightClusters {
@@ -42,7 +47,9 @@ public:
     struct Stats {
         int numInputLights { 0 };   // the frame's point and spot lights
         int numLights { 0 };        // in the list: in view, within the cap
-        int numTileBits { 0 };      // light bits set over every tile
+        int numInputProbes { 0 };   // the scene's reflection probes with a cube map
+        int numProbes { 0 };        // in the list: in view, within the cap
+        int numTileBits { 0 };      // light and probe bits set over every tile
         int tileSize { 0 };         // pixels
         int tileCountX { 0 };
         int tileCountY { 0 };
@@ -56,16 +63,22 @@ public:
     void updateLightStage(const LightStagePointer& lightStage) { _lightStage = lightStage; }
     // the frame's point and spot lights (each kind as the lighting model allows it): the candidates
     void updateLightFrame(const LightStage::FramePointer& lightFrame, bool points = true, bool spots = true);
+    // the scene's reflection probes (those with a layer in the stage's cube map array): the candidates
+    void updateReflectionProbes(const ReflectionProbeStagePointer& probeStage) { _probeStage = probeStage; }
     // builds the list, the bins and the tiles for the view of args (its viewport, and its two eyes in stereo)
     Stats updateClusters(const RenderArgs* args);
 
     int getNumLights() const { return _numLights; }
+    int getNumProbes() const { return _numProbes; }
+    // the probes' cube map array for the shaders (one black layer when the scene has none)
+    const gpu::TexturePointer& getReflectionProbeArray() const;
     // the lights a frame's list can hold: 256 with 64 KB uniform blocks, URP's own 32 on OpenGL below that
     static int getMaxLights();
 
     ViewFrustum _frustum;
     LightStagePointer _lightStage;
     LightStage::LightIndices _visibleLightIndices;
+    ReflectionProbeStagePointer _probeStage;
 
     // what the shaders bind: the parameters and the list, the tiles' words, the bins' words
     gpu::StructBuffer<LightClusterParams> _paramsBuffer;
@@ -75,6 +88,9 @@ public:
 private:
     struct Candidate {
         LightID id { LightStage::INVALID_INDEX };
+        // a reflection probe's: the probe and its layer in the array (null and -1 for a light)
+        graphics::ReflectionProbePointer probe;
+        int layer { -1 };
         float minZ { 0.0f };          // eye depth range
         float maxZ { 0.0f };
         glm::vec3 center;             // world: the sphere the tiles are scanned with
@@ -85,7 +101,9 @@ private:
     };
 
     int _numLights { 0 };
+    int _numProbes { 0 };
     std::vector<Candidate> _candidates;
+    std::vector<Candidate> _probeCandidates;
     std::vector<uint32_t> _tiles;
     std::vector<uint32_t> _bins;
     std::vector<glm::vec4> _columnPlanes;
@@ -103,6 +121,8 @@ class LightClusteringPassConfig : public render::Job::Config {
     Q_PROPERTY(int numInputLights MEMBER numInputLights NOTIFY dirty)
     Q_PROPERTY(int numClusteredLights MEMBER numClusteredLights NOTIFY dirty)
     Q_PROPERTY(int numClusteredLightReferences MEMBER numClusteredLightReferences NOTIFY dirty)
+    Q_PROPERTY(int numInputProbes MEMBER numInputProbes NOTIFY dirty)
+    Q_PROPERTY(int numClusteredProbes MEMBER numClusteredProbes NOTIFY dirty)
     Q_PROPERTY(int maxLights MEMBER maxLights NOTIFY dirty)
     Q_PROPERTY(int tileSize MEMBER tileSize NOTIFY dirty)
     Q_PROPERTY(int tileCountX MEMBER tileCountX NOTIFY dirty)
@@ -124,6 +144,9 @@ public:
     int numInputLights { 0 };
     int numClusteredLights { 0 };
     int numClusteredLightReferences { 0 };
+    // the scene's reflection probes with a cube map; those in the list
+    int numInputProbes { 0 };
+    int numClusteredProbes { 0 };
     // the layout
     int maxLights { 0 };
     int tileSize { 0 };

@@ -142,6 +142,9 @@ void DeferredLightingEffect::setupFrameLightingBatch(gpu::Batch& batch, const Re
     batch.setUniformBuffer(ru::Buffer::LightClusterParams, lightClusters->_paramsBuffer);
     batch.setUniformBuffer(ru::Buffer::LightClusterTiles, lightClusters->_tilesBuffer);
     batch.setUniformBuffer(ru::Buffer::LightClusterBins, lightClusters->_binsBuffer);
+    // the reflection probes' cube map array (the forward and translucent shaders blend the probes in view into the
+    // ambient specular, ReflectionProbe.slh)
+    batch.setResourceTexture(ru::Texture::ReflectionProbes, lightClusters->getReflectionProbeArray());
 
     // the lights' shadow maps and cookies; with none, a table in which no light has either
     const auto localShadows = _frameShadowFrame ? _frameShadowFrame->_localShadows : LocalShadowsPointer();
@@ -390,7 +393,8 @@ void RenderDeferredSetup::run(const render::RenderContextPointer& renderContext,
     const HazeStage::FramePointer& hazeFrame,
     const SurfaceGeometryFramebufferPointer& surfaceGeometryFramebuffer,
     const AmbientOcclusionFramebufferPointer& ambientOcclusionFramebuffer,
-    const SubsurfaceScatteringResourcePointer& subsurfaceScatteringResource) {
+    const SubsurfaceScatteringResourcePointer& subsurfaceScatteringResource,
+    const LightClustersPointer& lightClusters) {
 
     auto args = renderContext->args;
     auto& batch = (*args->_batch);
@@ -440,7 +444,20 @@ void RenderDeferredSetup::run(const render::RenderContextPointer& renderContext,
             batch.setUniformBuffer(ru::Buffer::SsscParams, subsurfaceScatteringResource->getParametersBuffer());
             batch.setResourceTexture(ru::Texture::SsscLut, subsurfaceScatteringResource->getScatteringTable());
             batch.setResourceTexture(ru::Texture::SsscSpecularBeckmann, subsurfaceScatteringResource->getScatteringSpecular());
+        } else {
+            // the slots stay empty rather than keep another pass's textures (a translucent pass leaves the probes'
+            // cube map array in the Beckmann slot)
+            batch.setResourceTexture(ru::Texture::SsscLut, nullptr);
+            batch.setResourceTexture(ru::Texture::SsscSpecularBeckmann, nullptr);
         }
+
+        // the frame's light culling, for the reflection probes the directional pass blends into the ambient
+        // specular (ReflectionProbe.slh), and their cube map array in the slot this pass has free
+        const auto& clusters = lightClusters ? lightClusters : getEmptyLightClusters();
+        batch.setUniformBuffer(ru::Buffer::LightClusterParams, clusters->_paramsBuffer);
+        batch.setUniformBuffer(ru::Buffer::LightClusterTiles, clusters->_tilesBuffer);
+        batch.setUniformBuffer(ru::Buffer::LightClusterBins, clusters->_binsBuffer);
+        batch.setResourceTexture(ru::Texture::ReflectionProbesDeferred, clusters->getReflectionProbeArray());
 
         // Global directional light, maybe shadow and ambient pass
         auto lightStage = renderContext->_scene->getStage<LightStage>();
@@ -639,7 +656,7 @@ void RenderDeferred::run(const RenderContextPointer& renderContext, const Inputs
         args->_batch = &batch;
         _gpuTimer->begin(batch);
 
-        setupJob.run(renderContext, deferredTransform, deferredFramebuffer, lightingModel, lightFrame, shadowFrame, hazeFrame, surfaceGeometryFramebuffer, ssaoFramebuffer, subsurfaceScatteringResource);
+        setupJob.run(renderContext, deferredTransform, deferredFramebuffer, lightingModel, lightFrame, shadowFrame, hazeFrame, surfaceGeometryFramebuffer, ssaoFramebuffer, subsurfaceScatteringResource, lightClusters);
 
         lightsJob.run(renderContext, deferredTransform, deferredFramebuffer, lightingModel, surfaceGeometryFramebuffer, lightClusters, shadowFrame);
 

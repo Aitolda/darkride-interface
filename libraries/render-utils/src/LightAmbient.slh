@@ -78,9 +78,16 @@ vec3 evalAmbientSpecularIrradiance(LightAmbient ambient, SurfaceData surface, ve
 }
 <@endfunc@>
 
-<@func declareLightingAmbient(supportAmbientSphere, supportAmbientMap, supportIfAmbientMapElseAmbientSphere, supportScattering)@>
+<@func declareLightingAmbient(supportAmbientSphere, supportAmbientMap, supportIfAmbientMapElseAmbientSphere, supportScattering, supportReflectionProbes)@>
 
 <$declareEvalAmbientSpecularIrradiance($supportAmbientSphere$, $supportAmbientMap$, $supportIfAmbientMapElseAmbientSphere$)$>
+
+<@if supportReflectionProbes@>
+// the reflection probes the fragment is inside take the ambient specular from the zone's map (ReflectionProbe.slh);
+// the fragment's world position finds its probes in the frame's light culling
+<@include ReflectionProbe.slh@>
+<$declareReflectionProbes()$>
+<@endif@>
 
 <@if supportScattering@>
 float curvatureAO(in float k) {
@@ -92,6 +99,9 @@ void evalLightingAmbient(out vec3 diffuse, out vec3 specular, LightAmbient ambie
                          float metallic, vec3 fresnelF0, vec3 albedo, float obscurance
 <@if supportScattering@>
     , float scattering, vec4 midNormalCurvature, vec4 lowNormalCurvature
+<@endif@>
+<@if supportReflectionProbes@>
+    , vec3 fragPositionWS
 <@endif@>
     ) {
 
@@ -110,6 +120,20 @@ void evalLightingAmbient(out vec3 diffuse, out vec3 specular, LightAmbient ambie
     // Specular highlight from ambient
     vec3 ambientSpaceLightDir = -reflect(ambientSpaceSurfaceEyeDir, ambientSpaceSurfaceNormal);
     specular = evalAmbientSpecularIrradiance(ambient, surface, ambientSpaceLightDir)  * ambientFresnel;
+<@if supportReflectionProbes@>
+    // the reflection probes the fragment is inside: their light along the world-space reflection, and the zone's
+    // map keeps the share they leave; the probes carry their own intensity, so only the zone's share takes the
+    // ambient light's below
+    vec3 probeSpecular = vec3(0.0);
+    LightCluster cluster = fetchLightCluster(vec4(fragPositionWS, 1.0), gl_FragCoord.xy);
+    if (hasReflectionProbes(cluster) && isReflectionProbesEnabled() > 0.0) {
+        vec3 lightDirWS = -reflect(surface.eyeDir, surface.normal);
+        float probeLod = max(getMipLevelFromRoughness(surface.roughness, getReflectionProbeNumMips()), 0.0);
+        vec4 probeLight = evalReflectionProbes(cluster, fragPositionWS, lightDirWS, probeLod);
+        probeSpecular = probeLight.rgb * ambientFresnel;
+        specular *= probeLight.a;
+    }
+<@endif@>
 
 <@if supportScattering@>
     if (scattering * isScatteringEnabled() > 0.0) {
@@ -136,6 +160,9 @@ void evalLightingAmbient(out vec3 diffuse, out vec3 specular, LightAmbient ambie
     lightEnergy *= isAmbientEnabled();
     diffuse *= lightEnergy * isDiffuseEnabled();
     specular *= lightEnergy * isSpecularEnabled();
+<@if supportReflectionProbes@>
+    specular += probeSpecular * (obscurance * isAmbientEnabled() * isSpecularEnabled());
+<@endif@>
 }
 
 <@endfunc@>

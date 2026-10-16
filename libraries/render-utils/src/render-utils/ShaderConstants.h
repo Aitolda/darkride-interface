@@ -67,6 +67,10 @@
 #define RENDER_UTILS_RESOURCE_BUFFER_LOCAL_SHADOW_TABLE 1
 // spot lights' cookies, one picture to a layer of a texture array; the same table says which light has which
 #define RENDER_UTILS_TEXTURE_LOCAL_COOKIES 15
+// the reflection probes' cube map array (ReflectionProbe.slh): in the material and forward shaders, and in the deferred
+// directional pass, which has the material slots taken by the G-buffer and the scattering tables and this one free
+#define RENDER_UTILS_TEXTURE_REFLECTION_PROBES 9
+#define RENDER_UTILS_TEXTURE_REFLECTION_PROBES_DEFERRED 13
 
 // the frame's light culling (LightClusterGrid.slh): its parameters and light list, the screen tiles' bits, the depth bins'
 #define RENDER_UTILS_BUFFER_LIGHT_CLUSTER_PARAMS 10
@@ -192,6 +196,8 @@ enum Texture {
     Shadow = RENDER_UTILS_TEXTURE_SHADOW,
     LocalShadow = RENDER_UTILS_TEXTURE_LOCAL_SHADOW,
     LocalCookies = RENDER_UTILS_TEXTURE_LOCAL_COOKIES,
+    ReflectionProbes = RENDER_UTILS_TEXTURE_REFLECTION_PROBES,
+    ReflectionProbesDeferred = RENDER_UTILS_TEXTURE_REFLECTION_PROBES_DEFERRED,
     TaaHistory = RENDER_UTILS_TEXTURE_TAA_HISTORY,
     TaaSource = RENDER_UTILS_TEXTURE_TAA_SOURCE,
     TaaVelocity = RENDER_UTILS_TEXTURE_TAA_VELOCITY,

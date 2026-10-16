@@ -14,23 +14,48 @@
 
 // one bit a light: at most this many lights in a frame's list (the light array the shaders read holds 256)
 #define LIGHT_CLUSTER_MAX_LIGHTS 256
+// the reflection probes in a frame's list: they take the bits after the lights', from the next whole word
+#define LIGHT_CLUSTER_MAX_PROBES 32
 // the uniform blocks' sizes in 32-bit words: the tiles' is 64 KB, the bins' 16 KB
 #define LIGHT_CLUSTER_TILE_WORDS 16384
 #define LIGHT_CLUSTER_BIN_WORDS 4096
+
+// A reflection probe of the frame's list (ReflectionProbe.slh): a cube map captured at a point, with a box it lights
+// (its blend region) and, box-projected, the box the cube map is taken to lie on
+struct ReflectionProbe {
+    // the probe's position in the world; w: its layer in the frame's cube map array
+    LC_VEC4 position;
+    // the box in the probe's own frame (the probe at the origin): its low corner; w: the blend distance, how far
+    // inside the box a fragment is fully the probe's
+    LC_VEC4 boxMin;
+    // its high corner; w: box projection (1) or the cube map at infinity (0)
+    LC_VEC4 boxMax;
+    // x: the intensity the cube map is scaled by; y, z, w unused
+    LC_VEC4 params;
+    // world to the probe's frame (its rotation and position; the box is axis-aligned there)
+    LC_MAT4 worldToProbe;
+};
 
 struct LightClusterParams {
     // tiles per pixel across and up, then the tile count across and up (one eye's)
     LC_VEC4 tileInfo;
     // the depth bins: bin = log2(eye depth) * x + y, clamped to z (the last bin); w unused
     LC_VEC4 binInfo;
-    // the lights in the list, the words a tile or a bin holds (one bit a light), the tiles of one eye, stereo (1) or not (0)
+    // the lights in the list, the words a tile or a bin holds (one bit a light or probe), the tiles of one eye,
+    // stereo (1) or not (0)
     LC_IVEC4 counts;
+    // the probes: the list entry the first probe's bit is at (a whole word after the lights'), how many, the mips of
+    // their cube map array, unused
+    LC_IVEC4 probeCounts;
     // each eye's viewport in framebuffer pixels { x, y, width, height } (the same twice in mono)
     LC_VEC4 viewports[2];
     // world to the view's eye space (the mono one in stereo), for the depth
     LC_MAT4 worldToEye;
     // the list: the LightStage index of each light, four to a vector
     LC_IVEC4 lightIndices[LIGHT_CLUSTER_MAX_LIGHTS / 4];
+    // the probes of the list, in the order of their bits (by importance, the most important first, then the
+    // smallest first, so a fragment's blend takes the right ones first)
+    ReflectionProbe probes[LIGHT_CLUSTER_MAX_PROBES];
 };
 
 #endif

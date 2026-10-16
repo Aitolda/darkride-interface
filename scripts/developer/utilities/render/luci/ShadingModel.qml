@@ -34,6 +34,7 @@ Column {
                         "Unlit:LightingModel:enableUnlit", 
                         "Emissive:LightingModel:enableEmissive", 
                         "Lightmap:LightingModel:enableLightmap",
+                        "Reflection Probes:LightingModel:enableReflectionProbes",
                         "Background:LightingModel:enableBackground",      
                         "Haze:LightingModel:enableHaze", 
                         "Bloom:LightingModel:enableBloom", 
