@@ -258,7 +258,11 @@ void GL45ResourceTexture::populateTransferQueue(TransferQueue& pendingTransfers)
             }
 
             // If the mip is less than the max transfer size, then just do it in one transfer
-            if (glm::all(glm::lessThanEqual(mipDimensions, MAX_TRANSFER_DIMENSIONS))) {
+            // One transfer when the mip fits the transfer buffer, by bytes and not only by dimensions: a half-float
+            // texture has 8 bytes a texel, so its 1024-wide mip is twice the buffer, and one job that never fits
+            // stalls the whole queue (the lightmaps' walls stayed at their first low mips, LIGHTMAPS.md step 3)
+            if (glm::all(glm::lessThanEqual(mipDimensions, MAX_TRANSFER_DIMENSIONS)) &&
+                _gpuObject.getStoredMipFaceSize(sourceMip, face) <= MAX_TRANSFER_SIZE) {
                 // Can the mip be transferred in one go
                 pendingTransfers.emplace(new TransferJob(_gpuObject, sourceMip, targetMip, face));
                 continue;
