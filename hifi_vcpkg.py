@@ -5,6 +5,7 @@ import os
 import platform
 import re
 import shutil
+import subprocess
 import tempfile
 import json
 import xml.etree.ElementTree as ET
@@ -96,7 +97,8 @@ endif()
             # self.vcpkgUrl = 'https://cdn.tivolicloud.com/dependencies/vcpkg/vcpkg-win32-client.zip'
             # self.vcpkgHash = 'a650db47a63ccdc9904b68ddd16af74772e7e78170b513ea8de5a3b47d032751a3b73dcc7526d88bcb500753ea3dd9880639ca842bb176e2bddb1710f9a58cd3'
             self.hostTriplet = 'x64-windows'
-            
+            self.loadMsvcEnv()
+
             if usePrebuilt:
                self.prebuiltArchive = "https://cdn.tivolicloud.com/dependencies/vcpkg/builds/vcpkg-win32.zip"
         
@@ -143,6 +145,85 @@ endif()
             self.androidPackagePath = os.getenv('HIFI_ANDROID_PRECOMPILED', os.path.join(self.path, 'android'))
         else:
             self.triplet = self.hostTriplet
+
+    def loadMsvcEnv(self):
+        # The Windows triplet chainloads a toolchain so ports build with Ninja (see copyTripletForBuildType),
+        # and then vcpkg expects the compiler in the environment instead of setting it up itself.
+        # Load the v142 (MSVC 14.29) compiler, the one Qt was built with, unless a developer prompt already has.
+        if 'VCTOOLSVERSION' in self.buildEnv:
+            return
+        vswhere = os.path.join(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'),
+            'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
+        if not os.path.isfile(vswhere):
+            raise RuntimeError('Visual Studio not found: install it with the MSVC v142 (14.29) build tools')
+        vsPath = subprocess.check_output([vswhere, '-latest', '-products', '*',
+            '-requires', 'Microsoft.VisualStudio.Component.VC.14.29.16.11.x86.x64',
+            '-property', 'installationPath'], universal_newlines=True).strip()
+        if not vsPath:
+            raise RuntimeError('Visual Studio has no MSVC v142 (14.29) build tools: add the component '
+                '"MSVC v142 - VS 2019 C++ x64/x86 build tools" in the Visual Studio Installer')
+        vcvarsall = os.path.join(vsPath, 'VC', 'Auxiliary', 'Build', 'vcvarsall.bat')
+        print("Loading the MSVC 14.29 environment from {}".format(vcvarsall))
+        output = subprocess.check_output('"{}" x64 -vcvars_ver=14.29 >nul && set'.format(vcvarsall),
+            shell=True, universal_newlines=True)
+        # vcpkg builds each port in a clean environment: keep everything vcvarsall set or changed
+        keep = [v for v in self.buildEnv.get('VCPKG_KEEP_ENV_VARS', '').split(';') if v]
+        for line in output.splitlines():
+            name, sep, value = line.partition('=')
+            name = name.upper()
+            # VS 2022 bundles its own vcpkg and points VCPKG_ROOT at it: keep ours
+            if name.startswith('VCPKG_'):
+                continue
+            if sep and self.buildEnv.get(name) != value:
+                self.buildEnv[name] = value
+                # Not PATH: vcpkg writes its own "Path" too, and the two make tools pick either
+                if name != 'PATH':
+                    keep.append(name)
+        # The triplet puts the MSVC tools in front of vcpkg's PATH from this
+        self.buildEnv['HIFI_MSVC_PATH'] = self.buildEnv['PATH']
+        keep.append('HIFI_MSVC_PATH')
+        self.buildEnv['VCPKG_KEEP_ENV_VARS'] = ';'.join(keep)
+
+    def patchVcpkgScripts(self):
+        # This vcpkg fetches pkg-config from MSYS2's 32-bit MinGW repository, which MSYS2 has retired:
+        # fetch the last pkg-config from its x86_64 repository instead
+        self.patchVcpkgScript('vcpkg_find_acquire_program.cmake', [
+            ('"https://repo.msys2.org/mingw/i686/mingw-w64-i686-pkg-config-${VERSION}-any.pkg.tar.zst"\n'
+             '            54f8dad3b1a36a4515db47825a3214fbd2bd82f604aec72e7fb8d79068095fda3c836fb2296acd308522d6e12ce15f69e0c26dcf4eb0681fd105d057d912cdb7',
+             '"https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-pkg-config-0.29.2-6-any.pkg.tar.zst"\n'
+             '            8dc4045e16314e24d8361336f989c97d2067ab3476d37e01c98b240cc299f24c8318ac48753653721e0118e0d69eba91f593e7ab0ec1ef3052cbd419595fbfe7'),
+            ('"https://repo.msys2.org/mingw/i686/mingw-w64-i686-libwinpthread-${LIBWINPTHREAD_VERSION}-any.pkg.tar.zst"\n'
+             '            2c3d9e6b2eee6a4c16fd69ddfadb6e2dc7f31156627d85845c523ac85e5c585d4cfa978659b1fe2ec823d44ef57bc2b92a6127618ff1a8d7505458b794f3f01c',
+             '"https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-libwinpthread-git-12.0.0.r747.g1a99f8514-1-any.pkg.tar.zst"\n'
+             '            dd6c5ac767f6ef39afaef822796d8da65bb09ceee35d19332922012266f384cd1907f3f73efa70e5160e2287f5804f2a49788cb16af1a98ba9dffba832e4ba92'),
+            ('"${PKGCONFIG_ROOT}/mingw32/bin/pkg-config.exe"', '"${PKGCONFIG_ROOT}/mingw64/bin/pkg-config.exe"'),
+            # A current NASM instead of 2.15.05 (from 2020)
+            ('set(NASM_VERSION 2.15.05)', 'set(NASM_VERSION 2.16.03)'),
+            ('9412b8caa07e15eac8f500f6f8fab9f038d95dc25e0124b08a80645607cf5761225f98546b52eac7b894420d64f26c3cbf22c19cd286bbe583f7c964256c97ed',
+             '8e93ef2378bd5fafe505f8a2940b1e83f2a7563f994ecc82b5d081d178c7ade80a6bad17d52f693432b44e28c2420f68159b36ffea742f4b7c91ef3a855bcd0c'),
+        ])
+        # The chainloaded toolchain (see copyTripletForBuildType) makes the toolset "external", which
+        # MSBuild doesn't know: build MSBuild ports with v142, as loadMsvcEnv set up
+        for script in ('vcpkg_build_msbuild.cmake', 'vcpkg_install_msbuild.cmake'):
+            self.patchVcpkgScript(script, [(
+                '        set(_csc_PLATFORM_TOOLSET ${VCPKG_PLATFORM_TOOLSET})\n',
+                '        set(_csc_PLATFORM_TOOLSET ${VCPKG_PLATFORM_TOOLSET})\n'
+                '        if(_csc_PLATFORM_TOOLSET STREQUAL "external")\n'
+                '            set(_csc_PLATFORM_TOOLSET v142)\n'
+                '        endif()\n')])
+
+    def patchVcpkgScript(self, name, replacements):
+        script = os.path.join(self.path, 'scripts', 'cmake', name)
+        with open(script, 'r') as f:
+            contents = f.read()
+        patched = contents
+        for old, new in replacements:
+            if new not in patched:
+                patched = patched.replace(old, new)
+        if patched != contents:
+            print("Patching vcpkg's {}".format(name))
+            with open(script, 'w') as f:
+                f.write(patched)
 
     def writeEnv(self, var, value=""):
         envPath = os.path.join(self.args.build_root, "_env")
@@ -274,6 +355,16 @@ endif()
 
         with open(tripletForBuildTypePath, "a") as tripletForBuildTypeFile:
             tripletForBuildTypeFile.write("set(VCPKG_BUILD_TYPE " + self.vcpkgBuildType + ")\n")
+            if platform.system() == 'Windows':
+                # Build every port with Ninja and the v142 compiler from VS 2022's installer: without a
+                # chainload toolchain, this vcpkg asks for the "Visual Studio 16 2019" generator by name,
+                # which only a full VS 2019 install provides.
+                tripletForBuildTypeFile.write('set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE "${CMAKE_CURRENT_LIST_DIR}/../scripts/toolchains/windows.cmake")\n')
+                # vcpkg resets PATH for each port: put the MSVC tools loadMsvcEnv set up in front of it
+                # (CMake finds cl without them, but jom, nmake and gn builds run it from PATH)
+                tripletForBuildTypeFile.write('if(DEFINED ENV{HIFI_MSVC_PATH})\n'
+                    '    set(ENV{PATH} "$ENV{HIFI_MSVC_PATH};$ENV{PATH}")\n'
+                    'endif()\n')
 
     def getTripletWithBuildType(self, triplet):
         if not self.vcpkgBuildType:
@@ -300,6 +391,9 @@ endif()
         if self.args.android:
             print("Installing Android binaries")
             self.setupAndroidDependencies()
+
+        if platform.system() == 'Windows':
+            self.patchVcpkgScripts()
 
         print("Installing host tools")
         if (self.vcpkgBuildType):
