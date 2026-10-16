@@ -140,7 +140,7 @@ void main(void) {
             _fragColor0 = vec4(albedo * isUnlitEnabled(), opacity);
     <@else@>
             packDeferredFragmentUnlit(
-                evalFrontOrBackFaceNormal(normalize(_normalWS)),
+                evalSafeFrontOrBackFaceNormal(_normalWS, _positionWS.xyz),
                 opacity,
                 albedo * isUnlitEnabled());
     <@endif@>
@@ -208,7 +208,7 @@ void main(void) {
     <@else@>
             vec3 fragNormalWS = _normalWS;
     <@endif@>
-        fragNormalWS = evalFrontOrBackFaceNormal(normalize(fragNormalWS));
+        fragNormalWS = evalSafeFrontOrBackFaceNormal(fragNormalWS, _positionWS.xyz);
 
     <@if HIFI_USE_FORWARD@>
         TransformCamera cam = getTransformCamera();

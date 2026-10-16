@@ -49,6 +49,11 @@ void main(void) {
     vec4 fragColorRaw = texture(colorMap, varTexCoord0);
 <@endif@>
     vec3 fragColor = fragColorRaw.xyz;
+    // a NaN here is a shading fault at this fragment: shown as magenta, not black, so it can be found
+    if (any(isnan(fragColor))) {
+        outFragColor = vec4(1.0, 0.0, 1.0, 1.0);
+        return;
+    }
 
     vec3 srcColor = fragColor * getTwoPowExposure();
 

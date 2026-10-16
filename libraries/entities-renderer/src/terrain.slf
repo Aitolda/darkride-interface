@@ -266,7 +266,10 @@ float heightWeight(float belowHeight, float layerHeight, float amount) {
 }
 
 void main(void) {
-    vec3 normal = normalize(_normalWS);
+    // a zero normal (a degenerate triangle) would be NaN normalized, which the forward colour keeps: it points up instead
+    vec3 normal = _normalWS;
+    float normalLength = length(normal);
+    normal = (normalLength > 1.0e-6) ? normal / normalLength : vec3(0.0, 1.0, 0.0);
     vec3 point = (params.worldToTerrain * vec4(_positionWS.xyz, 1.0)).xyz;
     Gradients g;
     g.dx = dFdx(point);
