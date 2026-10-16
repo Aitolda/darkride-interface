@@ -414,6 +414,7 @@ struct GLTFpbrMetallicRoughness {
 struct GLTFMaterial {
     QString name;
     QVector<double> emissiveFactor;
+    double emissiveStrength { 1.0 };    // KHR_materials_emissive_strength
     int emissiveTexture;
     int emissiveTexCoord { 0 };
     int normalTexture;

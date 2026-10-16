@@ -545,6 +545,15 @@ bool GLTFSerializer::addMaterial(const QJsonObject& object) {
 
     getStringVal(object, "name", material.name, material.defined);
     getDoubleArrayVal(object, "emissiveFactor", material.emissiveFactor, material.defined);
+    // KHR_materials_emissive_strength: the brightness of an HDR emission beyond the factor's 0..1 (the Unity
+    // exporter writes it for URP's HDR emission colours)
+    {
+        QJsonObject strength = object.value("extensions").toObject().value("KHR_materials_emissive_strength").toObject();
+        if (strength.contains("emissiveStrength")) {
+            material.emissiveStrength = strength.value("emissiveStrength").toDouble(1.0);
+            material.defined.insert("emissiveStrength", true);
+        }
+    }
     getIndexFromObject(object, "emissiveTexture", material.emissiveTexture, material.emissiveTexCoord, material.defined);
     readTextureTransform(object, "emissiveTexture", material, material.emissiveTexCoord);
     getIndexFromObject(object, "normalTexture", material.normalTexture, material.normalTexCoord, material.defined);
@@ -1795,6 +1804,9 @@ void GLTFSerializer::setHFMMaterial(HFMMaterial& hfmMat, const GLTFMaterial& mat
 
     if (material.defined["emissiveFactor"] && material.emissiveFactor.size() == 3) {
         glm::vec3 emissive = glm::vec3(material.emissiveFactor[0], material.emissiveFactor[1], material.emissiveFactor[2]);
+        if (material.defined["emissiveStrength"]) {
+            emissive *= (float)material.emissiveStrength;
+        }
         hfmMat._material->setEmissive(emissive);
     }
 
