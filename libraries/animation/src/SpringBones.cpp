@@ -211,6 +211,15 @@ float Law::rigidCarried(const ComponentSpec& spec) {
     return interpolateTable(TABLE, glm::clamp(spec.spring, 0.0f, 1.0f));
 }
 
+float Law::deeperRigidCarried(const ComponentSpec& spec, float stiffness) {
+    // bones below the first, fitted alone in their parent bone's frame (research/spring-bones/fitlaw.py --bone,
+    // 2026-10-16), read 0 on the tail, 0.44 on the back hair and 0.78 on the kemono ear's second bone; but the twin
+    // run whole prefers 0.36 on the tail, and the ear's second bone sits at its 27 degree limit in the recording,
+    // which the twin lacks and a carry stood in for. So the first bone's carry serves every bone until a sweep on a
+    // multi-bone chain reads otherwise; stiffness is unused.
+    return rigidCarried(spec);
+}
+
 float Law::avatarMoveImmobile(const ComponentSpec& spec, float immobile) {
     // the avatar's own movement is carried by the rigid carry's share like any rigid motion, and by immobile of the
     // rest (fitted over whole recordings at immobile 0.9 and 0: 0.935 and 0.363 carried in all, the carry 0.36)
@@ -305,8 +314,9 @@ bool Collider::pushOut(const glm::vec3& from, glm::vec3& point, float radius, fl
 
 // SPRING_BONES_TRACE=<root joint> logs one chain's first particle every step
 static bool traceChain(const ComponentSpec& spec) {
-    static const QString TRACE = QString::fromLocal8Bit(qgetenv("SPRING_BONES_TRACE"));
-    return !TRACE.isEmpty() && spec.root == TRACE;
+    // SPRING_BONES_TRACE=<root joint>[,<root joint>...] logs every particle of those chains per step
+    static const QStringList ROOTS = QString::fromLocal8Bit(qgetenv("SPRING_BONES_TRACE")).split(',', Qt::SkipEmptyParts);
+    return !ROOTS.isEmpty() && ROOTS.contains(spec.root);
 }
 
 glm::vec3 Solver::jointPosition(const AnimPoseVec& absolutePoses, int joint) const {
@@ -515,6 +525,12 @@ void Solver::resetChain(Chain& chain) {
         }
         p.localRotation = p.previousLocalRotation = p.presentedLocalRotation = p.animRotation;
         p.localPosition = p.previousLocalPosition = glm::inverse(parentRotation) * (p.position - chain.lastParentPosition);
+        p.hasFrame = false;
+        if (p.parent >= 0 && chain.particles[p.parent].parent >= 0) {
+            const Particle& par = chain.particles[p.parent];
+            glm::quat frame = chain.particles[par.parent].worldRotation * par.animRotation;
+            p.localPosition = p.previousLocalPosition = glm::inverse(frame) * (p.position - par.position);
+        }
     }
 }
 
@@ -552,12 +568,33 @@ void Solver::stepChain(Chain& chain, const glm::vec3& frameMove, const glm::vec3
     for (size_t i = 1; i < parts.size(); i++) {
         Particle& p = parts[i];
         const Particle& parent = parts[p.parent];
-        // the velocity: the particle's displacement in the parent's frame over the last step, in that frame now. The
-        // position is carried by the rigid carry's share of its rigid motion with the root; the positions being
-        // relative to the avatar, the frame's own movement in the world is rigid motion too, of which the carry's
-        // share is already in `rigid` and the rest must be taken out here, less the immobile share the chain keeps
-        glm::vec3 velocity = parentRotation * (p.localPosition - p.previousLocalPosition);
-        glm::vec3 rigid = root.position + frameTurn * (p.position - root.previousPosition);
+        int parentIndex = p.parent;
+        // The frame a particle lives in. The first particle's is the chain parent's: its rest is the animated rest
+        // rotations composed down from it, its velocity is measured in it, and it is carried by a share of its rigid
+        // motion with the root. A particle below the first lives in its parent joint's rest orientation under the
+        // bone above as that bone actually lies (its last fit): the rest follows the bone above, so lags add down the
+        // chain, the velocity is measured in that frame, and the carry of that frame's rigid motion follows the
+        // stiffness (the test avatar's chains fitted bone by bone, SPRING-BONES.md 5).
+        bool deeper = parent.parent >= 0;
+        glm::quat frame = parentRotation;
+        glm::quat frameRotationNow = restWorld[parentIndex];
+        float carry = rigidCarried;
+        glm::vec3 rigid;
+        if (deeper) {
+            const Particle& grand = parts[parent.parent];
+            frameRotationNow = grand.worldRotation * parent.animRotation;
+            frame = frameRotationNow;
+            carry = Law::deeperRigidCarried(spec, p.stiffness);
+            glm::quat turn = p.hasFrame ? frameRotationNow * glm::inverse(p.frameRotation) : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+            rigid = parent.position + turn * (p.position - parent.previousPosition);
+        } else {
+            rigid = root.position + frameTurn * (p.position - root.previousPosition);
+        }
+        // the velocity: the particle's displacement in its frame over the last step, in that frame now. The position
+        // is carried by the carry's share of its rigid motion; the positions being relative to the avatar, the
+        // avatar's own movement in the world is rigid motion too, of which the carry's share is already in `rigid`
+        // and the rest must be taken out here, less the immobile share the chain keeps
+        glm::vec3 velocity = frame * (p.localPosition - p.previousLocalPosition);
         // the immobile share: of the avatar's own movement in the World type, of every rigid motion (the parent's
         // turn included) in the All Motion type (the sweep, SPRING-BONES.md 5: at immobile 0.9 the All Motion type
         // takes the spin's lag from 25 to 2.8 degrees and leaves the walk's alone)
@@ -565,14 +602,12 @@ void Solver::stepChain(Chain& chain, const glm::vec3& frameMove, const glm::vec3
         if (spec.immobileType == ImmobileType::AllMotion) {
             immobileMotion += rigid - p.position;
         }
-        glm::vec3 carried = p.position + (rigid - p.position) * rigidCarried - frameMove * (1.0f - rigidCarried)
-                            + immobileMotion * Law::avatarMoveImmobile(spec, p.immobile);
+        glm::vec3 carried = p.position + (rigid - p.position) * carry - frameMove * (1.0f - carry)
+                            + immobileMotion * (1.0f - carry) * glm::clamp(p.immobile, 0.0f, 1.0f);
 
-        // the pull toward the rest: the bone's animated rest direction (the rest rotations composed down from the
-        // chain's parent, as the components do), anchored at the parent particle where it is now; the gap is measured
-        // from the carried position, before the velocity is added
-        int parentIndex = p.parent;
-        glm::vec3 restDirection = glm::normalize(restWorld[parentIndex] * p.restLocal);
+        // the pull toward the rest: the bone's rest direction in its frame, anchored at the parent particle where it
+        // is now; the gap is measured from the carried position, before the velocity is added
+        glm::vec3 restDirection = glm::normalize(frameRotationNow * p.restLocal);
         // gravity (version 1.1): the rest direction blended toward the world's down by the gravity value, a
         // normalized lerp (the sweep: 8.2 degrees of droop at 0.2, 77 at 0.5, straight down at 1.0, up at -0.5),
         // less the falloff's share of it while the bone lies along its rest (falloff 1 leaves none at rest)
@@ -589,8 +624,8 @@ void Solver::stepChain(Chain& chain, const glm::vec3& frameMove, const glm::vec3
         }
         glm::vec3 rest = parent.position + pullDirection * glm::length(p.restLocal);
         glm::vec3 next = carried + velocity * Law::velocityKept(spec, p.spring) + (rest - carried) * Law::pull(spec, p.pull);
-        if (trace && i == 1) {
-            qCDebug(animation) << "spring trace" << spec.root << "length" << p.length << "root" << root.position << "avatarMove" << frameMove << "ownMove" << ownMove << "rigid" << rigid << "velocity" << velocity
+        if (trace) {
+            qCDebug(animation) << "spring trace" << spec.root << "particle" << (int)i << "length" << p.length << "carry" << carry << "root" << root.position << "parent" << parent.position << "avatarMove" << frameMove << "ownMove" << ownMove << "rigid" << rigid << "velocity" << velocity
                                << "position" << p.position << "rest" << rest << "next" << next;
         }
 
@@ -599,7 +634,7 @@ void Solver::stepChain(Chain& chain, const glm::vec3& frameMove, const glm::vec3
         float distance = glm::length(direction);
         direction = distance > EPSILON ? direction / distance : restDirection;
         if (spec.limitType != LimitType::None) {
-            glm::vec3 axis = glm::normalize(restWorld[parentIndex] * (spec.limitRotation * glm::normalize(p.restLocal)));
+            glm::vec3 axis = glm::normalize(frameRotationNow * (spec.limitRotation * glm::normalize(p.restLocal)));
             float maxAngle = glm::radians(glm::clamp(p.maxAngleX, 0.0f, 180.0f));
             float cosAngle = glm::clamp(glm::dot(direction, axis), -1.0f, 1.0f);
             if (cosAngle < cosf(maxAngle)) {
@@ -630,7 +665,9 @@ void Solver::stepChain(Chain& chain, const glm::vec3& frameMove, const glm::vec3
         p.previousPosition = p.position;
         p.position = next;
         p.previousLocalPosition = p.localPosition;
-        p.localPosition = inverseParentRotation * (next - parentPosition);
+        p.localPosition = deeper ? glm::inverse(frameRotationNow) * (next - parent.position) : inverseParentRotation * (next - parentPosition);
+        p.frameRotation = frameRotationNow;
+        p.hasFrame = true;
     }
 
     // the rotations, root to tip: a joint turns so that its bone points at its child particle

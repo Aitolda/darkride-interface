@@ -113,8 +113,10 @@ struct Data {
 struct Law {
     static float velocityKept(const ComponentSpec& spec, float spring);
     static float pull(const ComponentSpec& spec, float pull);
-    // the fraction of the chain parent's rigid motion (its turn and its translation) a particle is carried by each step
+    // the fraction of the chain parent's rigid motion (its turn and its translation) the first particle is carried by
     static float rigidCarried(const ComponentSpec& spec);
+    // the same for a particle below the first, of its parent bone's frame's rigid motion: it follows the stiffness
+    static float deeperRigidCarried(const ComponentSpec& spec, float stiffness);
     // the fraction of the avatar's own movement per step that the chain is carried by beyond the rigid carry: the
     // immobile share of what that carry leaves
     static float avatarMoveImmobile(const ComponentSpec& spec, float immobile);
@@ -147,9 +149,13 @@ struct Particle {
     glm::vec3 position { 0.0f };
     glm::vec3 previousPosition { 0.0f };
     glm::vec3 presented { 0.0f };
-    // the position in the chain parent's frame at the last two steps: their difference is the velocity the law keeps
+    // the position in the particle's frame at the last two steps: their difference is the velocity the law keeps. The
+    // frame is the chain parent's for the first particle and, below it, the parent joint's rest orientation under the
+    // bone above as that bone lies (its last fit)
     glm::vec3 localPosition { 0.0f };
     glm::vec3 previousLocalPosition { 0.0f };
+    glm::quat frameRotation { 1.0f, 0.0f, 0.0f, 0.0f };   // that frame at the last step (particles below the first)
+    bool hasFrame { false };
     // the fitted rotations at the last two steps (joints only) and the presented one
     glm::quat localRotation { 1.0f, 0.0f, 0.0f, 0.0f };
     glm::quat previousLocalRotation { 1.0f, 0.0f, 0.0f, 0.0f };
