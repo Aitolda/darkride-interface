@@ -35,6 +35,7 @@
 #include "RenderHUDLayerTask.h"
 #include "DeferredLightingEffect.h"
 #include "HighlightEffect.h"
+#include "BloomEffect.h"
 
 namespace ru {
     using render_utils::slot::texture::Texture;
@@ -103,6 +104,7 @@ void RenderForwardTask::build(JobModel& task, const render::Varying& input, rend
             const auto lightFrame = currentStageFrames[0];
             const auto backgroundFrame = currentStageFrames[1];
             const auto hazeFrame = currentStageFrames[2];
+            const auto bloomFrame = currentStageFrames[3];
  
         const auto& zones = lightingStageInputs[1];
 
@@ -181,6 +183,11 @@ void RenderForwardTask::build(JobModel& task, const render::Varying& input, rend
 
     const auto outlineInputs = DrawHighlightTask::Inputs(items, resolvedFramebuffer, deferredFrameTransform, nullJitter).asVarying();
     task.addJob<DrawHighlightTask>("DrawHighlightForward", outlineInputs);
+
+    // Bloom over the resolved colour, as the deferred path has it over its lighting before tone mapping (the zone's
+    // bloom settings and the lighting model's switch apply to both)
+    const auto bloomInputs = BloomEffect::Inputs(deferredFrameTransform, resolvedFramebuffer, bloomFrame, lightingModel).asVarying();
+    task.addJob<BloomEffect>("BloomForward", bloomInputs);
 
     const auto destFramebuffer = static_cast<gpu::FramebufferPointer>(nullptr);
 

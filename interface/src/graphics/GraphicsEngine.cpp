@@ -101,6 +101,9 @@ void GraphicsEngine::initializeRender() {
         if (auto config = configuration->getConfig<BloomEffect>(view + "Bloom")) {
             config->setEnabled(false);
         }
+        if (auto config = configuration->getConfig<BloomEffect>(view + "BloomForward")) {
+            config->setEnabled(false);
+        }
         if (auto config = configuration->getConfig<DrawHighlightTask>(view + "DrawHighlight")) {
             config->setEnabled(false);
         }
