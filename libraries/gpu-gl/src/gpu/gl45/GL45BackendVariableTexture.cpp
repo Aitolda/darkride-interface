@@ -261,8 +261,11 @@ void GL45ResourceTexture::populateTransferQueue(TransferQueue& pendingTransfers)
             // One transfer when the mip fits the transfer buffer, by bytes and not only by dimensions: a half-float
             // texture has 8 bytes a texel, so its 1024-wide mip is twice the buffer, and one job that never fits
             // stalls the whole queue (the lightmaps' walls stayed at their first low mips, LIGHTMAPS.md step 3)
+            // and no job takes more than half the buffer: a job the size of the whole buffer only runs when nothing
+            // else is in flight, which with many textures streaming can take minutes (the walls' lightmaps stayed
+            // at their first mips while the floor's finished)
             if (glm::all(glm::lessThanEqual(mipDimensions, MAX_TRANSFER_DIMENSIONS)) &&
-                _gpuObject.getStoredMipFaceSize(sourceMip, face) <= MAX_TRANSFER_SIZE) {
+                _gpuObject.getStoredMipFaceSize(sourceMip, face) <= MAX_TRANSFER_SIZE / 2) {
                 // Can the mip be transferred in one go
                 pendingTransfers.emplace(new TransferJob(_gpuObject, sourceMip, targetMip, face));
                 continue;
@@ -277,7 +280,7 @@ void GL45ResourceTexture::populateTransferQueue(TransferQueue& pendingTransfers)
             const auto numBlocks = (lines + (BLOCK_NUM_LINES - 1)) / BLOCK_NUM_LINES;
             auto bytesPerBlock = mipSize / numBlocks;
             Q_ASSERT(0 == (mipSize % lines));
-            uint32_t linesPerTransfer = BLOCK_NUM_LINES * (uint32_t)(MAX_TRANSFER_SIZE / bytesPerBlock);
+            uint32_t linesPerTransfer = BLOCK_NUM_LINES * std::max<uint32_t>(1, (uint32_t)((MAX_TRANSFER_SIZE / 2) / bytesPerBlock));
             uint32_t lineOffset = 0;
             while (lineOffset < lines) {
                 uint32_t linesToCopy = std::min<uint32_t>(lines - lineOffset, linesPerTransfer);
