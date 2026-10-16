@@ -563,6 +563,12 @@ namespace scriptable {
                 obj.setProperty("lightmapMode", material.lightmapMode);
             }
 
+            if (hasPropertyFallthroughs && material.propertyFallthroughs.at(graphics::MaterialKey::LIGHTMAP_DIRECTION_MAP_BIT)) {
+                obj.setProperty("lightMapDirection", FALLTHROUGH);
+            } else if (!material.lightMapDirection.isEmpty()) {
+                obj.setProperty("lightMapDirection", material.lightMapDirection);
+            }
+
             if (hasPropertyFallthroughs && material.propertyFallthroughs.at(graphics::MaterialKey::SCATTERING_MAP_BIT)) {
                 obj.setProperty("scatteringMap", FALLTHROUGH);
             } else if (!material.scatteringMap.isEmpty()) {

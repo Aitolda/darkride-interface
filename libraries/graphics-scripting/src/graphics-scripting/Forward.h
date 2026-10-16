@@ -65,6 +65,7 @@ namespace scriptable {
         QString bumpMap;
         QString occlusionMap;
         QString lightMap;
+        QString lightMapDirection;  // the lightmap's direction map (LIGHTMAPS.md §3.4)
         QString lightmapMode;       // "indirect" or "full" (LIGHTMAPS.md)
         glm::vec2 lightmapParams { 0.0f, 1.0f };    // offset, scale
         QString scatteringMap;

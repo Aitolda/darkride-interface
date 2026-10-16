@@ -1585,7 +1585,8 @@ void ModelEntityRenderer::removeMaterial(graphics::MaterialPointer material, con
 }
 
 // The lightmap the entity's userData assigns to the whole model, as Unity assigns one per renderer (LIGHTMAPS.md §3.2):
-//   "lightmap": { "url": "....exr", "scaleOffset": [sx, sy, ox, oy], "mode": "indirect" | "full", "params": [offset, scale] }
+//   "lightmap": { "url": "....exr", "scaleOffset": [sx, sy, ox, oy], "mode": "indirect" | "full", "params": [offset, scale],
+//                 "directionalUrl": "....png" }
 // It becomes a material layer over every mesh part carrying only the map, the second texture coordinates' scale and
 // offset (uv * scale + offset, as Unity's lightmapScaleOffset) and the map's mode and params; everything else falls
 // through to the model's own materials, or a Material entity's. The layer sits above those (priority 1) so a Material
@@ -1625,12 +1626,16 @@ void ModelEntityRenderer::applyLightmap(const TypedEntityPointer& entity) {
     auto material = std::make_shared<NetworkMaterial>();
     // only the lightmap's own properties are this layer's
     for (uint flag = 0; flag < graphics::Material::NUM_TOTAL_FLAGS; flag++) {
-        if (flag != graphics::MaterialKey::LIGHT_MAP_BIT && flag != graphics::Material::TEXCOORDTRANSFORM1 &&
-            flag != graphics::Material::LIGHTMAP_PARAMS) {
+        if (flag != graphics::MaterialKey::LIGHT_MAP_BIT && flag != graphics::MaterialKey::LIGHTMAP_DIRECTION_MAP_BIT &&
+            flag != graphics::Material::TEXCOORDTRANSFORM1 && flag != graphics::Material::LIGHTMAP_PARAMS) {
             material->setPropertyDoesFallthrough(flag);
         }
     }
     material->setLightMap(QUrl(url));
+    QString directionUrl = lightmap.value("directionalUrl").toString();
+    if (!directionUrl.isEmpty()) {
+        material->setLightMapDirection(QUrl(directionUrl));
+    }
     // after the map: setting it resets the transform and the params to the map's own
     glm::vec2 scale(1.0f);
     glm::vec2 offset(0.0f);

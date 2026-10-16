@@ -57,6 +57,7 @@ public:
         OCCLUSION_MAP_BIT,
         LIGHT_MAP_BIT,
         SCATTERING_MAP_BIT,
+        LIGHTMAP_DIRECTION_MAP_BIT,     // the lightmap's direction map (Unity's directional lightmap, LIGHTMAPS.md §3.4)
 
         // how a material's packing reads its maps (see the "packing" of NetworkMaterialResource::parseJSONMaterial);
         // they go with the roughness map and the occlusion map, and need no fallthrough of their own
@@ -82,6 +83,7 @@ public:
         OCCLUSION_MAP,
         LIGHT_MAP,
         SCATTERING_MAP,
+        LIGHTMAP_DIRECTION_MAP,
 
         NUM_MAP_CHANNELS,
     };
@@ -175,6 +177,7 @@ public:
         Builder& withOcclusionMap() { _flags.set(OCCLUSION_MAP_BIT); return (*this); }
         Builder& withLightMap() { _flags.set(LIGHT_MAP_BIT); return (*this); }
         Builder& withScatteringMap() { _flags.set(SCATTERING_MAP_BIT); return (*this); }
+        Builder& withLightmapDirectionMap() { _flags.set(LIGHTMAP_DIRECTION_MAP_BIT); return (*this); }
 
         // Convenient standard keys that we will keep on using all over the place
         static MaterialKey opaqueAlbedo() { return Builder().withAlbedo().build(); }
@@ -234,6 +237,9 @@ public:
 
     void setScatteringMap(bool value) { _flags.set(SCATTERING_MAP_BIT, value); }
     bool isScatteringMap() const { return _flags[SCATTERING_MAP_BIT]; }
+
+    void setLightmapDirectionMap(bool value) { _flags.set(LIGHTMAP_DIRECTION_MAP_BIT, value); }
+    bool isLightmapDirectionMap() const { return _flags[LIGHTMAP_DIRECTION_MAP_BIT]; }
 
     void setRoughnessFromSmoothness(bool value) { _flags.set(ROUGHNESS_FROM_SMOOTHNESS_BIT, value); }
     bool isRoughnessFromSmoothness() const { return _flags[ROUGHNESS_FROM_SMOOTHNESS_BIT]; }

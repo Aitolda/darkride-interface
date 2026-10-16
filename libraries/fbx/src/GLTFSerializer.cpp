@@ -553,6 +553,8 @@ bool GLTFSerializer::addMaterial(const QJsonObject& object) {
     readTextureTransform(object, "occlusionTexture", material, material.occlusionTexCoord);
     getIndexFromObject(object, "lightmapTexture", material.lightmapTexture, material.lightmapTexCoord, material.defined); // proposal
     readTextureTransform(object, "lightmapTexture", material, material.lightmapTexCoord);
+    getIndexFromObject(object, "lightmapDirectionTexture", material.lightmapDirectionTexture, material.lightmapDirectionTexCoord, material.defined);
+    readTextureTransform(object, "lightmapDirectionTexture", material, material.lightmapDirectionTexCoord);
     getBoolVal(object, "doubleSided", material.doubleSided, material.defined);
     QString alphaMode;
     if (getStringVal(object, "alphaMode", alphaMode, material.defined)) {
@@ -1824,6 +1826,10 @@ void GLTFSerializer::setHFMMaterial(HFMMaterial& hfmMat, const GLTFMaterial& mat
         hfmMat.lightmapTexture = getHFMTexture(_file.textures[material.lightmapTexture], material.lightmapTexCoord,
                                                material.textureTransforms.value("lightmapTexture"));
         hfmMat.lightmapMode = graphics::MaterialKey::LIGHTMAP_INDIRECT;
+    }
+    if (material.defined["lightmapDirectionTexture"]) {
+        hfmMat.lightmapDirectionTexture = getHFMTexture(_file.textures[material.lightmapDirectionTexture], material.lightmapDirectionTexCoord,
+                                                        material.textureTransforms.value("lightmapDirectionTexture"));
     }
 
     if (material.defined["pbrMetallicRoughness"]) {

@@ -214,6 +214,12 @@ void main(void) {
             vec3 fragNormalWS = _normalWS;
     <@endif@>
         fragNormalWS = evalSafeFrontOrBackFaceNormal(fragNormalWS, _positionWS.xyz);
+    <@if HIFI_USE_LIGHTMAP@>
+        // the baked light's direction shades the normal-mapped normal (LIGHTMAPS.md §3.4)
+        if ((matKey & LIGHTMAP_DIRECTION_MAP_BIT) != 0) {
+            lightmap = applyLightMapDirection(lightmap, _texCoord1, fragNormalWS);
+        }
+    <@endif@>
 
     <@if HIFI_USE_FORWARD@>
         TransformCamera cam = getTransformCamera();

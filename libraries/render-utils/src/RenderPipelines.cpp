@@ -591,6 +591,23 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
                         schemaKey.setScatteringMap(true);
                     }
                     break;
+                case graphics::MaterialKey::LIGHTMAP_DIRECTION_MAP_BIT:
+                    // the lightmap's direction map (LIGHTMAPS.md §3.4): the key bit is set only once the picture is
+                    // there, since a stand-in would shade wrongly; until then the lightmap is used without it
+                    if (materialKey.isLightmapDirectionMap()) {
+                        auto itr = textureMaps.find(graphics::MaterialKey::LIGHTMAP_DIRECTION_MAP);
+                        if (itr != textureMaps.end() && itr->second->isDefined()) {
+                            drawMaterialTextures->setTexture(gr::Texture::MaterialLightmapDirection, itr->second->getTextureView());
+                            schemaKey.setLightmapDirectionMap(true);
+                            wasSet = true;
+                        } else {
+                            if (itr != textureMaps.end()) {
+                                multiMaterial.setTexturesLoading(true);
+                            }
+                            forceDefault = true;
+                        }
+                    }
+                    break;
                 case graphics::MaterialKey::EMISSIVE_MAP_BIT:
                     if (materialKey.isEmissiveMap()) {
                         auto itr = textureMaps.find(graphics::MaterialKey::EMISSIVE_MAP);
@@ -731,6 +748,10 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
                     drawMaterialTextures->setTexture(gr::Texture::MaterialScattering, textureCache->getWhiteTexture());
                 }
                 break;
+            case graphics::MaterialKey::LIGHTMAP_DIRECTION_MAP_BIT:
+                // bound whatever the key says, so that the sampler is complete; the shader reads it only with the bit
+                drawMaterialTextures->setTexture(gr::Texture::MaterialLightmapDirection, textureCache->getGrayTexture());
+                break;
             case graphics::MaterialKey::EMISSIVE_MAP_BIT:
                 if (schemaKey.isEmissiveMap()) {
                     drawMaterialTextures->setTexture(gr::Texture::MaterialEmissive, textureCache->getGrayTexture());
@@ -775,6 +796,7 @@ bool RenderPipelines::bindMaterials(graphics::MultiMaterial& multiMaterial, gpu:
         defaultMaterialTextures->setTexture(gr::Texture::MaterialScattering, textureCache->getWhiteTexture());
         defaultMaterialTextures->setTexture(gr::Texture::MaterialEmissive, textureCache->getGrayTexture());
         defaultMaterialTextures->setTexture(gr::Texture::MaterialLightmap, textureCache->getBlackTexture());
+        defaultMaterialTextures->setTexture(gr::Texture::MaterialLightmapDirection, textureCache->getGrayTexture());
     });
 
     // For shadows, we only need opacity mask information

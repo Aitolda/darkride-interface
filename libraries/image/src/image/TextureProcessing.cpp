@@ -111,6 +111,8 @@ TextureUsage::TextureLoader TextureUsage::getTextureLoaderForType(Type type) {
             return image::TextureUsage::createEmissiveTextureFromImage;
         case LIGHTMAP_TEXTURE:
             return image::TextureUsage::createLightmapTextureFromImage;
+        case LIGHTMAP_DIRECTION_TEXTURE:
+            return image::TextureUsage::createLightmapDirectionTextureFromImage;
         case SKY_TEXTURE:
             return image::TextureUsage::createCubeTextureFromImage;
         case AMBIENT_TEXTURE:
@@ -157,6 +159,7 @@ gpu::TexturePointer TextureUsage::createEmissiveTextureFromImage(Image&& srcImag
 }
 
 Image convertToLDRFormat(Image&& srcImage, Image::Format format);
+Image processSourceImage(Image&& srcImage, bool cubemap, BackendTarget target);
 
 gpu::TexturePointer TextureUsage::createLightmapTextureFromImage(Image&& srcImage, const std::string& srcImageName,
                                                                  bool compress, BackendTarget target, const std::atomic<bool>& abortProcessing) {
@@ -170,6 +173,28 @@ gpu::TexturePointer TextureUsage::createLightmapTextureFromImage(Image&& srcImag
         srcImage = convertToLDRFormat(srcImage.getConvertedToFormat(Image::Format_PACKED_FLOAT), Image::Format_ARGB32);
     }
     return process2DTextureColorFromImage(std::move(srcImage), srcImageName, compress, target, false, abortProcessing);
+}
+
+gpu::TexturePointer TextureUsage::createLightmapDirectionTextureFromImage(Image&& srcImage, const std::string& srcImageName,
+                                                                          bool compress, BackendTarget target, const std::atomic<bool>& abortProcessing) {
+    // a lightmap's direction map (LIGHTMAPS.md §3.4): four linear 8-bit channels, the direction's three and the share;
+    // uncompressed, since the colour path's sRGB decode and the normal map's two channels would both spoil it
+    PROFILE_RANGE(resource_parse, "createLightmapDirectionTextureFromImage");
+    Image image = processSourceImage(std::move(srcImage), false, target);
+    if ((image.getWidth() <= 0) || (image.getHeight() <= 0)) {
+        return nullptr;
+    }
+    if (image.getFormat() != Image::Format_ARGB32) {
+        image = image.getConvertedToFormat(Image::Format_ARGB32);
+    }
+    auto theTexture = gpu::Texture::create2D(gpu::Element::COLOR_RGBA_32, image.getWidth(), image.getHeight(),
+                                             gpu::Texture::MAX_NUM_MIPS, gpu::Sampler(gpu::Sampler::FILTER_MIN_MAG_MIP_LINEAR));
+    theTexture->setSource(srcImageName);
+    theTexture->setUsage(gpu::Texture::Usage::Builder().withColor().withAlpha().build());
+    theTexture->setStoredMipFormat(gpu::Element::COLOR_BGRA_32);
+    theTexture->assignStoredMip(0, image.getByteCount(), image.getBits());
+    convertToTextureWithMips(theTexture.get(), std::move(image), target, abortProcessing);
+    return theTexture;
 }
 
 gpu::TexturePointer TextureUsage::createNormalTextureFromNormalImage(Image&& srcImage, const std::string& srcImageName,

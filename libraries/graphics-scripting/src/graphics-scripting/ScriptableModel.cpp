@@ -44,6 +44,7 @@ scriptable::ScriptableMaterial& scriptable::ScriptableMaterial::operator=(const 
         bumpMap = material.bumpMap;
         occlusionMap = material.occlusionMap;
         lightMap = material.lightMap;
+        lightMapDirection = material.lightMapDirection;
         lightmapMode = material.lightmapMode;
         lightmapParams = material.lightmapParams;
         scatteringMap = material.scatteringMap;
@@ -127,6 +128,11 @@ scriptable::ScriptableMaterial::ScriptableMaterial(const graphics::MaterialPoint
             }
             lightmapMode = QString(graphics::MaterialKey::getLightmapModeName(material->getLightmapMode()).c_str());
             lightmapParams = material->getLightmapParams();
+
+            map = material->getTextureMap(graphics::Material::MapChannel::LIGHTMAP_DIRECTION_MAP);
+            if (map && map->getTextureSource()) {
+                lightMapDirection = map->getTextureSource()->getUrl().toString();
+            }
 
             map = material->getTextureMap(graphics::Material::MapChannel::SCATTERING_MAP);
             if (map && map->getTextureSource()) {

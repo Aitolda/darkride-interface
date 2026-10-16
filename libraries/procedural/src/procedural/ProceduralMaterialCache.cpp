@@ -250,6 +250,8 @@ NetworkMaterialResource::ParsedMaterials NetworkMaterialResource::parseJSONMater
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
  * @property {number[]|string} lightmapParams - The light map's <code>[offset, scale]</code>: light = offset + scale * the
  *     map's value. <code>"fallthrough"</code> takes the material below's.
+ * @property {string} lightMapDirection - The URL of the light map's direction map: Unity's directional lightmap, the
+ *     dominant light direction and its share, which lets normal maps shape the baked light.
  * @property {string} lightmapMode - What the light map holds: <code>"indirect"</code> (the default: Unity's Baked
  *     Indirect, the baked light replacing the ambient light while the sun and the local lights run as usual) or
  *     <code>"full"</code> (the whole diffuse lighting, as High Fidelity's bakes). See LIGHTMAPS.md.
@@ -596,6 +598,16 @@ std::pair<std::string, std::shared_ptr<NetworkMaterial>> NetworkMaterialResource
                     glm::mat4 transform = mat4FromVariant(valueVariant);
                     texcoordTransforms[1] = transform;
                 }
+            } else if (key == "lightMapDirection") {
+                auto value = materialJSON.value(key);
+                if (value.isString()) {
+                    auto valueString = value.toString();
+                    if (valueString == FALLTHROUGH) {
+                        material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::LIGHTMAP_DIRECTION_MAP_BIT);
+                    } else {
+                        material->setLightMapDirection(baseUrl.resolved(valueString));
+                    }
+                }
             } else if (key == "lightmapParams") {
                 auto value = materialJSON.value(key);
                 if (value.isString()) {
@@ -848,6 +860,13 @@ void NetworkMaterial::setLightMap(const QUrl& url) {
     }
 }
 
+void NetworkMaterial::setLightMapDirection(const QUrl& url) {
+    auto map = fetchTextureMap(url, image::TextureUsage::LIGHTMAP_DIRECTION_TEXTURE, MapChannel::LIGHTMAP_DIRECTION_MAP);
+    if (map) {
+        setTextureMap(MapChannel::LIGHTMAP_DIRECTION_MAP, map);
+    }
+}
+
 NetworkMaterial::NetworkMaterial(const HFMMaterial& material, const QUrl& textureBaseUrl) :
     graphics::Material(*material._material) {
     _name = material.name.toStdString();
@@ -929,6 +948,12 @@ NetworkMaterial::NetworkMaterial(const HFMMaterial& material, const QUrl& textur
         }
         setTextureMap(MapChannel::LIGHT_MAP, map);
         setLightmapMode(material.lightmapMode);
+    }
+
+    if (!material.lightmapDirectionTexture.filename.isEmpty()) {
+        auto map = fetchTextureMap(textureBaseUrl, material.lightmapDirectionTexture, image::TextureUsage::LIGHTMAP_DIRECTION_TEXTURE,
+                                   MapChannel::LIGHTMAP_DIRECTION_MAP);
+        setTextureMap(MapChannel::LIGHTMAP_DIRECTION_MAP, map);
     }
 }
 

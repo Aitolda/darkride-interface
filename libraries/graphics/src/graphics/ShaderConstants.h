@@ -30,6 +30,7 @@
 // the lightmap had the emissive map's slot (a lightmapped surface could have no emissive map); it has its own since
 // LIGHTMAPS.md, so that Unity's emissive panels keep their glow in a lightmapped room
 #define GRAPHICS_TEXTURE_MATERIAL_LIGHTMAP 7
+#define GRAPHICS_TEXTURE_MATERIAL_LIGHTMAP_DIRECTION 8
 
 // Make sure these match the ones in render-utils/ShaderConstants.h
 #define GRAPHICS_TEXTURE_SKYBOX 11
@@ -63,6 +64,7 @@ enum Texture {
     MaterialOcclusion = GRAPHICS_TEXTURE_MATERIAL_OCCLUSION,
     MaterialScattering = GRAPHICS_TEXTURE_MATERIAL_SCATTERING,
     MaterialLightmap = GRAPHICS_TEXTURE_MATERIAL_LIGHTMAP,
+    MaterialLightmapDirection = GRAPHICS_TEXTURE_MATERIAL_LIGHTMAP_DIRECTION,
     Skybox = GRAPHICS_TEXTURE_SKYBOX
 };
 } // namespace texture

@@ -504,6 +504,18 @@ namespace {
                 glm::vec2 offset = fromQ(v.value<QVector2D>());
                 setLightmapScaleOffset(p, glm::vec4(so.x, so.y, offset.x, offset.y));
             });
+        add("userData:lightmap:directionalUrl",
+            [=](const EP& p) { return QVariant(lightmapEntry(p).value("directionalUrl").toString()); },
+            [=](EP& p, const QVariant& v) {
+                QJsonObject lightmap = lightmapEntry(p);
+                QString url = v.toString();
+                if (url.isEmpty()) {
+                    lightmap.remove("directionalUrl");
+                } else {
+                    lightmap.insert("directionalUrl", url);
+                }
+                setLightmapEntry(p, lightmap);
+            });
         add("userData:lightmap:mode",
             [=](const EP& p) { return QVariant(lightmapEntry(p).value("mode").toString() == "full" ? "full" : "indirect"); },
             [=](EP& p, const QVariant& v) {
@@ -614,6 +626,7 @@ namespace {
             // no emission, or with an Emission Map, the map as it is
             { "emissive", Entry::Color, QJsonArray { 0.0, 0.0, 0.0 }, false, "emissiveMap", QJsonArray { 1.0, 1.0, 1.0 } },
             { "lightMap", Entry::Text, "", false },
+            { "lightMapDirection", Entry::Text, "", false },
             { "lightmapMode", Entry::Text, "indirect", false },
             { "opacity", Entry::Number, graphics::Material::DEFAULT_OPACITY, false },
             { "opacityCutoff", Entry::Number, graphics::Material::DEFAULT_OPACITY_CUTOFF, false }
@@ -884,6 +897,7 @@ namespace {
         // a model's lightmap (LIGHTMAPS.md §3.2): the picture, the second texture coordinates' scale and offset (Unity's
         // lightmapScaleOffset), how it lights, and a brightness (the params' scale)
         add(spec("userData:lightmap:url", "Lightmap", K::Image, "lightmap"));
+        with(add(spec("userData:lightmap:directionalUrl", "Direction Map", K::Image, "lightmap")), "userData:lightmap:url!=");
         with(stepping(add(spec("userData:lightmap:scale", "Scale", K::Vec2, "lightmap")), 0.01, 4), "userData:lightmap:url!=");
         with(stepping(add(spec("userData:lightmap:offset", "Offset", K::Vec2, "lightmap")), 0.01, 4), "userData:lightmap:url!=");
         en("userData:lightmap:mode", "Mode", "lightmap", { "indirect:Indirect (Baked Indirect)", "full:Full Bake" },
@@ -990,6 +1004,8 @@ namespace {
         // a baked lightmap over the second texture coordinates (LIGHTMAPS.md): Indirect is Unity's Baked Indirect (the
         // baked light in place of the ambient, the lights as usual), Full Bake High Fidelity's (the whole lighting)
         input("materialData:lightMap", "Lightmap", K::Image, OWN_DATA);
+        // Unity's directional lightmap: the baked light's direction, which lets the normal map shape it
+        input("materialData:lightMapDirection", "Direction Map", K::Image, OWN_DATA " and materialData:lightMap!=");
         en("materialData:lightmapMode", "Lightmap Mode", "material_inputs", { "indirect:Indirect (Baked Indirect)",
             "full:Full Bake" }, OWN_DATA " and materialData:lightMap!=");
         with(range(add(spec("materialData:lightmapScale", "Lightmap Scale", K::Float, "material_inputs")), 0, 16, 0.01, 2),

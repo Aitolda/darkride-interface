@@ -422,6 +422,8 @@ struct GLTFMaterial {
     int occlusionTexCoord { 0 };
     int lightmapTexture; // proposal
     int lightmapTexCoord { 1 }; // proposal
+    int lightmapDirectionTexture; // ours: the lightmap's direction map (LIGHTMAPS.md §3.4)
+    int lightmapDirectionTexCoord { 1 };
     QMap<QString, Transform> textureTransforms;    // KHR_texture_transform, by the texture's field name
     graphics::MaterialKey::OpacityMapMode alphaMode;
     double alphaCutoff;
