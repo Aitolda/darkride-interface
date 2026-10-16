@@ -99,6 +99,9 @@ public:
     // These should only be accessed by Backend implementation to report the buffer and texture allocations,
     // they are NOT public objects
     static ContextMetricSize freeGPUMemSize;
+    // the most samples a pixel a multisampled texture may have on this GPU (GL_MAX_SAMPLES), set by the backend at
+    // its init; 0 until then
+    static int maxSamples;
 
     static ContextMetricCount bufferCount;
     static ContextMetricSize bufferGPUMemSize;
@@ -233,6 +236,7 @@ public:
     double getFrameTimerBatchAverage() const;
 
     static Size getFreeGPUMemSize();
+    static int getMaxSamples();
     static Size getUsedGPUMemSize();
 
     static uint32_t getBufferGPUCount();

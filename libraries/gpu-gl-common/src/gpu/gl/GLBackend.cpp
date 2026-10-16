@@ -132,6 +132,11 @@ void GLBackend::init() {
         GL_GET_INTEGER(MAX_UNIFORM_BLOCK_SIZE);
         GL_GET_INTEGER(UNIFORM_BUFFER_OFFSET_ALIGNMENT);
 
+        // Multisampling: what the forward path's framebuffer may ask for (Apple GPUs stop at 4)
+        GLint maxSamples = 0;
+        glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
+        Backend::maxSamples = maxSamples;
+
         LOG_GL_CONTEXT_INFO(gpugllogging, contextInfo);
         GPUIdent* gpu = GPUIdent::getInstance(vendor, renderer); 
         // From here on, GPUIdent::getInstance()->getMumble() should efficiently give the same answers.
@@ -146,6 +151,7 @@ void GLBackend::init() {
         qCDebug(gpugllogging) << "\tmax uniform binding:" << MAX_COMBINED_UNIFORM_BLOCKS;
         qCDebug(gpugllogging) << "\tmax uniform size:" << MAX_UNIFORM_BLOCK_SIZE;
         qCDebug(gpugllogging) << "\tuniform alignment:" << UNIFORM_BUFFER_OFFSET_ALIGNMENT;
+        qCDebug(gpugllogging) << "\tmax samples:" << Backend::maxSamples;
 #if !defined(USE_GLES)
         qCDebug(gpugllogging, "V-Sync is %s\n", (::gl::getSwapInterval() > 0 ? "ON" : "OFF"));
 #endif

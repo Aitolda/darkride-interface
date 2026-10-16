@@ -10,6 +10,18 @@
 #include "LightingModel.h"
 #include "AntialiasingEffect.h"
 #include <Mirrors.h>
+#include <gpu/Context.h>
+
+namespace {
+    // 1, 2, 4 or 8, and no more than the GPU can do (Apple GPUs stop at 4)
+    int validMsaaSamples(int samples) {
+        const int maxSamples = gpu::Context::getMaxSamples();
+        if (maxSamples > 0) {
+            samples = std::min(samples, maxSamples);
+        }
+        return samples >= 8 ? 8 : samples >= 4 ? 4 : samples >= 2 ? 2 : 1;
+    }
+}
 
 RenderScriptingInterface* RenderScriptingInterface::getInstance() {
     static RenderScriptingInterface sharedInstance;
@@ -95,7 +107,7 @@ int RenderScriptingInterface::getMsaaSamples() const {
 }
 
 void RenderScriptingInterface::setMsaaSamples(int samples) {
-    samples = samples >= 8 ? 8 : samples >= 4 ? 4 : samples >= 2 ? 2 : 1;
+    samples = validMsaaSamples(samples);
     if (_msaaSamples != samples) {
         forceMsaaSamples(samples);
         emit settingsChanged();
@@ -103,7 +115,7 @@ void RenderScriptingInterface::setMsaaSamples(int samples) {
 }
 
 void RenderScriptingInterface::forceMsaaSamples(int samples) {
-    samples = samples >= 8 ? 8 : samples >= 4 ? 4 : samples >= 2 ? 2 : 1;
+    samples = validMsaaSamples(samples);
     _renderSettingLock.withWriteLock([&] {
         _msaaSamples = samples;
         _msaaSamplesSetting.set(samples);

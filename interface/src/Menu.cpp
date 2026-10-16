@@ -11,6 +11,8 @@
 
 #include "Menu.h"
 
+#include <gpu/Context.h>
+
 #include <Mirrors.h>
 #include <QDesktopServices>
 #include <QFileDialog>
@@ -574,10 +576,12 @@ Menu::Menu() {
         const std::vector<std::pair<QString, int>> choices = {
             { MenuOption::RenderMsaaOff, 1 }, { MenuOption::RenderMsaa2, 2 }, { MenuOption::RenderMsaa4, 4 }, { MenuOption::RenderMsaa8, 8 }
         };
+        const int maxSamples = gpu::Context::getMaxSamples();   // known: the GL backend is up before the menu
         for (const auto& choice : choices) {
             const int samples = choice.second;
             auto msaaAction = msaaGroup->addAction(addCheckableActionToQMenuAndActionHash(msaaMenu, choice.first, 0,
                 renderInterface->getMsaaSamples() == samples));
+            msaaAction->setEnabled(maxSamples <= 0 || samples <= maxSamples);   // what this GPU cannot do is greyed
             connect(msaaAction, &QAction::triggered, [samples] { RenderScriptingInterface::getInstance()->setMsaaSamples(samples); });
             connect(renderInterface, &RenderScriptingInterface::settingsChanged, msaaAction, [msaaAction, samples] {
                 msaaAction->setChecked(RenderScriptingInterface::getInstance()->getMsaaSamples() == samples);

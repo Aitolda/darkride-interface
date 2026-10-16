@@ -36,6 +36,7 @@
 #include "DeferredLightingEffect.h"
 #include "HighlightEffect.h"
 #include "BloomEffect.h"
+#include <gpu/Context.h>
 
 namespace ru {
     using render_utils::slot::texture::Texture;
@@ -253,9 +254,16 @@ void PreparePrimaryFramebufferMSAA::run(const RenderContextPointer& renderContex
     glm::uvec2 frameSize(renderContext->args->_viewport.z, renderContext->args->_viewport.w);
     glm::uvec2 scaledFrameSize(glm::vec2(frameSize) * _resolutionScale);
 
+    // no more samples than the GPU has (a multisampled texture beyond GL_MAX_SAMPLES gets no storage, and the
+    // framebuffer is incomplete: nothing draws, and the frame before stays on screen)
+    int numSamples = std::max(1, _numSamples);
+    const int maxSamples = gpu::Context::getMaxSamples();
+    if (maxSamples > 0) {
+        numSamples = std::min(numSamples, maxSamples);
+    }
     // Resizing framebuffers instead of re-building them seems to cause issues with threaded rendering
-    if (!_framebuffer || (_framebuffer->getSize() != scaledFrameSize) || (_framebuffer->getNumSamples() != _numSamples)) {
-        _framebuffer = createFramebuffer("forward", scaledFrameSize, _numSamples);
+    if (!_framebuffer || (_framebuffer->getSize() != scaledFrameSize) || (_framebuffer->getNumSamples() != numSamples)) {
+        _framebuffer = createFramebuffer("forward", scaledFrameSize, numSamples);
     }
 
     framebuffer = _framebuffer;

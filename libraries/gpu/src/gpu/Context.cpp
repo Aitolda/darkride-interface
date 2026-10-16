@@ -265,6 +265,7 @@ Backend::TransformCamera Backend::TransformCamera::getMonoCamera(const Transform
 // Counters for Buffer and Texture usage in GPU/Context
 
 ContextMetricSize  Backend::freeGPUMemSize;
+int Backend::maxSamples{ 0 };
 
 ContextMetricCount Backend::bufferCount;
 ContextMetricSize  Backend::bufferGPUMemSize;
@@ -284,6 +285,10 @@ ContextMetricSize  Backend::texturePendingGPUTransferMemSize;
 
 ContextMetricSize  Backend::textureResourcePopulatedGPUMemSize;
 ContextMetricSize  Backend::textureResourceIdealGPUMemSize;
+
+int Context::getMaxSamples() {
+    return Backend::maxSamples;
+}
 
 Size Context::getFreeGPUMemSize() {
     return Backend::freeGPUMemSize.getValue();
