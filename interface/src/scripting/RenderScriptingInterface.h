@@ -28,6 +28,7 @@
  * @property {boolean} shadowsEnabled - <code>true</code> if shadows are enabled, <code>false</code> if they're disabled.
  * @property {boolean} ambientOcclusionEnabled - <code>true</code> if ambient occlusion is enabled, <code>false</code> if it's disabled.
  * @property {Render.AntialiasingMethod} antialiasingMethod - The anti-aliasing method being used.
+ * @property {number} msaaSamples - The forward render method's multisampling: 1 (none), 2, 4 or 8 samples a pixel.
  * @property {number} viewportResolutionScale - The view port resolution scale, <code>&gt; 0.0</code>.
  * @property {boolean} nametagsEnabled - <code>true</code> if nametags are enabled, <code>false</code> if they're disabled.
  * @property {boolean} nametagsShowSelf - <code>true</code> if your nametag should appear above you, <code>false</code> if not.
@@ -40,6 +41,7 @@ class RenderScriptingInterface : public QObject {
     Q_PROPERTY(bool shadowsEnabled READ getShadowsEnabled WRITE setShadowsEnabled NOTIFY settingsChanged)
     Q_PROPERTY(bool ambientOcclusionEnabled READ getAmbientOcclusionEnabled WRITE setAmbientOcclusionEnabled NOTIFY settingsChanged)
     Q_PROPERTY(AntialiasingMethod antialiasingMethod READ getAntialiasingMethod WRITE setAntialiasingMethod NOTIFY settingsChanged)
+    Q_PROPERTY(int msaaSamples READ getMsaaSamples WRITE setMsaaSamples NOTIFY settingsChanged)
     Q_PROPERTY(float viewportResolutionScale READ getViewportResolutionScale WRITE setViewportResolutionScale NOTIFY settingsChanged)
     Q_PROPERTY(bool nametagsEnabled READ getNametagsEnabled WRITE setNametagsEnabled NOTIFY settingsChanged)
     Q_PROPERTY(bool nametagsShowSelf READ getNametagsShowSelf WRITE setNametagsShowSelf NOTIFY settingsChanged)
@@ -232,6 +234,21 @@ public slots:
     QStringList getAntialiasingMethodNames() const;
 
     /**jsdoc
+     * Gets the forward render method's multisampling: how many samples a pixel its frame is drawn with.
+     * @function Render.getMsaaSamples
+     * @returns {number} 1 (no multisampling), 2, 4 or 8.
+     */
+    int getMsaaSamples() const;
+
+    /**jsdoc
+     * Sets the forward render method's multisampling. The graphics presets set it too: Potato 1, Low 2, Medium and
+     * High 4. Deferred rendering is unaffected.
+     * @function Render.setMsaaSamples
+     * @param {number} samples - 1 (no multisampling), 2, 4 or 8; anything else rounds down to one of them.
+     */
+    void setMsaaSamples(int samples);
+
+    /**jsdoc
      * Gets the view port resolution scale.
      * @function Render.getViewportResolutionScale
      * @returns {number} The view port resolution scale, <code>&gt; 0.0</code>.
@@ -342,14 +359,15 @@ private:
     mutable ReadWriteLockable _renderSettingLock;
 
     // Runtime value of each settings
-    int _renderMethod{
-        RENDER_FORWARD ?
-        render::Args::RenderMethod::FORWARD :
-        render::Args::RenderMethod::DEFERRED
-    };
+    // forward (Forward+) is the default since 2026-10-16: the point and spot lights with their shadows and cookies,
+    // the sun's cascades, the terrain, the mirrors, the outline and Bloom all draw on it, in one multisampled pass;
+    // deferred stays a choice (Developer > Render > Forward Rendering off, or the setting) for what it alone has:
+    // ambient occlusion, temporal antialiasing, subsurface scattering
+    int _renderMethod{ render::Args::RenderMethod::FORWARD };
     bool _shadowsEnabled{ true };
     bool _ambientOcclusionEnabled{ true };
     int _antialiasingMethod{ AntialiasingMethod::NONE };
+    int _msaaSamples{ 4 };
     float _viewportResolutionScale{ 1.0f };
     bool _nametagsEnabled{ true };
     bool _nametagsShowSelf{ false };
@@ -362,6 +380,9 @@ private:
     Setting::Handle<bool> _shadowsEnabledSetting{ "shadowsEnabled", _shadowsEnabled };
     Setting::Handle<bool> _ambientOcclusionEnabledSetting{ "ambientOcclusionEnabled", _ambientOcclusionEnabled };
     Setting::Handle<int> _antialiasingMethodSetting{ "antialiasingMethod", _antialiasingMethod };
+    Setting::Handle<int> _msaaSamplesSetting{ "msaaSamples", _msaaSamples };
+    // settings saved before forward became the default keep their method once; this marks the one move to forward
+    Setting::Handle<bool> _forwardDefaultAppliedSetting{ "forwardDefaultApplied", false };
     Setting::Handle<float> _viewportResolutionScaleSetting{ "viewportResolutionScale", _viewportResolutionScale };
     Setting::Handle<bool> _nametagsEnabledSetting{ "nametagsEnabled", _nametagsEnabled };
     Setting::Handle<bool> _nametagsShowSelfSetting{ "nametagsShowSelf", _nametagsShowSelf };
@@ -373,6 +394,7 @@ private:
     void forceRenderMethod(RenderMethod renderMethod);
     void forceShadowsEnabled(bool enabled);
     void forceAmbientOcclusionEnabled(bool enabled);
+    void forceMsaaSamples(int samples);
     void forceAntialiasingMethod(AntialiasingMethod antialiasingMethod);
     void forceViewportResolutionScale(float scale);
     void forceNametagsEnabled(bool enabled);

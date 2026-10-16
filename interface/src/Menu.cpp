@@ -550,20 +550,40 @@ Menu::Menu() {
         RenderScriptingInterface::getInstance(), SLOT(setAmbientOcclusionEnabled(bool)));
 
     // Developer > Render > Forward Rendering: the forward path (Forward+: the point and spot lights with their shadows
-    // and cookies, and the sun's cascades, shaded in one multisampled pass) instead of deferred, whatever the graphics
-    // preset says. Off, the method goes back to deferred. A preset's own choice of forward (Low, Potato) leaves this
-    // unchecked: the item says what was asked for here, not what the preset chose
-    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::RenderForward, 0, false);
+    // and cookies, and the sun's cascades, shaded in one multisampled pass), the default since 2026-10-16; off,
+    // deferred, for what it alone has (ambient occlusion, temporal antialiasing, scattering). The item shows the
+    // method in use, whoever set it (a preset, a script, the setting)
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::RenderForward, 0,
+        RenderScriptingInterface::getInstance()->getRenderMethod() == RenderScriptingInterface::RenderMethod::FORWARD);
     connect(action, &QAction::triggered, [action] {
         RenderScriptingInterface::getInstance()->setRenderMethod(action->isChecked() ?
             RenderScriptingInterface::RenderMethod::FORWARD : RenderScriptingInterface::RenderMethod::DEFERRED);
     });
     connect(RenderScriptingInterface::getInstance(), &RenderScriptingInterface::settingsChanged, action, [action] {
-        // the method went back to deferred by another road (a preset, a script): the item follows
-        if (RenderScriptingInterface::getInstance()->getRenderMethod() != RenderScriptingInterface::RenderMethod::FORWARD) {
-            action->setChecked(false);
-        }
+        // the method changed by another road (a preset, a script): the item follows
+        action->setChecked(RenderScriptingInterface::getInstance()->getRenderMethod() == RenderScriptingInterface::RenderMethod::FORWARD);
     });
+
+    // Developer > Render > MSAA (Forward): the forward path's multisampling, 1, 2, 4 or 8 samples a pixel (the
+    // graphics presets set it: Potato 1, Low 2, Medium and High 4); the setting behind it is Render.msaaSamples
+    {
+        MenuWrapper* msaaMenu = renderOptionsMenu->addMenu(MenuOption::RenderMsaaMenu);
+        QActionGroup* msaaGroup = new QActionGroup(msaaMenu);
+        msaaGroup->setExclusive(true);
+        auto renderInterface = RenderScriptingInterface::getInstance();
+        const std::vector<std::pair<QString, int>> choices = {
+            { MenuOption::RenderMsaaOff, 1 }, { MenuOption::RenderMsaa2, 2 }, { MenuOption::RenderMsaa4, 4 }, { MenuOption::RenderMsaa8, 8 }
+        };
+        for (const auto& choice : choices) {
+            const int samples = choice.second;
+            auto msaaAction = msaaGroup->addAction(addCheckableActionToQMenuAndActionHash(msaaMenu, choice.first, 0,
+                renderInterface->getMsaaSamples() == samples));
+            connect(msaaAction, &QAction::triggered, [samples] { RenderScriptingInterface::getInstance()->setMsaaSamples(samples); });
+            connect(renderInterface, &RenderScriptingInterface::settingsChanged, msaaAction, [msaaAction, samples] {
+                msaaAction->setChecked(RenderScriptingInterface::getInstance()->getMsaaSamples() == samples);
+            });
+        }
+    }
 
     // Developer > Render > Cache Light Shadows: off, a spot or point light's shadow maps are drawn every frame, for
     // comparing

@@ -227,6 +227,11 @@ namespace MenuOption {
     const QString HMDTabletToToolbar = "HMD Tablet Becomes Toolbar";
     const QString Shadows = "Shadows";
     const QString RenderForward = "Forward Rendering";
+    const QString RenderMsaaMenu = "MSAA (Forward)";
+    const QString RenderMsaaOff = "No MSAA";
+    const QString RenderMsaa2 = "MSAA 2x";
+    const QString RenderMsaa4 = "MSAA 4x";
+    const QString RenderMsaa8 = "MSAA 8x";
     const QString LocalShadowCaching = "Cache Light Shadows";
     const QString LocalShadowStaticCaching = "Cache Static Shadow Casters";
     const QString Mirrors = "Mirrors";
