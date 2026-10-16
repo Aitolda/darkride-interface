@@ -280,10 +280,11 @@ DrawHighlight::DrawHighlight(unsigned int highlightIndex, HighlightSharedParamet
 
 void DrawHighlight::run(const render::RenderContextPointer& renderContext, const Inputs& inputs) {
     auto highlightFrameBuffer = inputs.get1();
-    auto highlightRect = inputs.get3();
+    auto highlightRect = inputs.get2();
+    auto primaryFramebuffer = inputs.get3();
 
     if (highlightFrameBuffer && highlightRect.z > 0 && highlightRect.w > 0) {
-        auto sceneDepthBuffer = inputs.get2();
+        auto sceneDepthBuffer = primaryFramebuffer ? primaryFramebuffer->getDepthStencilBuffer() : gpu::TexturePointer();
         const auto frameTransform = inputs.get0();
         auto highlightedDepthTexture = highlightFrameBuffer->getDepthTexture();
         auto destinationFrameBuffer = highlightFrameBuffer->getColorFramebuffer();
@@ -317,7 +318,6 @@ void DrawHighlight::run(const render::RenderContextPointer& renderContext, const
                     shaderParameters._size.y = size;
                 }
 
-                auto primaryFramebuffer = inputs.get4();
                 gpu::doInBatch("DrawHighlight::run", args->_context, [&](gpu::Batch& batch) {
                     batch.enableStereo(false);
                     batch.setFramebuffer(destinationFrameBuffer);
@@ -330,7 +330,7 @@ void DrawHighlight::run(const render::RenderContextPointer& renderContext, const
 
                     batch.setUniformBuffer(ru::Buffer::HighlightParams, _configuration);
                     batch.setUniformBuffer(ru::Buffer::DeferredFrameTransform, frameTransform->getFrameTransformBuffer());
-                    batch.setResourceTexture(ru::Texture::HighlightSceneDepth, sceneDepthBuffer->getPrimaryDepthTexture());
+                    batch.setResourceTexture(ru::Texture::HighlightSceneDepth, sceneDepthBuffer);
                     batch.setResourceTexture(ru::Texture::HighlightDepth, highlightedDepthTexture);
                     batch.draw(gpu::TRIANGLE_STRIP, 4);
 
@@ -500,10 +500,9 @@ void DrawHighlightTask::configure(const Config& config) {
 
 void DrawHighlightTask::build(JobModel& task, const render::Varying& inputs, render::Varying& outputs) {
     const auto items = inputs.getN<Inputs>(0).get<RenderFetchCullSortTask::BucketList>();
-    const auto sceneFrameBuffer = inputs.getN<Inputs>(1);
-    const auto primaryFramebuffer = inputs.getN<Inputs>(2);
-    const auto deferredFrameTransform = inputs.getN<Inputs>(3);
-    const auto jitter = inputs.getN<Inputs>(4);
+    const auto primaryFramebuffer = inputs.getN<Inputs>(1);
+    const auto deferredFrameTransform = inputs.getN<Inputs>(2);
+    const auto jitter = inputs.getN<Inputs>(3);
 
     // Prepare the ShapePipeline
     auto shapePlumber = std::make_shared<ShapePlumber>();
@@ -553,7 +552,7 @@ void DrawHighlightTask::build(JobModel& task, const render::Varying& inputs, ren
             stream << "HighlightEffect" << i;
             name = stream.str();
         }
-        const auto drawHighlightInputs = DrawHighlight::Inputs(deferredFrameTransform, highlightResources, sceneFrameBuffer, highlightedRect, primaryFramebuffer).asVarying();
+        const auto drawHighlightInputs = DrawHighlight::Inputs(deferredFrameTransform, highlightResources, highlightedRect, primaryFramebuffer).asVarying();
         task.addJob<DrawHighlight>(name, drawHighlightInputs, i, sharedParameters);
     }
 

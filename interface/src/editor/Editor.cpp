@@ -346,19 +346,16 @@ void Editor::setActive(bool active) {
 }
 
 void Editor::updateRenderMethod() {
-    // Build mode outlines the selection, and only deferred rendering draws outlines: while build mode is on,
-    // the main view renders deferred whatever the graphics settings say (Low and Potato pick forward, to spare
-    // the GPU), unless Developer > Render > Forward Rendering asks for the forward path outright (no outline then).
-    // The setting itself is left alone, so leaving build mode, or a crash, gives the user's own back.
+    // Build mode outlines the selection, and both render methods draw the outline now (the forward path since
+    // 2026-10-16, over its resolved frame), so the main view renders by the graphics settings' method in build mode
+    // too; this only re-applies it, as it used to force deferred here while deferred alone had the outline.
     auto engine = qApp->getRenderEngine();
     auto config = engine ? dynamic_cast<render::SwitchConfig*>(
         engine->getConfiguration()->getConfig("RenderMainView.DeferredForwardSwitch")) : nullptr;
     if (!config) {
         return;
     }
-    bool forwardAsked = Menu::getInstance()->isOptionChecked(MenuOption::RenderForward);
-    int method = (_active && !forwardAsked) ? (int)render::Args::DEFERRED : (int)RenderScriptingInterface::getInstance()->getRenderMethod();
-    config->setBranch((uint8_t)method);
+    config->setBranch((uint8_t)RenderScriptingInterface::getInstance()->getRenderMethod());
 }
 
 void Editor::setGridVisible(bool visible) {

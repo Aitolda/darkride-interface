@@ -34,6 +34,7 @@
 #include "RenderCommonTask.h"
 #include "RenderHUDLayerTask.h"
 #include "DeferredLightingEffect.h"
+#include "HighlightEffect.h"
 
 namespace ru {
     using render_utils::slot::texture::Texture;
@@ -170,7 +171,16 @@ void RenderForwardTask::build(JobModel& task, const render::Varying& input, rend
     const auto newResolvedFramebuffer = task.addJob<NewFramebuffer>("MakeResolvingFramebuffer", gpu::Element(gpu::SCALAR, gpu::FLOAT, gpu::R11G11B10));
 
     const auto resolveInputs = ResolveFramebuffer::Inputs(scaledPrimaryFramebuffer, newResolvedFramebuffer).asVarying();
-    const auto resolvedFramebuffer = task.addJob<ResolveFramebuffer>("Resolve", resolveInputs);
+    const auto resolvedColorFramebuffer = task.addJob<ResolveFramebuffer>("Resolve", resolveInputs);
+
+    // and the depth, single-sampled, for the selection outline, which is drawn over the resolved colour as the
+    // deferred path draws it over its lighting (the in-front layers are already in, multisampled, so an outline runs
+    // over them where they cross it; deferred draws them after)
+    const auto resolveDepthInputs = ResolveDepth::Inputs(scaledPrimaryFramebuffer, resolvedColorFramebuffer).asVarying();
+    const auto resolvedFramebuffer = task.addJob<ResolveDepth>("ResolveDepth", resolveDepthInputs);
+
+    const auto outlineInputs = DrawHighlightTask::Inputs(items, resolvedFramebuffer, deferredFrameTransform, nullJitter).asVarying();
+    task.addJob<DrawHighlightTask>("DrawHighlightForward", outlineInputs);
 
     const auto destFramebuffer = static_cast<gpu::FramebufferPointer>(nullptr);
 
@@ -179,6 +189,34 @@ void RenderForwardTask::build(JobModel& task, const render::Varying& input, rend
     // HUD Layer
     const auto renderHUDLayerInputs = RenderHUDLayerTask::Input(toneMappedBuffer, lightingModel, hudOpaque, hudTransparent, hazeFrame).asVarying();
     task.addJob<RenderHUDLayerTask>("RenderHUDLayer", renderHUDLayerInputs);
+}
+
+void ResolveDepth::run(const render::RenderContextPointer& renderContext, const Inputs& inputs, Outputs& outputs) {
+    RenderArgs* args = renderContext->args;
+    const auto primary = inputs.get0();
+    const auto resolved = inputs.get1();
+    outputs = resolved;
+    if (!primary || !resolved || !primary->getDepthStencilBuffer() || resolved->getSize() != primary->getSize()) {
+        return;
+    }
+    const auto depthFormat = primary->getDepthStencilBufferFormat();
+    const auto frameSize = primary->getSize();
+    // the resolved framebuffer is remade on a size change, without depth: attach one of the same format
+    if (!_depth || glm::uvec2(_depth->getDimensions()) != frameSize || _depth->getTexelFormat() != depthFormat) {
+        _depth = gpu::TexturePointer(gpu::Texture::createRenderBuffer(depthFormat, frameSize.x, frameSize.y));
+        _depth->setSource("forward resolved depth");
+    }
+    if (resolved->getDepthStencilBuffer() != _depth) {
+        resolved->setDepthStencilBuffer(_depth, depthFormat);
+    }
+    if (!_source || _source->getDepthStencilBuffer() != primary->getDepthStencilBuffer()) {
+        _source = gpu::FramebufferPointer(gpu::Framebuffer::create("forward depth"));
+        _source->setDepthStencilBuffer(primary->getDepthStencilBuffer(), depthFormat);
+    }
+    gpu::Vec4i rect(0, 0, frameSize.x, frameSize.y);
+    gpu::doInBatch("ResolveDepth", args->_context, [&](gpu::Batch& batch) {
+        batch.blit(_source, rect, resolved, rect);
+    });
 }
 
 gpu::FramebufferPointer PreparePrimaryFramebufferMSAA::createFramebuffer(const char* name, const glm::uvec2& frameSize, int numSamples) {

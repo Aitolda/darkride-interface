@@ -220,7 +220,7 @@ void RenderDeferredTask::build(JobModel& task, const render::Varying& input, ren
     task.addJob<RenderTransparentDeferred>("DrawTransparentDeferred", transparentsInputs, shapePlumber);
 
     // Highlight 
-    const auto outlineInputs = DrawHighlightTask::Inputs(items, deferredFramebuffer, lightingFramebuffer, deferredFrameTransform, jitter).asVarying();
+    const auto outlineInputs = DrawHighlightTask::Inputs(items, lightingFramebuffer, deferredFrameTransform, jitter).asVarying();
     task.addJob<DrawHighlightTask>("DrawHighlight", outlineInputs);
 
     // Layered Over (in front)

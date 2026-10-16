@@ -551,9 +551,8 @@ Menu::Menu() {
 
     // Developer > Render > Forward Rendering: the forward path (Forward+: the point and spot lights with their shadows
     // and cookies, and the sun's cascades, shaded in one multisampled pass) instead of deferred, whatever the graphics
-    // preset says, and in build mode too, which draws no selection outline then (only deferred has it yet). Off, the
-    // method goes back to deferred. A preset's own choice of forward (Low, Potato) leaves this unchecked, so that
-    // build mode keeps forcing deferred for it, as before
+    // preset says. Off, the method goes back to deferred. A preset's own choice of forward (Low, Potato) leaves this
+    // unchecked: the item says what was asked for here, not what the preset chose
     action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::RenderForward, 0, false);
     connect(action, &QAction::triggered, [action] {
         RenderScriptingInterface::getInstance()->setRenderMethod(action->isChecked() ?

@@ -73,19 +73,23 @@ namespace {
         return transform;
     }
 
-    // the glass of a screen-mode mirror: its picture by screen position, unlit, into the G-buffer
-    gpu::PipelinePointer screenMirrorPipeline() {
-        static gpu::PipelinePointer pipeline;
+    // the glass of a screen-mode mirror: its picture by screen position, unlit, into the G-buffer or, on the forward
+    // path, straight to the colour
+    gpu::PipelinePointer screenMirrorPipeline(bool forward) {
+        static gpu::PipelinePointer pipelines[2];
         static std::once_flag once;
         std::call_once(once, [] {
-            auto program = gpu::Shader::createProgram(shader::entities_renderer::program::mirror_screen);
-            auto state = std::make_shared<gpu::State>();
-            state->setCullMode(gpu::State::CULL_BACK);
-            state->setDepthTest(true, true, gpu::LESS_EQUAL);
-            PrepareStencil::testMaskDrawShape(*state);
-            pipeline = gpu::Pipeline::create(program, state);
+            namespace program = shader::entities_renderer::program;
+            for (int i = 0; i < 2; ++i) {
+                auto shaderProgram = gpu::Shader::createProgram(i ? program::mirror_screen_forward : program::mirror_screen);
+                auto state = std::make_shared<gpu::State>();
+                state->setCullMode(gpu::State::CULL_BACK);
+                state->setDepthTest(true, true, gpu::LESS_EQUAL);
+                PrepareStencil::testMaskDrawShape(*state);
+                pipelines[i] = gpu::Pipeline::create(shaderProgram, state);
+            }
         });
-        return pipeline;
+        return pipelines[forward ? 1 : 0];
     }
 }
 
@@ -184,7 +188,7 @@ void ShapeEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPoint
         if (_color != color) {
             _color = color;
             // a Picture mirror shows its picture as light over black, nothing lit; a Screen mirror keeps its colour
-            // for when it has no picture (a mirror's view, forward rendering, no slot)
+            // for when it has no picture (a mirror's view, no slot this frame)
             _material->setAlbedo(_mirrorShown && !_mirrorScreen ? glm::vec3(0.0f) : color);
             materialChanged = true;
         }
@@ -442,10 +446,10 @@ void ShapeEntityRenderer::doRender(RenderArgs* args) {
         return;
     }
 
-    // a screen-mode mirror in the main view draws its picture by screen position with a pipeline of its own; in a
-    // mirror's view, in forward rendering, or without a slot this frame, it is a plain shape of its colour
-    if (_mirrorScreen && args->_renderMethod == render::Args::DEFERRED
-            && args->_renderMode == RenderArgs::DEFAULT_RENDER_MODE && primitiveMode != PrimitiveMode::LINES) {
+    // a screen-mode mirror in the main view draws its picture by screen position with a pipeline of its own, under
+    // either render method (the mirror view was rendered by the frame's); in a mirror's view, or without a slot
+    // this frame, it is a plain shape of its colour
+    if (_mirrorScreen && args->_renderMode == RenderArgs::DEFAULT_RENDER_MODE && primitiveMode != PrimitiveMode::LINES) {
         gpu::TexturePointer picture;
         glm::vec4 region;
         if (Mirrors::instance().screenFor(_mirrorId, picture, region)) {
@@ -457,7 +461,7 @@ void ShapeEntityRenderer::doRender(RenderArgs* args) {
                 _mirrorRegion->setSubData(0, region);
             }
             auto previous = args->_shapePipeline;
-            batch.setPipeline(screenMirrorPipeline());
+            batch.setPipeline(screenMirrorPipeline(args->_renderMethod == render::Args::FORWARD));
             batch.setResourceTexture(ENTITIES_TEXTURE_MIRROR_PICTURE, picture);
             batch.setUniformBuffer(ENTITIES_BUFFER_MIRROR, _mirrorRegion, 0, sizeof(glm::vec4));
             geometryCache->renderShape(batch, geometryShape);

@@ -106,4 +106,22 @@ private:
     bool _opaquePass;
 };
 
+// Resolves the multisampled primary framebuffer's depth into the resolved framebuffer (a depth-stencil buffer of its
+// own, attached here, since the resolved framebuffer is made with colour alone), so that what draws after the resolve
+// and needs the scene's depth single-sampled, the selection outline, has it as the deferred path's lighting
+// framebuffer has it. The backend blits depth from a framebuffer that has only depth, so the source is one wrapping
+// the primary's depth-stencil texture.
+class ResolveDepth {
+public:
+    using Inputs = render::VaryingSet2<gpu::FramebufferPointer, gpu::FramebufferPointer>;   // the primary (multisampled), the resolved
+    using Outputs = gpu::FramebufferPointer;   // the resolved framebuffer, with the depth attached
+    using JobModel = render::Job::ModelIO<ResolveDepth, Inputs, Outputs>;
+
+    void run(const render::RenderContextPointer& renderContext, const Inputs& inputs, Outputs& outputs);
+
+private:
+    gpu::FramebufferPointer _source;   // the primary's depth-stencil texture alone
+    gpu::TexturePointer _depth;        // the resolved depth-stencil texture
+};
+
 #endif // hifi_RenderForwardTask_h

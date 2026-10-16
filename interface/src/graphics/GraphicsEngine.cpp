@@ -104,6 +104,9 @@ void GraphicsEngine::initializeRender() {
         if (auto config = configuration->getConfig<DrawHighlightTask>(view + "DrawHighlight")) {
             config->setEnabled(false);
         }
+        if (auto config = configuration->getConfig<DrawHighlightTask>(view + "DrawHighlightForward")) {
+            config->setEnabled(false);
+        }
         if (auto config = configuration->getJobConfig(view + "RenderHUDLayer")) {
             config->setEnabled(false);
         }
