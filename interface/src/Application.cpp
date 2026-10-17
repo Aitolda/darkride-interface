@@ -1165,7 +1165,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     QFontDatabase::addApplicationFont(PathUtils::resourcesPath() + "styles/Inconsolata.otf");
     
-    _window->setWindowTitle("Tivoli Cloud VR");
+    _window->setWindowTitle("Darkride");
 
     Model::setAbstractViewStateInterface(this); // The model class will sometimes need to know view state details from us
 
@@ -1599,20 +1599,19 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     });
 
     connect(offscreenUi.data(), &OffscreenUi::keyboardFocusActive, [this]() {
-// #if !defined(Q_OS_ANDROID) && !defined(DISABLE_QML)
-//         // Do not show login dialog if requested not to on the command line
-//         // QString hifiNoLoginCommandLineKey = QString("--").append(HIFI_NO_LOGIN_COMMAND_LINE_KEY);
-//         // int index = arguments().indexOf(hifiNoLoginCommandLineKey);
+#if !defined(Q_OS_ANDROID) && !defined(DISABLE_QML)
+        // Darkride starts on the sign-in screen when nobody is signed in: until then the avatar is hidden, no world
+        // is joined and no scripts run (pauseUntilLoginDetermined), and the screen covers the window. Signed in
+        // already, showLoginScreen goes straight on. A launcher passing --tokens has signed in for us.
+        if (arguments().indexOf("--tokens") != -1) {
+            resumeAfterLoginDialogActionTaken();
+            return;
+        }
 
-//         if (arguments().indexOf("--tokens") != -1) {
-//             resumeAfterLoginDialogActionTaken();
-//             return;
-//         }
-
-//         showLoginScreen();
-// #else
+        showLoginScreen();
+#else
         resumeAfterLoginDialogActionTaken();
-// #endif
+#endif
     });
 
     // Initialize the user interface and menu system
@@ -3268,7 +3267,7 @@ void Application::showLoginScreen() {
         QJsonObject loginData = {};
         loginData["action"] = "login dialog popped up";
         UserActivityLogger::getInstance().logAction("encourageLoginDialog", loginData);
-        _window->setWindowTitle("Tivoli Cloud VR");
+        _window->setWindowTitle("Darkride");
     } else {
         resumeAfterLoginDialogActionTaken();
     }
@@ -7371,7 +7370,7 @@ void Application::updateWindowTitle() const {
         }
     }
     
-    // Not connected, Not logged in - Maki @ Cutelab (Maki) - Tivoli Cloud VR 0.7.2
+    // Not connected, Not logged in - Maki @ Cutelab (Maki) - Darkride Build 0.7.2 native-editor 7c5c5bda86
 
     QStringList statusList = { connectionStatus, loginStatus };
     statusList.removeAll(QString(""));
@@ -7382,7 +7381,7 @@ void Application::updateWindowTitle() const {
         username +
         (username.isEmpty() || currentWorldName.isEmpty() ? "" : " @ ")  +
         currentWorldName + " - " +
-        "Tivoli Cloud VR " + buildVersion
+        "Darkride " + buildVersion
     );
 
 #ifndef WIN32

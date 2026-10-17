@@ -543,38 +543,8 @@ Item {
                 }
             }
         }
-        TextMetrics {
-            id: dismissButtonTextMetrics
-            font: loginErrorMessage.font
-            text: dismissButton.text
-        }
-        HifiControlsUit.Button {
-            id: dismissButton
-            width: dismissButtonTextMetrics.width
-            height: d.minHeightButton
-            anchors {
-                bottom: parent.bottom
-                right: parent.right
-                margins: 3 * hifi.dimensions.contentSpacing.y
-            }
-            color: hifi.buttons.noneBorderlessWhite
-            text: qsTr("No thanks, take me in-world! >")
-            fontCapitalization: Font.MixedCase
-            fontFamily: linkAccountBody.fontFamily
-            fontSize: linkAccountBody.fontSize
-            fontBold: linkAccountBody.fontBold
-            visible: loginDialog.getLoginDialogPoppedUp() && !linkAccountBody.linkSteam && !linkAccountBody.linkOculus;
-            onClicked: {
-                if (linkAccountBody.loginDialogPoppedUp) {
-                    var data = {
-                        "action": "user dismissed login screen"
-                    };
-                    UserActivityLogger.logAction("encourageLoginDialog", data);
-                    loginDialog.dismissLoginDialog();
-                }
-                root.tryDestroy();
-            }
-        }
+        // No "No thanks, take me in-world!" here: Darkride has no anonymous sign-in, so the screen stays until
+        // someone signs in (the window can still be closed).
     }
 
     Connections {

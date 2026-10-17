@@ -55,11 +55,11 @@ FocusScope {
         }
     }
 
-    Image {
+    // Darkride's navy, the website's page colour (--dr-bg): the world doesn't show until someone has signed in
+    Rectangle {
         z: -10
         id: loginDialogBackground
-        fillMode: Image.PreserveAspectCrop
-        source: "LoginDialog/images/background.jpg"
+        color: "#1c2136"
         anchors.fill: parent
     }
 
@@ -89,6 +89,19 @@ FocusScope {
             height: 150
             source: "../images/darkride-banner.png"
             horizontalAlignment: Image.AlignHCenter
+        }
+        // the dR mark above the wordmark, in the space above the banner
+        Image {
+            id: mark
+            anchors {
+                bottom: banner.top
+                horizontalCenter: parent.horizontalCenter
+            }
+            height: Math.max(0, Math.min(140, bannerContainer.anchors.topMargin - 16))
+            width: height * 390 / 330
+            fillMode: Image.PreserveAspectFit
+            source: "../images/darkride-mark.png"
+            mipmap: true
         }
     }
 
