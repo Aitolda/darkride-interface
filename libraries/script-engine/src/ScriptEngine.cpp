@@ -197,7 +197,7 @@ ScriptEnginePointer scriptEngineFactory(ScriptEngine::Context context,
     // ScriptEngines::loadScript puts in the name before the content is fetched. A JavaScript client script
     // and the entities engines (the client's, the entity script server's) go there too when the setting says
     // so, and a client script for which an engine was chosen goes to that one; agents stay on this engine
-    // until their owners say otherwise.
+    // until their owners say otherwise. JavaScript goes there only when the build has the guest module that runs it.
     const bool isEntitiesEngine = context == ScriptEngine::ENTITY_CLIENT_SCRIPT || context == ScriptEngine::ENTITY_SERVER_SCRIPT;
     const bool isClientJavaScript = context == ScriptEngine::CLIENT_SCRIPT && WasmScriptEngine::isJavaScriptFile(fileNameString);
     bool javaScriptOnWebAssembly = WasmScriptEngine::runJavaScriptOnWebAssembly();
@@ -205,7 +205,7 @@ ScriptEnginePointer scriptEngineFactory(ScriptEngine::Context context,
         WasmScriptEngine::engineChosenForScript(scriptURL, javaScriptOnWebAssembly);
     }
     const bool onWebAssembly = WasmScriptEngine::isWasmScript(fileNameString) ||
-        (javaScriptOnWebAssembly && (isClientJavaScript || isEntitiesEngine));
+        (javaScriptOnWebAssembly && (isClientJavaScript || isEntitiesEngine) && WasmScriptEngine::hasJavaScriptGuest());
     ScriptEngine* engine = onWebAssembly ? new WasmScriptEngine(context, scriptContents, fileNameString)
                                          : new ScriptEngine(context, scriptContents, fileNameString);
     ScriptEnginePointer engineSP = ScriptEnginePointer(engine, &QObject::deleteLater);

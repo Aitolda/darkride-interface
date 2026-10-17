@@ -27,7 +27,7 @@ macro(COPY_JAVASCRIPT_GUEST DESTINATION_DIR)
         endif()
     endforeach()
     if ("${JAVASCRIPT_GUEST}" STREQUAL "")
-        message(WARNING "No JavaScript guest module (darkride-js.wasm): JavaScript runs on the QtScript engine only. Build one with tools/wasm-js/build.sh.")
+        message(WARNING "No JavaScript guest module: JavaScript runs on the QtScript engine only. Put darkride-js-${JAVASCRIPT_GUEST_VERSION}.wasm in ${CMAKE_SOURCE_DIR}/../downloads or build one with tools/wasm-js/build.sh.")
     else()
         message(STATUS "JavaScript guest from ${JAVASCRIPT_GUEST}")
         add_custom_command(TARGET ${TARGET_NAME} POST_BUILD

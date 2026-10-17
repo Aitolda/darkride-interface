@@ -94,6 +94,9 @@ public:
     /// Where the JavaScript guest module is: $DARKRIDE_JS_WASM, else wasm/darkride-js.wasm under the
     /// resources beside the executable (Contents/Resources on macOS, resources/ elsewhere).
     static QString javascriptGuestPath();
+    /// Whether the JavaScript guest module is there (a build can be made without one). Without it JavaScript stays
+    /// on the QtScript engine whatever the setting says, with one warning in the log.
+    static bool hasJavaScriptGuest();
 
     bool runsJavaScript() const { return _runsJavaScript; }
 

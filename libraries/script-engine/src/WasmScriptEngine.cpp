@@ -244,6 +244,18 @@ QString WasmScriptEngine::javascriptGuestPath() {
     return candidates.last();
 }
 
+bool WasmScriptEngine::hasJavaScriptGuest() {
+    const QString path = javascriptGuestPath();
+    if (QFileInfo::exists(path)) {
+        return true;
+    }
+    static std::once_flag warned;
+    std::call_once(warned, [&path] {
+        qCWarning(scriptengine) << "No JavaScript guest module at" << path << "- JavaScript runs on the QtScript engine";
+    });
+    return false;
+}
+
 // The guest is one module for every JavaScript script of the process: compiled once, shared.
 std::shared_ptr<WasmModule> WasmScriptEngine::javascriptGuestModule(QString& error) {
     static std::mutex mutex;
