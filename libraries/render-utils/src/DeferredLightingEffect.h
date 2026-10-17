@@ -52,6 +52,9 @@ public:
     static void unsetKeyLightBatch(gpu::Batch& batch, int probeVolumeSlot = -1);
     // a 1 x 9 x 1 black probe volume, for the shaders' sampler when the zone has none
     static const gpu::TexturePointer& getEmptyProbeVolume();
+    // the probe volume the key light setup last bound (the zone's, or the empty one): the material binding puts it
+    // back after the material texture table, whose entries cover its slot (RenderPipelines::bindMaterials)
+    static const gpu::TexturePointer& getFrameProbeVolume();
 
     // localShadows: the spot lights casting shadows this frame, or null for none
     static void setupLocalLightsBatch(gpu::Batch& batch, const LightClustersPointer& lightClusters, const LocalShadowsPointer& localShadows);
@@ -72,6 +75,7 @@ public:
     void setupFrameLightingBatch(gpu::Batch& batch, const RenderArgs* args) const;
 
 private:
+    static gpu::TexturePointer _frameProbeVolume;
     DeferredLightingEffect() = default;
 
     LightClustersPointer _frameLightClusters;

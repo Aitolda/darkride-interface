@@ -813,6 +813,13 @@ bool RenderPipelines::bindMaterials(graphics::MultiMaterial& multiMaterial, gpu:
         } else {
             batch.setResourceTextureTable(defaultMaterialTextures);
         }
+        // The table's nine entries take texture units 0 to 8, the scattering map's among them, which is also the
+        // probe volume's unit in the forward and translucent programs (LightAmbient.slh): the table just unbound the
+        // volume, so it goes back, and every material lit by the zone's probes keeps its ambient diffuse. Only the
+        // deferred opaque programs of a material with a scattering map read that unit as the map, so those keep it.
+        if (renderMode != render::Args::RenderMode::SHADOW_RENDER_MODE && !key.isScatteringMap()) {
+            batch.setResourceTexture(ru::Texture::ProbeVolume, DeferredLightingEffect::getFrameProbeVolume());
+        }
         return true;
     } else {
         batch.setResourceTextureTable(defaultMaterialTextures);

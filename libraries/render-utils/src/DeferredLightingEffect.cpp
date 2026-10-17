@@ -100,10 +100,20 @@ void DeferredLightingEffect::setupKeyLightBatch(const RenderArgs* args, gpu::Bat
             batch.setResourceTexture(ru::Texture::Skybox, keyAmbiLight->getAmbientMap());
         }
         // the zone's probe volume, or an empty one so that the sampler never sees a texture of another kind
-        batch.setResourceTexture(probeVolumeSlot, keyAmbiLight->getProbeVolume() ? keyAmbiLight->getProbeVolume() : getEmptyProbeVolume());
+        _frameProbeVolume = keyAmbiLight->getProbeVolume() ? keyAmbiLight->getProbeVolume() : getEmptyProbeVolume();
     } else {
-        batch.setResourceTexture(probeVolumeSlot, getEmptyProbeVolume());
+        _frameProbeVolume = getEmptyProbeVolume();
     }
+    batch.setResourceTexture(probeVolumeSlot, _frameProbeVolume);
+}
+
+gpu::TexturePointer DeferredLightingEffect::_frameProbeVolume;
+
+const gpu::TexturePointer& DeferredLightingEffect::getFrameProbeVolume() {
+    if (!_frameProbeVolume) {
+        _frameProbeVolume = getEmptyProbeVolume();
+    }
+    return _frameProbeVolume;
 }
 
 void DeferredLightingEffect::unsetKeyLightBatch(gpu::Batch& batch, int probeVolumeSlot) {
