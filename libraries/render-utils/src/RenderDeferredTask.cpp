@@ -427,7 +427,7 @@ gpu::FramebufferPointer PreparePrimaryFramebuffer::createFramebuffer(const char*
 
     framebuffer->setRenderBuffer(0, primaryColorTexture);
 
-    auto depthFormat = gpu::Element(gpu::SCALAR, gpu::UINT32, gpu::DEPTH_STENCIL); // Depth24_Stencil8 texel format
+    auto depthFormat = gpu::Element::DEPTH32F_STENCIL8; // reversed-Z float depth, see gpu::Backend::reversedZProjection
     auto primaryDepthTexture = gpu::Texture::createRenderBuffer(depthFormat, frameSize.x, frameSize.y, gpu::Texture::SINGLE_MIP, defaultSampler);
 
     framebuffer->setDepthStencilBuffer(primaryDepthTexture, depthFormat);

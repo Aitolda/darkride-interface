@@ -75,7 +75,7 @@ void HighlightResources::allocateColorBuffer(const gpu::FramebufferPointer& prim
 }
 
 void HighlightResources::allocateDepthBuffer(const gpu::FramebufferPointer& primaryFrameBuffer) {
-    auto depthFormat = gpu::Element(gpu::SCALAR, gpu::UINT32, gpu::DEPTH_STENCIL);
+    auto depthFormat = gpu::Element::DEPTH32F_STENCIL8; // as the scene's, for the blit
     _depthStencilTexture = gpu::TexturePointer(gpu::Texture::createRenderBuffer(depthFormat, _frameSize.x, _frameSize.y));
     _depthFrameBuffer = gpu::FramebufferPointer(gpu::Framebuffer::create("highlightDepth"));
     _depthFrameBuffer->setDepthStencilBuffer(_depthStencilTexture, depthFormat);
@@ -130,13 +130,13 @@ void DrawHighlightMask::run(const render::RenderContextPointer& renderContext, c
 
     if (!_stencilMaskPipeline || !_stencilMaskFillPipeline) {
         gpu::StatePointer state = std::make_shared<gpu::State>();
-        state->setDepthTest(true, false, gpu::LESS_EQUAL);
+        state->setDepthTest(true, false, gpu::GREATER_EQUAL);
         state->setStencilTest(true, 0xFF, gpu::State::StencilTest(OUTLINE_STENCIL_MASK, 0xFF, gpu::NOT_EQUAL, gpu::State::STENCIL_OP_KEEP, gpu::State::STENCIL_OP_KEEP, gpu::State::STENCIL_OP_REPLACE));
         state->setColorWriteMask(false, false, false, false);
         state->setCullMode(gpu::State::CULL_FRONT);
 
         gpu::StatePointer fillState = std::make_shared<gpu::State>();
-        fillState->setDepthTest(false, false, gpu::LESS_EQUAL);
+        fillState->setDepthTest(false, false, gpu::GREATER_EQUAL);
         fillState->setStencilTest(true, 0xFF, gpu::State::StencilTest(OUTLINE_STENCIL_MASK, 0xFF, gpu::NOT_EQUAL, gpu::State::STENCIL_OP_KEEP, gpu::State::STENCIL_OP_KEEP, gpu::State::STENCIL_OP_REPLACE));
         fillState->setColorWriteMask(false, false, false, false);
         fillState->setCullMode(gpu::State::CULL_FRONT);
@@ -168,7 +168,7 @@ void DrawHighlightMask::run(const render::RenderContextPointer& renderContext, c
         gpu::doInBatch("DrawHighlightMask::run::begin", args->_context, [&](gpu::Batch& batch) {
             batch.enableStereo(false);
             batch.setFramebuffer(resources->getDepthFramebuffer());
-            batch.clearDepthStencilFramebuffer(1.0f, 0);
+            batch.clearDepthStencilFramebuffer(0.0f, 0); // depth 0 is the far plane (reversed-Z)
         });
 
         const auto jitter = inputs.get2();
@@ -508,7 +508,7 @@ void DrawHighlightTask::build(JobModel& task, const render::Varying& inputs, ren
     auto shapePlumber = std::make_shared<ShapePlumber>();
     {
         auto state = std::make_shared<gpu::State>();
-        state->setDepthTest(true, true, gpu::LESS_EQUAL);
+        state->setDepthTest(true, true, gpu::GREATER_EQUAL);
         state->setColorWriteMask(false, false, false, false);
 
 

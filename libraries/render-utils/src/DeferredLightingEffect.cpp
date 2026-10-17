@@ -375,7 +375,7 @@ void PrepareDeferred::run(const RenderContextPointer& renderContext, const Input
             gpu::Framebuffer::BUFFER_COLOR0 | gpu::Framebuffer::BUFFER_COLOR1 | gpu::Framebuffer::BUFFER_COLOR2 | gpu::Framebuffer::BUFFER_COLOR3 |
             gpu::Framebuffer::BUFFER_DEPTH |
             gpu::Framebuffer::BUFFER_STENCIL,
-            vec4(vec3(0), 0), 1.0, 0, true);
+            vec4(vec3(0), 0), 0.0, 0, true); // depth 0 is the far plane (reversed-Z)
 
         // For the rest of the rendering, bind the lighting model
         batch.setUniformBuffer(ru::Buffer::LightModel, lightingModel->getParametersBuffer());

@@ -84,7 +84,7 @@ namespace {
                 auto shaderProgram = gpu::Shader::createProgram(i ? program::mirror_screen_forward : program::mirror_screen);
                 auto state = std::make_shared<gpu::State>();
                 state->setCullMode(gpu::State::CULL_BACK);
-                state->setDepthTest(true, true, gpu::LESS_EQUAL);
+                state->setDepthTest(true, true, gpu::GREATER_EQUAL);
                 PrepareStencil::testMaskDrawShape(*state);
                 pipelines[i] = gpu::Pipeline::create(shaderProgram, state);
             }

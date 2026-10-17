@@ -162,11 +162,20 @@ void GLBackend::init() {
 GLBackend::GLBackend(bool syncCache) {
     _pipeline._cameraCorrectionBuffer._buffer->flush();
     initShaderBinaryCache();
+    initPipelineStateCache();
 }
 
 GLBackend::GLBackend() {
     _pipeline._cameraCorrectionBuffer._buffer->flush();
     initShaderBinaryCache();
+    initPipelineStateCache();
+}
+
+void GLBackend::initPipelineStateCache() {
+    // The cache starts as State::DEFAULT, on the assumption that a fresh GL context is in that state; its depth
+    // function is the one place that is no longer so: GL starts at LESS, State::DEFAULT (reversed-Z, gpu/State.h) at
+    // GREATER. Recorded as GL has it, the first pipeline that tests depth sets the function instead of trusting it.
+    _pipeline._stateCache.depthTest = State::DepthTest(false, true, LESS);
 }
 
 GLBackend::~GLBackend() {}
@@ -433,6 +442,15 @@ public:
 
 void GLBackend::render(const Batch& batch) {
     GL_PROFILE_RANGE(render_gpu_gl, batch.getName().c_str());
+
+#if !defined(USE_GLES)
+    // Reversed-Z (Backend::reversedZProjection): the 0..1 clip depth is context state, and this backend draws in
+    // whichever context is current (the one it was made in, then the display plugin's present thread's), so it is
+    // set per batch; one cheap call
+    if (isDepthClipZeroToOne()) {
+        glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
+    }
+#endif
 
     _transform._skybox = _stereo._skybox = batch.isSkyboxEnabled();
     // FIXME move this to between the transfer and draw passes, so that

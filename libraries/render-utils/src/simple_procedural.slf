@@ -147,7 +147,7 @@ void main(void) {
     posEye = posEye4.xyz;
 <@endif@>
     vec4 posClip = cam._projection * posEye4;
-    gl_FragDepth = 0.5 * (posClip.z / posClip.w + 1.0);
+    gl_FragDepth = transformClipToDepth(posClip);
 #endif
 
 #endif

@@ -311,7 +311,7 @@ void GraphicsEngine::render_performFrame() {
             batch.setFramebuffer(finalFramebuffer);
             batch.enableSkybox(true);
             batch.enableStereo(isStereo);
-            batch.clearDepthStencilFramebuffer(1.0, 0);
+            batch.clearDepthStencilFramebuffer(0.0f, 0); // depth 0 is the far plane (reversed-Z)
             batch.setViewportTransform({ 0, 0, finalFramebuffer->getSize() });
             _splashScreen->render(batch, viewFrustum, renderArgs._renderMethod == RenderArgs::RenderMethod::FORWARD);
         });

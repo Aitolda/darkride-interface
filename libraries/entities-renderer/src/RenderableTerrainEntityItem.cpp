@@ -133,7 +133,7 @@ ShapePipelinePointer terrainPipelineFactory(const ShapePlumber& plumber, const S
             for (int wireframe = 0; wireframe < 2; ++wireframe) {
                 auto state = std::make_shared<gpu::State>();
                 state->setCullMode(gpu::State::CULL_BACK);
-                state->setDepthTest(true, true, gpu::LESS_EQUAL);
+                state->setDepthTest(true, true, gpu::GREATER_EQUAL);
                 PrepareStencil::testMaskDrawShape(*state);
                 if (wireframe) {
                     state->setFillMode(gpu::State::FILL_LINE);

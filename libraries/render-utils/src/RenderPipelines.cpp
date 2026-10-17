@@ -267,7 +267,7 @@ void addPlumberPipeline(ShapePlumber& plumber,
             key.isTranslucent() ? PrepareStencil::testMask(*state) : PrepareStencil::testMaskDrawShape(*state);
 
             // Depth test depends on transparency
-            state->setDepthTest(true, !key.isTranslucent(), gpu::LESS_EQUAL);
+            state->setDepthTest(true, !key.isTranslucent(), gpu::GREATER_EQUAL);
             state->setBlendFunction(key.isTranslucent(),
                     gpu::State::SRC_ALPHA, gpu::State::BLEND_OP_ADD, gpu::State::INV_SRC_ALPHA,
                     gpu::State::FACTOR_ALPHA, gpu::State::BLEND_OP_ADD, gpu::State::ONE);
@@ -281,8 +281,8 @@ void addPlumberPipeline(ShapePlumber& plumber,
             }
             if (isBiased) {
                 builder.withDepthBias();
-                state->setDepthBias(1.0f);
-                state->setDepthBiasSlopeScale(1.0f);
+                state->setDepthBias(-1.0f); // reversed-Z: away from the viewer is the smaller depth
+                state->setDepthBiasSlopeScale(-1.0f);
             }
 
             auto baseBatchSetter = (forceLightBatchSetter || key.isTranslucent()) ? &lightBatchSetter : &batchSetter;

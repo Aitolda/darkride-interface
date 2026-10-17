@@ -237,7 +237,7 @@ gpu::FramebufferPointer PreparePrimaryFramebufferMSAA::createFramebuffer(const c
         gpu::Texture::createRenderBufferMultisample(colorFormat, frameSize.x, frameSize.y, numSamples, defaultSampler);
     framebuffer->setRenderBuffer(0, colorTexture);
 
-    auto depthFormat = gpu::Element(gpu::SCALAR, gpu::UINT32, gpu::DEPTH_STENCIL);  // Depth24_Stencil8 texel format
+    auto depthFormat = gpu::Element::DEPTH32F_STENCIL8;  // reversed-Z float depth, see gpu::Backend::reversedZProjection
     auto depthTexture =
         gpu::Texture::createRenderBufferMultisample(depthFormat, frameSize.x, frameSize.y, numSamples, defaultSampler);
     framebuffer->setDepthStencilBuffer(depthTexture, depthFormat);
@@ -289,7 +289,7 @@ void PrepareForward::run(const RenderContextPointer& renderContext, const Inputs
         batch.setFramebuffer(primaryFramebuffer);
         batch.clearFramebuffer(gpu::Framebuffer::BUFFER_COLOR0 | gpu::Framebuffer::BUFFER_DEPTH |
             gpu::Framebuffer::BUFFER_STENCIL,
-            vec4(vec3(0), 0), 1.0, 0, true);
+            vec4(vec3(0), 0), 0.0, 0, true); // depth 0 is the far plane (reversed-Z)
 
         graphics::LightPointer keySunLight;
         auto lightStage = args->_scene->getStage<LightStage>();
