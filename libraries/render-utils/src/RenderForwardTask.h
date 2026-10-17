@@ -111,17 +111,30 @@ private:
 // and needs the scene's depth single-sampled, the selection outline, has it as the deferred path's lighting
 // framebuffer has it. The backend blits depth from a framebuffer that has only depth, so the source is one wrapping
 // the primary's depth-stencil texture.
+// The primary's depth, resolved to one sample: run before the in-front layers clear the primary's depth for themselves,
+// so that what the selection outline tests its occlusion against is the scene's depth, as in the deferred path
 class ResolveDepth {
 public:
-    using Inputs = render::VaryingSet2<gpu::FramebufferPointer, gpu::FramebufferPointer>;   // the primary (multisampled), the resolved
-    using Outputs = gpu::FramebufferPointer;   // the resolved framebuffer, with the depth attached
+    using Inputs = gpu::FramebufferPointer;   // the primary (multisampled)
+    using Outputs = gpu::TexturePointer;      // its depth-stencil, resolved to one sample
     using JobModel = render::Job::ModelIO<ResolveDepth, Inputs, Outputs>;
 
     void run(const render::RenderContextPointer& renderContext, const Inputs& inputs, Outputs& outputs);
 
 private:
     gpu::FramebufferPointer _source;   // the primary's depth-stencil texture alone
+    gpu::FramebufferPointer _target;   // the resolved one alone
     gpu::TexturePointer _depth;        // the resolved depth-stencil texture
+};
+
+// Attaches the resolved depth to the resolved colour framebuffer (made after the in-front layers, without depth)
+class AttachResolvedDepth {
+public:
+    using Inputs = render::VaryingSet2<gpu::FramebufferPointer, gpu::TexturePointer>;   // the resolved colour, the resolved depth
+    using Outputs = gpu::FramebufferPointer;   // the resolved framebuffer with the depth attached
+    using JobModel = render::Job::ModelIO<AttachResolvedDepth, Inputs, Outputs>;
+
+    void run(const render::RenderContextPointer& renderContext, const Inputs& inputs, Outputs& outputs);
 };
 
 #endif // hifi_RenderForwardTask_h
