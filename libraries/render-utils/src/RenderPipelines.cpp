@@ -456,7 +456,11 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
                     }
                     break;
                 case graphics::MaterialKey::GLOSSY_VAL_BIT:
-                    if (materialKey.isRough() || materialKey.isGlossy()) {
+                    // a material that set its roughness (the glossy bit, set even for a roughness of 1 so that a
+                    // glTF factor comes through) says it; one that never did is rough only if it does not fall
+                    // through, so a layer with no roughness of its own (the lightmap's, a material entity's) leaves
+                    // the model's: every lightmapped model used to render at the default roughness of 1
+                    if (materialKey.isGlossy() || (!fallthrough && materialKey.isRough())) {
                         schema._roughness = material->getRoughness();
                         schemaKey.setGlossy(materialKey.isGlossy());
                         wasSet = true;
