@@ -912,11 +912,12 @@ namespace {
         en("userData:mirror", "Mirror", "shape", { "off:Off", "picture:Picture", "screen:Screen" });
 
         // a reflection probe (LIGHTMAPS.md §7): the shape is the box inside which surfaces reflect the probe's cube
-        // map (a 1:6 strip, as the zone's ambient map) instead of the zone's, the probe at the shape's position;
+        // map (a 1:6 strip, as the zone's ambient map) instead of the zone's, the probe at the shape's position
+        // (Acts as Probe: the shape is a probe, which is not the same as the shape being lit by one);
         // Importance orders probes that overlap, Blend Distance fades the probe in from the box's faces, Box
         // Projection reflects the box's faces from the right place (off: the cube map at infinity), Box Offset
         // moves the box from the probe
-        add(spec("userData:reflectionProbe", "Reflection Probe", K::Bool, "reflectionProbe"));
+        add(spec("userData:reflectionProbe", "Acts as Probe", K::Bool, "reflectionProbe"));
         with(add(spec("userData:reflectionProbe:url", "Cube Map", K::Image, "reflectionProbe")), "userData:reflectionProbe=true");
         with(range(add(spec("userData:reflectionProbe:intensity", "Intensity", K::Float, "reflectionProbe")), 0, 16, 0.01, 2), "userData:reflectionProbe=true");
         with(stepping(add(spec("userData:reflectionProbe:importance", "Importance", K::Int, "reflectionProbe")), 1, 0), "userData:reflectionProbe=true");
