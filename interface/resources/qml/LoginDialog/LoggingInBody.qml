@@ -31,7 +31,6 @@ Item {
     property bool linkSteam: linkSteam
     property bool linkOculus: linkOculus
     property bool createOculus: createOculus
-    property string displayName: ""
 
     readonly property bool loginDialogPoppedUp: loginDialog.getLoginDialogPoppedUp()
 
@@ -162,7 +161,7 @@ Item {
             }
 
         }
-        MyAvatar.displayName = displayName;
+        // the avatar's name is the account's username, set by the viewer when the username arrives (Application)
         successTimer.start();
     }
 
