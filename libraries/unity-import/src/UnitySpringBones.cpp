@@ -1,5 +1,5 @@
 //
-//  SpringBones.cpp
+//  UnitySpringBones.cpp
 //  libraries/unity-import/src
 //
 //  Created on 2026-10-14 for Darkride's import of avatars from Unity packages.
@@ -8,7 +8,7 @@
 //  See the accompanying file LICENSE-MIT or https://opensource.org/licenses/MIT
 //
 
-#include "SpringBones.h"
+#include "UnitySpringBones.h"
 
 #include <algorithm>
 

@@ -29,11 +29,11 @@
 #include <Humanoid.h>
 
 #include "AvatarMenuImport.h"
-#include "SpringBones.h"
 #include "PrefabOverrides.h"
 #include "UnityHumanoid.h"
 #include "UnityIds.h"
 #include "UnityPackage.h"
+#include "UnitySpringBones.h"
 #include "UnityTransforms.h"
 #include "UnityYaml.h"
 
@@ -853,7 +853,7 @@ WrittenAvatar writeAvatar(const unity::Package& package, const AvatarSource& ava
     }
 
     // Spring bones, their colliders and the contacts, from the prefab and the prefabs nested in it, written as data
-    // for the engine (SpringBones.h); the engine does not simulate them yet.
+    // for the engine (UnitySpringBones.h); the engine does not simulate them yet.
     const bool sortChildrenByName = unity::toNumber(importer.value("meshes").toMap().value("sortHierarchyByName"), 1.0) != 0.0;
     const SpringBoneData springBones = springBoneData(prefabComponents(package, avatar.prefabGuid), avatar.modelGuid, *hfmModel,
                                                 paths, skeletonNames, sortChildrenByName);

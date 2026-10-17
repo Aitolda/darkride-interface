@@ -1,5 +1,5 @@
 //
-//  SpringBones.h
+//  UnitySpringBones.h
 //  libraries/unity-import/src
 //
 //  Created on 2026-10-14 for Darkride's import of avatars from Unity packages.
@@ -8,8 +8,8 @@
 //  See the accompanying file LICENSE-MIT or https://opensource.org/licenses/MIT
 //
 
-#ifndef hifi_SpringBones_h
-#define hifi_SpringBones_h
+#ifndef hifi_UnitySpringBones_h
+#define hifi_UnitySpringBones_h
 
 #include <QHash>
 #include <QJsonObject>
@@ -50,4 +50,4 @@ SpringBoneData springBoneData(const QVector<PrefabComponent>& components, const 
 
 }
 
-#endif // hifi_SpringBones_h
+#endif // hifi_UnitySpringBones_h

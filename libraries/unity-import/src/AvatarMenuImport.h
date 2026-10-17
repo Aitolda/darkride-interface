@@ -48,7 +48,7 @@ namespace avatarimport {
 // - a state's "drive": what it sets on entering, [{"type" ("set", "add", "random", "copy"), "name", "value", "min",
 //   "max", "chance", "source", "convertRange", "sourceMin", "sourceMax", "destMin", "destMax", "localOnly" (only for the
 //   avatar's owner)}].
-// - contacts: the touches that set parameters, as SpringBones.h has them but with lengths in the avatar's own meters
+// - contacts: the touches that set parameters, as UnitySpringBones.h has them but with lengths in the avatar's own meters
 //   (the joint's scale and the avatar's applied): receivers set their "parameter" when a sender with a shared tag
 //   overlaps them ("receiverType" 0 while touching, 1 on touching, 2 by how close to the middle); the engine gives every
 //   avatar senders on its head, chest, hands, index fingers and feet.
@@ -74,7 +74,7 @@ struct AvatarMenuInputs {
     std::function<bool(int joint)> prefabActive;                   // an object's state as the prefab leaves it
     std::function<QJsonObject(int joint)> prefabPose;              // a joint's pose as the prefab leaves it
     QHash<QString, float> prefabBlendshapes;                       // shape keys the prefab sets, 0 to 1
-    QJsonArray contacts;  // the avatar's contacts in its own meters (UnityAvatar.cpp scales SpringBones.h's)
+    QJsonArray contacts;  // the avatar's contacts in its own meters (UnityAvatar.cpp scales UnitySpringBones.h's)
 };
 
 AvatarMenuData avatarMenuData(const unity::Package& package, const QVariantMap& descriptor, const AvatarMenuInputs& in);
