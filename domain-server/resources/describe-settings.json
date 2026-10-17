@@ -1587,9 +1587,8 @@
           "name": "enabled",
           "type": "checkbox",
           "label": "Enabled",
-          "help": "Assigns a physics-server in your domain: the server-authoritative simulation that drives trains along Track entities and owns the cars that ride them, so every visitor sees the same train in the same place (PHYSICS.md).",
-          "default": true,
-          "advanced": true
+          "help": "Runs a physics server in this domain, for worlds with vehicles: trains on Track entities, driven cars and airships are then simulated by the server, so every visitor sees the same vehicle in the same place. Off, each vehicle is simulated by a visitor's client, which works but is less steady. Off costs nothing; on, it takes up to about a tenth of one CPU core even while nothing moves. Saving restarts the domain.",
+          "default": false
         }
       ]
     },

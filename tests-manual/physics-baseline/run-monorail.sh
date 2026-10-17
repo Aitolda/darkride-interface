@@ -84,6 +84,8 @@ with gzip.open(path, "wt") as f:
     json.dump(world, f)
 print("world cleaned of earlier runs' test entities:", before - len(world["Entities"]), "removed,", len(world["Entities"]), "kept")
 PY
+# the physics server is off by default (describe-settings.json); this sandbox runs it
+python3 -c 'import json, os, sys; p = sys.argv[1]; c = json.load(open(p)) if os.path.exists(p) else {}; c.setdefault("physics_server", {})["enabled"] = True; json.dump(c, open(p, "w"), indent=2)' "/Users/thistlequell/tivoli-sandboxes/physics/domain-config.json"
 /Users/thistlequell/git/tivolicloud/domain-sandbox.sh physics "$BUILD" "$PORT"
 
 # the sandbox's own monitor adds a child only every 30 s, so the bots get a monitor of their own with a child each;
@@ -138,4 +140,6 @@ if [ -n "$BOTS_PID" ]; then
 fi
 kill "$HTTP_PID" 2>/dev/null || true
 set_bots 0 0
+# the physics server is off by default (describe-settings.json); this sandbox runs it
+python3 -c 'import json, os, sys; p = sys.argv[1]; c = json.load(open(p)) if os.path.exists(p) else {}; c.setdefault("physics_server", {})["enabled"] = True; json.dump(c, open(p, "w"), indent=2)' "/Users/thistlequell/tivoli-sandboxes/physics/domain-config.json"
 /Users/thistlequell/git/tivolicloud/domain-sandbox.sh physics "$BUILD" "$PORT"

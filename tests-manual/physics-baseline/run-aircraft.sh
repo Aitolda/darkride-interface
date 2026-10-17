@@ -65,6 +65,8 @@ with gzip.open(path, "wt") as f:
     json.dump(world, f)
 print("world cleaned of earlier runs' test entities:", before - len(world["Entities"]), "removed,", len(world["Entities"]), "kept")
 PY
+# the physics server is off by default (describe-settings.json); this sandbox runs it
+python3 -c 'import json, os, sys; p = sys.argv[1]; c = json.load(open(p)) if os.path.exists(p) else {}; c.setdefault("physics_server", {})["enabled"] = True; json.dump(c, open(p, "w"), indent=2)' "/Users/thistlequell/tivoli-sandboxes/physics/domain-config.json"
 /Users/thistlequell/git/tivolicloud/domain-sandbox.sh physics "$BUILD" "$PORT"
 # the sandbox's monitor starts six children for seven services and adds the seventh, the physics server, at its next
 # spare check (30 s)
