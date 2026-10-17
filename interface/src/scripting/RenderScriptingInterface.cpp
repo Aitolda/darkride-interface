@@ -55,6 +55,7 @@ void RenderScriptingInterface::loadSettings() {
         // _maximumTextureMemory = (_maximumTextureMemorySetting.get()); // handled by gpu::Texture
         _fieldOfView = (_fieldOfViewSetting.get());
         _farClip = (_farClipSetting.get());
+        _nearClip = (_nearClipSetting.get());
     });
     forceRenderMethod((RenderMethod)_renderMethod);
     forceShadowsEnabled(_shadowsEnabled);
@@ -67,6 +68,7 @@ void RenderScriptingInterface::loadSettings() {
     forceMaximumTextureMemory(_maximumTextureMemorySetting.get());
     forceFieldOfView(_fieldOfView);
     forceFarClip(_farClip);
+    forceNearClip(_nearClip);
     emit settingsChanged();   // the menu items that show these follow, whether they were built before or after
 }
 
@@ -413,4 +415,22 @@ void RenderScriptingInterface::forceFarClip(float farClip) {
     _farClip = farClip;
     _farClipSetting.set(farClip);
     qApp->setFarClip(farClip);
+}
+
+float RenderScriptingInterface::getNearClip() const {
+    return _nearClip;
+}
+
+void RenderScriptingInterface::setNearClip(float nearClip) {
+    nearClip = glm::clamp(nearClip, 0.01f, 5.0f);
+    if (_nearClip != nearClip) {
+        forceNearClip(nearClip);
+        emit settingsChanged();
+    }
+}
+
+void RenderScriptingInterface::forceNearClip(float nearClip) {
+    _nearClip = nearClip;
+    _nearClipSetting.set(nearClip);
+    qApp->setNearClip(nearClip);
 }

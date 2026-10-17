@@ -34,6 +34,9 @@
  * @property {boolean} nametagsShowSelf - <code>true</code> if your nametag should appear above you, <code>false</code> if not.
  * @property {number} maximumTextureMemory - The maximum texture memory in MB.
  * @property {number} farClip - The far clip distance.
+ * @property {number} nearClip - The desktop camera's near clip distance, metres (0.08 by default; the HMD keeps 0.08
+ *     for the hands). A longer one gives the depth buffer precision in proportion: at 0.3 m, Unity's default, surfaces
+ *     a fraction of a millimetre apart stop fighting almost four times farther away; anything nearer than it is cut.
  */
 class RenderScriptingInterface : public QObject {
     Q_OBJECT
@@ -48,6 +51,7 @@ class RenderScriptingInterface : public QObject {
     Q_PROPERTY(int maximumTextureMemory READ getMaximumTextureMemory WRITE setMaximumTextureMemory NOTIFY settingsChanged)
     Q_PROPERTY(float fieldOfView READ getFieldOfView WRITE setFieldOfView NOTIFY settingsChanged)
     Q_PROPERTY(float farClip READ getFarClip WRITE setFarClip NOTIFY settingsChanged)
+    Q_PROPERTY(float nearClip READ getNearClip WRITE setNearClip NOTIFY settingsChanged)
 
 public:
     RenderScriptingInterface();
@@ -340,6 +344,20 @@ public slots:
      */
     void setFarClip(float farClip);
 
+    /**jsdoc
+     * Gets the desktop camera's near clip distance.
+     * @function Render.getNearClip
+     * @returns {number} metres
+     */
+    float getNearClip() const;
+
+    /**jsdoc
+     * Sets the desktop camera's near clip distance, 0.01 to 5 m. The depth buffer's precision grows in proportion.
+     * @function Render.setNearClip
+     * @param {number} nearClip - metres
+     */
+    void setNearClip(float nearClip);
+
 signals:
 
     /**jsdoc
@@ -374,6 +392,7 @@ private:
     // int _maximumTextureMemory{ 8192 }; // handled by gpu::Texture
     float _fieldOfView{ DEFAULT_FIELD_OF_VIEW_DEGREES };
     float _farClip { DEFAULT_FAR_CLIP };
+    float _nearClip { DEFAULT_NEAR_CLIP };
 
     // Actual settings saved on disk
     Setting::Handle<int> _renderMethodSetting{ "renderMethod", _renderMethod };
@@ -389,6 +408,7 @@ private:
     Setting::Handle<int> _maximumTextureMemorySetting{ "maximumTextureMemory", 8192 };
     Setting::Handle<float> _fieldOfViewSetting{ "fieldOfView", _fieldOfView };
     Setting::Handle<float> _farClipSetting{ "farClip", _farClip };
+    Setting::Handle<float> _nearClipSetting{ "nearClip", _nearClip };
 
     // Force assign both setting AND runtime value to the parameter value
     void forceRenderMethod(RenderMethod renderMethod);
@@ -402,6 +422,7 @@ private:
     void forceMaximumTextureMemory(int maximumTextureMemory);
     void forceFieldOfView(float fieldOfView);
     void forceFarClip(float farClip);
+    void forceNearClip(float nearClip);
 
     static std::once_flag registry_flag;
 };
