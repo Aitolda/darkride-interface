@@ -25,6 +25,7 @@
 #include <Mirrors.h>
 #include <RenderLocalShadowTask.h>
 #include <RenderMirrorsTask.h>
+#include <ImpostorBake.h>
 #include <RenderShadowTask.h>
 #include <ToneMapAndResampleTask.h>
 #include <SecondaryCamera.h>
@@ -86,6 +87,8 @@ void GraphicsEngine::initializeRender() {
 #ifndef Q_OS_ANDROID
     _renderEngine->addJob<SecondaryCameraRenderTask>("SecondaryCameraJob", cullFunctor);
 #endif
+    // the impostor bake's frames (IMPOSTORS.md 2.2): one a frame while a bake is queued, nothing otherwise
+    _renderEngine->addJob<RenderImpostorBakeTask>("RenderImpostorBake", cullFunctor);
     // the mirrors' pictures, drawn before the main view shows them
     _renderEngine->addJob<RenderMirrorsTask>("RenderMirrors", cullFunctor);
     _renderEngine->addJob<RenderViewTask>("RenderMainView", cullFunctor, render::ItemKey::TAG_BITS_0, render::ItemKey::TAG_BITS_0);

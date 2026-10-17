@@ -7,6 +7,7 @@
 //
 
 #include "Editor.h"
+#include "ImpostorBaker.h"
 
 #include <algorithm>
 #include <cmath>
@@ -3015,4 +3016,16 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
             break;
     }
     return false;
+}
+
+void Editor::bakeImpostor() {
+    QList<QUuid> ids = _selection.topLevel();
+    if (ids.isEmpty()) {
+        qCDebug(interfaceapp) << "Bake Impostor: nothing selected";
+        return;
+    }
+    auto baker = DependencyManager::get<ImpostorBaker>();
+    for (const QUuid& id : ids) {
+        baker->bake(id, 256);
+    }
 }

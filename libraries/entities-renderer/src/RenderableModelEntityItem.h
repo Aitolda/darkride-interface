@@ -141,6 +141,8 @@ class ModelEntityRenderer : public TypedEntityRenderer<RenderableModelEntityItem
 
 public:
     ModelEntityRenderer(const EntityItemPointer& entity);
+    // the model, for the impostor bake (ImpostorBaker): null until it is set
+    ModelPointer getModelForBake() const { return _model; }
     virtual scriptable::ScriptableModelBase getScriptableModel() override;
     virtual bool canReplaceModelMeshPart(int meshIndex, int partIndex) override;
     virtual bool replaceScriptableModelMeshPart(scriptable::ScriptableModelBasePointer model, int meshIndex, int partIndex) override;

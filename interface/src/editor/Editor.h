@@ -153,6 +153,8 @@ public slots:
     // stable link, read from a fresh listing of My Files; one undo step, and a report of what could not be matched
     // (NATIVE-EDITOR.md section 7.4)
     void useStableLinks();
+    // Build > Bake Impostor: every selected entity without a selected ancestor, one after the other (ImpostorBaker)
+    void bakeImpostor();
 
 signals:
     void activeChanged(bool active);

@@ -196,6 +196,7 @@
 #include "scripting/RatesScriptingInterface.h"
 #include "scripting/SelectionScriptingInterface.h"
 #include "editor/Editor.h"
+#include "editor/ImpostorBaker.h"
 #include "editor/ui/ViewportContainer.h"
 #include "scripting/WalletScriptingInterface.h"
 #include "scripting/TTSScriptingInterface.h"
@@ -940,6 +941,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     DependencyManager::set<ResourceManager>();
     DependencyManager::set<SelectionScriptingInterface>();
     DependencyManager::set<Editor>();
+    DependencyManager::set<ImpostorBaker>();
     DependencyManager::set<Ledger>();
     DependencyManager::set<Wallet>();
     DependencyManager::set<WalletScriptingInterface>();
@@ -7769,6 +7771,7 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
 
     scriptEngine->registerGlobalObject("Scene", DependencyManager::get<SceneScriptingInterface>().data());
     scriptEngine->registerGlobalObject("Render", RenderScriptingInterface::getInstance());
+    scriptEngine->registerGlobalObject("Impostors", DependencyManager::get<ImpostorBaker>().data());
     scriptEngine->registerGlobalObject("Workload", _gameWorkload._engine->getConfiguration().get());
 
     GraphicsScriptingInterface::registerMetaTypes(scriptEngine.data());
