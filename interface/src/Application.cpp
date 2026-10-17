@@ -1614,6 +1614,20 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 #endif
     });
 
+#if !defined(Q_OS_ANDROID) && !defined(DISABLE_QML)
+    // Signing out of a running viewer goes back to the sign-in screen, as at the start: out of the world, the avatar
+    // hidden, until someone signs in, and then on as at the start (resumeAfterLoginDialogActionTaken).
+    if (arguments().indexOf("--tokens") == -1) {
+        connect(DependencyManager::get<AccountManager>().data(), &AccountManager::logoutComplete, this, [this]() {
+            if (getLoginDialogPoppedUp()) {
+                return;
+            }
+            pauseUntilLoginDetermined();
+            showLoginScreen();
+        }, Qt::QueuedConnection);
+    }
+#endif
+
     // Initialize the user interface and menu system
     // Needs to happen AFTER the render engine initialization to access its configuration
     initializeUi();
