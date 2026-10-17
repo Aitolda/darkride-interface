@@ -81,7 +81,9 @@ FocusScope {
         Image {
             id: banner
             anchors.centerIn: parent
-            source: "../images/tivoli-banner.svg"
+            width: 500
+            height: 150
+            source: "../images/darkride-banner.png"
             horizontalAlignment: Image.AlignHCenter
         }
     }

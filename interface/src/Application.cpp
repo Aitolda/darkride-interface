@@ -1063,7 +1063,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 {
     
 #if defined(Q_OS_LINUX)
-    _window->setWindowIcon(QIcon(PathUtils::resourcesPath() + "images/tivoli-logo.svg"));
+    _window->setWindowIcon(QIcon(PathUtils::resourcesPath() + "images/darkride-logo.png"));
 #endif
 
     auto steamClient = PluginManager::getInstance()->getSteamClientPlugin();
