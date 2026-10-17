@@ -44,9 +44,14 @@ class DeferredLightingEffect : public Dependency {
 public:
     void init();
  
-    static void setupKeyLightBatch(const RenderArgs* args, gpu::Batch& batch);
-    static void setupKeyLightBatch(const RenderArgs* args, gpu::Batch& batch, const LightStage::Frame& lightFrame);
-    static void unsetKeyLightBatch(gpu::Batch& batch);
+    // the key light and the ambient light of the frame's zone, with the zone's probe volume (or an empty one) at
+    // probeVolumeSlot: the material, forward and translucent programs' slot by default (-1), the deferred directional
+    // pass gives its own (render_utils::slot::texture::ProbeVolumeDeferred)
+    static void setupKeyLightBatch(const RenderArgs* args, gpu::Batch& batch, int probeVolumeSlot = -1);
+    static void setupKeyLightBatch(const RenderArgs* args, gpu::Batch& batch, const LightStage::Frame& lightFrame, int probeVolumeSlot = -1);
+    static void unsetKeyLightBatch(gpu::Batch& batch, int probeVolumeSlot = -1);
+    // a 1 x 9 x 1 black probe volume, for the shaders' sampler when the zone has none
+    static const gpu::TexturePointer& getEmptyProbeVolume();
 
     // localShadows: the spot lights casting shadows this frame, or null for none
     static void setupLocalLightsBatch(gpu::Batch& batch, const LightClustersPointer& lightClusters, const LocalShadowsPointer& localShadows);

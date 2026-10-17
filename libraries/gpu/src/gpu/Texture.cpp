@@ -208,7 +208,8 @@ TexturePointer Texture::createStrict(const Element& texelFormat, uint16 width, u
 }
 
 TexturePointer Texture::create3D(const Element& texelFormat, uint16 width, uint16 height, uint16 depth, uint16 numMips, const Sampler& sampler) {
-    return create(TextureUsageType::RESOURCE, TEX_3D, texelFormat, width, height, depth, 1, 0, numMips, sampler);
+    // a strict resource: the volume is uploaded whole from its stored mip (no streaming of a 3D texture)
+    return create(TextureUsageType::STRICT_RESOURCE, TEX_3D, texelFormat, width, height, depth, 1, 0, numMips, sampler);
 }
 
 TexturePointer Texture::createCube(const Element& texelFormat, uint16 width, uint16 numMips, const Sampler& sampler) {

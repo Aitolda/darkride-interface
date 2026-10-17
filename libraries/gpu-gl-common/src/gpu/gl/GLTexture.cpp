@@ -79,6 +79,11 @@ GLenum GLTexture::getGLTextureType(const Texture& texture) {
         return texture.isArray() ? GL_TEXTURE_CUBE_MAP_ARRAY : GL_TEXTURE_CUBE_MAP;
         break;
 
+    case Texture::TEX_3D:
+        // a volume: one face of width x height x depth texels, uploaded whole (the probe volume)
+        return GL_TEXTURE_3D;
+        break;
+
     default:
         qFatal("Unsupported texture type");
     }
@@ -93,6 +98,7 @@ uint8_t GLTexture::getFaceCount(GLenum target) {
         case GL_TEXTURE_2D_MULTISAMPLE:
         case GL_TEXTURE_2D_ARRAY:
         case GL_TEXTURE_2D_MULTISAMPLE_ARRAY:
+        case GL_TEXTURE_3D:
             return TEXTURE_2D_NUM_FACES;
         case GL_TEXTURE_CUBE_MAP:
         case GL_TEXTURE_CUBE_MAP_ARRAY:
@@ -120,6 +126,9 @@ const std::vector<GLenum>& GLTexture::getFaceTargets(GLenum target) {
     static const std::vector<GLenum> cubeArrayFaceTargets{
         GL_TEXTURE_CUBE_MAP_ARRAY
     };
+    static const std::vector<GLenum> face3DTargets{
+        GL_TEXTURE_3D
+    };
     switch (target) {
     case GL_TEXTURE_2D:
         return face2DTargets;
@@ -131,6 +140,8 @@ const std::vector<GLenum>& GLTexture::getFaceTargets(GLenum target) {
         return cubeFaceTargets;
     case GL_TEXTURE_CUBE_MAP_ARRAY:
         return cubeArrayFaceTargets;
+    case GL_TEXTURE_3D:
+        return face3DTargets;
     default:
         Q_UNREACHABLE();
         break;

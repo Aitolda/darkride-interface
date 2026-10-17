@@ -329,6 +329,8 @@ void PrepareForward::run(const RenderContextPointer& renderContext, const Inputs
             if (keyAmbiLight->getAmbientMap()) {
                 batch.setResourceTexture(ru::Texture::Skybox, keyAmbiLight->getAmbientMap());
             }
+            // the zone's probe volume (LightAmbient.slh), or an empty one
+            batch.setResourceTexture(ru::Texture::ProbeVolume, keyAmbiLight->getProbeVolume() ? keyAmbiLight->getProbeVolume() : DeferredLightingEffect::getEmptyProbeVolume());
         }
     });
 }

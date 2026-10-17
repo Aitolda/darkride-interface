@@ -56,11 +56,24 @@ void DeferredLightingEffect::init() {
 }
 
 // FIXME: figure out how to move lightFrame into a varying in GeometryCache and RenderPipelines
-void DeferredLightingEffect::setupKeyLightBatch(const RenderArgs* args, gpu::Batch& batch) {
-    setupKeyLightBatch(args, batch, args->_scene->getStage<LightStage>()->_currentFrame);
+void DeferredLightingEffect::setupKeyLightBatch(const RenderArgs* args, gpu::Batch& batch, int probeVolumeSlot) {
+    setupKeyLightBatch(args, batch, args->_scene->getStage<LightStage>()->_currentFrame, probeVolumeSlot);
 }
 
-void DeferredLightingEffect::setupKeyLightBatch(const RenderArgs* args, gpu::Batch& batch, const LightStage::Frame& lightFrame) {
+const gpu::TexturePointer& DeferredLightingEffect::getEmptyProbeVolume() {
+    static const gpu::TexturePointer EMPTY = [] {
+        auto texture = gpu::Texture::create3D(gpu::Element::COLOR_RGBA16F, 1, 9, 1, 1,
+                                              gpu::Sampler(gpu::Sampler::FILTER_MIN_MAG_LINEAR, gpu::Sampler::WRAP_CLAMP));
+        texture->setStoredMipFormat(gpu::Element::COLOR_RGBA16F);
+        const uint16_t black[9 * 4] = { 0 };
+        texture->assignStoredMip(0, sizeof(black), (const gpu::Byte*)black);
+        texture->setSource("no probe volume");
+        return texture;
+    }();
+    return EMPTY;
+}
+
+void DeferredLightingEffect::setupKeyLightBatch(const RenderArgs* args, gpu::Batch& batch, const LightStage::Frame& lightFrame, int probeVolumeSlot) {
     PerformanceTimer perfTimer("DLE->setupBatch()");
     graphics::LightPointer keySunLight;
     auto lightStage = args->_scene->getStage<LightStage>();
@@ -77,19 +90,27 @@ void DeferredLightingEffect::setupKeyLightBatch(const RenderArgs* args, gpu::Bat
         batch.setUniformBuffer(gr::Buffer::KeyLight, keySunLight->getLightSchemaBuffer());
     }
 
+    if (probeVolumeSlot < 0) {
+        probeVolumeSlot = ru::Texture::ProbeVolume;
+    }
     if (keyAmbiLight) {
         batch.setUniformBuffer(gr::Buffer::AmbientLight, keyAmbiLight->getAmbientSchemaBuffer());
 
         if (keyAmbiLight->getAmbientMap() ) {
             batch.setResourceTexture(ru::Texture::Skybox, keyAmbiLight->getAmbientMap());
         }
+        // the zone's probe volume, or an empty one so that the sampler never sees a texture of another kind
+        batch.setResourceTexture(probeVolumeSlot, keyAmbiLight->getProbeVolume() ? keyAmbiLight->getProbeVolume() : getEmptyProbeVolume());
+    } else {
+        batch.setResourceTexture(probeVolumeSlot, getEmptyProbeVolume());
     }
 }
 
-void DeferredLightingEffect::unsetKeyLightBatch(gpu::Batch& batch) {
+void DeferredLightingEffect::unsetKeyLightBatch(gpu::Batch& batch, int probeVolumeSlot) {
     batch.setUniformBuffer(gr::Buffer::KeyLight, nullptr);
     batch.setUniformBuffer(gr::Buffer::AmbientLight, nullptr);
     batch.setResourceTexture(ru::Texture::Skybox, nullptr);
+    batch.setResourceTexture(probeVolumeSlot < 0 ? (int)ru::Texture::ProbeVolume : probeVolumeSlot, nullptr);
 }
 
 void DeferredLightingEffect::setupLocalLightsBatch(gpu::Batch& batch, const LightClustersPointer& lightClusters,
@@ -513,7 +534,7 @@ void RenderDeferredSetup::run(const render::RenderContextPointer& renderContext,
         }
 
         // Setup the global lighting
-        deferredLightingEffect->setupKeyLightBatch(args, batch, *lightFrame);
+        deferredLightingEffect->setupKeyLightBatch(args, batch, *lightFrame, ru::Texture::ProbeVolumeDeferred);
 
         // Haze
         const auto& hazeStage = args->_scene->getStage<HazeStage>();
@@ -526,7 +547,7 @@ void RenderDeferredSetup::run(const render::RenderContextPointer& renderContext,
 
         batch.draw(gpu::TRIANGLE_STRIP, 4);
 
-        deferredLightingEffect->unsetKeyLightBatch(batch);
+        deferredLightingEffect->unsetKeyLightBatch(batch, ru::Texture::ProbeVolumeDeferred);
         batch.setResourceTexture(ru::Texture::Shadow, nullptr);
     }
 }

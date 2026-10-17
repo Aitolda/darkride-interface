@@ -254,6 +254,9 @@ Size GL45Texture::copyMipFaceLinesFromTexture(uint16_t mip, uint8_t face, const 
         } else {
             glTextureSubImage3D(_id, mip, 0, yOffset, face, size.x, size.y, 1, format, type, sourcePointer);
         }
+    } else if (GL_TEXTURE_3D == _target) {
+        // a volume: the whole depth of the mip at once (size.z slices, x fastest), uncompressed
+        glTextureSubImage3D(_id, mip, 0, yOffset, 0, size.x, size.y, size.z, format, type, sourcePointer);
     } else {
         assert(false);
         amountCopied = 0;
@@ -351,7 +354,10 @@ void GL45FixedAllocationTexture::allocateStorage() const {
 
 
     if (!_gpuObject.isMultisample()) {
-        if (!_gpuObject.isArray()) {
+        if (GL_TEXTURE_3D == _target) {
+            // a volume: its depth is the third dimension
+            glTextureStorage3D(_id, mips, texelFormat.internalFormat, dimensions.x, dimensions.y, dimensions.z);
+        } else if (!_gpuObject.isArray()) {
             glTextureStorage2D(_id, mips, texelFormat.internalFormat, dimensions.x, dimensions.y);
         } else {
             glTextureStorage3D(_id, mips, texelFormat.internalFormat, dimensions.x, dimensions.y, numSlices);

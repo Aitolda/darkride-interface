@@ -40,6 +40,9 @@ float isLightmapEnabled() {
 float isReflectionProbesEnabled() {
     return lightingModel._AmbientOcclusionShadowReflectionProbesSpare.z;
 }
+float isProbeVolumeEnabled() {
+    return lightingModel._AmbientOcclusionShadowReflectionProbesSpare.w;
+}
 float isBackgroundEnabled() {
     return lightingModel._UnlitEmissiveLightmapBackground.w;
 }

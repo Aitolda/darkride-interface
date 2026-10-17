@@ -71,6 +71,11 @@
 // directional pass, which has the material slots taken by the G-buffer and the scattering tables and this one free
 #define RENDER_UTILS_TEXTURE_REFLECTION_PROBES 9
 #define RENDER_UTILS_TEXTURE_REFLECTION_PROBES_DEFERRED 13
+// the zone's probe volume (LightAmbient.slh): in the material, forward and translucent programs the scattering map's
+// slot, which no program that lights with the ambient light declares; in the deferred directional pass the lighting
+// buffer's, which that pass does not read
+#define RENDER_UTILS_TEXTURE_PROBE_VOLUME 6
+#define RENDER_UTILS_TEXTURE_PROBE_VOLUME_DEFERRED 10
 
 // the frame's light culling (LightClusterGrid.slh): its parameters and light list, the screen tiles' bits, the depth bins'
 #define RENDER_UTILS_BUFFER_LIGHT_CLUSTER_PARAMS 10
@@ -198,6 +203,8 @@ enum Texture {
     LocalCookies = RENDER_UTILS_TEXTURE_LOCAL_COOKIES,
     ReflectionProbes = RENDER_UTILS_TEXTURE_REFLECTION_PROBES,
     ReflectionProbesDeferred = RENDER_UTILS_TEXTURE_REFLECTION_PROBES_DEFERRED,
+    ProbeVolume = RENDER_UTILS_TEXTURE_PROBE_VOLUME,
+    ProbeVolumeDeferred = RENDER_UTILS_TEXTURE_PROBE_VOLUME_DEFERRED,
     TaaHistory = RENDER_UTILS_TEXTURE_TAA_HISTORY,
     TaaSource = RENDER_UTILS_TEXTURE_TAA_SOURCE,
     TaaVelocity = RENDER_UTILS_TEXTURE_TAA_VELOCITY,

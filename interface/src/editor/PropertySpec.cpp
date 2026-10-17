@@ -536,6 +536,45 @@ namespace {
                 }
                 setProbeEntry(p, probe);
             });
+        // a zone's probe volume (LIGHTMAPS.md step 4), the entry "probeVolume": { "url", "intensity" }; clearing the
+        // file removes the entry
+        auto volumeObject = [](const EP& p) {
+            QJsonValue entry = QJsonDocument::fromJson(p.getUserData().toUtf8()).object().value("probeVolume");
+            return entry.isObject() ? entry.toObject() : QJsonObject();
+        };
+        auto setVolumeEntry = [](EP& p, const QJsonObject& volume) {
+            QString text = p.getUserData();
+            QJsonDocument document = QJsonDocument::fromJson(text.toUtf8());
+            if (!text.trimmed().isEmpty() && !document.isObject()) {
+                return;
+            }
+            QJsonObject object = document.object();
+            if (volume.value("url").toString().isEmpty()) {
+                object.remove("probeVolume");
+            } else {
+                object.insert("probeVolume", volume);
+            }
+            p.setUserData(object.isEmpty() ? QString() : JsonOrder::write(object, JsonOrder::scan(text)));
+        };
+        add("userData:probeVolume:url",
+            [=](const EP& p) { return QVariant(volumeObject(p).value("url").toString()); },
+            [=](EP& p, const QVariant& v) {
+                QJsonObject volume = volumeObject(p);
+                QString url = v.toString().trimmed();
+                if (url.isEmpty()) {
+                    volume.remove("url");
+                } else {
+                    volume.insert("url", url);
+                }
+                setVolumeEntry(p, volume);
+            });
+        add("userData:probeVolume:intensity",
+            [=](const EP& p) { return QVariant(volumeObject(p).value("intensity").toDouble(1.0)); },
+            [=](EP& p, const QVariant& v) {
+                QJsonObject volume = volumeObject(p);
+                volume.insert("intensity", std::round(v.toDouble() * 10000.0) / 10000.0);
+                setVolumeEntry(p, volume);
+            });
         // a model's lightmap, the entry "lightmap" (LIGHTMAPS.md §3.2): { "url", "scaleOffset": [sx, sy, ox, oy],
         // "mode": "indirect" | "full", "params": [offset, scale] }, shown as the Lightmap section's fields; clearing
         // the picture removes the entry
@@ -962,6 +1001,11 @@ namespace {
         en("ambientLightMode", "Ambient Light", "zone", MODE_VALUES);
         with(range(add(spec("ambientLight.ambientIntensity", "Ambient Intensity", K::Float, "zone")), 0, 200, 0.1, 2), "ambientLightMode=enabled");
         with(add(spec("ambientLight.ambientURL", "Ambient Source", K::Url, "zone")), "ambientLightMode=enabled");
+        // the zone's probe volume (LIGHTMAPS.md step 4): the file the Unity exporter writes (probes/ProbeVolume.bin),
+        // light probes on a grid, sampled by position for the ambient diffuse light of whatever has no lightmap
+        // (avatars, things that move) in place of the ambient source's one sphere; it rides with the ambient light
+        with(add(spec("userData:probeVolume:url", "Probe Volume", K::Url, "zone")), "ambientLightMode=enabled");
+        with(range(add(spec("userData:probeVolume:intensity", "Probe Volume Intensity", K::Float, "zone")), 0, 16, 0.01, 2), "ambientLightMode=enabled");
         en("hazeMode", "Haze", "zone", MODE_VALUES);
         with(range(add(spec("haze.hazeRange", "Haze Range", K::Float, "zone")), 1, 10000, 1, 0, "m"), "hazeMode=enabled");
         with(add(spec("haze.hazeAltitudeEffect", "Use Altitude", K::Bool, "zone")), "hazeMode=enabled");

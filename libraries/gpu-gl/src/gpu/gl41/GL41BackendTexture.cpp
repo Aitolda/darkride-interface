@@ -184,6 +184,9 @@ Size GL41Texture::copyMipFaceLinesFromTexture(uint16_t mip, uint8_t face, const 
                 glTexSubImage3D(_target, mip, 0, yOffset, face, size.x, size.y, 1, format, type, sourcePointer);
                 break;
         }
+    } else if (GL_TEXTURE_3D == _target) {
+        // a volume: the whole depth of the mip at once (size.z slices, x fastest), uncompressed
+        glTexSubImage3D(_target, mip, 0, yOffset, 0, size.x, size.y, size.z, format, type, sourcePointer);
     } else {
         assert(false);
         amountCopied = 0;
@@ -242,7 +245,11 @@ void GL41FixedAllocationTexture::allocateStorage() const {
         for (GLint level = 0; level < numMips; level++) {
             Vec3u dimensions = _gpuObject.evalMipDimensions(level);
             for (GLenum target : getFaceTargets(_target)) {
-                if (!_gpuObject.isArray()) {
+                if (GL_TEXTURE_3D == _target) {
+                    // a volume: the mip's depth is its third dimension
+                    glTexImage3D(target, level, texelFormat.internalFormat, dimensions.x, dimensions.y, dimensions.z, 0,
+                                 texelFormat.format, texelFormat.type, nullptr);
+                } else if (!_gpuObject.isArray()) {
                     glTexImage2D(target, level, texelFormat.internalFormat, dimensions.x, dimensions.y, 0, texelFormat.format,
                                 texelFormat.type, nullptr);
                 } else {

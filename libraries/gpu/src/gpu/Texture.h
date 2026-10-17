@@ -389,6 +389,9 @@ public:
     static TexturePointer create1D(const Element& texelFormat, uint16 width, uint16 numMips = SINGLE_MIP, const Sampler& sampler = Sampler());
     static TexturePointer create2D(const Element& texelFormat, uint16 width, uint16 height, uint16 numMips = SINGLE_MIP, const Sampler& sampler = Sampler());
     static TexturePointer create2DArray(const Element& texelFormat, uint16 width, uint16 height, uint16 numSlices, uint16 numMips = SINGLE_MIP, const Sampler& sampler = Sampler());
+    // A 3D texture (a volume): width x height x depth texels in one stored face a mip (assignStoredMip with the
+    // slices back to back, x fastest), a strict resource uploaded whole, GL_TEXTURE_3D in the GL backends, sampled
+    // with a sampler3D (the zone's probe volume, LightAmbient.slh)
     static TexturePointer create3D(const Element& texelFormat, uint16 width, uint16 height, uint16 depth, uint16 numMips = SINGLE_MIP, const Sampler& sampler = Sampler());
     static TexturePointer createCube(const Element& texelFormat, uint16 width, uint16 numMips = 1, const Sampler& sampler = Sampler());
     // A cube map array (one strict resource texture, uploaded whole): numSlices cube maps of one size and format, a
