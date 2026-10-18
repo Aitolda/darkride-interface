@@ -33,7 +33,7 @@ public:
     bool safeLandingIsComplete() const;
 
     float domainLoadingProgress() const { return _safeLanding->loadingProgressPercentage(); }
-    void setSafeLandingWaitsForVisuals(bool wait) { _safeLanding->setWaitForVisuals(wait); }
+    void setSafeLandingWaitsForVisuals(bool wait, float radius = 0.0f) { _safeLanding->setWaitForVisuals(wait, radius); }
     SafeLanding::Progress safeLandingProgress() const { return _safeLanding->getProgress(); }
 
 signals:

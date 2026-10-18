@@ -1396,6 +1396,14 @@
           "help": "With Load the Whole World First on: after this many seconds the loading screen lifts and the rest of the world streams in as usual, so a big world keeps nobody waiting for ever. Between 10 and 600.",
           "placeholder": "60",
           "default": "60"
+        },
+        {
+          "name": "radius",
+          "type": "int",
+          "label": "Wait for Models Within (meters)",
+          "help": "With Load the Whole World First on: the whole world always arrives, but the loading screen waits only for the models and textures within this distance of where visitors arrive; farther ones finish loading after it lifts. 0 waits for every model in the world.",
+          "placeholder": "100",
+          "default": "100"
         }
       ]
     },

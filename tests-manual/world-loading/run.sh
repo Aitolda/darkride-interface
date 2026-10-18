@@ -1,6 +1,7 @@
 #!/bin/zsh
 # One arrival in a test world, in either loading mode, on this session's own sandbox:
 #   tests-manual/world-loading/run.sh <build dir> <results dir> <whole|progressive> [world dir] [skip after s] [udp port]
+# LOADING_RADIUS=<metres> sets the domain's loading.radius (default 100; 0 waits for every model in the world).
 # The world dir has the snapshot layout of instances/tivoli-instance.sh (models.json.gz, config.json with the spawn
 # point, assets/map.json and assets/files/<sha256>); the default is the Tivoli Town copy in ~/tivoli-test-worlds.
 # The sandbox ("loading", ~/tivoli-sandboxes/loading) gets a fresh copy of the world and the domain's loading
@@ -38,6 +39,8 @@ path, world_config, mode = sys.argv[1:4]
 config = json.load(open(path)) if os.path.exists(path) else {}
 world = json.load(open(world_config)) if os.path.exists(world_config) else {}
 config["loading"] = {"whole_world": mode == "whole", "time_limit": 60}
+if os.environ.get("LOADING_RADIUS"):
+    config["loading"]["radius"] = int(os.environ["LOADING_RADIUS"])  # metres; 0 waits for the whole world
 if world.get("paths"):
     config["paths"] = world["paths"]
 json.dump(config, open(path, "w"), indent=2)

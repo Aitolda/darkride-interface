@@ -44,12 +44,12 @@ public:
     void addToSequence(OCTREE_PACKET_SEQUENCE sequenceNumber);
     float loadingProgressPercentage();
 
-    // Whole-world loading (the domain's loading.whole_world): wait until every entity received is drawn as well as
-    // ready for physics, as interstitial mode does
-    void setWaitForVisuals(bool wait) { _waitForVisuals = wait; }
+    // Whole-world loading (the domain's loading.whole_world): wait until the entities received are drawn as well as
+    // ready for physics, as interstitial mode does: those within `radius` metres of the avatar, or all with 0
+    void setWaitForVisuals(bool wait, float radius = 0.0f) { _visualsRadius = radius; _waitForVisuals = wait; }
     struct Progress {
         int received { 0 };            // entities received since tracking started
-        int waiting { 0 };             // of those, not yet ready
+        int waiting { 0 };             // of those, not yet ready (and near enough to be waited for)
         bool serverDone { false };     // the entity server has said its first pass is complete
     };
     Progress getProgress();
@@ -74,6 +74,8 @@ private:
     int32_t _maxTrackedEntityCount { 0 };
     int32_t _receivedEntityCount { 0 };
     std::atomic<bool> _waitForVisuals { false };
+    std::atomic<float> _visualsRadius { 0.0f };
+    int32_t _blockingCount { 0 };       // tracked entities the last update still waited for
     int32_t _trackedEntityStabilityCount { 0 };
 
     quint64 _startTime { 0 };

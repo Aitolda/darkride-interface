@@ -6453,23 +6453,34 @@ void Application::updateWorldLoading() {
         if (timeLimit <= 0) {
             timeLimit = DEFAULT_TIME_LIMIT;
         }
-        startWorldLoading(glm::clamp(timeLimit, MIN_TIME_LIMIT, MAX_TIME_LIMIT));
+        // the whole world always arrives; the screen waits for the models and textures within this distance of
+        // the avatar (0: all of them)
+        static const float DEFAULT_RADIUS = 100.0f;
+        static const float MAX_RADIUS = 10000.0f;
+        bool hasRadius = false;
+        float radius = loading["radius"].toVariant().toFloat(&hasRadius);
+        if (!hasRadius || radius < 0.0f) {
+            radius = DEFAULT_RADIUS;
+        }
+        startWorldLoading(glm::clamp(timeLimit, MIN_TIME_LIMIT, MAX_TIME_LIMIT), glm::min(radius, MAX_RADIUS));
     }
 }
 
-void Application::startWorldLoading(int timeLimitSeconds) {
+void Application::startWorldLoading(int timeLimitSeconds, float radius) {
     _worldLoading.active = true;
     _worldLoading.skipRequested = false;
     _worldLoading.timeLimit = timeLimitSeconds;
+    _worldLoading.radius = radius;
     _worldLoading.started = usecTimestampNow();
     _worldLoading.deadline = _worldLoading.started + (quint64)timeLimitSeconds * USECS_PER_SECOND;
     _worldLoading.lastQuery = 0;
-    _octreeProcessor.setSafeLandingWaitsForVisuals(true);
+    _octreeProcessor.setSafeLandingWaitsForVisuals(true, radius);
     setIsInterstitialMode(true);
     // a new connection id: the entity server drops what it knows of this client and starts a first traversal, of
     // the whole world now that the query has no view
     _octreeQuery.incrementConnectionID();
-    qCDebug(interfaceapp) << "World loading: the whole world first, for at most" << timeLimitSeconds << "s";
+    qCDebug(interfaceapp) << "World loading: the whole world first, for at most" << timeLimitSeconds << "s, waiting for the models" <<
+        (radius > 0.0f ? QString("within %1 m").arg(radius) : QString("everywhere"));
     emit worldLoadingChanged(true);
 }
 
@@ -6495,6 +6506,7 @@ QVariantMap Application::getWorldLoadingState() {
         state["seconds"] = (double)(now - _worldLoading.started) / USECS_PER_SECOND;
         state["secondsLeft"] = _worldLoading.deadline > now ? (double)(_worldLoading.deadline - now) / USECS_PER_SECOND : 0.0;
         state["timeLimit"] = _worldLoading.timeLimit;
+        state["radius"] = _worldLoading.radius;
     }
     return state;
 }

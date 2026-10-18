@@ -575,6 +575,8 @@ public slots:
      * @property {number} seconds - The seconds since loading began.
      * @property {number} secondsLeft - The seconds until the time limit lifts the loading screen anyway.
      * @property {number} timeLimit - The domain's time limit, in seconds.
+     * @property {number} radius - The distance in metres within which the screen waits for models and textures
+     *     (<code>0</code>: everywhere); <code>ready</code> counts the farther ones as ready.
      */
     /**jsdoc
      * Gets the state of whole-world loading.

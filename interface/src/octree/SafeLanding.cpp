@@ -16,6 +16,7 @@
 #include "RenderableModelEntityItem.h"
 #include "InterfaceLogging.h"
 #include "Application.h"
+#include "avatar/AvatarManager.h"
 
 
 CalculateEntityLoadingPriority SafeLanding::entityLoadingOperatorElevateCollidables = [](const EntityItem& entityItem) {
@@ -46,6 +47,7 @@ void SafeLanding::startTracking(QSharedPointer<EntityTreeRenderer> entityTreeRen
             _trackedEntities.clear();
             _maxTrackedEntityCount = 0;
             _receivedEntityCount = 0;
+            _blockingCount = 0;
             _sequenceStart = SafeLanding::INVALID_SEQUENCE;
             _sequenceEnd = SafeLanding::INVALID_SEQUENCE;
             _sequenceNumbers.clear();
@@ -107,10 +109,15 @@ void SafeLanding::updateTracking() {
         return;
     }
 
+    int32_t blocking = 0;
     {
         Locker lock(_lock);
         bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
             _waitForVisuals;
+        // whole-world loading may wait only for what is drawn near the avatar: a far entity that is ready for physics
+        // but not yet drawn stays tracked (the avatar may yet be placed nearer it) without holding the landing up
+        float visualsRadius = _waitForVisuals ? _visualsRadius.load() : 0.0f;
+        glm::vec3 center = visualsRadius > 0.0f ? DependencyManager::get<AvatarManager>()->getMyAvatar()->getWorldPosition() : glm::vec3(0.0f);
         auto entityMapIter = _trackedEntities.begin();
         while (entityMapIter != _trackedEntities.end()) {
             auto entity = entityMapIter->second;
@@ -122,18 +129,32 @@ void SafeLanding::updateTracking() {
                 }
                 isVisuallyReady = entity->isVisuallyReady() || (!entityRenderable && !entity->isParentPathComplete());
             }
-            if (isEntityPhysicsReady(entity) && isVisuallyReady) {
+            bool isPhysicsReady = isEntityPhysicsReady(entity);
+            if (isPhysicsReady && isVisuallyReady) {
                 entityMapIter = _trackedEntities.erase(entityMapIter);
-            } else {
-                entityMapIter++;
+                continue;
             }
+            bool waitedFor = true;
+            if (isPhysicsReady && visualsRadius > 0.0f) {
+                bool success = false;
+                AABox box = entity->getAABox(success);
+                if (success) {
+                    glm::vec3 closest = glm::clamp(center, box.getMinimumPoint(), box.getMaximumPoint());
+                    waitedFor = glm::distance(center, closest) <= visualsRadius;
+                }
+            }
+            if (waitedFor) {
+                blocking++;
+            }
+            entityMapIter++;
         }
+        _blockingCount = blocking;
         if (enableInterstitial) {
             _trackedEntityStabilityCount++;
         }
     }
 
-    if (_trackedEntities.empty()) {
+    if (blocking == 0) {
         // no more tracked entities --> check sequenceNumbers
         if (_sequenceStart != SafeLanding::INVALID_SEQUENCE) {
             bool shouldStop = false;
@@ -177,6 +198,7 @@ void SafeLanding::reset() {
     _trackedEntities.clear();
     _maxTrackedEntityCount = 0;
     _receivedEntityCount = 0;
+    _blockingCount = 0;
     _sequenceStart = SafeLanding::INVALID_SEQUENCE;
     _sequenceEnd = SafeLanding::INVALID_SEQUENCE;
 }
@@ -185,7 +207,7 @@ SafeLanding::Progress SafeLanding::getProgress() {
     Locker lock(_lock);
     Progress progress;
     progress.received = _receivedEntityCount;
-    progress.waiting = (int)_trackedEntities.size();
+    progress.waiting = _blockingCount;
     progress.serverDone = _sequenceStart != SafeLanding::INVALID_SEQUENCE;
     return progress;
 }

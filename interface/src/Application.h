@@ -596,7 +596,7 @@ private:
     void idle();
     void tryToEnablePhysics(bool skipTextureCheck = false);
     void updateWorldLoading();
-    void startWorldLoading(int timeLimitSeconds);
+    void startWorldLoading(int timeLimitSeconds, float radius);
     void endWorldLoading();
     void update(float deltaTime);
 
@@ -810,6 +810,7 @@ private:
         quint64 started { 0 };
         quint64 deadline { 0 };
         int timeLimit { 0 };            // seconds
+        float radius { 0.0f };          // metres round the avatar whose models are waited for; 0 for all
         quint64 lastQuery { 0 };
     } _worldLoading;
 
