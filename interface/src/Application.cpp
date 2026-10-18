@@ -1530,6 +1530,10 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     _window->restoreGeometry();
     _window->setVisible(true);
+    // the window has been seen to end up at Qt's bare 640 x 480 after the start on macOS (2026-10-18), cause unknown:
+    // where it is is logged once it has been shown and a little later, and a shrunk window is put back
+    QTimer::singleShot(0, _window, [this] { _window->checkStartGeometry(); });
+    QTimer::singleShot(3000, _window, [this] { _window->checkStartGeometry(); });
 
     _glWidget->setFocusPolicy(Qt::StrongFocus);
     _glWidget->setFocus();
