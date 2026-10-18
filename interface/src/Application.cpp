@@ -2710,7 +2710,7 @@ QString Application::getUserAgent() {
     }
 
     QString userAgent = (
-        "TivoliCloudVR/" + 
+        "Darkride/" + 
         (BuildInfo::BUILD_TYPE == BuildInfo::BuildType::Stable ? BuildInfo::VERSION : "dev")
     );
 
@@ -5128,7 +5128,7 @@ bool Application::acceptSnapshot(const QString& urlString) {
         }
     } else {
         OffscreenUi::asyncWarning("", "No location details were found in the file\n" +
-                             snapshotPath + "\nTry dragging in an authentic Hifi snapshot.");
+                             snapshotPath + "\nTry dragging in a Darkride Snap saved on this computer.");
     }
     return true;
 }
