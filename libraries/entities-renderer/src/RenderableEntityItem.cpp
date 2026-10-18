@@ -446,7 +446,13 @@ void EntityRenderer::doRenderUpdateSynchronous(const ScenePointer& scene,
 
         if (_visible) {   
             EntityTypes::EntityType checkType = entity->getType();
-            if (checkType == EntityTypes::Zone) return;
+            if (checkType == EntityTypes::Zone) {
+                // a zone lights every view that fetches its item, and the mirrors' views and the secondary camera's
+                // fetch only items tagged for the secondary view: without its flag a reflection had no zone light,
+                // sky or haze (MIRRORS.md section 5)
+                setIsVisibleInSecondaryCamera(entity->isVisibleInSecondaryCamera());
+                return;
+            }
             if (checkType == EntityTypes::Gizmo) return;
             if (checkType == EntityTypes::Grid) return;
             if (checkType == EntityTypes::Material) return;
