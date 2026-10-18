@@ -31,9 +31,9 @@
 
 (function () {
     var CHANNEL = "Darkride-Hop";
-    var STATUS_STARTING = "Starting the world…";
+    var STATUS_STARTING = "Starting world…";
     var STATUS_CONNECTING = "Connecting…";
-    var STATUS_LOADING = "Loading what's around you…";
+    var STATUS_LOADING = "Loading world…";
     var TIME_LIMIT = 90;          // s: a way in that never arrives lifts the screen anyway
     var AVATAR_GRACE = 10;        // s after physics: an avatar that has not loaded by then no longer holds the screen
     var LAUNCH_RELEASE_DELAY = 600;   // ms: the desktop screen's fade-in, after which it covers the launch screen
