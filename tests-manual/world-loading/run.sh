@@ -8,9 +8,9 @@
 # point, assets/map.json and assets/files/<sha256>); the default is the Tivoli Town copy in ~/tivoli-test-worlds.
 # The sandbox ("loading", ~/tivoli-sandboxes/loading) gets a fresh copy of the world and the domain's loading
 # settings each run, starts, takes one walled-off client running arrival.js, and is stopped by its pids afterwards.
-# The client is walled off (its own settings and app data). Its resource cache is meant to be fresh each run (a cold
-# arrival): TIVOLI_APP_DATA_DIR and XDG_CACHE_HOME point into the run; check on the first run that nothing is read
-# from ~/Library/Caches, as Qt on macOS may ignore XDG_CACHE_HOME.
+# The client is walled off (its own settings and app data), and its resource cache is fresh each run (a cold arrival):
+# the caches live in TIVOLI_APP_DATA_DIR (data/cache, data/ktx_cache; ~/Library/Caches is not touched, checked 10-18),
+# which points into the run and is deleted after it.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
 BUILD=${1:?usage: run.sh <build dir> <results dir> <whole|progressive> [world dir] [skip after s] [udp port]}
@@ -64,4 +64,6 @@ XDG_CONFIG_HOME="$RUN/config" XDG_CACHE_HOME="$RUN/cache" TIVOLI_APP_DATA_DIR="$
 for pidfile in "$SANDBOX"/*.pid(N); do
     pid=$(cat "$pidfile"); case "$(ps -o command= -p $pid 2>/dev/null)" in *"$BUILD"*) kill $pid;; esac; rm -f "$pidfile"
 done
+# the client's caches (2 GB a run for Tivoli Town, the textures in data/ktx_cache) go; the log and snapshots stay
+rm -rf "$RUN/data" "$RUN/cache"
 grep "WORLD-LOADING\|World loading" "$RUN/client.log" || { echo "no summary in $RUN/client.log" >&2; exit 1; }
