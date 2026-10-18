@@ -1,0 +1,620 @@
+//! The viewer's chat (CHAT.md 4.5): Matrix through matrix-rust-sdk, the library behind Element X, wrapped in a small
+//! interface the viewer's Qt panels can call. The host sends commands as JSON and gets events back as JSON, through a
+//! callback on one of this library's threads (Qt posts them to its own thread). The C interface is ../ffi; the
+//! spike (src/bin/spike.rs) drives the same commands from stdin.
+//!
+//! Commands: {"op": ...}
+//!   login_jwt {token}            sign in with the metaverse's chat token (POST /api/v1/user/chat-token)
+//!   open {room, count?}          follow a room's timeline (a room id or #alias), at least count (30) of its
+//!                                newest events; "timeline" events follow
+//!   close {room}
+//!   back {room, count}           older messages
+//!   send {room, body}
+//!   read {room}                  mark it read
+//!   join {room}                  accept an invite, or join by id or alias
+//!   leave {room}
+//!   create_dm {user, encrypted?} a DM with someone, inviting them (encrypted when asked)
+//!   logout
+//! Events: {"event": ...}
+//!   state {state: signed_out|starting|ready, user?, reason?}
+//!   sync {state: running|offline|error|idle|terminated, message?}   offline: waiting for the server, by itself
+//!   rooms {rooms: [{id, name, dm, encrypted, invited, unread, notifications}]}
+//!   timeline {room, items: [{id, sender, name, body, kind, ts, own, encrypted, state}]}
+//!                                state: sending, waiting (for the server), sent, failed
+//!   done {op, room?, start?}     a command finished (open, back, create_dm, join, leave); start: the room's
+//!                                first message is in, there's nothing older
+//!   error {op, message}
+
+// the SDK's futures are deep; matrix-rust-sdk's own crates raise this too
+#![recursion_limit = "256"]
+
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
+};
+
+use anyhow::{Context, Result, anyhow};
+use futures_util::StreamExt;
+use matrix_sdk::{
+    Client, Room, RoomState, SessionChange,
+    authentication::matrix::MatrixSession,
+    ruma::{
+        OwnedRoomId, RoomAliasId, RoomId, RoomOrAliasId, UserId,
+        api::client::{receipt::create_receipt::v3::ReceiptType, room::create_room},
+        events::{
+            InitialStateEvent,
+            room::{
+                encryption::RoomEncryptionEventContent,
+                message::{MessageType, RoomMessageEventContent},
+            },
+        },
+    },
+};
+use matrix_sdk_ui::{
+    eyeball_im::Vector,
+    room_list_service::{RoomListItem, filters::new_filter_non_left},
+    sync_service::{State as SyncState, SyncService},
+    timeline::{EventSendState, RoomExt, Timeline, TimelineItem},
+};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use tokio::{runtime::Runtime, sync::mpsc, task::JoinHandle};
+
+pub fn version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+/// Where the chat lives: the homeserver (https://chat.darkride.ai), and a folder of its own for the session and the
+/// SQLite stores (encryption keys among them).
+#[derive(Deserialize)]
+pub struct Config {
+    pub homeserver: String,
+    pub data_dir: PathBuf,
+    #[serde(default = "default_device_name")]
+    pub device_name: String,
+}
+
+fn default_device_name() -> String {
+    "Darkride viewer".into()
+}
+
+/// How many of a timeline's newest items an event carries
+const TIMELINE_ITEMS: usize = 100;
+
+pub type EventSink = Arc<dyn Fn(String) + Send + Sync>;
+
+/// A running chat: a Tokio runtime of its own, and a queue of commands into it
+pub struct Chat {
+    runtime: Option<Runtime>,
+    commands: mpsc::UnboundedSender<Value>,
+    // commands sent and not finished yet
+    busy: Arc<AtomicUsize>,
+}
+
+impl Chat {
+    pub fn start(config: Config, events: EventSink) -> Result<Chat> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("darkride-chat")
+            .enable_all()
+            .build()?;
+        let (commands, queue) = mpsc::unbounded_channel();
+        let busy = Arc::new(AtomicUsize::new(0));
+        runtime.spawn(run(config, events, queue, busy.clone()));
+        Ok(Chat { runtime: Some(runtime), commands, busy })
+    }
+
+    /// A command as JSON; its outcome comes back as events
+    pub fn command(&self, json: &str) {
+        self.busy.fetch_add(1, Ordering::SeqCst);
+        // Windows tools often start text with a byte-order mark
+        let json = json.trim_start_matches('\u{feff}');
+        match serde_json::from_str::<Value>(json) {
+            Ok(command) => {
+                let _ = self.commands.send(command);
+            }
+            Err(e) => {
+                // nowhere else to say it: the queue's reader would
+                let _ = self.commands.send(json!({ "op": "invalid", "message": e.to_string() }));
+            }
+        }
+    }
+}
+
+impl Chat {
+    /// Waits, up to a time, until every command sent so far has finished: for a host about to stop (the spike at the
+    /// end of its input), so a sign-in isn't cut off halfway. True if they all did.
+    pub fn wait_idle(&self, timeout: Duration) -> bool {
+        let until = Instant::now() + timeout;
+        while self.busy.load(Ordering::SeqCst) > 0 {
+            if Instant::now() >= until {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        true
+    }
+}
+
+impl Drop for Chat {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_timeout(std::time::Duration::from_secs(2));
+        }
+    }
+}
+
+struct State {
+    config: Config,
+    events: EventSink,
+    client: Mutex<Option<Client>>,
+    sync: Mutex<Option<Arc<SyncService>>>,
+    // the room list, the sync's state and the session's, while signed in
+    tasks: Mutex<Vec<JoinHandle<()>>>,
+    // open rooms: the timeline and the task sending its events
+    open: Mutex<HashMap<OwnedRoomId, (Arc<Timeline>, JoinHandle<()>)>>,
+}
+
+impl State {
+    fn emit(&self, event: Value) {
+        (self.events)(event.to_string());
+    }
+
+    fn client(&self) -> Result<Client> {
+        self.client.lock().unwrap().clone().ok_or_else(|| anyhow!("not signed in"))
+    }
+
+    fn session_file(&self) -> PathBuf {
+        self.config.data_dir.join("session.json")
+    }
+}
+
+async fn run(config: Config, events: EventSink, mut queue: mpsc::UnboundedReceiver<Value>, busy: Arc<AtomicUsize>) {
+    let state = Arc::new(State {
+        config,
+        events,
+        client: Mutex::new(None),
+        sync: Mutex::new(None),
+        tasks: Mutex::new(Vec::new()),
+        open: Mutex::new(HashMap::new()),
+    });
+
+    // a session kept from before starts by itself
+    match restore(&state).await {
+        Ok(true) => {}
+        Ok(false) => state.emit(json!({ "event": "state", "state": "signed_out" })),
+        Err(e) => {
+            state.emit(json!({ "event": "error", "op": "restore", "message": format!("{e:#}") }));
+            state.emit(json!({ "event": "state", "state": "signed_out" }));
+        }
+    }
+
+    // signing in and out finish before the next command starts (an "open" sent right after "login_jwt" waits for
+    // it); the rest run side by side, so a long pagination doesn't hold up a send
+    while let Some(command) = queue.recv().await {
+        let op = command["op"].as_str().unwrap_or("").to_owned();
+        let in_turn = matches!(op.as_str(), "login_jwt" | "logout");
+        let state = state.clone();
+        let busy = busy.clone();
+        let work = async move {
+            if let Err(e) = Box::pin(handle(&state, &op, &command)).await {
+                state.emit(json!({ "event": "error", "op": op, "message": format!("{e:#}") }));
+            }
+            busy.fetch_sub(1, Ordering::SeqCst);
+        };
+        if in_turn {
+            work.await;
+        } else {
+            tokio::spawn(work);
+        }
+    }
+}
+
+fn arg<'a>(command: &'a Value, name: &str) -> Result<&'a str> {
+    command[name].as_str().ok_or_else(|| anyhow!("{name} is missing"))
+}
+
+async fn handle(state: &Arc<State>, op: &str, command: &Value) -> Result<()> {
+    match op {
+        "login_jwt" => login_jwt(state, arg(command, "token")?).await,
+        "open" => {
+            open(state, arg(command, "room")?).await?;
+            // the room list syncs one event a room; a room opened shows a screenful
+            let timeline = open_timeline(state, arg(command, "room")?).await?;
+            let wanted = command["count"].as_u64().unwrap_or(30).min(200) as usize;
+            let mut start = false;
+            for _ in 0..5 {
+                let shown = timeline.items().await.iter().filter(|item| item.as_event().is_some()).count();
+                if shown >= wanted {
+                    break;
+                }
+                start = timeline.paginate_backwards((wanted - shown) as u16).await?;
+                if start {
+                    break;
+                }
+            }
+            state.emit(json!({ "event": "done", "op": "open", "room": timeline.room().room_id(), "start": start }));
+            Ok(())
+        }
+        "close" => {
+            let room = room_by_id_or_alias(state, arg(command, "room")?).await?;
+            if let Some((_, task)) = state.open.lock().unwrap().remove(room.room_id()) {
+                task.abort();
+            }
+            Ok(())
+        }
+        "back" => {
+            let timeline = open_timeline(state, arg(command, "room")?).await?;
+            let start = timeline.paginate_backwards(command["count"].as_u64().unwrap_or(20).min(200) as u16).await?;
+            state.emit(json!({ "event": "done", "op": "back", "room": timeline.room().room_id(), "start": start }));
+            Ok(())
+        }
+        "send" => {
+            let timeline = open_timeline(state, arg(command, "room")?).await?;
+            timeline.send(RoomMessageEventContent::text_plain(arg(command, "body")?).into()).await?;
+            Ok(())
+        }
+        "read" => {
+            let timeline = open_timeline(state, arg(command, "room")?).await?;
+            timeline.mark_as_read(ReceiptType::Read).await?;
+            Ok(())
+        }
+        "join" => {
+            let client = state.client()?;
+            let target = arg(command, "room")?;
+            let invited = <&RoomId>::try_from(target)
+                .ok()
+                .and_then(|id| client.get_room(id))
+                .filter(|room| room.state() == RoomState::Invited);
+            let room = match invited {
+                Some(room) => {
+                    room.join().await?;
+                    room
+                }
+                None => client.join_room_by_id_or_alias(<&RoomOrAliasId>::try_from(target)?, &[]).await?,
+            };
+            state.emit(json!({ "event": "done", "op": "join", "room": room.room_id() }));
+            Ok(())
+        }
+        "leave" => {
+            let room = room_by_id_or_alias(state, arg(command, "room")?).await?;
+            if let Some((_, task)) = state.open.lock().unwrap().remove(room.room_id()) {
+                task.abort();
+            }
+            room.leave().await?;
+            state.emit(json!({ "event": "done", "op": "leave", "room": room.room_id() }));
+            Ok(())
+        }
+        "create_dm" => {
+            let client = state.client()?;
+            let user = <&UserId>::try_from(arg(command, "user")?)?;
+            // encrypted only when asked, as in the web client, which encrypts only behind ?e2ee=1 until round 5: a DM
+            // the other side can't decrypt is worse than one that isn't encrypted (CHAT.md 4.9)
+            let initial_state = if command["encrypted"].as_bool().unwrap_or(false) {
+                vec![InitialStateEvent::with_empty_state_key(RoomEncryptionEventContent::with_recommended_defaults()).to_raw_any()]
+            } else {
+                vec![]
+            };
+            let mut request = create_room::v3::Request::new();
+            request.invite = vec![user.to_owned()];
+            request.is_direct = true;
+            request.preset = Some(create_room::v3::RoomPreset::TrustedPrivateChat);
+            request.initial_state = initial_state;
+            let room = client.create_room(request).await?;
+            state.emit(json!({ "event": "done", "op": "create_dm", "room": room.room_id() }));
+            Ok(())
+        }
+        "logout" => {
+            forget(state, true).await;
+            state.emit(json!({ "event": "state", "state": "signed_out" }));
+            Ok(())
+        }
+        "invalid" => Err(anyhow!("not JSON: {}", command["message"].as_str().unwrap_or(""))),
+        _ => Err(anyhow!("no such command")),
+    }
+}
+
+async fn build_client(state: &State) -> Result<Client> {
+    std::fs::create_dir_all(&state.config.data_dir)?;
+    Ok(Client::builder()
+        .homeserver_url(&state.config.homeserver)
+        .sqlite_store(state.config.data_dir.join("store"), None)
+        .build()
+        .await?)
+}
+
+async fn restore(state: &Arc<State>) -> Result<bool> {
+    let Ok(saved) = std::fs::read_to_string(state.session_file()) else { return Ok(false) };
+    let session: MatrixSession = serde_json::from_str(&saved).context("the kept session")?;
+    let client = build_client(state).await?;
+    client.restore_session(session).await?;
+    started(state, client).await?;
+    Ok(true)
+}
+
+async fn login_jwt(state: &Arc<State>, token: &str) -> Result<()> {
+    if state.client.lock().unwrap().is_some() {
+        return Err(anyhow!("already signed in"));
+    }
+    state.emit(json!({ "event": "state", "state": "starting" }));
+    let client = build_client(state).await?;
+    let mut data = matrix_sdk::ruma::serde::JsonObject::new();
+    data.insert("token".into(), token.into());
+    let login = client
+        .matrix_auth()
+        .login_custom("org.matrix.login.jwt", data)?
+        .initial_device_display_name(&state.config.device_name)
+        .await;
+    if let Err(e) = login {
+        // refused: the stores made for it go too (the client first, which holds them open)
+        drop(client);
+        let _ = std::fs::remove_dir_all(state.config.data_dir.join("store"));
+        state.emit(json!({ "event": "state", "state": "signed_out" }));
+        return Err(e.into());
+    }
+    let session = client.matrix_auth().session().ok_or_else(|| anyhow!("signed in, but no session"))?;
+    write_private(&state.session_file(), &serde_json::to_string(&session)?)?;
+    started(state, client).await
+}
+
+/// the session file holds the access token: only this account may read it
+fn write_private(path: &PathBuf, text: &str) -> Result<()> {
+    let new = path.with_extension("new");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&new)?;
+        std::io::Write::write_all(&mut file, text.as_bytes())?;
+    }
+    #[cfg(not(unix))]
+    std::fs::write(&new, text)?;
+    std::fs::rename(&new, path)?;
+    Ok(())
+}
+
+async fn started(state: &Arc<State>, client: Client) -> Result<()> {
+    // offline mode: when the server can't be reached the service waits for it and carries on by itself
+    let sync = Arc::new(SyncService::builder(client.clone()).with_offline_mode().build().await?);
+    sync.start().await;
+    let rooms = sync.room_list_service().all_rooms().await?;
+    *state.client.lock().unwrap() = Some(client.clone());
+    *state.sync.lock().unwrap() = Some(sync.clone());
+    let mut tasks = Vec::new();
+
+    // the sync's state, for the panel ("Reconnecting…"); after an error it starts again in a while
+    let sync_state = state.clone();
+    let sync_client = client.clone();
+    tasks.push(tokio::spawn(async move {
+        let mut states = sync.state();
+        let mut now = states.get();
+        loop {
+            let (name, message) = match &now {
+                SyncState::Idle => ("idle", None),
+                SyncState::Running => ("running", None),
+                SyncState::Terminated => ("terminated", None),
+                SyncState::Offline => ("offline", None),
+                SyncState::Error(e) => ("error", Some(e.to_string())),
+            };
+            sync_state.emit(json!({ "event": "sync", "state": name, "message": message }));
+            // a network error pauses sending; messages typed meanwhile go out once the server is back
+            if matches!(now, SyncState::Running) {
+                sync_client.send_queue().set_enabled(true).await;
+            }
+            if matches!(now, SyncState::Error(_)) {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                sync.start().await;
+            }
+            match states.next().await {
+                Some(next) => now = next,
+                None => break,
+            }
+        }
+    }));
+
+    // a session the server has ended (signed out elsewhere, the account closed): signed out here too
+    let session_state = state.clone();
+    let mut changes = client.subscribe_to_session_changes();
+    tasks.push(tokio::spawn(async move {
+        while let Ok(change) = changes.recv().await {
+            if let SessionChange::UnknownToken(_) = change {
+                let state = session_state.clone();
+                // from a task of its own: forgetting stops this one
+                tokio::spawn(async move {
+                    forget(&state, false).await;
+                    state.emit(json!({ "event": "state", "state": "signed_out", "reason": "the server ended this session" }));
+                });
+                break;
+            }
+        }
+    }));
+
+    let rooms_state = state.clone();
+    tasks.push(tokio::spawn(async move {
+        let (stream, controller) = rooms.entries_with_dynamic_adapters(200);
+        controller.set_filter(Box::new(new_filter_non_left()));
+        let mut stream = std::pin::pin!(stream);
+        let mut list: Vector<RoomListItem> = Vector::new();
+        while let Some(diffs) = stream.next().await {
+            for diff in diffs {
+                diff.apply(&mut list);
+            }
+            let mut out = Vec::with_capacity(list.len());
+            for item in list.iter() {
+                if item.is_space() {
+                    continue;
+                }
+                out.push(room_json(item).await);
+            }
+            rooms_state.emit(json!({ "event": "rooms", "rooms": out }));
+        }
+    }));
+    *state.tasks.lock().unwrap() = tasks;
+    state.emit(json!({ "event": "state", "state": "ready", "user": client.user_id() }));
+    Ok(())
+}
+
+async fn room_json(room: &Room) -> Value {
+    let name = match room.cached_display_name() {
+        Some(name) => name.to_string(),
+        None => room.display_name().await.map(|n| n.to_string()).unwrap_or_default(),
+    };
+    json!({
+        "id": room.room_id(),
+        "name": name,
+        "dm": room.is_direct().await.unwrap_or(false),
+        "encrypted": room.encryption_state().is_encrypted(),
+        "invited": room.state() == RoomState::Invited,
+        "unread": room.num_unread_messages(),
+        "notifications": room.unread_notification_counts().notification_count,
+    })
+}
+
+async fn room_by_id_or_alias(state: &State, target: &str) -> Result<Room> {
+    let client = state.client()?;
+    let id: OwnedRoomId = if target.starts_with('#') {
+        // a room you're in is found by its names here, without asking the server (which may be away)
+        let alias = <&RoomAliasId>::try_from(target)?;
+        let known = client.rooms().into_iter().find(|room| {
+            room.canonical_alias().as_deref() == Some(alias) || room.alt_aliases().iter().any(|a| a == alias)
+        });
+        match known {
+            Some(room) => return Ok(room),
+            None => client.resolve_room_alias(alias).await?.room_id,
+        }
+    } else {
+        target.try_into()?
+    };
+    if let Some(room) = client.get_room(&id) {
+        return Ok(room);
+    }
+    // right after signing in the first sync may not have brought it yet
+    tokio::time::timeout(std::time::Duration::from_secs(10), client.await_room_remote_echo(&id))
+        .await
+        .map_err(|_| anyhow!("not in {target}"))
+}
+
+async fn open_timeline(state: &Arc<State>, target: &str) -> Result<Arc<Timeline>> {
+    let room = room_by_id_or_alias(state, target).await?;
+    if let Some((timeline, _)) = state.open.lock().unwrap().get(room.room_id()) {
+        return Ok(timeline.clone());
+    }
+    open(state, target).await?;
+    let open = state.open.lock().unwrap();
+    Ok(open.get(room.room_id()).ok_or_else(|| anyhow!("closed"))?.0.clone())
+}
+
+async fn open(state: &Arc<State>, target: &str) -> Result<()> {
+    let room = room_by_id_or_alias(state, target).await?;
+    if state.open.lock().unwrap().contains_key(room.room_id()) {
+        return Ok(());
+    }
+    let timeline = Arc::new(room.timeline().await?);
+    let (items, mut stream) = timeline.subscribe().await;
+    let room_id = room.room_id().to_owned();
+    let events = state.clone();
+    let id = room_id.clone();
+    let task = tokio::spawn(async move {
+        let mut items = items;
+        events.emit(timeline_json(&id, &items));
+        while let Some(diffs) = stream.next().await {
+            for diff in diffs {
+                diff.apply(&mut items);
+            }
+            events.emit(timeline_json(&id, &items));
+        }
+    });
+    let mut open = state.open.lock().unwrap();
+    if open.contains_key(&room_id) {
+        // opened twice at once: keep the first
+        task.abort();
+    } else {
+        open.insert(room_id, (timeline, task));
+    }
+    Ok(())
+}
+
+fn timeline_json(room: &OwnedRoomId, items: &Vector<Arc<TimelineItem>>) -> Value {
+    let shown: Vec<Value> = items
+        .iter()
+        .skip(items.len().saturating_sub(TIMELINE_ITEMS))
+        .filter_map(|item| {
+            let event = item.as_event()?;
+            let content = event.content();
+            let (kind, body) = if content.is_unable_to_decrypt() {
+                ("undecryptable", String::new())
+            } else if let Some(message) = content.as_message() {
+                let kind = match message.msgtype() {
+                    MessageType::Text(_) => "text",
+                    MessageType::Emote(_) => "emote",
+                    MessageType::Notice(_) => "notice",
+                    MessageType::Image(_) => "image",
+                    MessageType::File(_) => "file",
+                    MessageType::Video(_) => "video",
+                    MessageType::Audio(_) => "audio",
+                    _ => "other",
+                };
+                (kind, message.body().to_owned())
+            } else {
+                return None;
+            };
+            let name = match event.sender_profile() {
+                matrix_sdk_ui::timeline::TimelineDetails::Ready(profile) => profile.display_name.clone(),
+                _ => None,
+            };
+            let send = match event.send_state() {
+                None | Some(EventSendState::Sent { .. }) => "sent",
+                Some(EventSendState::NotSentYet { .. }) => "sending",
+                // waiting: it goes out once the server is back; failed: it won't
+                Some(EventSendState::SendingFailed { is_recoverable: true, .. }) => "waiting",
+                Some(EventSendState::SendingFailed { .. }) => "failed",
+            };
+            Some(json!({
+                "id": event.event_id().map(|e| e.to_string()).unwrap_or_else(|| format!("{:?}", event.identifier())),
+                "sender": event.sender(),
+                "name": name,
+                "body": body,
+                "kind": kind,
+                "ts": event.timestamp().0,
+                "own": event.is_own(),
+                "encrypted": event.encryption_info().is_some(),
+                "state": send,
+            }))
+        })
+        .collect();
+    json!({ "event": "timeline", "room": room, "items": shown })
+}
+
+/// Signed out: everything stopped and waited for (Windows can't remove files still open), the server told when asked
+/// (it forgets the device), then the session and the stores, keys too, gone from the folder
+async fn forget(state: &Arc<State>, tell_server: bool) {
+    let mut tasks: Vec<JoinHandle<()>> = state.open.lock().unwrap().drain().map(|(_, (_, task))| task).collect();
+    tasks.extend(state.tasks.lock().unwrap().drain(..));
+    for task in &tasks {
+        task.abort();
+    }
+    for task in tasks {
+        let _ = task.await;
+    }
+    let sync = state.sync.lock().unwrap().take();
+    if let Some(sync) = sync {
+        sync.stop().await;
+    }
+    let client = state.client.lock().unwrap().take();
+    if let Some(client) = client {
+        if tell_server {
+            let _ = client.logout().await;
+        }
+    }
+    let _ = std::fs::remove_file(state.session_file());
+    let store = state.config.data_dir.join("store");
+    if let Err(e) = std::fs::remove_dir_all(&store) {
+        if store.exists() {
+            state.emit(json!({ "event": "error", "op": "logout", "message": format!("the chat's store stays in {}: {e}", store.display()) }));
+        }
+    }
+}

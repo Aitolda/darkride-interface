@@ -47,6 +47,7 @@
 #include "scripting/MenuScriptingInterface.h"
 #include "scripting/HMDScriptingInterface.h"
 #include "ui/DialogsManager.h"
+#include "chat/ChatWindow.h"
 #include "ui/StandAloneJSConsole.h"
 #include "InterfaceLogging.h"
 #include "LocationBookmarks.h"
@@ -240,6 +241,12 @@ Menu::Menu() {
 
     // View > Enter First Person Mode in HMD
     addCheckableActionToQMenuAndActionHash(viewMenu, MenuOption::FirstPersonHMD, 0, true);
+
+    viewMenu->addSeparator();
+
+    // View > Chat: Darkride chat's window (chat/ChatWindow.h)
+    action = addActionToQMenuAndActionHash(viewMenu, MenuOption::Chat, ChatWindow::shortcut());
+    connect(action, &QAction::triggered, [] { ChatWindow::toggle(); });
 
     // Build menu ----------------------------------
     MenuWrapper* buildMenu = addMenu("Build");

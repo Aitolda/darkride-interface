@@ -66,6 +66,7 @@
 #include <Trace.h>
 #include <ResourceScriptingInterface.h>
 #include <AccountManager.h>
+#include <ChatService.h>
 #include <AddressManager.h>
 #include <AnimDebugDraw.h>
 #include <BuildInfo.h>
@@ -909,6 +910,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     DependencyManager::set<SpeechRecognizer>();
 #endif
     DependencyManager::set<DiscoverabilityManager>();
+    DependencyManager::set<ChatService>();
     DependencyManager::set<SceneScriptingInterface>();
 #if !defined(DISABLE_QML)
     DependencyManager::set<OffscreenUi>();
@@ -1632,6 +1634,9 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         }, Qt::QueuedConnection);
     }
 #endif
+
+    // Darkride chat (libraries/chat) follows the account from here: signed in to chat while it is signed in
+    DependencyManager::get<ChatService>()->start();
 
     // Initialize the user interface and menu system
     // Needs to happen AFTER the render engine initialization to access its configuration
@@ -2905,6 +2910,9 @@ void Application::cleanupBeforeQuit() {
     if (!keepMeLoggedIn) {
         DependencyManager::get<AccountManager>()->removeAccountFromFile();
     }
+    // an account not kept on this computer leaves no chat session on it either
+    DependencyManager::get<ChatService>()->stop(!keepMeLoggedIn);
+    DependencyManager::destroy<ChatService>();
 
     _displayPlugin.reset();
     PluginManager::getInstance()->shutdown();
