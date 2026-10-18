@@ -1616,6 +1616,41 @@ void Rig::removeAnimationStateHandler(QScriptValue identifier) { // called in sc
     }
 }
 
+int Rig::addAnimationStateCallback(const ScriptCallback& handler, const QStringList& propertyNames, bool useNames) { // called in script thread
+    if (!handler.isValid()) {
+        qCWarning(animation) << "Rig::addAnimationStateCallback invalid arguments, expected (function, string[])";
+        return 0;
+    }
+    QMutexLocker locker(&_stateMutex);
+    while (!_nextStateHandlerId || _stateHandlers.contains(_nextStateHandlerId)) {
+        _nextStateHandlerId++;
+    }
+    StateHandler& data = _stateHandlers[_nextStateHandlerId];
+    data.callback = handler;
+    data.useNames = useNames;
+    if (useNames) {
+        data.propertyNames = propertyNames;
+    }
+    return _nextStateHandlerId;
+}
+
+void Rig::removeAnimationStateCallback(int identifier) { // called in script thread
+    QMutexLocker locker(&_stateMutex);
+    _stateHandlers.remove(identifier);
+}
+
+void Rig::animationStateCallbackResult(int identifier, const QVariant& result) { // called in script thread
+    if (result.type() != QVariant::Map) {
+        return;
+    }
+    QMutexLocker locker(&_stateMutex);
+    auto found = _stateHandlers.find(identifier);
+    if (found == _stateHandlers.end()) {
+        return;
+    }
+    found.value().results.animVariantMapFromVariantMap(result.toMap());
+}
+
 void Rig::animationStateHandlerResult(int identifier, QScriptValue result) { // called synchronously from script
     QMutexLocker locker(&_stateMutex);
     auto found = _stateHandlers.find(identifier);
@@ -1637,6 +1672,20 @@ void Rig::updateAnimationStateHandlers() { // called on avatar update thread (wh
         StateHandler& value = data.value();
         QScriptValue& function = value.function;
         int rigId = _rigId;
+        if (value.callback.isValid()) {
+            // a handler on the WebAssembly script engine: called on its thread with the variables as a map, the
+            // map it returns read back here; the results gathered below as for a QtScript handler
+            value.callback.request(QVariantList { _animVars.animVariantMapToVariantMap(value.propertyNames, value.useNames) },
+                                   [rigId, identifier](const QVariant& result) {
+                                       std::lock_guard<std::mutex> guard(rigRegistryMutex);
+                                       auto iter = rigRegistry.find(rigId);
+                                       if (iter != rigRegistry.end()) {
+                                           iter->second->animationStateCallbackResult(identifier, result);
+                                       }
+                                   });
+            _animVars.copyVariantsFrom(value.results);
+            continue;
+        }
         auto handleResult = [rigId, identifier](QScriptValue result) { // called in script thread to get the result back to us.
             // Hold the rigRegistryMutex to ensure thread-safe access to the rigRegistry, but
             // also to prevent the rig from being deleted while this lambda is being executed.

@@ -69,7 +69,7 @@ public slots:
      * @function Window.hasFocus
      * @returns {boolean} <code>true</code> if the Interface window has focus, <code>false</code> if it doesn't.
      */
-    QScriptValue hasFocus();
+    QVariant hasFocus();
 
     /**jsdoc
      * Makes the Interface window have focus. On Windows, if Interface doesn't already have focus, the task bar icon flashes to 
@@ -104,7 +104,7 @@ public slots:
      * var answer = Window.confirm("Are you sure?");
      * print(answer);  // true or false
      */
-    QScriptValue confirm(const QString& message = "");
+    QVariant confirm(const QString& message = "");
 
     /**jsdoc
      * Prompts the user to enter some text. Displays a modal dialog with a message and a text box, plus "OK" and "Cancel" 
@@ -121,7 +121,7 @@ public slots:
      *     print("User answer: " + answer);
      * }
      */
-    QScriptValue prompt(const QString& message, const QString& defaultText);
+    QVariant prompt(const QString& message, const QString& defaultText);
 
     /**jsdoc
      * Prompts the user to enter some text. Displays a non-modal dialog with a message and a text box, plus "OK" and "Cancel" 
@@ -151,7 +151,7 @@ public slots:
      * var directory = Window.browseDir("Select Directory", Paths.resources);
      * print("Directory: " + directory);
      */
-    QScriptValue browseDir(const QString& title = "", const QString& directory = "");
+    QVariant browseDir(const QString& title = "", const QString& directory = "");
     
     /**jsdoc
      * Prompts the user to choose a directory. Displays a non-modal dialog that navigates the directory tree. A
@@ -183,7 +183,7 @@ public slots:
      * var filename = Window.browse("Select Image File", Paths.resources, "Images (*.png *.jpg *.svg)");
      * print("File: " + filename);
      */
-    QScriptValue browse(const QString& title = "", const QString& directory = "",  const QString& nameFilter = "");
+    QVariant browse(const QString& title = "", const QString& directory = "",  const QString& nameFilter = "");
 
     /**jsdoc
      * Prompts the user to choose a file. Displays a non-modal dialog that navigates the directory tree. A
@@ -219,7 +219,7 @@ public slots:
      * var filename = Window.save("Save to JSON file", Paths.resources, "*.json");
      * print("File: " + filename);
      */
-    QScriptValue save(const QString& title = "", const QString& directory = "",  const QString& nameFilter = "");
+    QVariant save(const QString& title = "", const QString& directory = "",  const QString& nameFilter = "");
 
     /**jsdoc
      * Prompts the user to specify the path and name of a file to save to. Displays a non-modal dialog that navigates the
@@ -254,7 +254,7 @@ public slots:
      * var asset = Window.browseAssets("Select FBX File", "/", "*.fbx");
      * print("FBX file: " + asset);
      */
-    QScriptValue browseAssets(const QString& title = "", const QString& directory = "", const QString& nameFilter = "");
+    QVariant browseAssets(const QString& title = "", const QString& directory = "", const QString& nameFilter = "");
 
     /**jsdoc
      * Prompts the user to choose an Asset Server item. Displays a non-modal dialog that navigates the tree of assets on the 

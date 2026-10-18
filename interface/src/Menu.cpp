@@ -32,6 +32,7 @@
 #include <UserActivityLogger.h>
 #include <VrMenu.h>
 #include <ScriptEngines.h>
+#include <WasmScriptEngine.h>
 #include <MenuItemProperties.h>
 #include <ui/types/FileTypeProfile.h>
 #include <ui/types/TivoliWebEngineProfile.h>
@@ -514,6 +515,12 @@ Menu::Menu() {
     // Developer > Scripting > Verbose Logging
     addCheckableActionToQMenuAndActionHash(scriptingOptionsMenu, MenuOption::VerboseLogging, 0, false,
                                            qApp, SLOT(updateVerboseLogging()));
+
+    // Developer > Scripting > Run JavaScript on WebAssembly (which engine a .js client script loads on; takes effect
+    // for scripts loaded after the change)
+    addCheckableActionToQMenuAndActionHash(scriptingOptionsMenu, MenuOption::RunJavaScriptOnWebAssembly,
+                                           [](bool checked) { WasmScriptEngine::setRunJavaScriptOnWebAssembly(checked); },
+                                           0, WasmScriptEngine::runJavaScriptOnWebAssembly());
     
     // Developer > Scripting > Enable Speech Control API
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)

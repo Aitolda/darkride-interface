@@ -163,6 +163,7 @@ namespace MenuOption {
     const QString Pair = "Pair";
     const QString PhysicsShowOwned = "Highlight Simulation Ownership";
     const QString VerboseLogging = "Verbose Logging";
+    const QString RunJavaScriptOnWebAssembly = "Run JavaScript on WebAssembly";
     const QString PhysicsShowBulletWireframe = "Show Bullet Collision";
     const QString PhysicsShowBulletAABBs = "Show Bullet Bounding Boxes";
     const QString PhysicsShowBulletContactPoints = "Show Bullet Contact Points";

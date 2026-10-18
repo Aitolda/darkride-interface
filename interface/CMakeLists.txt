@@ -215,7 +215,7 @@ link_hifi_libraries(
   shared workload task octree ktx gpu gl procedural graphics graphics-scripting render
   pointers recording hfm fbx networking material-networking
   model-networking model-baker entities avatars
-  audio audio-client animation script-engine physics vehicles
+  audio audio-client animation script-engine wasm-scripting physics vehicles
   render-utils entities-renderer avatars-renderer ui qml auto-updater midi terrain
   controllers plugins image platform auto-rigging
   ui-plugins display-plugins input-plugins
@@ -429,6 +429,9 @@ else()
     optional_win_executable_signing()
   endif()
 endif()
+
+# the JavaScript guest of the WebAssembly script engine, beside the other resources
+copy_javascript_guest("${RESOURCES_DEV_DIR}")
 
 if (DEV_BUILD AND (APPLE OR UNIX))
   # create a qt.conf file to override hard-coded search paths in Qt libs
