@@ -15,7 +15,8 @@
 //  {"type": "cancel"} should it fail before the client goes. The screen comes up at once ("Hopping to <world>") and
 //  stays through the world's start, the connection and the arrival: until the new world's physics is on (the avatar
 //  can move), or, when that world loads whole, until its loading is done. A hop that has not arrived after 90 s, or a
-//  refused connection, lifts it.
+//  refused connection, lifts it. The screen says on the same channel when it comes up and goes: {"type": "screen",
+//  "up": true} and {"type": "screen", "up": false}.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -192,6 +193,7 @@
         peakWaiting = 0;
         textTimer = Script.setInterval(updateCard, TEXT_INTERVAL);
         updateCard();
+        Messages.sendLocalMessage(HOP_CHANNEL, JSON.stringify({ type: "screen", up: true }));
     }
 
     function hide() {
@@ -205,6 +207,9 @@
         }
         if (ids.sphere) {
             Entities.deleteEntity(ids.sphere);
+        }
+        if (ids.card) {
+            Messages.sendLocalMessage(HOP_CHANNEL, JSON.stringify({ type: "screen", up: false }));
         }
         ids = {};
     }

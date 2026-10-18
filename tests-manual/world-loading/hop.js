@@ -23,8 +23,17 @@
             print("WORLD-LOADING-HOP " + name + " at " + events[name].toFixed(2) + " s");
         }
     }
+    // the screen is local entities, which Entities' searches skip: it says when it comes up and goes
+    var screenIsUp = false;
+    Messages.subscribe("Darkride-Hop");
+    Messages.messageReceived.connect(function (channel, message) {
+        var data = channel === "Darkride-Hop" ? JSON.parse(message) : {};
+        if (data.type === "screen") {
+            screenIsUp = data.up;
+        }
+    });
     function screenUp() {
-        return Entities.findEntitiesByName("World loading card", MyAvatar.position, 20, true).length > 0;
+        return screenIsUp;
     }
 
     Window.domainChanged.connect(function () { if (start) { domainChanged = true; mark("domainChanged"); } });
@@ -53,7 +62,7 @@
         if (events.physicsOffAfterHop !== undefined && Window.isPhysicsEnabled()) {
             mark("physicsOnAfterHop");
         }
-        if (Window.getWorldLoading().active) {
+        if (Window.getWorldLoading && Window.getWorldLoading().active) {   // only in clients with whole-world loading
             mark("wholeWorldLoading");
         }
         if ((events.screenDown !== undefined && t() > events.screenDown + 5) || t() > 120) {
