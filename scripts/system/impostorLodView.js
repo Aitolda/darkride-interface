@@ -4,9 +4,9 @@
 //  scripts/system
 //
 //  Developer > Render > Show Impostors and LODs (Menu.cpp): while the item is checked, writes at the top of the view
-//  what the view draws of the thing at its centre, marked by a small cross: the entity, its impostor card or its model
-//  (IMPOSTORS.md), how wide it looks against the switch angle, and for a model its automatic LOD level and triangles
-//  (AUTOMATIC-LODS.md). The menu item itself tints every card blue. The same menu has Impostor Cards and Automatic
+//  what the view draws of the thing at its centre (the first entity box it meets), marked by a small cross: the
+//  entity, its impostor card or its model (IMPOSTORS.md), how wide it looks against the switch angle, and for a model
+//  its automatic LOD level and triangles (AUTOMATIC-LODS.md). The menu item itself tints every card blue. The same menu has Impostor Cards and Automatic
 //  LODs to turn either off.
 //
 //  Distributed under the Apache License, Version 2.0.
@@ -114,11 +114,11 @@
         Overlays.editOverlay(panel, { bounds: place.panel });
         Overlays.editOverlay(cross, { bounds: place.cross });
 
+        // the first entity whose box the view's centre meets (a box is easier to put the cross on than a chair's tubes
+        // far away, and the precise pick missed the test field's chairs), the zones the camera stands in left out
         var ray = { origin: Camera.position, direction: Quat.getForward(Camera.orientation) };
-        var hit = Entities.findRayIntersection(ray, true, [], [], true, false);
-        // where the precise pick meets no triangle (it missed the test field's chairs from a distance), the entities'
-        // boxes, the zones the camera stands in left out
         var discard = [];
+        var hit = { intersects: false };
         for (var tries = 0; !hit.intersects && tries < 4; tries++) {
             hit = Entities.findRayIntersection(ray, false, [], discard, true, false);
             if (hit.intersects && Entities.getEntityProperties(hit.entityID, ["type"]).type === "Zone") {
