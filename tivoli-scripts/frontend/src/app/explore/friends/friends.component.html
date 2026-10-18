@@ -15,6 +15,7 @@
 			class="friend"
 			*ngFor="let friend of domain.friends"
 			(click)="onJoinFriend(friend.username)"
+			(mouseenter)="onHoverFriend()"
 		>
 			<!-- <div
 				class="avatar"
