@@ -17,6 +17,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QSharedPointer>
 
+#include <atomic>
 #include <set>
 
 #include "EntityItem.h"
@@ -43,6 +44,16 @@ public:
     void addToSequence(OCTREE_PACKET_SEQUENCE sequenceNumber);
     float loadingProgressPercentage();
 
+    // Whole-world loading (the domain's loading.whole_world): wait until every entity received is drawn as well as
+    // ready for physics, as interstitial mode does
+    void setWaitForVisuals(bool wait) { _waitForVisuals = wait; }
+    struct Progress {
+        int received { 0 };            // entities received since tracking started
+        int waiting { 0 };             // of those, not yet ready
+        bool serverDone { false };     // the entity server has said its first pass is complete
+    };
+    Progress getProgress();
+
 private slots:
     void addTrackedEntity(const EntityItemID& entityID);
     void deleteTrackedEntity(const EntityItemID& entityID);
@@ -61,6 +72,8 @@ private:
     OCTREE_PACKET_SEQUENCE _sequenceStart { INVALID_SEQUENCE };
     OCTREE_PACKET_SEQUENCE _sequenceEnd { INVALID_SEQUENCE };
     int32_t _maxTrackedEntityCount { 0 };
+    int32_t _receivedEntityCount { 0 };
+    std::atomic<bool> _waitForVisuals { false };
     int32_t _trackedEntityStabilityCount { 0 };
 
     quint64 _startTime { 0 };

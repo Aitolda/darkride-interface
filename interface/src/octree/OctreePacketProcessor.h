@@ -33,6 +33,8 @@ public:
     bool safeLandingIsComplete() const;
 
     float domainLoadingProgress() const { return _safeLanding->loadingProgressPercentage(); }
+    void setSafeLandingWaitsForVisuals(bool wait) { _safeLanding->setWaitForVisuals(wait); }
+    SafeLanding::Progress safeLandingProgress() const { return _safeLanding->getProgress(); }
 
 signals:
     void packetVersionMismatch();

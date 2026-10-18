@@ -564,6 +564,32 @@ public slots:
     float domainLoadingProgress();
 
     /**jsdoc
+     * The state of whole-world loading. A domain's owner can ask (its settings, Loading) that visitors see a loading
+     * screen on arrival until the whole world has arrived and its models and textures have loaded.
+     * @typedef {object} Window.WorldLoading
+     * @property {boolean} active - <code>true</code> while the loading screen should be up.
+     * @property {number} received - The entities received so far (while <code>active</code>).
+     * @property {number} ready - Of those, the ones drawn and ready for physics.
+     * @property {boolean} serverDone - <code>true</code> once the entity server has sent the whole world, so
+     *     <code>received</code> is the world's total.
+     * @property {number} seconds - The seconds since loading began.
+     * @property {number} secondsLeft - The seconds until the time limit lifts the loading screen anyway.
+     * @property {number} timeLimit - The domain's time limit, in seconds.
+     */
+    /**jsdoc
+     * Gets the state of whole-world loading.
+     * @function Window.getWorldLoading
+     * @returns {Window.WorldLoading} The state; only <code>active</code> when no loading screen is wanted.
+     */
+    QVariantMap getWorldLoading();
+
+    /**jsdoc
+     * Lifts the whole-world loading screen now ("Show me now"); the rest of the world streams in as usual.
+     * @function Window.showWorldNow
+     */
+    void showWorldNow();
+
+    /**jsdoc
      * Gets the number of display plugins currently available.
      * @function Window.getDisplayPluginCount
      * @returns {number} The number of display plugins currently available.
@@ -672,6 +698,15 @@ signals:
      * @returns {Signal}
      */
     void interstitialModeChanged(bool interstitialMode);
+
+    /**jsdoc
+     * Triggered when whole-world loading starts or ends.
+     * @function Window.worldLoadingChanged
+     * @param {boolean} loading - <code>true</code> when the loading screen should go up, <code>false</code> when it
+     *     should lift.
+     * @returns {Signal}
+     */
+    void worldLoadingChanged(bool loading);
 
     /**jsdoc
      * Triggered when a still snapshot has been taken by calling {@link Window.takeSnapshot|takeSnapshot} with 

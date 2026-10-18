@@ -45,6 +45,7 @@ void SafeLanding::startTracking(QSharedPointer<EntityTreeRenderer> entityTreeRen
             _entityTreeRenderer = entityTreeRenderer;
             _trackedEntities.clear();
             _maxTrackedEntityCount = 0;
+            _receivedEntityCount = 0;
             _sequenceStart = SafeLanding::INVALID_SEQUENCE;
             _sequenceEnd = SafeLanding::INVALID_SEQUENCE;
             _sequenceNumbers.clear();
@@ -69,7 +70,9 @@ void SafeLanding::addTrackedEntity(const EntityItemID& entityID) {
         if (entityTree) {
             EntityItemPointer entity = entityTree->findEntityByID(entityID);
             if (entity && !entity->isLocalEntity() && entity->getCreated() < _startTime) {
-                _trackedEntities.emplace(entityID, entity);
+                if (_trackedEntities.emplace(entityID, entity).second) {
+                    _receivedEntityCount++;
+                }
 
                 int32_t trackedEntityCount = (int32_t)_trackedEntities.size();
                 if (trackedEntityCount > _maxTrackedEntityCount) {
@@ -106,7 +109,8 @@ void SafeLanding::updateTracking() {
 
     {
         Locker lock(_lock);
-        bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled();
+        bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
+            _waitForVisuals;
         auto entityMapIter = _trackedEntities.begin();
         while (entityMapIter != _trackedEntities.end()) {
             auto entity = entityMapIter->second;
@@ -172,8 +176,18 @@ void SafeLanding::reset() {
     _trackingEntities = false;
     _trackedEntities.clear();
     _maxTrackedEntityCount = 0;
+    _receivedEntityCount = 0;
     _sequenceStart = SafeLanding::INVALID_SEQUENCE;
     _sequenceEnd = SafeLanding::INVALID_SEQUENCE;
+}
+
+SafeLanding::Progress SafeLanding::getProgress() {
+    Locker lock(_lock);
+    Progress progress;
+    progress.received = _receivedEntityCount;
+    progress.waiting = (int)_trackedEntities.size();
+    progress.serverDone = _sequenceStart != SafeLanding::INVALID_SEQUENCE;
+    return progress;
 }
 
 bool SafeLanding::trackingIsComplete() const {

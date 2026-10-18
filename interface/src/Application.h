@@ -345,6 +345,11 @@ public:
 
     bool isServerlessMode() const;
     bool isInterstitialMode() const { return _interstitialMode; }
+
+    // Whole-world loading: the domain's settings ask for a loading screen until the whole world is in
+    bool isWorldLoading() const { return _worldLoading.active; }
+    QVariantMap getWorldLoadingState();
+    void showWorldNow();
     bool failedToConnectToEntityServer() const { return _failedToConnectToEntityServer; }
 
     void replaceDomainContent(const QString& url, const QString& itemName);
@@ -400,6 +405,7 @@ signals:
     void uploadRequest(QString path);
 
     void interstitialModeChanged(bool isInInterstitialMode);
+    void worldLoadingChanged(bool isWorldLoading);
 
     void loginDialogFocusEnabled();
     void loginDialogFocusDisabled();
@@ -588,7 +594,10 @@ private:
     void cleanupBeforeQuit();
 
     void idle();
-    void tryToEnablePhysics();
+    void tryToEnablePhysics(bool skipTextureCheck = false);
+    void updateWorldLoading();
+    void startWorldLoading(int timeLimitSeconds);
+    void endWorldLoading();
     void update(float deltaTime);
 
     // Various helper functions called during update()
@@ -790,6 +799,19 @@ private:
     bool _isGLInitialized{ false };
     bool _physicsEnabled{ false };
     bool _failedToConnectToEntityServer{ false };
+
+    // Whole-world loading, per arrival (reset with the physics-ready information). The choice is the domain's
+    // ("loading.whole_world" and "loading.time_limit" in its settings, sent to the client when it connects).
+    struct WorldLoading {
+        bool settingsKnown { false };   // the domain's settings have arrived, or we stopped waiting for them
+        bool active { false };          // the loading screen is up and the entity query asks for the whole world
+        bool skipRequested { false };   // "Show me now"
+        quint64 waitStart { 0 };        // since when we are connected and waiting for the domain's settings
+        quint64 started { 0 };
+        quint64 deadline { 0 };
+        int timeLimit { 0 };            // seconds
+        quint64 lastQuery { 0 };
+    } _worldLoading;
 
     bool _reticleClickPressed{ false };
     bool _keyboardFocusWaitingOnRenderable{ false };
