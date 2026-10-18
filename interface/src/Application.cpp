@@ -1165,7 +1165,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     QFontDatabase::addApplicationFont(PathUtils::resourcesPath() + "styles/Inconsolata.otf");
     
-    _window->setWindowTitle("Tivoli Cloud VR");
+    _window->setWindowTitle("Darkride");
 
     Model::setAbstractViewStateInterface(this); // The model class will sometimes need to know view state details from us
 
@@ -1342,8 +1342,13 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     auto discoverabilityManager = DependencyManager::get<DiscoverabilityManager>();
     connect(&locationUpdateTimer, &QTimer::timeout, discoverabilityManager.data(), &DiscoverabilityManager::updateLocation);
-    connect(&locationUpdateTimer, &QTimer::timeout,
-        DependencyManager::get<AddressManager>().data(), &AddressManager::storeCurrentAddress);
+    connect(&locationUpdateTimer, &QTimer::timeout, this, [this] {
+        // nothing to remember while the sign-in screen is up, since no world is joined until someone signs in
+        // (pauseUntilLoginDetermined); the last place stays saved for after
+        if (!getLoginDialogPoppedUp()) {
+            DependencyManager::get<AddressManager>()->storeCurrentAddress();
+        }
+    });
     locationUpdateTimer.start(DATA_SERVER_LOCATION_CHANGE_UPDATE_MSECS);
 
     // if we get a domain change, immediately attempt update location in metaverse server
@@ -1525,6 +1530,10 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     _window->restoreGeometry();
     _window->setVisible(true);
+    // the window has been seen to end up at Qt's bare 640 x 480 after the start on macOS (2026-10-18), cause unknown:
+    // where it is is logged once it has been shown and a little later, and a shrunk window is put back
+    QTimer::singleShot(0, _window, [this] { _window->checkStartGeometry(); });
+    QTimer::singleShot(3000, _window, [this] { _window->checkStartGeometry(); });
 
     _glWidget->setFocusPolicy(Qt::StrongFocus);
     _glWidget->setFocus();
@@ -1599,21 +1608,34 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     });
 
     connect(offscreenUi.data(), &OffscreenUi::keyboardFocusActive, [this]() {
-// #if !defined(Q_OS_ANDROID) && !defined(DISABLE_QML)
-//         // Do not show login dialog if requested not to on the command line
-//         // QString hifiNoLoginCommandLineKey = QString("--").append(HIFI_NO_LOGIN_COMMAND_LINE_KEY);
-//         // int index = arguments().indexOf(hifiNoLoginCommandLineKey);
+#if !defined(Q_OS_ANDROID) && !defined(DISABLE_QML)
+        // Darkride starts on the sign-in screen: until someone signs in, or continues as the remembered account, the
+        // avatar is hidden, no world is joined and no scripts run (pauseUntilLoginDetermined), and the screen covers
+        // the window. A launcher passing --tokens has signed in for us.
+        if (arguments().indexOf("--tokens") != -1) {
+            resumeAfterLoginDialogActionTaken();
+            return;
+        }
 
-//         if (arguments().indexOf("--tokens") != -1) {
-//             resumeAfterLoginDialogActionTaken();
-//             return;
-//         }
-
-//         showLoginScreen();
-// #else
+        showLoginScreen();
+#else
         resumeAfterLoginDialogActionTaken();
-// #endif
+#endif
     });
+
+#if !defined(Q_OS_ANDROID) && !defined(DISABLE_QML)
+    // Signing out of a running viewer goes back to the sign-in screen, as at the start: out of the world, the avatar
+    // hidden, until someone signs in, and then on as at the start (resumeAfterLoginDialogActionTaken).
+    if (arguments().indexOf("--tokens") == -1) {
+        connect(DependencyManager::get<AccountManager>().data(), &AccountManager::logoutComplete, this, [this]() {
+            if (getLoginDialogPoppedUp()) {
+                return;
+            }
+            pauseUntilLoginDetermined();
+            showLoginScreen();
+        }, Qt::QueuedConnection);
+    }
+#endif
 
     // Initialize the user interface and menu system
     // Needs to happen AFTER the render engine initialization to access its configuration
@@ -3255,25 +3277,21 @@ static void addDisplayPluginToMenu(const DisplayPluginPointer& displayPlugin, in
 
 void Application::showLoginScreen() {
 #if !defined(DISABLE_QML)
-    auto accountManager = DependencyManager::get<AccountManager>();
+    // Signed in or not, the sign-in screen comes first: a remembered account ("Remember me") gets "Continue as <name>"
+    // there (LoginDialog/ContinueBody.qml), and goes in from it.
     auto dialogsManager = DependencyManager::get<DialogsManager>();
-    if (!accountManager->isLoggedIn()) {
-        if (!isHMDMode()) {
-            auto toolbar =  DependencyManager::get<ToolbarScriptingInterface>()->getToolbar("com.highfidelity.interface.toolbar.system");
-            toolbar->writeProperty("visible", false);
-        }
-        _loginDialogPoppedUp = true;
-        dialogsManager->showLoginDialog();
-        emit loginDialogFocusEnabled();
-        QJsonObject loginData = {};
-        loginData["action"] = "login dialog popped up";
-        UserActivityLogger::getInstance().logAction("encourageLoginDialog", loginData);
-        _window->setWindowTitle("Tivoli Cloud VR");
-    } else {
-        resumeAfterLoginDialogActionTaken();
+    if (!isHMDMode()) {
+        auto toolbar =  DependencyManager::get<ToolbarScriptingInterface>()->getToolbar("com.highfidelity.interface.toolbar.system");
+        toolbar->writeProperty("visible", false);
     }
-    _loginDialogPoppedUp = !accountManager->isLoggedIn();
+    _loginDialogPoppedUp = true;
     loginDialogPoppedUp.set(_loginDialogPoppedUp);
+    dialogsManager->showLoginDialog();
+    emit loginDialogFocusEnabled();
+    QJsonObject loginData = {};
+    loginData["action"] = "login dialog popped up";
+    UserActivityLogger::getInstance().logAction("encourageLoginDialog", loginData);
+    _window->setWindowTitle("Darkride");
 #else
     resumeAfterLoginDialogActionTaken();
 #endif
@@ -7371,7 +7389,7 @@ void Application::updateWindowTitle() const {
         }
     }
     
-    // Not connected, Not logged in - Maki @ Cutelab (Maki) - Tivoli Cloud VR 0.7.2
+    // Not connected, Not logged in - Maki @ Cutelab (Maki) - Darkride Build 0.7.2 native-editor 7c5c5bda86
 
     QStringList statusList = { connectionStatus, loginStatus };
     statusList.removeAll(QString(""));
@@ -7382,7 +7400,7 @@ void Application::updateWindowTitle() const {
         username +
         (username.isEmpty() || currentWorldName.isEmpty() ? "" : " @ ")  +
         currentWorldName + " - " +
-        "Tivoli Cloud VR " + buildVersion
+        "Darkride " + buildVersion
     );
 
 #ifndef WIN32
