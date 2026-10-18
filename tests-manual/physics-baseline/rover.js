@@ -175,8 +175,10 @@
         var found = Entities.findEntitiesByName("rover-chassis", LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE, false);
         var best = null, bestAge = Infinity;
         found.forEach(function (id) {
+            // the newest chassis, whenever it was made: with sign-in first (login-first) the passenger's script can start
+            // after the driver's car exists, so its age is not measured against this script's start
             var age = Entities.getEntityProperties(id, ["age"]).age;
-            if (age !== undefined && age < bestAge && age < now() + 1) { bestAge = age; best = id; }
+            if (age !== undefined && age < bestAge) { bestAge = age; best = id; }
         });
         return best;
     }
