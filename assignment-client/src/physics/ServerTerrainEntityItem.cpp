@@ -124,7 +124,8 @@ void ServerTerrainEntityItem::fetch(const QString& url, uint32_t version) {
         terrain::VoxelGrid grid;
         std::string error;
         QByteArray data = request->getData();
-        if (!terrain::loadTerrain(reinterpret_cast<const uint8_t*>(data.constData()), (size_t)data.size(), grid, &error)) {
+        if (!terrain::loadTerrain(reinterpret_cast<const uint8_t*>(data.constData()), (size_t)data.size(), grid, nullptr, nullptr,
+                                  &error)) {
             qCWarning(physics) << "physics-server: terrain file" << url << "is not usable:" << QString::fromStdString(error);
             _built = true;
             _builtVoxelCount = getVoxelCount();
@@ -167,7 +168,7 @@ void ServerTerrainEntityItem::build(const terrain::VoxelGrid& grid) {
     ShapeInfo::TriangleIndices indices;
     int meshed = 0;
     terrain::ChunkSamples samples;
-    grid.forEachChunk([&](const glm::ivec3& chunk, const terrain::Chunk&) {
+    grid.forEachChunk([&](const terrain::ChunkKey& chunk, const terrain::Chunk&) {
         grid.sampleChunk(chunk, samples);
         if (samples.isOneSided()) {
             return;
@@ -177,10 +178,13 @@ void ServerTerrainEntityItem::build(const terrain::VoxelGrid& grid) {
             return;
         }
         ++meshed;
-        const glm::vec3 origin(chunk * terrain::CHUNK_SIZE);
+        // the mesh is in the chunk's own voxels, from its origin (a finer chunk's are smaller): as the client's
+        // collision shape (RenderableTerrainEntityItem::updateCollisionShape)
+        const glm::vec3 origin(chunk.getOrigin());
+        const float perVoxel = 1.0f / (float)chunk.getScale();
         const uint32_t base = (uint32_t)points.size();
         for (const glm::vec3& position : mesh.positions) {
-            points.push_back(glm::vec3(voxelToLocal * glm::vec4(position + origin, 1.0f)));
+            points.push_back(glm::vec3(voxelToLocal * glm::vec4(position * perVoxel + origin, 1.0f)));
         }
         for (uint32_t index : mesh.indices) {
             indices.push_back((int32_t)(base + index));
