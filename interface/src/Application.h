@@ -362,6 +362,9 @@ public:
     void setOtherAvatarsReplicaCount(int count) { DependencyManager::get<AvatarHashMap>()->setReplicaCount(count); }
 
     bool getLoginDialogPoppedUp() const { return _loginDialogPoppedUp; }
+    // From the start, and again after signing out, until the viewer goes in (resumeAfterLoginDialogActionTaken): the
+    // 3D view isn't drawn then, only Darkride's navy under the user interface (GraphicsEngine::render_performFrame)
+    bool isSignInPending() const { return _signInPending; }
     void createLoginDialog();
     void updateLoginDialogPosition();
 
@@ -766,6 +769,7 @@ private:
     bool _interstitialModeEnabled{ false };
 
     bool _loginDialogPoppedUp{ false };
+    std::atomic<bool> _signInPending{ true };
     bool _desktopRootItemCreated{ false };
 
     bool _developerMenuVisible{ false };

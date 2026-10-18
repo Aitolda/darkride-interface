@@ -5821,6 +5821,8 @@ void Application::pauseUntilLoginDetermined() {
         return;
     }
 
+    _signInPending = true;
+
     auto myAvatar = getMyAvatar();
     _previousAvatarTargetScale = myAvatar->getTargetScale();
     _previousAvatarSkeletonModel = myAvatar->getSkeletonModelURL().toString();
@@ -5951,6 +5953,7 @@ void Application::resumeAfterLoginDialogActionTaken() {
     cameraModeChanged();
     _startUpFinished = true;
     getRefreshRateManager().setRefreshRateRegime(RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE);
+    _signInPending = false;
 }
 
 void Application::loadAvatarScripts(const QVector<QString>& urls) {
