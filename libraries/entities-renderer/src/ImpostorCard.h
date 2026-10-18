@@ -3,11 +3,13 @@
 //  libraries/entities-renderer/src
 //
 //  An entity's impostor card (IMPOSTORS.md 2.3): the render item that stands in for the entity's models at a
-//  distance, a square of side two radii facing the camera, drawn by impostor.slf from the two atlases the bake wrote
+//  distance, a square of side two radii facing the camera, drawn by impostor.slf from the atlases the bake wrote
 //  (ImpostorBaker, the "impostor" entry of the entity's userData). The base EntityRenderer owns one for every entity
 //  with an entry and keeps it a second item in the scene beside the entity's own; the card's ImpostorSwitch decides,
-//  per view, whether the card or the models draw, and the models the card stands for (the entity's own and its
-//  descendants') hold the same switch (Model::setImpostorSwitch).
+//  per view, whether the card or the models draw (or both, dissolving into each other), and the models the card
+//  stands for (the entity's own and its descendants') hold the same switch (Model::setImpostorSwitch). The item
+//  draws through pipelines of its own (deferred, forward, and the shadow pass, where the card casts the shadow the
+//  model would), so its shape key says so.
 //
 //  Created by the editor session on 2026-10-18.
 //
@@ -36,6 +38,7 @@ struct ImpostorEntry {
     QString spec;           // the entry's own JSON, compact: equal specs are the same entry
     QString albedoUrl;
     QString normalUrl;
+    QString materialUrl;    // roughness and metallic per texel (a bake since step 4); empty: the entry's values
     int size { 256 };       // a frame's side, texels
     float radius { 0.0f };  // the bounding sphere in the entity's frame at bake time
     glm::vec3 center { 0.0f };
@@ -53,7 +56,7 @@ public:
     void setEntry(const ImpostorEntry& entry);
     void setFrame(const glm::vec3& positionWS, const glm::quat& rotationWS);
     void setVisible(bool visible);
-    void setKeyBits(render::hifi::Tag tagMask, render::hifi::Layer layer, bool subMetaCulled);
+    void setKeyBits(render::hifi::Tag tagMask, render::hifi::Layer layer, bool subMetaCulled, bool castShadow);
     // the atlases are still on their way (the renderer asks for another update until they are here or have failed)
     bool waitingForTextures() const;
     const ImpostorSwitchPointer& getSwitch() const { return _switch; }
@@ -77,17 +80,20 @@ private:
         render::hifi::Tag tagMask { render::hifi::TAG_MAIN_VIEW };
         render::hifi::Layer layer { render::hifi::LAYER_3D };
         bool subMetaCulled { false };
+        bool castShadow { false };
     };
 
     mutable std::mutex _mutex;     // over _pending and the network textures
     State _pending;
     NetworkTexturePointer _albedo;
     NetworkTexturePointer _normal;
+    NetworkTexturePointer _material;
 
     // the render thread's
     State _live;
     gpu::TexturePointer _albedoTexture;
     gpu::TexturePointer _normalTexture;
+    gpu::TexturePointer _materialTexture;
     bool _ready { false };
     glm::vec3 _centerWS { 0.0f };
     render::Item::Bound _bound;

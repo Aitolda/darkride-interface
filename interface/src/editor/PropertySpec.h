@@ -28,7 +28,8 @@
 //   Bool: bool  Int, Float, Slider: double  Degrees: double degrees (stored in radians)
 //   String, Url, Json, Image (the picture's URL), UserData (the whole text), Enum (the value name),
 //   CollisionMask (the comma list): QString   TerrainLayers: the property's text, unused (the layers live in the
-//   terrain file on this client, which the editor reads and sets directly)
+//   terrain file on this client, which the editor reads and sets directly)   Impostor: the entry's JSON, empty for
+//   none (setting it empty removes the entry; the bake itself goes through the ImpostorBaker)
 //   Color, FloatColor: QColor  Vec2, Polar (elevation and azimuth in degrees): QVector2D
 //   Vec3, Euler (degrees): QVector3D  Rect: QRect
 enum class PropertyKind {
@@ -51,7 +52,8 @@ enum class PropertyKind {
     Rect,
     Enum,
     CollisionMask,
-    TerrainLayers   // a Terrain's material layers: the list, with the selected layer's settings (TerrainLayersEditor)
+    TerrainLayers,  // a Terrain's material layers: the list, with the selected layer's settings (TerrainLayersEditor)
+    Impostor        // an entity's impostor card (IMPOSTORS.md): the entry's summary and atlases, Bake and Remove (ImpostorEditor)
 };
 
 struct PropertySpec {

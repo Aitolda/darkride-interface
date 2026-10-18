@@ -24,6 +24,7 @@
 
 #include <NetworkAccessManager.h>
 
+#include "ImpostorEditor.h"
 #include "TerrainLayersEditor.h"
 #include "UserDataEditor.h"
 #include <QtCore/QRect>
@@ -426,6 +427,7 @@ PropertyEditor* PropertyEditor::create(const PropertySpec& spec, QWidget* parent
         case PropertyKind::Image: return new ImageEditor(spec, parent);
         case PropertyKind::UserData: return new UserDataEditor(spec, parent);
         case PropertyKind::TerrainLayers: return new TerrainLayersEditor(spec, parent);
+        case PropertyKind::Impostor: return new ImpostorEditor(spec, parent);
         case PropertyKind::Color:
         case PropertyKind::FloatColor: return new ColorEditor(spec, parent);
         case PropertyKind::Vec2:

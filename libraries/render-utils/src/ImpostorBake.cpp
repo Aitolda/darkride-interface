@@ -124,7 +124,7 @@ namespace {
         RenderArgsPointer _cachedArgsPointer;
     };
 
-    // The subject's G-buffer, unpacked into the frame's two pictures and read back at the end of the batch (the
+    // The subject's G-buffer, unpacked into the frame's three pictures and read back at the end of the batch (the
     // read runs on the backend's thread, right after the draws that filled the pictures).
     class BakeResolve {
     public:
@@ -134,7 +134,7 @@ namespace {
         struct Params {
             glm::mat4 invProjection;        // the inverse of the reversed-depth projection the backend drew with
             glm::mat4 worldToObject;
-            glm::vec4 nearFarZeroToOneMode; // near, far, 1 when the clip depth runs 0..1, the layer (0 albedo, 1 normal)
+            glm::vec4 nearFarZeroToOneMode; // near, far, 1 when the clip depth runs 0..1, the layer (0 albedo, 1 normal, 2 material)
         };
 
         void run(const render::RenderContextPointer& renderContext, const Inputs& inputs) {
@@ -152,6 +152,7 @@ namespace {
                 _pipeline = gpu::Pipeline::create(program, state);
                 _params = std::make_shared<gpu::Buffer>(sizeof(Params), nullptr);
                 _params2 = std::make_shared<gpu::Buffer>(sizeof(Params), nullptr);
+                _params3 = std::make_shared<gpu::Buffer>(sizeof(Params), nullptr);
             }
             Params params;
             params.invProjection = glm::inverse(gpu::Backend::reversedZProjection(frame->projection));
@@ -160,6 +161,8 @@ namespace {
             _params->setSubData(0, params);
             params.nearFarZeroToOneMode.w = 1.0f;
             _params2->setSubData(0, params);
+            params.nearFarZeroToOneMode.w = 2.0f;
+            _params3->setSubData(0, params);
 
             const int size = frame->size;
             const glm::ivec4 viewport(0, 0, size, size);
@@ -182,6 +185,9 @@ namespace {
                 batch.setFramebuffer(frame->normalFramebuffer);
                 batch.setUniformBuffer(ru::Buffer::DebugDeferredParams, _params2);
                 batch.draw(gpu::TRIANGLE_STRIP, 4);
+                batch.setFramebuffer(frame->materialFramebuffer);
+                batch.setUniformBuffer(ru::Buffer::DebugDeferredParams, _params3);
+                batch.draw(gpu::TRIANGLE_STRIP, 4);
 
                 batch.setResourceTexture(ru::Texture::DeferredColor, nullptr);
                 batch.setResourceTexture(ru::Texture::DeferredNormal, nullptr);
@@ -193,6 +199,7 @@ namespace {
                     gpu::Vec4i region(0, 0, size, size);
                     context->downloadFramebuffer(frame->albedoFramebuffer, region, frame->albedo);
                     context->downloadFramebuffer(frame->normalFramebuffer, region, frame->normal);
+                    context->downloadFramebuffer(frame->materialFramebuffer, region, frame->material);
                     frame->state = ImpostorBake::Frame::DONE;
                 });
             });
@@ -202,6 +209,7 @@ namespace {
         gpu::PipelinePointer _pipeline;
         gpu::BufferPointer _params;
         gpu::BufferPointer _params2;
+        gpu::BufferPointer _params3;
     };
 
     // The frame's turn ends: the frame's own settings come back.

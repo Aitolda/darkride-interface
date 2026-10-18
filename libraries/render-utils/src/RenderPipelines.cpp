@@ -39,7 +39,7 @@ namespace gr {
 }
 
 void initDeferredPipelines(ShapePlumber& plumber, const render::ShapePipeline::BatchSetter& batchSetter, const render::ShapePipeline::ItemSetter& itemSetter);
-void initForwardPipelines(ShapePlumber& plumber);
+void initForwardPipelines(ShapePlumber& plumber, const render::ShapePipeline::BatchSetter& batchSetter, const render::ShapePipeline::ItemSetter& itemSetter);
 void initZPassPipelines(ShapePlumber& plumber, gpu::StatePointer state, const render::ShapePipeline::BatchSetter& batchSetter, const render::ShapePipeline::ItemSetter& itemSetter);
 
 void addPlumberPipeline(ShapePlumber& plumber,
@@ -171,79 +171,84 @@ void initDeferredPipelines(render::ShapePlumber& plumber, const render::ShapePip
     }
 }
 
-void initForwardPipelines(ShapePlumber& plumber) {
+void initForwardPipelines(ShapePlumber& plumber, const render::ShapePipeline::BatchSetter& batchSetter, const render::ShapePipeline::ItemSetter& itemSetter) {
     using namespace shader::render_utils::program;
     using Key = render::ShapeKey;
     auto addPipelineBind = std::bind(&addPlumberPipeline, std::ref(plumber), _1, _2, _3, _4);
 
-    // Disable fade on the forward pipeline, all shaders get added twice, once with the fade key and once without
-    auto addPipeline = [&](const ShapeKey& key, int programId) {
+    // Every shader is added twice, once with the fade key and once without: a model's fade variant is its own program
+    // (the dissolve into or out of its impostor card, ImpostorSwitch, clips by it), the simple shapes' is the plain one
+    auto addPipeline = [&](const ShapeKey& key, int programId, int fadeProgramId) {
         addPipelineBind(key, programId, nullptr, nullptr);
-        addPipelineBind(Key::Builder(key).withFade(), programId, nullptr, nullptr);
+        if (fadeProgramId != programId) {
+            addPipelineBind(Key::Builder(key).withFade(), fadeProgramId, batchSetter, itemSetter);
+        } else {
+            addPipelineBind(Key::Builder(key).withFade(), programId, nullptr, nullptr);
+        }
     };
 
     // Forward pipelines need the lightBatchSetter for opaques and transparents
     forceLightBatchSetter = true;
 
     // TOOD: build this list algorithmically so we don't have to maintain it
-    std::vector<std::pair<render::ShapeKey::Builder, uint32_t>> pipelines = {
+    std::vector<std::tuple<render::ShapeKey::Builder, uint32_t, uint32_t>> pipelines = {
         // Simple
-        { Key::Builder(), simple_forward },
-        { Key::Builder().withTranslucent(), simple_translucent_forward },
-        { Key::Builder().withUnlit(), simple_unlit_forward },
-        { Key::Builder().withTranslucent().withUnlit(), simple_translucent_unlit_forward },
+        { Key::Builder(), simple_forward, simple_forward },
+        { Key::Builder().withTranslucent(), simple_translucent_forward, simple_translucent_forward },
+        { Key::Builder().withUnlit(), simple_unlit_forward, simple_unlit_forward },
+        { Key::Builder().withTranslucent().withUnlit(), simple_translucent_unlit_forward, simple_translucent_unlit_forward },
 
         // Unskinned
-        { Key::Builder().withMaterial(), model_forward },
-        { Key::Builder().withMaterial().withTangents(), model_normalmap_forward },
-        { Key::Builder().withMaterial().withTranslucent(), model_translucent_forward },
-        { Key::Builder().withMaterial().withTangents().withTranslucent(), model_normalmap_translucent_forward },
+        { Key::Builder().withMaterial(), model_forward, model_fade_forward },
+        { Key::Builder().withMaterial().withTangents(), model_normalmap_forward, model_normalmap_fade_forward },
+        { Key::Builder().withMaterial().withTranslucent(), model_translucent_forward, model_translucent_fade_forward },
+        { Key::Builder().withMaterial().withTangents().withTranslucent(), model_normalmap_translucent_forward, model_normalmap_translucent_fade_forward },
         // Unskinned Unlit
-        { Key::Builder().withMaterial().withUnlit(), model_unlit_forward },
-        { Key::Builder().withMaterial().withTangents().withUnlit(), model_normalmap_unlit_forward },
-        { Key::Builder().withMaterial().withTranslucent().withUnlit(), model_translucent_unlit_forward },
-        { Key::Builder().withMaterial().withTangents().withTranslucent().withUnlit(), model_normalmap_translucent_unlit_forward },
+        { Key::Builder().withMaterial().withUnlit(), model_unlit_forward, model_unlit_fade_forward },
+        { Key::Builder().withMaterial().withTangents().withUnlit(), model_normalmap_unlit_forward, model_normalmap_unlit_fade_forward },
+        { Key::Builder().withMaterial().withTranslucent().withUnlit(), model_translucent_unlit_forward, model_translucent_unlit_fade_forward },
+        { Key::Builder().withMaterial().withTangents().withTranslucent().withUnlit(), model_normalmap_translucent_unlit_forward, model_normalmap_translucent_unlit_fade_forward },
         // Unskinned Lightmapped
-        { Key::Builder().withMaterial().withLightMap(), model_lightmap_forward },
-        { Key::Builder().withMaterial().withTangents().withLightMap(), model_normalmap_lightmap_forward },
-        { Key::Builder().withMaterial().withTranslucent().withLightMap(), model_translucent_lightmap_forward },
-        { Key::Builder().withMaterial().withTangents().withTranslucent().withLightMap(), model_normalmap_translucent_lightmap_forward },
+        { Key::Builder().withMaterial().withLightMap(), model_lightmap_forward, model_lightmap_fade_forward },
+        { Key::Builder().withMaterial().withTangents().withLightMap(), model_normalmap_lightmap_forward, model_normalmap_lightmap_fade_forward },
+        { Key::Builder().withMaterial().withTranslucent().withLightMap(), model_translucent_lightmap_forward, model_translucent_lightmap_fade_forward },
+        { Key::Builder().withMaterial().withTangents().withTranslucent().withLightMap(), model_normalmap_translucent_lightmap_forward, model_normalmap_translucent_lightmap_fade_forward },
 
         // Matrix palette skinned
-        { Key::Builder().withMaterial().withDeformed(), model_forward_deformed },
-        { Key::Builder().withMaterial().withTangents().withDeformed(), model_normalmap_forward_deformed },
-        { Key::Builder().withMaterial().withTranslucent().withDeformed(), model_translucent_forward_deformed },
-        { Key::Builder().withMaterial().withTangents().withTranslucent().withDeformed(), model_normalmap_translucent_forward_deformed },
+        { Key::Builder().withMaterial().withDeformed(), model_forward_deformed, model_fade_forward_deformed },
+        { Key::Builder().withMaterial().withTangents().withDeformed(), model_normalmap_forward_deformed, model_normalmap_fade_forward_deformed },
+        { Key::Builder().withMaterial().withTranslucent().withDeformed(), model_translucent_forward_deformed, model_translucent_fade_forward_deformed },
+        { Key::Builder().withMaterial().withTangents().withTranslucent().withDeformed(), model_normalmap_translucent_forward_deformed, model_normalmap_translucent_fade_forward_deformed },
         // Matrix palette skinned Unlit
-        { Key::Builder().withMaterial().withUnlit().withDeformed(), model_unlit_forward_deformed },
-        { Key::Builder().withMaterial().withTangents().withUnlit().withDeformed(), model_normalmap_unlit_forward_deformed },
-        { Key::Builder().withMaterial().withTranslucent().withUnlit().withDeformed(), model_translucent_unlit_forward_deformed },
-        { Key::Builder().withMaterial().withTangents().withTranslucent().withUnlit().withDeformed(), model_normalmap_translucent_unlit_forward_deformed },
+        { Key::Builder().withMaterial().withUnlit().withDeformed(), model_unlit_forward_deformed, model_unlit_fade_forward_deformed },
+        { Key::Builder().withMaterial().withTangents().withUnlit().withDeformed(), model_normalmap_unlit_forward_deformed, model_normalmap_unlit_fade_forward_deformed },
+        { Key::Builder().withMaterial().withTranslucent().withUnlit().withDeformed(), model_translucent_unlit_forward_deformed, model_translucent_unlit_fade_forward_deformed },
+        { Key::Builder().withMaterial().withTangents().withTranslucent().withUnlit().withDeformed(), model_normalmap_translucent_unlit_forward_deformed, model_normalmap_translucent_unlit_fade_forward_deformed },
         // Matrix palette skinned Lightmapped
-        { Key::Builder().withMaterial().withLightMap().withDeformed(), model_lightmap_forward_deformed },
-        { Key::Builder().withMaterial().withTangents().withLightMap().withDeformed(), model_normalmap_lightmap_forward_deformed },
-        { Key::Builder().withMaterial().withTranslucent().withLightMap().withDeformed(), model_translucent_lightmap_forward_deformed },
-        { Key::Builder().withMaterial().withTangents().withTranslucent().withLightMap().withDeformed(), model_normalmap_translucent_lightmap_forward_deformed },
+        { Key::Builder().withMaterial().withLightMap().withDeformed(), model_lightmap_forward_deformed, model_lightmap_fade_forward_deformed },
+        { Key::Builder().withMaterial().withTangents().withLightMap().withDeformed(), model_normalmap_lightmap_forward_deformed, model_normalmap_lightmap_fade_forward_deformed },
+        { Key::Builder().withMaterial().withTranslucent().withLightMap().withDeformed(), model_translucent_lightmap_forward_deformed, model_translucent_lightmap_fade_forward_deformed },
+        { Key::Builder().withMaterial().withTangents().withTranslucent().withLightMap().withDeformed(), model_normalmap_translucent_lightmap_forward_deformed, model_normalmap_translucent_lightmap_fade_forward_deformed },
 
         // Dual quaternion skinned
-        { Key::Builder().withMaterial().withDeformed().withDualQuatSkinned(), model_forward_deformeddq },
-        { Key::Builder().withMaterial().withTangents().withDeformed().withDualQuatSkinned(), model_normalmap_forward_deformeddq },
-        { Key::Builder().withMaterial().withTranslucent().withDeformed().withDualQuatSkinned(), model_translucent_forward_deformeddq },
-        { Key::Builder().withMaterial().withTangents().withTranslucent().withDeformed().withDualQuatSkinned(), model_normalmap_translucent_forward_deformeddq },
+        { Key::Builder().withMaterial().withDeformed().withDualQuatSkinned(), model_forward_deformeddq, model_fade_forward_deformeddq },
+        { Key::Builder().withMaterial().withTangents().withDeformed().withDualQuatSkinned(), model_normalmap_forward_deformeddq, model_normalmap_fade_forward_deformeddq },
+        { Key::Builder().withMaterial().withTranslucent().withDeformed().withDualQuatSkinned(), model_translucent_forward_deformeddq, model_translucent_fade_forward_deformeddq },
+        { Key::Builder().withMaterial().withTangents().withTranslucent().withDeformed().withDualQuatSkinned(), model_normalmap_translucent_forward_deformeddq, model_normalmap_translucent_fade_forward_deformeddq },
         // Dual quaternion skinned Unlit
-        { Key::Builder().withMaterial().withUnlit().withDeformed().withDualQuatSkinned(), model_unlit_forward_deformeddq },
-        { Key::Builder().withMaterial().withTangents().withUnlit().withDeformed().withDualQuatSkinned(), model_normalmap_unlit_forward_deformeddq },
-        { Key::Builder().withMaterial().withTranslucent().withUnlit().withDeformed().withDualQuatSkinned(), model_translucent_unlit_forward_deformeddq },
-        { Key::Builder().withMaterial().withTangents().withTranslucent().withUnlit().withDeformed().withDualQuatSkinned(), model_normalmap_translucent_unlit_forward_deformeddq },
+        { Key::Builder().withMaterial().withUnlit().withDeformed().withDualQuatSkinned(), model_unlit_forward_deformeddq, model_unlit_fade_forward_deformeddq },
+        { Key::Builder().withMaterial().withTangents().withUnlit().withDeformed().withDualQuatSkinned(), model_normalmap_unlit_forward_deformeddq, model_normalmap_unlit_fade_forward_deformeddq },
+        { Key::Builder().withMaterial().withTranslucent().withUnlit().withDeformed().withDualQuatSkinned(), model_translucent_unlit_forward_deformeddq, model_translucent_unlit_fade_forward_deformeddq },
+        { Key::Builder().withMaterial().withTangents().withTranslucent().withUnlit().withDeformed().withDualQuatSkinned(), model_normalmap_translucent_unlit_forward_deformeddq, model_normalmap_translucent_unlit_fade_forward_deformeddq },
         // Dual quaternion skinned Lightmapped
-        { Key::Builder().withMaterial().withLightMap().withDeformed().withDualQuatSkinned(), model_lightmap_forward_deformeddq },
-        { Key::Builder().withMaterial().withTangents().withLightMap().withDeformed().withDualQuatSkinned(), model_normalmap_lightmap_forward_deformeddq },
-        { Key::Builder().withMaterial().withTranslucent().withLightMap().withDeformed().withDualQuatSkinned(), model_translucent_lightmap_forward_deformeddq },
-        { Key::Builder().withMaterial().withTangents().withTranslucent().withLightMap().withDeformed().withDualQuatSkinned(), model_normalmap_translucent_lightmap_forward_deformeddq },
+        { Key::Builder().withMaterial().withLightMap().withDeformed().withDualQuatSkinned(), model_lightmap_forward_deformeddq, model_lightmap_fade_forward_deformeddq },
+        { Key::Builder().withMaterial().withTangents().withLightMap().withDeformed().withDualQuatSkinned(), model_normalmap_lightmap_forward_deformeddq, model_normalmap_lightmap_fade_forward_deformeddq },
+        { Key::Builder().withMaterial().withTranslucent().withLightMap().withDeformed().withDualQuatSkinned(), model_translucent_lightmap_forward_deformeddq, model_translucent_lightmap_fade_forward_deformeddq },
+        { Key::Builder().withMaterial().withTangents().withTranslucent().withLightMap().withDeformed().withDualQuatSkinned(), model_normalmap_translucent_lightmap_forward_deformeddq, model_normalmap_translucent_lightmap_fade_forward_deformeddq },
     };
 
     for (auto& pipeline : pipelines) {
-        addPipeline(pipeline.first, pipeline.second);
+        addPipeline(std::get<0>(pipeline), std::get<1>(pipeline), std::get<2>(pipeline));
     }
 
     forceLightBatchSetter = false;

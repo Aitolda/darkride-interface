@@ -3,8 +3,9 @@
 //  libraries/render-utils/src
 //
 //  The in-engine impostor bake (IMPOSTORS.md 2.2): a subject (the render items carrying the bake tag) drawn alone from
-//  an orthographic view through the deferred opaque pass into a small G-buffer, resolved into two 8-bit pictures (the
-//  albedo with its coverage; the object-space normal with the depth through the bounding sphere) and read back. One
+//  an orthographic view through the deferred opaque pass into a small G-buffer, resolved into three 8-bit pictures
+//  (the albedo with its coverage; the object-space normal with the depth through the bounding sphere; the roughness
+//  and metallic) and read back. One
 //  frame is drawn per rendered frame; the editor's baker queues six of them for a model and composes the atlases.
 //
 //  Created by the editor session on 2026-10-18.
@@ -45,8 +46,10 @@ public:
         int size { 256 };
         gpu::FramebufferPointer albedoFramebuffer;
         gpu::FramebufferPointer normalFramebuffer;
+        gpu::FramebufferPointer materialFramebuffer;
         QImage albedo;                    // read back: Format_ARGB32, the bottom row first as glReadPixels gives it
         QImage normal;
+        QImage material;                  // r: roughness, g: metallic (step 4)
         std::atomic<int> state { PENDING };
     };
     using FramePointer = std::shared_ptr<Frame>;

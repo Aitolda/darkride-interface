@@ -513,7 +513,7 @@ void EntityRenderer::updateImpostorCard(const ScenePointer& scene, Transaction& 
     glm::quat rotation = entity->getWorldOrientation(success);
     _impostorCard->setFrame(entity->getWorldPosition(), success ? rotation : glm::quat());
     _impostorCard->setVisible(impostorCardVisible(entity));
-    _impostorCard->setKeyBits(getTagMask(), getHifiRenderLayer(), _cullWithParent);
+    _impostorCard->setKeyBits(getTagMask(), getHifiRenderLayer(), _cullWithParent, _canCastShadow);
     if (_impostorCard->waitingForTextures()) {
         emit requestRenderUpdate();
     }

@@ -132,6 +132,9 @@ namespace render {
         // the impostor card's debug view (LODManager.impostorDebug, impostor.slf): 0 draws the card, other values paint
         // what the shader reads
         int _impostorDebug{ 0 };
+        // the impostor cross-fade forced to a share (LODManager.impostorCrossfade, a test hook): below 0 the switch
+        // times its own; 0 draws the model alone, 1 the card alone, between them both, dissolved
+        float _impostorCrossfade{ -1.0f };
 
         RenderMode _renderMode { DEFAULT_RENDER_MODE };
         DisplayMode _displayMode { MONO };

@@ -462,6 +462,11 @@ void ModelMeshPartPayload::setShapeKey(bool invalidateShapeKey, PrimitiveMode pr
 }
 
 ShapeKey ModelMeshPartPayload::getShapeKey() const {
+    // during the dissolve into or out of the model's impostor card the part draws through its fade pipeline, which
+    // clips it by the dissolve's noise (ImpostorSwitch, IMPOSTORS.md 2.4)
+    if (_impostorSwitch && _impostorSwitch->isFading() && _shapeKey.isValid() && !_shapeKey.hasOwnPipeline()) {
+        return ShapeKey::Builder(_shapeKey).withFade().build();
+    }
     return _shapeKey;
 }
 
@@ -487,8 +492,8 @@ void ModelMeshPartPayload::render(RenderArgs* args) {
     if (!args || (args->_renderMode == RenderArgs::RenderMode::DEFAULT_RENDER_MODE && _cauterized)) {
         return;
     }
-    // the model's impostor card stands in for it in this view (IMPOSTORS.md 2.4)
-    if (_impostorSwitch && _impostorSwitch->hidesModel(args)) {
+    // the model's impostor card stands in for it in this view, or the two dissolve into each other (IMPOSTORS.md 2.4)
+    if (_impostorSwitch && !_impostorSwitch->evaluate(args).model) {
         return;
     }
 
@@ -523,6 +528,11 @@ void ModelMeshPartPayload::render(RenderArgs* args) {
         if (RenderPipelines::bindMaterials(_drawMaterials, batch, args->_renderMode, args->_enableTexturing)) {
             args->_details._materialSwitches++;
         }
+    }
+    if (_impostorSwitch) {
+        // the dissolve's threshold for the fade pipeline the key asked for (the fade effect's own item setter binds
+        // nothing for an item without a transition of the scene's)
+        batch.setUniformBuffer(render_utils::slot::buffer::FadeObjectParameters, _impostorSwitch->fadeParams(args));
     }
 
     // Draw!

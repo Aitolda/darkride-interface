@@ -575,6 +575,29 @@ namespace {
                 volume.insert("intensity", std::round(v.toDouble() * 10000.0) / 10000.0);
                 setVolumeEntry(p, volume);
             });
+        // an entity's impostor card (IMPOSTORS.md), the entry "impostor" the baker writes, as one value: its JSON,
+        // shown by the Impostor section's own editor; an empty value takes the entry off (Remove), nothing else is
+        // written through here (the bake writes the entry itself)
+        add("userData:impostor",
+            [](const EP& p) {
+                QJsonValue entry = QJsonDocument::fromJson(p.getUserData().toUtf8()).object().value("impostor");
+                return QVariant(entry.isObject() ? QString::fromUtf8(QJsonDocument(entry.toObject()).toJson(QJsonDocument::Compact)) : QString());
+            },
+            [](EP& p, const QVariant& v) {
+                QString text = p.getUserData();
+                QJsonDocument document = QJsonDocument::fromJson(text.toUtf8());
+                if (!text.trimmed().isEmpty() && !document.isObject()) {
+                    return;
+                }
+                QJsonObject object = document.object();
+                QJsonDocument entry = QJsonDocument::fromJson(v.toString().toUtf8());
+                if (entry.isObject() && !entry.object().isEmpty()) {
+                    object.insert("impostor", entry.object());
+                } else {
+                    object.remove("impostor");
+                }
+                p.setUserData(object.isEmpty() ? QString() : JsonOrder::write(object, JsonOrder::scan(text)));
+            });
         // a model's lightmap, the entry "lightmap" (LIGHTMAPS.md §3.2): { "url", "scaleOffset": [sx, sy, ox, oy],
         // "mode": "indirect" | "full", "params": [offset, scale] }, shown as the Lightmap section's fields; clearing
         // the picture removes the entry
@@ -1053,6 +1076,10 @@ namespace {
             "userData:lightmap:url!=");
         add(spec("groupCulled", "Group Culled", K::Bool, "model"));
 
+        // the entity's impostor card (IMPOSTORS.md): a Model's, or a Shape's that groups models (a Unity export's
+        // empty parent); the section's editor shows the bake and runs it
+        add(spec("userData:impostor", "Impostor", K::Impostor, "impostor"));
+
         // image
         add(spec("imageURL", "Image", K::Url, "image"));
         add(spec("color", "Color", K::Color, "image"));
@@ -1261,6 +1288,7 @@ namespace {
         { "zone", "Zone", false },
         { "model", "Model", false },
         { "lightmap", "Lightmap", true },
+        { "impostor", "Impostor", true },
         { "image", "Image", false },
         { "web", "Web", false },
         { "light", "Light", false },
@@ -1329,13 +1357,13 @@ static QStringList typeSections(EntityTypes::EntityType type, bool multiple) {
         case EntityTypes::Box:
         case EntityTypes::Sphere:
         case EntityTypes::Shape:
-            return { "base", "spatial", "shape", "reflectionProbe", "behavior", "collision", "physics" };
+            return { "base", "spatial", "shape", "reflectionProbe", "impostor", "behavior", "collision", "physics" };
         case EntityTypes::Text:
             return { "base", "spatial", "text", "behavior", "collision", "physics" };
         case EntityTypes::Zone:
             return { "base", "spatial", "zone", "behavior", "physics" };
         case EntityTypes::Model:
-            return { "base", "spatial", "model", "lightmap", "behavior", "collision", "physics" };
+            return { "base", "spatial", "model", "lightmap", "impostor", "behavior", "collision", "physics" };
         case EntityTypes::Image:
             return { "base", "spatial", "image", "behavior", "collision", "physics" };
         case EntityTypes::Web:

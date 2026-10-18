@@ -50,7 +50,7 @@ namespace gr {
 
 using namespace render;
 
-extern void initForwardPipelines(ShapePlumber& plumber);
+extern void initForwardPipelines(ShapePlumber& plumber, const render::ShapePipeline::BatchSetter& batchSetter, const render::ShapePipeline::ItemSetter& itemSetter);
 
 void PreparePrimaryFramebufferMSAAConfig::setResolutionScale(float scale) {
     const float SCALE_RANGE_MIN = 0.1f;
@@ -76,7 +76,7 @@ void RenderForwardTask::build(JobModel& task, const render::Varying& input, rend
     // Prepare the ShapePipelines
     auto fadeEffect = DependencyManager::get<FadeEffect>();
     ShapePlumberPointer shapePlumber = std::make_shared<ShapePlumber>();
-    initForwardPipelines(*shapePlumber);
+    initForwardPipelines(*shapePlumber, fadeEffect->getBatchSetter(), fadeEffect->getItemUniformSetter());
 
     // Unpack inputs
     const auto& inputs = input.get<Input>();

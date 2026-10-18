@@ -154,6 +154,7 @@ class LODManager : public QObject, public Dependency {
         Q_PROPERTY(float lodAngleDeg READ getLODAngleDeg WRITE setLODAngleDeg)
         Q_PROPERTY(float impostorAngleDeg READ getImpostorAngleDeg WRITE setImpostorAngleDeg)
         Q_PROPERTY(int impostorDebug READ getImpostorDebug WRITE setImpostorDebug)
+        Q_PROPERTY(float impostorCrossfade READ getImpostorCrossfade WRITE setImpostorCrossfade)
 
         Q_PROPERTY(float pidKp READ getPidKp WRITE setPidKp)
         Q_PROPERTY(float pidKi READ getPidKi WRITE setPidKi)
@@ -296,11 +297,17 @@ public:
     // than this angle and the card below it, down to lodAngleDeg; 0 (the default) means four times lodAngleDeg
     float getImpostorAngleDeg() const;
     void setImpostorAngleDeg(float angle);
+    // the setting as stored: 0 for the automatic angle
+    float getImpostorAngleSetting() const { return _impostorAngleDeg; }
     // the angle as RenderArgs::_impostorAngleHalfTanSq takes it
     float getImpostorAngleHalfTanSq() const;
     // the card shader's debug view (impostor.slf), not saved: 0 draws the card
     int getImpostorDebug() const { return _impostorDebug; }
     void setImpostorDebug(int mode) { _impostorDebug = mode; }
+    // the cross-fade between a model and its card held at a share (ImpostorSwitch), not saved: below 0 the switch
+    // times its own; 0 the model alone, 1 the card alone, between them both, dissolved (a test hook)
+    float getImpostorCrossfade() const { return _impostorCrossfade; }
+    void setImpostorCrossfade(float share) { _impostorCrossfade = share < 0.0f ? -1.0f : std::min(share, 1.0f); }
     float getLODAngle() const;
     float getVisibilityDistance() const;
     void setVisibilityDistance(float distance);
@@ -387,6 +394,7 @@ private:
     float _lodHalfAngle = getHalfAngleFromVisibilityDistance(DEFAULT_VISIBILITY_DISTANCE_FOR_UNIT_ELEMENT);
     float _impostorAngleDeg { 0.0f };   // 0: automatic, four times the LOD angle
     int _impostorDebug { 0 };
+    float _impostorCrossfade { -1.0f };
     int _boundaryLevelAdjust = 0;
 
     glm::vec4 _pidCoefs{ 1.0f, 0.0f, 0.0f, 1.0f }; // Kp, Ki, Kd, Kv

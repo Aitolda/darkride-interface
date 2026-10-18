@@ -5,9 +5,11 @@
 //  impostor_bake_resolve.slf
 //
 //  One frame of an impostor bake (IMPOSTORS.md 2.2): the subject's G-buffer, drawn alone from an orthographic view,
-//  unpacked into one of the atlas's two layers. Layer 0: the albedo, sRGB, with the coverage in alpha. Layer 1: the
+//  unpacked into one of the atlas's three layers. Layer 0: the albedo, sRGB, with the coverage in alpha. Layer 1: the
 //  object-space normal (0.5 + 0.5 n) with the depth through the bounding sphere in alpha (0 at the near face, 1 at the
-//  far face). The G-buffer clears its depth to 0, the far plane in reversed-Z, so a depth above 0 is a covered texel.
+//  far face). Layer 2 (step 4): the roughness in red and the metallic in green, as the G-buffer holds them, so the
+//  card tells a chrome tube from a plastic plate. The G-buffer clears its depth to 0, the far plane in reversed-Z, so
+//  a depth above 0 is a covered texel.
 //
 //  Created by the editor session on 2026-10-18.
 //
@@ -32,6 +34,12 @@ void main(void) {
     if (bake.nearFarZeroToOneLayer.w < 0.5) {
         vec3 albedo = texture(albedoMap, uv).rgb;
         outFragColor = vec4(color_LinearTosRGB(albedo) * covered, covered);
+    } else if (bake.nearFarZeroToOneLayer.w > 1.5) {
+        float roughness = texture(normalMap, uv).a;
+        int mode;
+        float metallic;
+        unpackModeMetallic(texture(albedoMap, uv).w, mode, metallic);
+        outFragColor = vec4(mix(1.0, roughness, covered), metallic * covered, 0.0, 1.0);
     } else {
         vec3 normalWS = unpackNormal(texture(normalMap, uv).xyz);
         vec3 normalOS = normalize(mat3(bake.worldToObject) * normalWS);

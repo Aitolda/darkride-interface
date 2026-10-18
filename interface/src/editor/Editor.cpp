@@ -3022,10 +3022,55 @@ void Editor::bakeImpostor() {
     QList<QUuid> ids = _selection.topLevel();
     if (ids.isEmpty()) {
         qCDebug(interfaceapp) << "Bake Impostor: nothing selected";
+        setStatus("Bake Impostor: nothing selected", STATUS_CLEAR_MS);
         return;
     }
     auto baker = DependencyManager::get<ImpostorBaker>();
     for (const QUuid& id : ids) {
         baker->bake(id, 256);
     }
+    setStatus(ids.size() == 1 ? QStringLiteral("Baking the impostor…") : QString("Baking %1 impostors…").arg(ids.size()));
+}
+
+void Editor::bakeAllImpostors() {
+    auto baker = DependencyManager::get<ImpostorBaker>();
+    if (!_impostorBakerConnected) {
+        _impostorBakerConnected = true;
+        connect(baker.data(), &ImpostorBaker::baked, this, [this](const QUuid& id, bool ok, const QString& message) {
+            if (_impostorBakesQueued == 0) {
+                setStatus(ok ? QStringLiteral("Impostor baked") : QString("Impostor bake failed: %1").arg(message), STATUS_CLEAR_MS);
+                return;
+            }
+            ++_impostorBakesDone;
+            if (_impostorBakesDone >= _impostorBakesQueued) {
+                setStatus(QString("Baked %1 impostors").arg(_impostorBakesDone), STATUS_CLEAR_MS);
+                _impostorBakesQueued = 0;
+                _impostorBakesDone = 0;
+            } else {
+                setStatus(QString("Baking impostors: %1 of %2…").arg(_impostorBakesDone).arg(_impostorBakesQueued));
+            }
+        });
+    }
+    const float MAX_RADIUS = 4.0f;   // a prop's size: a bigger group is opened and its children taken in turn
+    const float MIN_RADIUS = 0.3f;   // a die needs no card
+    int count = baker->bakeAll(256, MAX_RADIUS, MIN_RADIUS, false);
+    if (count == 0) {
+        setStatus("Bake All Impostors: nothing to bake (every prop between 0.3 and 4 m has a card, or no model has loaded)", STATUS_CLEAR_MS);
+        return;
+    }
+    _impostorBakesQueued += count;
+    setStatus(QString("Baking impostors: 0 of %1…").arg(_impostorBakesQueued));
+}
+
+void Editor::removeImpostor() {
+    QList<QUuid> ids = _selection.topLevel();
+    if (ids.isEmpty()) {
+        setStatus("Remove Impostor: nothing selected", STATUS_CLEAR_MS);
+        return;
+    }
+    auto baker = DependencyManager::get<ImpostorBaker>();
+    for (const QUuid& id : ids) {
+        baker->remove(id);
+    }
+    setStatus(ids.size() == 1 ? QStringLiteral("Impostor removed") : QString("Impostors removed from %1 entities").arg(ids.size()), STATUS_CLEAR_MS);
 }

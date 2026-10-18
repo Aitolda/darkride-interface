@@ -155,6 +155,10 @@ public slots:
     void useStableLinks();
     // Build > Bake Impostor: every selected entity without a selected ancestor, one after the other (ImpostorBaker)
     void bakeImpostor();
+    // Build > Bake All Impostors: every prop of the world without a card yet (ImpostorBaker::bakeAll), the progress
+    // on the status bar; Build > Remove Impostor: the selected entities' entries
+    void bakeAllImpostors();
+    void removeImpostor();
 
 signals:
     void activeChanged(bool active);
@@ -372,6 +376,9 @@ private:
     AssetsPanel* _assets { nullptr };     // My Files, along the bottom
     EditorToolBar* _toolBar { nullptr };
     TerrainToolBar* _terrainBar { nullptr };
+    int _impostorBakesQueued { 0 };       // Bake All's count, for the status bar
+    int _impostorBakesDone { 0 };
+    bool _impostorBakerConnected { false };
     QStatusBar* _statusBar { nullptr };   // the bottom of the window, in build mode: notes go there
     QLabel* _statusLabel { nullptr };
     EntityTreeModel* _treeModel { nullptr };

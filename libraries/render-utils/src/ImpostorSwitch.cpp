@@ -7,43 +7,111 @@
 
 #include "ImpostorSwitch.h"
 
+#include <NumericalConstants.h>
+#include <SharedUtil.h>
 #include <ViewFrustum.h>
+
+#include "FadeEffectJobs.h"
+
+const float ImpostorSwitch::CROSSFADE_SECONDS = 0.35f;
 
 namespace {
     // the hysteresis band of the main view, on the squared half-tangent: the card comes at a fifth under the angle's
     // measure and goes at a fifth over it, about a tenth of the distance either way
     const float BAND = 0.2f;
+
+    void setParams(gpu::StructBuffer<FadeObjectParams>& buffer, float threshold) {
+        auto& params = buffer.edit();
+        params.noiseOffset = glm::vec4(0.0f);
+        params.baseOffset = glm::vec4(0.0f);
+        params.baseInvSize = glm::vec4(1.0f);
+        params.category = FADE_LOD_SWITCH;
+        params.threshold = threshold;
+    }
 }
 
-bool ImpostorSwitch::showsCard(const RenderArgs* args) {
-    if (!_cardReady || _radius <= 0.0f || !args || !args->hasViewFrustum()) {
-        return false;
-    }
-    if (args->_renderMode == RenderArgs::RenderMode::SHADOW_RENDER_MODE) {
-        return false;
-    }
-    const float thresholdSq = args->_impostorAngleHalfTanSq;
-    if (thresholdSq <= 0.0f) {
-        return false;
-    }
-    // LODManager::shouldRender's test: the bound's half size squared against the angle's half tangent squared times
-    // the squared distance; the card shows where the model would be too small for the impostor angle
-    glm::vec3 toCamera = args->getViewFrustum().getPosition() - _center;
-    float distanceSq = glm::dot(toCamera, toCamera);
+// LODManager::shouldRender's test: the bound's half size squared against the angle's half tangent squared times
+// the squared distance; the card shows where the model would be too small for the impostor angle, and never with the
+// camera inside the sphere (the card is a section through the sphere's centre, nothing from in there)
+bool ImpostorSwitch::wantsCardAt(float distanceSq, float thresholdSq) const {
     float radiusSq = _radius * _radius;
-    if (args->_renderMode != RenderArgs::RenderMode::DEFAULT_RENDER_MODE) {
-        return radiusSq < thresholdSq * distanceSq;
+    return distanceSq > radiusSq && radiusSq < thresholdSq * distanceSq;
+}
+
+ImpostorSwitch::View ImpostorSwitch::evaluate(const RenderArgs* args) {
+    View view;
+    if (!args) {
+        return view;
     }
-    // the main view: every item of a frame reads the same state, and the band's two tests agree with each other for
-    // either state, so the model's parts and the card never both draw or both stay away
-    if (_mainViewShowsCard) {
-        if (radiusSq > thresholdSq * (1.0f + BAND) * distanceSq) {
-            _mainViewShowsCard = false;
+    const bool mainView = args->_renderMode == RenderArgs::RenderMode::DEFAULT_RENDER_MODE;
+    const bool shadow = args->_renderMode == RenderArgs::RenderMode::SHADOW_RENDER_MODE;
+    if (mainView || shadow) {
+        if (mainView) {
+            // the state the view goes to: every item of a frame reads the same one, and the band's two tests agree
+            // with each other for either state, so the model's parts and the card never disagree about it
+            bool target = _mainViewShowsCard;
+            const float thresholdSq = args->_impostorAngleHalfTanSq;
+            if (!_cardReady || _radius <= 0.0f || thresholdSq <= 0.0f || !args->hasViewFrustum()) {
+                target = false;
+            } else {
+                glm::vec3 toCamera = args->getViewFrustum().getPosition() - _center;
+                float distanceSq = glm::dot(toCamera, toCamera);
+                float radiusSq = _radius * _radius;
+                if (distanceSq <= radiusSq) {
+                    target = false;
+                } else if (_mainViewShowsCard) {
+                    if (radiusSq > thresholdSq * (1.0f + BAND) * distanceSq) {
+                        target = false;
+                    }
+                } else if (radiusSq < thresholdSq * (1.0f - BAND) * distanceSq) {
+                    target = true;
+                }
+            }
+            quint64 now = usecTimestampNow();
+            if (target != _mainViewShowsCard) {
+                _mainViewShowsCard = target;
+                _fadeFrom = _share;   // a reversal in mid-dissolve goes on from where it is
+                _fadeStart = now;
+            }
+            float goal = _mainViewShowsCard ? 1.0f : 0.0f;
+            if (args->_impostorCrossfade >= 0.0f) {
+                _share = glm::clamp(args->_impostorCrossfade, 0.0f, 1.0f);
+            } else if (_share != goal) {
+                float t = (float)(now - _fadeStart) / (CROSSFADE_SECONDS * (float)USECS_PER_SECOND);
+                _share = (t >= 1.0f) ? goal : glm::mix(_fadeFrom, goal, glm::max(t, 0.0f));
+            }
         }
-    } else {
-        if (radiusSq < thresholdSq * (1.0f - BAND) * distanceSq) {
-            _mainViewShowsCard = true;
-        }
+        // the shadow pass takes the main view's state as it stands (its own camera is the light's)
+        view.share = _share;
+        view.card = _share > 0.0f;
+        view.model = _share < 1.0f;
+        return view;
     }
-    return _mainViewShowsCard;
+    // mirrors and the secondary camera: the plain threshold on their own camera, no band, no dissolve
+    bool card = false;
+    if (_cardReady && _radius > 0.0f && args->_impostorAngleHalfTanSq > 0.0f && args->hasViewFrustum()) {
+        glm::vec3 toCamera = args->getViewFrustum().getPosition() - _center;
+        card = wantsCardAt(glm::dot(toCamera, toCamera), args->_impostorAngleHalfTanSq);
+    }
+    view.card = card;
+    view.model = !card;
+    view.share = card ? 1.0f : 0.0f;
+    return view;
+}
+
+const gpu::BufferView& ImpostorSwitch::fadeParams(const RenderArgs* args) {
+    const bool mainOrShadow = args && (args->_renderMode == RenderArgs::RenderMode::DEFAULT_RENDER_MODE ||
+                                       args->_renderMode == RenderArgs::RenderMode::SHADOW_RENDER_MODE);
+    if (mainOrShadow) {
+        if (_mainParamsShare != _share) {
+            setParams(_mainParams, _share);
+            _mainParamsShare = _share;
+        }
+        return _mainParams;
+    }
+    if (!_plainParamsSet) {
+        setParams(_plainParams, 0.0f);
+        _plainParamsSet = true;
+    }
+    return _plainParams;
 }

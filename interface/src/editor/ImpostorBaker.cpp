@@ -16,11 +16,15 @@
 #include <QtCore/QThread>
 #include <QtGui/QPainter>
 
+#include <functional>
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
 
 #include <AbstractViewStateInterface.h>
 #include <EntityScriptingInterface.h>
+#include <EntityTree.h>
+#include <EntityTreeElement.h>
 #include <EntityTreeRenderer.h>
 #include <PathUtils.h>
 #include <RenderableModelEntityItem.h>
@@ -85,21 +89,7 @@ void ImpostorBaker::start(const QUuid& entityID, int size) {
     }
 
     // the models: the entity's own and its descendants', loaded
-    auto addModel = [&](const SpatiallyNestablePointer& nestable) {
-        auto item = std::dynamic_pointer_cast<EntityItem>(nestable);
-        if (!item || item->getType() != EntityTypes::Model) {
-            return;
-        }
-        auto renderer = std::dynamic_pointer_cast<render::entities::ModelEntityRenderer>(entityTreeRenderer->renderableForEntityId(item->getID()));
-        ModelPointer model = renderer ? renderer->getModelForBake() : nullptr;
-        if (model && model->isLoaded()) {
-            _job->models.push_back(model);
-        } else {
-            qCDebug(interfaceapp) << "impostor bake skips" << item->getName() << item->getID() << (renderer ? (model ? "model not loaded yet" : "no model") : "no renderer");
-        }
-    };
-    addModel(entity);
-    entity->forEachDescendant(addModel);
+    collectModels(entity, _job->models, true);
     {
         QStringList seen;
         entity->forEachDescendant([&](const SpatiallyNestablePointer& nestable) {
@@ -163,8 +153,10 @@ void ImpostorBaker::start(const QUuid& entityID, int size) {
         frame->size = size;
         frame->albedoFramebuffer = gpu::FramebufferPointer(gpu::Framebuffer::create("impostorBakeAlbedo", gpu::Element::COLOR_RGBA_32, size, size));
         frame->normalFramebuffer = gpu::FramebufferPointer(gpu::Framebuffer::create("impostorBakeNormal", gpu::Element::COLOR_RGBA_32, size, size));
+        frame->materialFramebuffer = gpu::FramebufferPointer(gpu::Framebuffer::create("impostorBakeMaterial", gpu::Element::COLOR_RGBA_32, size, size));
         frame->albedo = QImage(size, size, QImage::Format_ARGB32);
         frame->normal = QImage(size, size, QImage::Format_ARGB32);
+        frame->material = QImage(size, size, QImage::Format_ARGB32);
         _job->frames.push_back(frame);
     }
 
@@ -177,6 +169,141 @@ void ImpostorBaker::start(const QUuid& entityID, int size) {
     qCDebug(interfaceapp) << "impostor bake started" << entityID << name << "radius" << radius << "centre" << _job->center.x << _job->center.y << _job->center.z
                           << "models" << _job->models.size() << "size" << size;
     _timer.start();
+}
+
+void ImpostorBaker::collectModels(const EntityItemPointer& entity, std::vector<ModelPointer>& models, bool log) const {
+    auto entityTreeRenderer = DependencyManager::get<EntityTreeRenderer>();
+    auto addModel = [&](const SpatiallyNestablePointer& nestable) {
+        auto item = std::dynamic_pointer_cast<EntityItem>(nestable);
+        if (!item || item->getType() != EntityTypes::Model) {
+            return;
+        }
+        auto renderer = std::dynamic_pointer_cast<render::entities::ModelEntityRenderer>(entityTreeRenderer->renderableForEntityId(item->getID()));
+        ModelPointer model = renderer ? renderer->getModelForBake() : nullptr;
+        if (model && model->isLoaded()) {
+            models.push_back(model);
+        } else if (log) {
+            qCDebug(interfaceapp) << "impostor bake skips" << item->getName() << item->getID() << (renderer ? (model ? "model not loaded yet" : "no model") : "no renderer");
+        }
+    };
+    addModel(entity);
+    entity->forEachDescendant(addModel);
+}
+
+bool ImpostorBaker::hasEntry(const EntityItemPointer& entity) {
+    QString userData = entity->getUserData();
+    return userData.contains(QStringLiteral("impostor")) &&
+        QJsonDocument::fromJson(userData.toUtf8()).object().value("impostor").isObject();
+}
+
+// The subjects of Bake All: every entity of the world without a parent is considered (an avatar's entities and this
+// client's local ones, the stylus and the keyboard, are not the world's); one with an entry keeps it (unless the
+// bake is a rebake), one without models or models under it is passed over, one whose models fit a sphere between
+// the two radii is a subject, a smaller one is passed over, and a bigger one (a room's parent, a building) is opened
+// and its children considered in turn. An entity under a subject gets no card of its own: its models follow the
+// subject's.
+QVector<QUuid> ImpostorBaker::candidates(float maxRadius, float minRadius, bool rebake, QStringList& lines) const {
+    QVector<QUuid> out;
+    auto entityTreeRenderer = DependencyManager::get<EntityTreeRenderer>();
+    auto tree = entityTreeRenderer ? entityTreeRenderer->getTree() : nullptr;
+    if (!tree) {
+        return out;
+    }
+    std::vector<EntityItemPointer> roots;
+    tree->recurseTreeWithOperation([&](const OctreeElementPointer& element, void*) {
+        std::static_pointer_cast<EntityTreeElement>(element)->forEachEntity([&](EntityItemPointer entity) {
+            if (entity && entity->isDomainEntity() && entity->getParentID().isNull()) {
+                roots.push_back(entity);
+            }
+        });
+        return true;
+    });
+    std::function<void(const EntityItemPointer&)> consider = [&](const EntityItemPointer& entity) {
+        if (!rebake && hasEntry(entity)) {
+            return;
+        }
+        std::vector<ModelPointer> models;
+        collectModels(entity, models, false);
+        if (models.empty()) {
+            return;
+        }
+        AABox box;
+        bool first = true;
+        for (const auto& model : models) {
+            AABox bound = model->getRenderableMeshBound();
+            if (first) {
+                box = bound;
+                first = false;
+            } else {
+                box += bound;
+            }
+        }
+        float radius = 0.5f * glm::length(box.getDimensions());
+        if (radius <= 0.0f || radius < minRadius) {
+            return;
+        }
+        if (radius <= maxRadius) {
+            out.push_back(entity->getID());
+            lines << QString("%1 (%2 models, radius %3 m)").arg(entity->getName().isEmpty() ? QStringLiteral("entity") : entity->getName())
+                                                            .arg(models.size()).arg(radius, 0, 'f', 2);
+            return;
+        }
+        for (const auto& child : entity->getChildren()) {
+            auto item = std::dynamic_pointer_cast<EntityItem>(child);
+            if (item) {
+                consider(item);
+            }
+        }
+    };
+    for (const auto& root : roots) {
+        consider(root);
+    }
+    return out;
+}
+
+int ImpostorBaker::bakeAll(int size, float maxRadius, float minRadius, bool rebake) {
+    if (QThread::currentThread() != thread()) {
+        int count = 0;
+        QMetaObject::invokeMethod(this, [&] { count = bakeAll(size, maxRadius, minRadius, rebake); }, Qt::BlockingQueuedConnection);
+        return count;
+    }
+    QStringList lines;
+    QVector<QUuid> ids = candidates(maxRadius, minRadius, rebake, lines);
+    qCDebug(interfaceapp) << "impostor bake all:" << ids.size() << "subjects between" << minRadius << "and" << maxRadius << "m:" << lines.join("; ");
+    for (const QUuid& id : ids) {
+        bake(id, size);
+    }
+    return ids.size();
+}
+
+QStringList ImpostorBaker::listBakeAll(float maxRadius, float minRadius, bool rebake) {
+    if (QThread::currentThread() != thread()) {
+        QStringList lines;
+        QMetaObject::invokeMethod(this, [&] { lines = listBakeAll(maxRadius, minRadius, rebake); }, Qt::BlockingQueuedConnection);
+        return lines;
+    }
+    QStringList lines;
+    candidates(maxRadius, minRadius, rebake, lines);
+    return lines;
+}
+
+void ImpostorBaker::remove(const QUuid& entityID) {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, [this, entityID] { remove(entityID); }, Qt::QueuedConnection);
+        return;
+    }
+    auto entityTreeRenderer = DependencyManager::get<EntityTreeRenderer>();
+    auto tree = entityTreeRenderer ? entityTreeRenderer->getTree() : nullptr;
+    EntityItemPointer entity = tree ? tree->findEntityByID(entityID) : nullptr;
+    if (!entity || !hasEntry(entity)) {
+        return;
+    }
+    QJsonObject userData = QJsonDocument::fromJson(entity->getUserData().toUtf8()).object();
+    userData.remove("impostor");
+    EntityItemProperties properties;
+    properties.setUserData(userData.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(userData).toJson(QJsonDocument::Compact)));
+    DependencyManager::get<EntityScriptingInterface>()->editEntity(entityID, properties);
+    qCDebug(interfaceapp) << "impostor removed from" << entity->getName() << entityID;
 }
 
 void ImpostorBaker::poll() {
@@ -217,18 +344,23 @@ void ImpostorBaker::compose() {
     const int size = _job->size;
     QImage albedo(3 * size, 2 * size, QImage::Format_ARGB32);
     QImage normal(3 * size, 2 * size, QImage::Format_ARGB32);
+    QImage material(3 * size, 2 * size, QImage::Format_ARGB32);
     albedo.fill(Qt::transparent);
     normal.fill(QColor(128, 128, 255, 255));
+    material.fill(QColor(255, 0, 0, 255));   // rough, not metallic
     {
         QPainter albedoPainter(&albedo);
         QPainter normalPainter(&normal);
+        QPainter materialPainter(&material);
         albedoPainter.setCompositionMode(QPainter::CompositionMode_Source);
         normalPainter.setCompositionMode(QPainter::CompositionMode_Source);
+        materialPainter.setCompositionMode(QPainter::CompositionMode_Source);
         for (int i = 0; i < 6; i++) {
             const auto& frame = _job->frames[i];
             // glReadPixels gives the bottom row first
             albedoPainter.drawImage((i % 3) * size, (i / 3) * size, frame->albedo.mirrored(false, true));
             normalPainter.drawImage((i % 3) * size, (i / 3) * size, frame->normal.mirrored(false, true));
+            materialPainter.drawImage((i % 3) * size, (i / 3) * size, frame->material.mirrored(false, true));
         }
     }
     _job->frames.clear();
@@ -242,36 +374,36 @@ void ImpostorBaker::compose() {
     }
     QString albedoPath = folder() + _job->name + ".albedo.png";
     QString normalPath = folder() + _job->name + ".normal.png";
-    QByteArray albedoPng;
-    QByteArray normalPng;
-    {
-        QBuffer buffer(&albedoPng);
+    QString materialPath = folder() + _job->name + ".material.png";
+    auto encode = [](const QImage& image) {
+        QByteArray png;
+        QBuffer buffer(&png);
         buffer.open(QIODevice::WriteOnly);
-        albedo.save(&buffer, "PNG");
-    }
-    {
-        QBuffer buffer(&normalPng);
-        buffer.open(QIODevice::WriteOnly);
-        normal.save(&buffer, "PNG");
-    }
-    QFile albedoFile(albedoPath);
-    QFile normalFile(normalPath);
-    if (!albedoFile.open(QIODevice::WriteOnly) || albedoFile.write(albedoPng) != albedoPng.size() ||
-        !normalFile.open(QIODevice::WriteOnly) || normalFile.write(normalPng) != normalPng.size()) {
+        image.save(&buffer, "PNG");
+        return png;
+    };
+    QByteArray albedoPng = encode(albedo);
+    QByteArray normalPng = encode(normal);
+    QByteArray materialPng = encode(material);
+    auto write = [](const QString& path, const QByteArray& png) {
+        QFile file(path);
+        return file.open(QIODevice::WriteOnly) && file.write(png) == png.size();
+    };
+    if (!write(albedoPath, albedoPng) || !write(normalPath, normalPng) || !write(materialPath, materialPng)) {
         finish(false, "could not write " + albedoPath);
         return;
     }
-    albedoFile.close();
-    normalFile.close();
     _job->albedoUrl = QUrl::fromLocalFile(albedoPath).toString();
     _job->normalUrl = QUrl::fromLocalFile(normalPath).toString();
+    _job->materialUrl = QUrl::fromLocalFile(materialPath).toString();
     qCDebug(interfaceapp) << "impostor atlases written" << albedoPath << "in" << _job->clock.elapsed() << "ms";
 
     // to My Files when logged in; the entry takes the local files meanwhile
     if (UserFiles::isLoggedIn()) {
-        _job->uploadsLeft = 2;
+        _job->uploadsLeft = 3;
         upload(albedoPng, _job->name + ".albedo.png", _job->albedoUrl);
         upload(normalPng, _job->name + ".normal.png", _job->normalUrl);
+        upload(materialPng, _job->name + ".material.png", _job->materialUrl);
     } else {
         writeEntry();
     }
@@ -320,6 +452,7 @@ void ImpostorBaker::writeEntry() {
     QJsonObject entry;
     entry["albedo"] = _job->albedoUrl;
     entry["normal"] = _job->normalUrl;
+    entry["material"] = _job->materialUrl;
     entry["frames"] = "cube6";
     entry["size"] = _job->size;
     entry["radius"] = (double)_job->radius;

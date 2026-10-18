@@ -310,9 +310,14 @@ Menu::Menu() {
         // Build > Use Stable Links: the world's links to your files by path become their stable links (NATIVE-EDITOR.md 7.4)
         editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildUseStableLinks, 0,
             editor.data(), SLOT(useStableLinks())));
-        // Build > Bake Impostor: the selected entities' replacement cards (IMPOSTORS.md 2.2)
+        // Build > Bake Impostor: the selected entities' replacement cards (IMPOSTORS.md 2.2); Bake All Impostors:
+        // every prop of the world without one; Remove Impostor: the selected entities' entries
         editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildBakeImpostor, 0,
             editor.data(), SLOT(bakeImpostor())));
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildBakeAllImpostors, 0,
+            editor.data(), SLOT(bakeAllImpostors())));
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildRemoveImpostor, 0,
+            editor.data(), SLOT(removeImpostor())));
     }
 
     //TODO: Remove Navigation menu when these functions are included in GoTo menu

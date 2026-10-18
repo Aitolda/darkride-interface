@@ -63,6 +63,8 @@ namespace MenuOption {
     const QString BuildResetPanels = "Reset Panels";
     const QString BuildUseStableLinks = "Use Stable Links";
     const QString BuildBakeImpostor = "Bake Impostor";
+    const QString BuildBakeAllImpostors = "Bake All Impostors";
+    const QString BuildRemoveImpostor = "Remove Impostor";
     const QString BuildUndo = "Undo";
     const QString CalibrateCamera = "Calibrate Camera";
     const QString CenterPlayerInView = "Center Player In View";
