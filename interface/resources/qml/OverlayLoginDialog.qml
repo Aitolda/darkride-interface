@@ -22,7 +22,15 @@ FocusScope {
     objectName: "LoginDialog"
     visible: true
 
-    anchors.fill: parent
+    // laid out as if the window were at least 760 tall and 640 wide, then scaled down to fit it: in a small window the
+    // banner and the form shrink together instead of the form running off the bottom (clicks and typing are scaled
+    // with it)
+    readonly property real fitScale: parent && parent.width > 0 && parent.height > 0 ?
+        Math.min(1, parent.height / 760, parent.width / 640) : 1
+    width: parent ? parent.width / fitScale : 0
+    height: parent ? parent.height / fitScale : 0
+    scale: fitScale
+    transformOrigin: Item.TopLeft
 
     readonly property bool isTablet: false
     readonly property bool isOverlay: true
