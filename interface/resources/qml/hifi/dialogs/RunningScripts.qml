@@ -300,10 +300,10 @@ Windows.ScrollingWindow {
 
                         RobotoMedium {
                             id: engineLabel
-                            // the script's engine (Developer Menu on); a click moves a .js script to the other one
-                            property bool canSwitch: canEdit && /\.js$/i.test(model.url)
-                            visible: developerMenuEnabled && model.engine !== undefined && model.engine !== ""
-                            text: model.engine === "WebAssembly" ? "WebAssembly" : "QtScript"
+                            // the script's engine (Developer Menu on); a click moves a .js script to the other one; a row being released has no model
+                            property bool canSwitch: canEdit && !!model && /\.js$/i.test(model.url)
+                            visible: developerMenuEnabled && !!model && model.engine !== undefined && model.engine !== ""
+                            text: !!model && model.engine === "WebAssembly" ? "WebAssembly" : "QtScript"
                             size: hifi.fontSizes.tableHeading
                             color: engineLabelArea.pressed ? hifi.colors.white : parent.color
                             anchors {
