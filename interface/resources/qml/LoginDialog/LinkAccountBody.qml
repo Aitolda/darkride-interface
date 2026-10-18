@@ -428,19 +428,9 @@ Item {
                         "withSteam": linkAccountBody.withSteam, "withOculus": linkAccountBody.withOculus, "linkSteam": linkAccountBody.linkSteam, "linkOculus": linkAccountBody.linkOculus});
                 }
                 Component.onCompleted: {
-                    if (linkAccountBody.linkSteam || linkAccountBody.linkOculus) {
-                        continueButton.visible = false;
-                        return;
-                    }
-                    if (loginDialog.isOculusRunning()) {
-                        continueButton.text = qsTr("CONTINUE WITH OCULUS");
-                        continueButton.buttonGlyph = hifi.glyphs.oculus;
-                    } else if (loginDialog.isSteamRunning()) {
-                        continueButton.text = qsTr("CONTINUE WITH STEAM");
-                        continueButton.buttonGlyph = hifi.glyphs.steamSquare;
-                    } else {
-                        continueButton.visible = false;
-                    }
+                    // Darkride's accounts have no Steam or Oculus sign-in, so this button never shows, even with
+                    // Steam running; its screens (CompleteProfileBody, UsernameCollisionBody) are High Fidelity's
+                    continueButton.visible = false;
                 }
             }
         }
@@ -485,7 +475,8 @@ Item {
                      leftMargin: hifi.dimensions.contentSpacing.x
                 }
 
-                text: "<a href='" + Account.metaverseServerURL + "/?signUp'>Sign Up</a>"
+                // signing up is on the website, in the browser (High Fidelity's form, SignUpBody.qml, isn't used)
+                text: "<a href='https://darkride.ai/?signUp'>Sign Up</a>"
 
                 linkColor: hifi.colors.blueAccent
                 onLinkActivated: {
@@ -496,8 +487,7 @@ Item {
                         };
                         UserActivityLogger.logAction("encourageLoginDialog", data);
                     }
-                    bodyLoader.setSource("SignUpBody.qml", { "loginDialog": loginDialog, "root": root, "bodyLoader": bodyLoader,
-                        "errorString": "" });
+                    Window.openUrl(link);
                 }
             }
         }
