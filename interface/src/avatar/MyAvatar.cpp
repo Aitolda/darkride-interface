@@ -2711,7 +2711,23 @@ void MyAvatar::rebuildCollisionShape() {
     glm::vec3 corner(-radius, -0.5f * height, -radius);
     corner += scale * _skeletonModel->getBoundingCapsuleOffset();
     glm::vec3 diagonal(2.0f * radius, height, 2.0f * radius);
+
+    // The feet stay where they were. A new avatar or scale moves the shape's bottom relative to the avatar's position
+    // while the character keeps the old shape's centre: going from a short avatar to a tall one left the feet half a
+    // metre in the ground, which a terrain does not push them out of (the avatar juddered there), and tall to short
+    // left them in the air. Seated, or carried by a parent, the seat or the parent places the avatar instead.
+    auto shapeBottom = [this]() {
+        return _characterController.getCapsuleLocalOffset().y -
+               (_characterController.getCapsuleHalfHeight() + _characterController.getCapsuleRadius());
+    };
+    const bool hadShape = _characterController.getCapsuleRadius() > 0.0f;
+    const float oldBottom = shapeBottom();
     _characterController.setLocalBoundingBox(corner, diagonal);
+    const float lift = oldBottom - shapeBottom();
+    const float MIN_FEET_SHIFT = 0.001f; // metres
+    if (hadShape && radius > 0.0f && fabsf(lift) > MIN_FEET_SHIFT && !isSeated() && getParentID().isNull()) {
+        setWorldPosition(getWorldPosition() + lift * (getWorldOrientation() * Vectors::UNIT_Y));
+    }
 }
 
 void MyAvatar::setControllerPoseInSensorFrame(controller::Action action, const controller::Pose& pose) {
