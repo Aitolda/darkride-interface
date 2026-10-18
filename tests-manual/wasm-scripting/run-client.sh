@@ -13,7 +13,7 @@ NAME=$1
 SECONDS_MAX=$2
 shift 2
 [ -n "$NAME" ] && [ -n "$SECONDS_MAX" ] || { echo "usage: $0 <name> <seconds> [client arguments...]" >&2; exit 1; }
-BIN="$D/../../build/interface/interface.app/Contents/MacOS/interface"
+BIN="$D/../../build/interface/Darkride.app/Contents/MacOS/Darkride"
 BIN=$(cd "$(dirname "$BIN")" && pwd)/interface
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 R="$D/results/$NAME"

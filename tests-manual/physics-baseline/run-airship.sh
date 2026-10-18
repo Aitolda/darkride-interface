@@ -1,6 +1,6 @@
 #!/bin/zsh
 # PHYSICS.md round 7: the airship over the terrain, flown through a scripted course (airship.js, airship-rig.js).
-#   tests-manual/physics-baseline/run-airship.sh [path/to/interface.app] [results dir] [udp port|serverless] [loss] [delay_ms] [car]
+#   tests-manual/physics-baseline/run-airship.sh [path/to/Darkride.app] [results dir] [udp port|serverless] [loss] [delay_ms] [car]
 # With "car" as the sixth argument the ship carries a track along its deck with a trolley on it (round 8, nesting): the
 # crew rides the trolley, on and off at its stations, instead of walking the deck.
 # make-terrain.py writes the terrain file into the results dir, which is served over HTTP on <port>+78 (the physics server
@@ -14,7 +14,7 @@
 # assignment-client log of the run (the physics server's lines are in it under [physics-server]) is copied beside them.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
-APP=${1:-"$D/../../build/interface/interface.app"}
+APP=${1:-"$D/../../build/interface/Darkride.app"}
 R=${2:-"${TMPDIR:-/tmp}/physics-airship"}
 PORT=${3:-42102}
 LOSS=${4:-0}
@@ -24,7 +24,7 @@ DECK_CAR=false
 [ "$CAR" = "car" ] && DECK_CAR=true
 SANDBOX=${SANDBOX:-$HOME/tivoli-sandboxes/physics}
 DOMAIN_SANDBOX=${DOMAIN_SANDBOX:-$HOME/git/tivolicloud/domain-sandbox.sh}   # darkride-ops' sandbox starter
-BIN="$APP/Contents/MacOS/interface"
+BIN="$APP/Contents/MacOS/Darkride"
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 mkdir -p "$R/pilot" "$R/crew"
 export HIFI_METAVERSE_URL=${HIFI_METAVERSE_URL:-https://vr.darkride.ai}

@@ -10,7 +10,7 @@
 //  client was started with --testResultsLocation.
 //
 //  Run (serverless, no domain needed):
-//    tests-manual/wasm-scripting/run.sh [path/to/interface.app] [results dir]
+//    tests-manual/wasm-scripting/run.sh [path/to/Darkride.app] [results dir]
 //
 //  Written in ES5 on purpose: it must run on the engine it measures.
 //

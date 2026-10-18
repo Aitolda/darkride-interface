@@ -4,7 +4,7 @@
 # SIGTERM first, SIGKILL after 5 s. Run it before and after every test run.
 #   tests-manual/wasm-scripting/stop-clients.sh
 CHECKOUT=$(cd "$(dirname "$0")/../.." && pwd)
-CLIENT="$CHECKOUT/build/interface/interface.app/Contents/MacOS/interface"
+CLIENT="$CHECKOUT/build/interface/Darkride.app/Contents/MacOS/Darkride"
 my_clients() {
     ps -ax -o pid=,command= | grep -F "$CLIENT" | grep -v grep | awk '{print $1}'
 }

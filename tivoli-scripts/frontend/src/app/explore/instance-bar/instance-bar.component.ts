@@ -136,6 +136,11 @@ export class InstanceBarComponent implements OnInit, OnDestroy {
 	onNewInstance(visibility: InstanceVisibility) {
 		this.busy = true;
 		this.exploreService.setHopping(this.current.world.id);
+		this.exploreService.hopStart(
+			this.current.world.label,
+			this.current.world.username,
+			this.current.world.id,
+		);
 		this.exploreService
 			.startInstance(this.current.world.id, visibility)
 			.subscribe(
@@ -145,6 +150,7 @@ export class InstanceBarComponent implements OnInit, OnDestroy {
 				},
 				err => {
 					this.exploreService.setHopping(null);
+					this.exploreService.hopFailed();
 					this.fail("Could not start an instance")(err);
 				},
 			);

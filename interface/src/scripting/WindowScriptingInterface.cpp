@@ -658,3 +658,12 @@ void WindowScriptingInterface::openWebBrowser() {
     auto offscreenUi = DependencyManager::get<OffscreenUi>();
     offscreenUi->load("Browser.qml");
 }
+
+void WindowScriptingInterface::setLoadingScreen(const QVariantMap& state) {
+    // scripts call from their own threads; the screen (QML) listens on this object's, the main thread
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "setLoadingScreen", Qt::QueuedConnection, Q_ARG(QVariantMap, state));
+        return;
+    }
+    emit loadingScreenChanged(state);
+}

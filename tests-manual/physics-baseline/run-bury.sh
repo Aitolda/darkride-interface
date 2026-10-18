@@ -1,14 +1,14 @@
 #!/bin/zsh
 # Feet put under a Terrain must come back out (bury.js), serverless, on the rover terrain:
-#   tests-manual/physics-baseline/run-bury.sh [path/to/interface.app] [results dir]
+#   tests-manual/physics-baseline/run-bury.sh [path/to/Darkride.app] [results dir]
 # make-terrain.py writes the terrain into the results dir, served over HTTP on 127.0.0.1:42181; one walled-off client
 # (its own settings and app data under the results, no sign-in) runs landrover.js and bury.js in world.json. Prints the
 # PHYSICS-BURY lines and how often the lift fired during the walk (it must be 0).
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
-APP=${1:-"$D/../../build/interface/interface.app"}
+APP=${1:-"$D/../../build/interface/Darkride.app"}
 R=${2:-"${TMPDIR:-/tmp}/physics-bury"}
-BIN="$APP/Contents/MacOS/interface"
+BIN="$APP/Contents/MacOS/Darkride"
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 HTTP_PORT=42181
 mkdir -p "$R/home/config/Tivoli Cloud VR - dev" "$R/home/data"

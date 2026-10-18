@@ -450,8 +450,8 @@ Menu::Menu() {
     MenuWrapper* developerMenu = addMenu("Developer", "Developer");
     
 
-    // Developer > Tivoli Options >>>
-    MenuWrapper* tivoliOptionsMenu = developerMenu->addMenu("Tivoli Options");
+    // Developer > Darkride Options >>>
+    MenuWrapper* tivoliOptionsMenu = developerMenu->addMenu("Darkride Options");
 
     addCheckableActionToQMenuAndActionHash(tivoliOptionsMenu, MenuOption::StopRendering);
 
@@ -459,7 +459,7 @@ Menu::Menu() {
                                                     qApp->getLoadCompleteEntityTreeSetting());
  
 
-    //// Developer > Tivoli Options > Test Zone Culling (test)
+    //// Developer > Darkride Options > Test Zone Culling (test)
     //addCheckableActionToQMenuAndActionHash(tivoliOptionsMenu, MenuOption::TestZoneCulling, 0, false);
 
 
@@ -1021,46 +1021,36 @@ Menu::Menu() {
     // Help/Application menu ----------------------------------
     MenuWrapper * helpMenu = addMenu("Help");
 
-    action = addActionToQMenuAndActionHash(helpMenu, "About Tivoli Cloud VR");
+    action = addActionToQMenuAndActionHash(helpMenu, "About Darkride");
     connect(action, &QAction::triggered, [] {
         qApp->showDialog(QString("hifi/dialogs/AboutDialog.qml"),
             QString("hifi/dialogs/TabletAboutDialog.qml"), "AboutDialog");
     });
     helpMenu->addSeparator();
 
-    // Help > Online Documentation
+    // Help > Online Documentation, JavaScript API Reference, Changelog and Report a Bug stay greyed out until
+    // Darkride has those pages (Tivoli's are gone)
     action = addActionToQMenuAndActionHash(helpMenu, "Online Documentation");
-    connect(action, &QAction::triggered, qApp, [] {
-        QDesktopServices::openUrl(QUrl("https://docs.tivolicloud.com/"));
-    });
+    action->setEnabled(false);
 
     // Help > Discord Server
     action = addActionToQMenuAndActionHash(helpMenu, "Discord Server");
     connect(action, &QAction::triggered, qApp, [] {
-        QDesktopServices::openUrl(QUrl("https://tivolicloud.com/discord"));
+        QDesktopServices::openUrl(QUrl("https://discord.gg/fQqG7dT9wY"));
     });
 
-    // Help > JavaScript API Reference
     action = addActionToQMenuAndActionHash(helpMenu, "JavaScript API Reference");
-    connect(action, &QAction::triggered, qApp, [] {
-        QDesktopServices::openUrl(QUrl("https://apidocs.tivolicloud.com/"));
-    });
+    action->setEnabled(false);
 
     addActionToQMenuAndActionHash(helpMenu, "Controls Reference", 0, qApp, SLOT(showHelp()));
 
     helpMenu->addSeparator();
 
-    // Help > Changelog
     action = addActionToQMenuAndActionHash(helpMenu, "Changelog");
-    connect(action, &QAction::triggered, qApp, [] {
-        QDesktopServices::openUrl(QUrl("https://docs.tivolicloud.com/changelog/"));
-    });
+    action->setEnabled(false);
 
-    // Help > Report a bug!
-    action = addActionToQMenuAndActionHash(helpMenu, "Report a bug!");
-    connect(action, &QAction::triggered, qApp, [] {
-        QDesktopServices::openUrl(QUrl("https://git.tivolicloud.com/tivolicloud/issues"));
-    });
+    action = addActionToQMenuAndActionHash(helpMenu, "Report a Bug");
+    action->setEnabled(false);
 }
 
 void Menu::addMenuItem(const MenuItemProperties& properties) {

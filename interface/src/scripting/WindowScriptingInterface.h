@@ -623,6 +623,15 @@ public slots:
      */
     void openWebBrowser();
 
+    /**jsdoc
+     * Shows, updates or hides Darkride's loading screen over the window (<code>WorldLoadingScreen.qml</code>). A field
+     * left out keeps its last value.
+     * @function Window.setLoadingScreen
+     * @param {object} state - <code>up</code> (boolean), and the strings <code>world</code>, <code>author</code>,
+     *     <code>picture</code> (a URL) and <code>status</code>.
+     */
+    void setLoadingScreen(const QVariantMap& state);
+
 
 private slots:
     void onWindowGeometryChanged(const QRect& geometry);
@@ -645,6 +654,15 @@ signals:
      * Window.domainChanged.connect(onDomainChanged);
      */
     void domainChanged(QUrl domainURL);
+
+    /**jsdoc
+     * Triggered when a script changes the loading screen with {@link Window.setLoadingScreen|setLoadingScreen}; the
+     * screen listens to it.
+     * @function Window.loadingScreenChanged
+     * @param {object} state - The fields that changed.
+     * @returns {Signal}
+     */
+    void loadingScreenChanged(const QVariantMap& state);
 
     /**jsdoc
      * Triggered when you try to navigate to a *.json, *.svo, or *.svo.json URL in a Web browser within Interface.
