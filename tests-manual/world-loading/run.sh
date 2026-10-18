@@ -47,7 +47,7 @@ if world.get("paths"):
     config["paths"] = world["paths"]
 json.dump(config, open(path, "w"), indent=2)
 PY
-/Users/thistlequell/git/tivolicloud/domain-sandbox.sh loading "$BUILD" "$PORT"
+"${DOMAIN_SANDBOX:-$HOME/git/tivolicloud/domain-sandbox.sh}" loading "$BUILD" "$PORT"   # darkride-ops' sandbox starter
 for i in {1..60}; do curl -s "localhost:$((PORT - 2))/nodes.json" | grep -q entity-server && break; sleep 1; done
 
 # one walled-off client, with a fresh cache
