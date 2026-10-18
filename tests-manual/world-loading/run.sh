@@ -55,7 +55,10 @@ for i in {1..60}; do curl -s "localhost:$((PORT - 2))/nodes.json" | grep -q enti
 # one walled-off client, with a fresh cache
 RUN="$R/$MODE-$(date +%H%M%S)"
 mkdir -p "$RUN/config/Tivoli Cloud VR - dev" "$RUN/data" "$RUN/snaps" "$RUN/cache"
-echo "{\"snapshotsLocation\": \"$RUN/snaps\"}" > "$RUN/config/Tivoli Cloud VR - dev/Interface.json"
+# CARD=1: the loading screen's headset card on the desktop too, to see it in the snapshots
+CARD_SETTING=""
+[ -n "$CARD" ] && CARD_SETTING=", \"worldLoading/cardOnDesktop\": true"
+echo "{\"snapshotsLocation\": \"$RUN/snaps\"$CARD_SETTING}" > "$RUN/config/Tivoli Cloud VR - dev/Interface.json"
 { echo "var ARRIVAL_SKIP_AFTER = $SKIP;"; cat "$D/arrival.js"; } > "$RUN/arrival.js"
 URL="hifi://localhost:$PORT"
 TEST_SCRIPT="$RUN/arrival.js"

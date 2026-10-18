@@ -7,15 +7,17 @@
 //  the first arrival after sign-in, and a world whose owner asks for it to load whole first (in clients built with
 //  whole-world loading, Window.getWorldLoading). On a desktop the screen itself is
 //  interface/resources/qml/hifi/WorldLoadingScreen.qml, which this drives by local messages; in a headset, where that
-//  screen hides itself, this shows a card of its own: local entities that follow the camera.
+//  screen hides itself, this shows a card of its own: local entities that follow the camera. The desktop screen is
+//  driven by Window.setLoadingScreen({up, world, author, picture, status}) (QML cannot listen to Messages).
 //
 //  The local message channel "Darkride-Hop":
 //    in:  {"type": "start", "world": <name>, "author": <name or "">, "picture": <URL or "">} when a hop starts
 //         (Explore's Hop or Join, "new instance", the address bar, a friend's Join), and {"type": "cancel"} should it
 //         fail before the client leaves;
-//    out: {"type": "screen", "up": <bool>, "world", "author", "picture", "status"} whenever any of it changes; the
-//         screen keeps the last values, and "up": false fades it out.
-//  The screen lifts once the new world's physics is on (the avatar can move) and the avatar's own model has loaded
+//    out: {"type": "screen", "up": <bool>, "world", "author", "picture", "status"} whenever any of it changes (for
+//         scripts; the same goes to Window.setLoadingScreen), and "up": false fades it out.
+//  The screen lifts once the client has left the old world (its physics or its connection gone), the new world is
+//  connected, its physics is on (the avatar can move) and the avatar's own model has loaded
 //  (MyAvatar.isSkeletonModelLoaded; at most 10 s more after physics). A cancel, a refused connection, or 90 s without
 //  arriving lifts it anyway. At the first arrival, the launch screen (sign-in's navy cover) is released once this one
 //  covers the view.
@@ -97,8 +99,9 @@
             author: author || "",
             picture: picture || "",
             started: Date.now(),
-            left: kind !== "hop",           // a hop has left the old world once the domain changes
-            physicsWentOff: kind !== "hop", // and its new world's physics must go off and come on again
+            left: kind !== "hop",           // a hop has gone for the old world once the domain changes
+            lostOld: kind !== "hop",        // and has seen the old world's physics or connection drop (physics is
+                                            // sometimes switched on again in the very frame of a domain change)
             physicsOnAt: 0,
             launchReleased: false
         };
@@ -137,6 +140,10 @@
             return;   // nothing was ever up
         }
         sent = message;
+        if (Window.setLoadingScreen) {
+            Window.setLoadingScreen({ up: message.up, world: message.world, author: message.author,
+                picture: message.picture, status: message.status });
+        }
         Messages.sendLocalMessage(CHANNEL, JSON.stringify(message));
     }
 
@@ -147,18 +154,19 @@
         var now = Date.now();
         var loading = loadingState();
         var physics = Window.isPhysicsEnabled();
-        if (way.left && !physics) {
-            way.physicsWentOff = true;
+        var connected = location.isConnected;
+        if (way.left && (!physics || !connected)) {
+            way.lostOld = true;
         }
-        if (!physics) {
+        var landed = way.lostOld && connected && physics;
+        if (!landed) {
             way.physicsOnAt = 0;
-        } else if (way.physicsWentOff && !way.physicsOnAt) {
+        } else if (!way.physicsOnAt) {
             way.physicsOnAt = now;
         }
 
-        // arrived: the new world's physics on and the avatar's own model in (or waited for long enough)
-        var arrived = !loading.active && way.left && way.physicsOnAt &&
-            (avatarLoaded() || now - way.physicsOnAt > AVATAR_GRACE * 1000);
+        // arrived: in the new world with its physics on, and the avatar's own model in (or waited for long enough)
+        var arrived = !loading.active && landed && (avatarLoaded() || now - way.physicsOnAt > AVATAR_GRACE * 1000);
         if (arrived || (!loading.active && now - way.started > TIME_LIMIT * 1000)) {
             end();
             return;
@@ -348,7 +356,7 @@
     function onDomainChanged() {
         if (way && !way.left) {
             way.left = true;
-            way.physicsWentOff = false;
+            way.lostOld = false;
         }
     }
 
@@ -386,6 +394,9 @@
         }
         hideCard();
         if (sent && sent.up) {
+            if (Window.setLoadingScreen) {
+                Window.setLoadingScreen({ up: false });
+            }
             Messages.sendLocalMessage(CHANNEL, JSON.stringify({ type: "screen", up: false, world: sent.world,
                 author: sent.author, picture: sent.picture, status: "" }));
         }
