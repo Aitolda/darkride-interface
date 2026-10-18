@@ -53,6 +53,7 @@ if [ "$PORT" = "serverless" ]; then
     XDG_CONFIG_HOME="$R/driver-home/config" TIVOLI_APP_DATA_DIR="$R/driver-home/data" \
         "$BIN" --allowMultipleInstances --url "file://$D/world.json" --testScript "$R/rover-driver.js" --testResultsLocation "$R/driver" \
         > "$R/driver.log" 2>&1 || true
+    rm -rf "$R/driver-home/data/ktx_cache"
     grep "PHYSICS-ROVER" "$R/driver.log" || echo "no driver summary in $R/driver.log" >&2
     exit 0
 fi
@@ -68,6 +69,8 @@ XDG_CONFIG_HOME="$R/driver-home/config" TIVOLI_APP_DATA_DIR="$R/driver-home/data
 TIVOLI_PACKET_LOSS="$LOSS" TIVOLI_PACKET_DELAY_MS="$DELAY" "$BIN" --allowMultipleInstances --url "$URL" --testScript "$R/rover-driver.js" \
     --testResultsLocation "$R/driver" > "$R/driver.log" 2>&1 || true
 wait $PASSENGER || true
+# the clients' texture caches (data/ktx_cache, up to 1.5 GB a client) go; their logs and samples stay
+rm -rf "$R/driver-home/data/ktx_cache" "$R/passenger-home/data/ktx_cache"
 echo "== driver"
 grep "PHYSICS-ROVER" "$R/driver.log" || echo "no driver summary in $R/driver.log" >&2
 echo "== passenger"
