@@ -150,10 +150,20 @@ public:
     // removes it. Contacts with it are reported against the frame's motion state.
     void setFrameHull(ObjectMotionState* frameState);
     bool hasFrameHull() const { return !_frameHullID.IsInvalid(); }
+    // The interior changed (a static body came, went or moved): the frame's copy of it in the parent world
+    // (ObjectMotionState::setInteriorShape) is rebuilt by the engine, which takes the flag.
+    void markInteriorChanged() { _interiorChanged = true; }
+    bool takeInteriorChanged() { bool changed = _interiorChanged; _interiorChanged = false; return changed; }
 
     // one substep: kinematics pushed (parents before children), the character moved, gravity applied, the
     // world stepped, contacts harvested
     void stepOnce(float dt, CharacterController* character);
+    // Rollback for prediction (PHYSICS.md 4.6, round 6): the state of every non-static body but one (the vehicle, which
+    // is set from the authority's state instead), as Jolt's state recorder writes it, and the same put back; then
+    // substeps run again with nothing but gravity and Jolt (no kinematic push, no character, no contact events).
+    std::string saveBodies(const JPH::BodyID& exclude) const;
+    bool restoreBodies(const std::string& saved, const JPH::BodyID& exclude);
+    void replayStep(float dt);
 
     // after the frame's steps: every body that was active is pulled, the sleepers are listed
     void harvestChanges(VectorOfMotionStates& changed, VectorOfMotionStates& deactivated);
@@ -186,6 +196,7 @@ private:
     void destroyBody(ObjectMotionState* motionState);
     void wakeBodiesAround(const JPH::Body* body);
     void applyGravityForces();
+    void rememberSubstepStarts();
     void harvestContacts();
     void doOwnershipInfection(ObjectMotionState* motionStateA, bool aIsCharacter, bool aIsStatic,
                               ObjectMotionState* motionStateB, bool bIsStatic, bool bIsKinematic);
@@ -201,6 +212,7 @@ private:
     std::unique_ptr<JoltLayers::Tables> _layers;
     std::unique_ptr<JPH::PhysicsSystem> _system;
     std::unique_ptr<ContactRecorder> _contactRecorder;
+    bool _replaying { false };
     std::unique_ptr<ActivationRecorder> _activationRecorder;
 
     ContactMap _contactMap;
@@ -209,6 +221,7 @@ private:
     std::set<ObjectMotionState*> _activeStaticObjects;
     JPH::BodyID _frameHullID;
     const JPH::Shape* _frameHullShape { nullptr };
+    bool _interiorChanged { false };
     uint32_t _numContactFrames { 0 };
 };
 

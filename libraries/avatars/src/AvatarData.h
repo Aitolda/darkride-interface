@@ -571,6 +571,12 @@ class AvatarData : public QObject, public SpatiallyNestable {
     Q_PROPERTY(glm::vec3 velocity READ getWorldVelocity WRITE setWorldVelocity)
     Q_PROPERTY(glm::vec3 angularVelocity READ getWorldAngularVelocity WRITE setWorldAngularVelocity)
 
+    // the parent and the pose in it, so an assignment client's avatar can ride a frame (MyAvatar declares its own)
+    Q_PROPERTY(QUuid parentID READ getParentID WRITE setParentID)
+    Q_PROPERTY(quint16 parentJointIndex READ getParentJointIndex WRITE setParentJointIndex)
+    Q_PROPERTY(glm::vec3 localPosition READ getLocalPosition WRITE setLocalPosition)
+    Q_PROPERTY(glm::quat localOrientation READ getLocalOrientation WRITE setLocalOrientation)
+
     Q_PROPERTY(float audioLoudness READ getAudioLoudness WRITE setAudioLoudness)
     Q_PROPERTY(float audioAverageLoudness READ getAudioAverageLoudness WRITE setAudioAverageLoudness)
 

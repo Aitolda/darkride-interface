@@ -1453,6 +1453,9 @@ public:
     // The moving reference frame the avatar is in (PHYSICS.md 4.1): its parent, when that is a frame entity;
     // null in the domain itself. The character then moves in that frame's physics world, in its coordinates.
     QUuid getFrameID() const;
+    // The frame's world orientation; identity outside a frame. The camera, the look-at yaw and the motors are world
+    // rotations, and the character in a frame moves in the frame's coordinates: the inverse takes them there.
+    glm::quat getFrameOrientation() const;
 
     const QString& getCollisionSoundURL() { return _collisionSoundURL; }
     void setCollisionSoundURL(const QString& url);
@@ -2035,6 +2038,14 @@ public:
      * @returns {MyAvatar.FlowData}
      */
     Q_INVOKABLE QVariantMap getFlowData();
+
+    /*@jsdoc
+     * Gets the state of the spring bones of an imported avatar (the .fst's springBones data): whether the solver is
+     * initialized and active, each chain's joint indices by its root joint's name, and the collider count.
+     * @function MyAvatar.getSpringBoneData
+     * @returns {object} The spring-bone state.
+     */
+    Q_INVOKABLE QVariantMap getSpringBoneData();
 
     /**jsdoc
      * Gets the indexes of currently colliding flow joints.
@@ -2891,6 +2902,10 @@ private:
     const float MAX_LOOK_AT_TIME_SCRIPT_CONTROL = 2.0f;
     glm::quat _lookAtPitch;
     glm::quat _lookAtYaw;
+    // the frame the look-at yaw was last turned with, and that frame's orientation then (PHYSICS.md 4.4: the camera is
+    // a member of the avatar's frame, so the look-at yaw turns with the frame's heading)
+    QUuid _lookAtFrameID;
+    glm::quat _lookAtFrameOrientation;
     float _lookAtYawSpeed { 0.0f };
     glm::vec3 _lookAtCameraTarget;
     glm::vec3 _lookAtScriptTarget;
@@ -2926,6 +2941,8 @@ private:
     void initHeadBones();
     void initAnimGraph();
     void initFlowFromFST();
+    // the spring bones of an imported avatar, from the .fst's springBones line (and its scale)
+    void initSpringBonesFromFST();
     void updateHeadLookAt(float deltaTime);
     void resetHeadLookAt();
     void resetLookAtRotation(const glm::vec3& avatarPosition, const glm::quat& avatarOrientation);

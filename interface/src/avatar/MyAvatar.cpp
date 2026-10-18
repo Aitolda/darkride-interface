@@ -11,6 +11,9 @@
 
 #include "MyAvatar.h"
 
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonParseError>
+
 #include <algorithm>
 #include <vector>
 
@@ -66,6 +69,7 @@
 #include "EntityEditPacketSender.h"
 #include "MovingEntitiesOperator.h"
 #include "SceneScriptingInterface.h"
+
 
 using namespace std;
 
@@ -2548,6 +2552,7 @@ void MyAvatar::setSkeletonModelURL(const QUrl& skeletonModelURL) {
             _fstAnimGraphOverrideUrl = _skeletonModel->getNetworkModel()->getAnimGraphOverrideUrl();
             initAnimGraph();
             if (getFlowEnabled()) initFlowFromFST();
+            initSpringBonesFromFST();
         }
         QObject::disconnect(*skeletonConnection);
     });
@@ -2757,6 +2762,9 @@ glm::quat MyAvatar::getOffHandRotation() const {
 void MyAvatar::updateMotors() {
     _characterController.clearMotors();
     glm::quat motorRotation;
+    // In a frame the character moves through the frame's own world (PHYSICS.md 4.3), but the motors are built from
+    // the camera and the avatar's world orientation: each is taken into the frame's coordinates. Identity outside.
+    glm::quat toFrame = glm::inverse(getFrameOrientation());
 
     const float FLYING_MOTOR_TIMESCALE = 0.05f;
     const float WALKING_MOTOR_TIMESCALE = 0.2f;
@@ -2796,11 +2804,11 @@ void MyAvatar::updateMotors() {
         }
 
         if (_isPushing || _isBraking || !_isBeingPushed) {
-            _characterController.addMotor(_actionMotorVelocity, motorRotation, horizontalMotorTimescale, verticalMotorTimescale);
+            _characterController.addMotor(_actionMotorVelocity, toFrame * motorRotation, horizontalMotorTimescale, verticalMotorTimescale);
         } else {
             // _isBeingPushed must be true --> disable action motor by giving it a long timescale,
             // otherwise it's attempt to "stand in in place" could defeat scripted motor/thrusts
-            _characterController.addMotor(_actionMotorVelocity, motorRotation, INVALID_MOTOR_TIMESCALE);
+            _characterController.addMotor(_actionMotorVelocity, toFrame * motorRotation, INVALID_MOTOR_TIMESCALE);
         }
     }
     if (_motionBehaviors & AVATAR_MOTION_SCRIPTED_MOTOR_ENABLED) {
@@ -2813,16 +2821,16 @@ void MyAvatar::updateMotors() {
             motorRotation = glm::quat();
         }
         if (_scriptedMotorMode == SCRIPTED_MOTOR_SIMPLE_MODE) {
-            _characterController.addMotor(_scriptedMotorVelocity, motorRotation, _scriptedMotorTimescale);
+            _characterController.addMotor(_scriptedMotorVelocity, toFrame * motorRotation, _scriptedMotorTimescale);
         } else {
             // dynamic mode
-            _characterController.addMotor(_scriptedMotorVelocity, motorRotation, horizontalMotorTimescale, verticalMotorTimescale);
+            _characterController.addMotor(_scriptedMotorVelocity, toFrame * motorRotation, horizontalMotorTimescale, verticalMotorTimescale);
         }
     }
 
     // legacy support for 'MyAvatar::applyThrust()', which has always been implemented as a
     // short-lived linearAcceleration
-    _characterController.setLinearAcceleration(_thrust);
+    _characterController.setLinearAcceleration(toFrame * _thrust);
     _thrust = Vectors::ZERO;
 }
 
@@ -2834,6 +2842,15 @@ QUuid MyAvatar::getFrameID() const {
         return parent->getID();
     }
     return QUuid();
+}
+
+glm::quat MyAvatar::getFrameOrientation() const {
+    if (getFrameID().isNull()) {
+        return Quaternions::IDENTITY;
+    }
+    bool success = false;
+    Transform parentTransform = getParentTransform(success);
+    return success ? parentTransform.getRotation() : Quaternions::IDENTITY;
 }
 
 void MyAvatar::prepareForPhysicsSimulation() {
@@ -2861,6 +2878,17 @@ void MyAvatar::prepareForPhysicsSimulation() {
     if (inFrame) {
         _characterController.setPositionAndOrientation(getLocalPosition(), getLocalOrientation());
     } else {
+        if (!hasParent()) {
+            // A free-standing avatar stands upright. A pose left tilted (stepping out of a car lying on its side, a
+            // script's orientation) is levelled here, before the character takes it: the character hands its pose back
+            // after the step, so a tilt it is given is kept for ever.
+            const float LEVEL_EPSILON = 1.0e-6f;  // about 0.2 degrees
+            glm::quat orientation = getWorldOrientation();
+            glm::quat level = cancelOutRollAndPitch(orientation);
+            if (1.0f - glm::abs(glm::dot(orientation, level)) > LEVEL_EPSILON) {
+                setWorldOrientation(level);
+            }
+        }
         _characterController.setPositionAndOrientation(getWorldPosition(), getWorldOrientation());
     }
     auto headPose = getControllerPoseInAvatarFrame(controller::Action::HEAD);
@@ -2902,7 +2930,12 @@ void MyAvatar::harvestResultsFromPhysicsSimulation(float deltaTime) {
     glm::vec3 position = inFrame ? getLocalPosition() : getWorldPosition();
     glm::quat orientation = inFrame ? getLocalOrientation() : getWorldOrientation();
     glm::vec3 velocity;
-    if (_characterController.isEnabledAndReady() && !(_characterController.needsSafeLandingSupport() || _goToPending)) {
+    // Parented to something that is not a frame (a seat, a hand): the parent carries the avatar and a script owns its
+    // local pose. The character still runs (collisionless, re-placed every prepare) but its step is not taken: it
+    // integrates the parent's velocity of the previous frame, which lags an accelerating vehicle and slides the rider
+    // off the seat (PHYSICS.md round 6).
+    bool carried = !inFrame && hasParent();
+    if (_characterController.isEnabledAndReady() && !carried && !(_characterController.needsSafeLandingSupport() || _goToPending)) {
         _characterController.getPositionAndOrientation(position, orientation);
         velocity = _characterController.getLinearVelocity() + _characterController.getFollowVelocity();
     } else {
@@ -3672,6 +3705,21 @@ void MyAvatar::updateOrientation(float deltaTime) {
         }
     }
 
+    // In a frame the camera is a member too (PHYSICS.md 4.4): the look-at yaw is a world rotation, so it turns with
+    // the frame's heading, else a ship turning under a standing avatar swings the camera round it and, past the
+    // turn-to-camera angle, turns the avatar on the deck to face the camera.
+    {
+        QUuid frameID = getFrameID();
+        glm::quat frameOrientation = getFrameOrientation();
+        if (!frameID.isNull() && frameID == _lookAtFrameID) {
+            glm::quat swing, headingChange;
+            swingTwistDecomposition(frameOrientation * glm::inverse(_lookAtFrameOrientation), Vectors::UNIT_Y, swing, headingChange);
+            _lookAtYaw = headingChange * _lookAtYaw;
+        }
+        _lookAtFrameID = frameID;
+        _lookAtFrameOrientation = frameOrientation;
+    }
+
     // update body orientation by movement inputs
     glm::quat initialOrientation = getOrientationOutbound();
     glm::vec3 eyesPosition = getDefaultEyePosition();
@@ -3743,7 +3791,16 @@ void MyAvatar::updateOrientation(float deltaTime) {
                     blend = 1.0f;
                 }
             }
-            if (!_characterController.getSeated()) setLocalOrientation(glm::slerp(getLocalOrientation(), faceRotation, blend));
+            if (!_characterController.getSeated()) {
+                // faceRotation is a world yaw and the orientation set is local: in a frame, take it into the frame's
+                // coordinates and keep the turn about the frame's up, which the character stands on.
+                glm::quat localFaceRotation = faceRotation;
+                if (!getFrameID().isNull()) {
+                    glm::quat swing;
+                    swingTwistDecomposition(glm::inverse(getFrameOrientation()) * faceRotation, Vectors::UNIT_Y, swing, localFaceRotation);
+                }
+                setLocalOrientation(glm::slerp(getLocalOrientation(), localFaceRotation, blend));
+            }
         } else if (isRotatingWhileSeated) {
             float direction = -getDriveKey(TRANSLATE_X);
             float seatedTargetSpeed = direction * _yawSpeed * deltaTime;  //deg/renderframe
@@ -4125,14 +4182,17 @@ void MyAvatar::updatePosition(float deltaTime) {
         const float MOVING_SPEED_THRESHOLD_SQUARED = 0.0001f; // 0.01 m/s
         _moving = speed2 > sensorToWorldScale2 * MOVING_SPEED_THRESHOLD_SQUARED;
         if (_moving) {
-            if (hasParent()) {
-              _characterController.setStepUpEnabled(false);
-              return;
+            bool inFrame = !getFrameID().isNull();
+            if (hasParent() && !inFrame) {
+                // carried by a seat or a hand: the character takes no step of its own
+                _characterController.setStepUpEnabled(false);
+                return;
             }
-            // scan for walkability
-            glm::vec3 position = getWorldPosition();
+            // scan for walkability, in the coordinates of the world the character moves through (a frame's own)
+            glm::vec3 position = inFrame ? getLocalPosition() : getWorldPosition();
+            glm::quat orientation = inFrame ? getLocalOrientation() : getWorldOrientation();
             MyCharacterController::RayShotgunResult result;
-            glm::vec3 step = deltaTime * (getWorldOrientation() * _actionMotorVelocity);
+            glm::vec3 step = deltaTime * (orientation * _actionMotorVelocity);
             _characterController.testRayShotgun(position, step, result);
             _characterController.setStepUpEnabled(result.walkable);
         }
@@ -6524,17 +6584,24 @@ void MyAvatar::addAvatarHandsToFlow(const std::shared_ptr<Avatar>& otherAvatar) 
  * @property {boolean} [active=true] - <code>true</code> to enable flow on the joint, otherwise <code>false</code>.
  * @property {number} [radius=0.01] - The thickness of segments and knots (needed for collisions).
  * @property {number} [gravity=-0.0096] - Y-value of the gravity vector.
- * @property {number} [inertia=0.8] - Rotational inertia multiplier.
- * @property {number} [damping=0.85] - The amount of damping on joint oscillation.
- * @property {number} [stiffness=0.0] - The stiffness of each thread.
- * @property {number} [delta=0.55] - Delta time for every integration step.
+ * @property {number} [inertia=0.8] - How much of the chain root's movement every joint takes on at once (a quarter of
+ *     this value, capped at 0.5).
+ * @property {number} [damping=0.85] - The fraction of velocity kept per 60 Hz step (<code>1 - drag</code>).
+ * @property {number} [stiffness=0.0] - How hard each joint springs back to its modelled rest direction.
+ * @property {number} [delta=0.55] - Legacy scale on gravity and stiffness; leave at the default.
+ * @property {number} [maxAngle=45] - The most, in degrees, a bone may swing away from its rest direction.
+ * @property {number} [lift=0] - Degrees each bone's rest direction is curled up from the model's pose, for a tail or
+ *     hair modelled hanging limper than wanted.
  */
 /**jsdoc
  * Collision options to use in the flow simulation of a joint.
  * @typedef {object} MyAvatar.FlowCollisionsOptions
- * @property {string} [type="sphere"] - Currently, only <code>"sphere"</code> is supported.
- * @property {number} [radius=0.05] - Collision sphere radius.
- * @property {number} [offset=Vec3.ZERO] - Offset of the collision sphere from the joint.
+ * @property {string} [type="sphere"] - <code>"sphere"</code> or <code>"capsule"</code>. A capsule runs from the joint to
+ *     the <code>end</code> joint.
+ * @property {number} [radius=0.05] - Collision sphere or capsule radius.
+ * @property {number} [offset=Vec3.ZERO] - Offset of the collision shape from the joint.
+ * @property {string} [end] - For a capsule, the joint at its far end; the joint's first child when omitted.
+ * @property {number} [endOffset=Vec3.ZERO] - For a capsule, offset of the far end from the <code>end</code> joint.
  */
 void MyAvatar::useFlow(bool isActive, bool isCollidable, const QVariantMap& physicsConfig, const QVariantMap& collisionsConfig) {
     if (QThread::currentThread() != thread()) {
@@ -6580,6 +6647,12 @@ void MyAvatar::useFlow(bool isActive, bool isCollidable, const QVariantMap& phys
                 if (settings.contains("stiffness")) {
                     physicsSettings._stiffness = settings["stiffness"].toFloat();
                 }
+                if (settings.contains("maxAngle")) {
+                    physicsSettings._maxAngle = settings["maxAngle"].toFloat();
+                }
+                if (settings.contains("lift")) {
+                    physicsSettings._lift = settings["lift"].toFloat();
+                }
                 flow.setPhysicsSettingsForGroup(groupName, physicsSettings);
             }
         }
@@ -6596,6 +6669,21 @@ void MyAvatar::useFlow(bool isActive, bool isCollidable, const QVariantMap& phys
                 }
                 if (settings.contains("offset")) {
                     collisionsSettings._offset = vec3FromVariant(settings["offset"]);
+                }
+                if (settings.contains("type") && settings["type"].toString().toLower() == "capsule") {
+                    // a capsule runs from this joint to the "end" joint (its first child when none is named)
+                    collisionsSettings._type = FlowCollisionType::CollisionCapsule;
+                    int endJointIndex = -1;
+                    if (settings.contains("end")) {
+                        endJointIndex = getJointIndex(settings["end"].toString());
+                    } else {
+                        auto children = _skeletonModel->getRig().getAnimSkeleton()->getChildrenOfJoint(jointIndex);
+                        endJointIndex = children.size() > 0 ? children[0] : -1;
+                    }
+                    collisionsSettings._endJointIndex = endJointIndex;
+                    if (settings.contains("endOffset")) {
+                        collisionsSettings._endOffset = vec3FromVariant(settings["endOffset"]);
+                    }
                 }
                 collisionSystem.addCollisionSphere(jointIndex, collisionsSettings);
             }
@@ -6637,6 +6725,33 @@ void MyAvatar::useFlow(bool isActive, bool isCollidable, const QVariantMap& phys
  * @property {number} offset - Offset of the collision sphere from the joint.
  * @property {number} jointIndex - The index of the joint the options are applied to.
  */
+QVariantMap MyAvatar::getSpringBoneData() {
+    QVariantMap result;
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "getSpringBoneData", Q_RETURN_ARG(QVariantMap, result));
+        return result;
+    }
+    if (!_skeletonModel->isLoaded()) {
+        return result;
+    }
+    auto& solver = _skeletonModel->getRig().getSpringBones();
+    result.insert("initialized", solver.isInitialized());
+    result.insert("active", solver.getActive());
+    result.insert("colliders", (int)solver.getData().colliders.size());
+    QVariantMap chains;
+    for (const auto& chain : solver.getChains()) {
+        QVariantList joints;
+        for (const auto& particle : chain.particles) {
+            if (particle.joint >= 0) {
+                joints.append(particle.joint);
+            }
+        }
+        chains.insert(chain.spec->root, joints);
+    }
+    result.insert("chains", chains);
+    return result;
+}
+
 QVariantMap MyAvatar::getFlowData() {
     QVariantMap result;
     if (QThread::currentThread() != thread()) {
@@ -6678,6 +6793,8 @@ QVariantMap MyAvatar::getFlowData() {
             settingsObject.insert("inertia", groupSettings._inertia);
             settingsObject.insert("radius", groupSettings._radius);
             settingsObject.insert("stiffness", groupSettings._stiffness);
+            settingsObject.insert("maxAngle", groupSettings._maxAngle);
+            settingsObject.insert("lift", groupSettings._lift);
             settingsObject.insert("jointIndices", groupJointsMap[groupName]);
             physicsData.insert(groupName, settingsObject);
         }
@@ -6688,6 +6805,11 @@ QVariantMap MyAvatar::getFlowData() {
             collisionObject.insert("offset", vec3toVariant(collision._offset));
             collisionObject.insert("radius", collision._radius);
             collisionObject.insert("jointIndex", collision._jointIndex);
+            collisionObject.insert("type", collision._type == FlowCollisionType::CollisionCapsule ? "capsule" : "sphere");
+            if (collision._type == FlowCollisionType::CollisionCapsule) {
+                collisionObject.insert("end", jointNames.size() > collision._endJointIndex && collision._endJointIndex >= 0 ? jointNames[collision._endJointIndex] : "unknown");
+                collisionObject.insert("endOffset", vec3toVariant(collision._endOffset));
+            }
             QString jointName = jointNames.size() > collision._jointIndex ? jointNames[collision._jointIndex] : "unknown";
             collisionsData.insert(jointName, collisionObject);
         }
@@ -6746,6 +6868,28 @@ bool MyAvatar::getNetworkGraphActive() const {
     } else {
         return false;
     }
+}
+
+void MyAvatar::initSpringBonesFromFST() {
+    if (!_skeletonModel->isLoaded() || !_skeletonModel->getNetworkModel()) {
+        return;
+    }
+    auto& rig = _skeletonModel->getRig();
+    const auto& mapping = _skeletonModel->getNetworkModel()->getMapping();
+    static const QString SPRING_BONES_FIELD = "springBones";
+    if (!getFlowEnabled() || !mapping.contains(SPRING_BONES_FIELD)) {
+        rig.getSpringBones().cleanUp();
+        return;
+    }
+    QJsonParseError error;
+    auto document = QJsonDocument::fromJson(mapping.value(SPRING_BONES_FIELD).toByteArray(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject()) {
+        qCWarning(interfaceapp) << "springBones in the avatar's .fst is not a JSON object:" << error.errorString();
+        rig.getSpringBones().cleanUp();
+        return;
+    }
+    // the data's metres are the model's; the rig's poses are in the model's metres too (the .fst's scale does not reach them)
+    rig.initSpringBones(document.object(), 1.0f);
 }
 
 void MyAvatar::initFlowFromFST() {

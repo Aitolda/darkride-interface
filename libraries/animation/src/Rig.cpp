@@ -1071,7 +1071,7 @@ void Rig::computeMotionAnimationState(float deltaTime, const glm::vec3& localPos
     glm::vec3 forward = localRotation * IDENTITY_FORWARD;
     glm::vec3 workingVelocity = localVelocity;
     _internalFlow.setTransform(sensorToWorldScale, localPosition, localRotation * Quaternions::Y_180);
-    _networkFlow.setTransform(sensorToWorldScale, localPosition, localRotation * Quaternions::Y_180);
+    _springBones.setTransform(sensorToWorldScale, localPosition, localRotation * Quaternions::Y_180);
     {
         glm::vec3 forwardVelocity = glm::inverse(localRotation) * workingVelocity;
 
@@ -1808,15 +1808,14 @@ void Rig::updateAnimations(float deltaTime, const glm::mat4& rootTransform, cons
 
     buildAbsoluteRigPoses(_internalPoseSet._relativePoses, _internalPoseSet._absolutePoses);    
     _internalFlow.update(deltaTime, _internalPoseSet._relativePoses, _internalPoseSet._absolutePoses, _internalPoseSet._overrideFlags);
+    _springBones.update(deltaTime, _internalPoseSet._relativePoses, _internalPoseSet._absolutePoses, _internalPoseSet._overrideFlags);
 
     if (_sendNetworkNode) {
-        if (_internalFlow.getActive() && !_networkFlow.getActive()) {
-            _networkFlow = _internalFlow;
-        }
+        // the flow and spring-bone joints are not animated by the network graph: give it the simulated rotations,
+        // so what goes on the wire is the chain you see
+        _internalFlow.copyJointRotations(_internalPoseSet._relativePoses, _networkPoseSet._relativePoses);
+        _springBones.copyJointRotations(_internalPoseSet._relativePoses, _networkPoseSet._relativePoses);
         buildAbsoluteRigPoses(_networkPoseSet._relativePoses, _networkPoseSet._absolutePoses);
-        _networkFlow.update(deltaTime, _networkPoseSet._relativePoses, _networkPoseSet._absolutePoses, _internalPoseSet._overrideFlags);
-    } else if (_networkFlow.getActive()) {
-        _networkFlow.setActive(false);
     }
 
     // copy internal poses to external poses
@@ -2845,16 +2844,26 @@ void Rig::computeAvatarBoundingCapsule(
     localOffsetOut = capsuleCenter - hipsPosition;
 }
 
+bool Rig::initSpringBones(const QJsonObject& data, float lengthScale) {
+    if (!_animSkeleton) {
+        return false;
+    }
+    auto parsed = springbones::Data::fromJson(data);
+    if (parsed.empty()) {
+        _springBones.cleanUp();
+        return false;
+    }
+    return _springBones.init(parsed, _animSkeleton, _internalPoseSet._relativePoses, _internalPoseSet._absolutePoses, lengthScale);
+}
+
 void Rig::initFlow(bool isActive) {
     _internalFlow.setActive(isActive);
     if (isActive) {
         if (!_internalFlow.isInitialized()) {
             _internalFlow.calculateConstraints(_animSkeleton, _internalPoseSet._relativePoses, _internalPoseSet._absolutePoses);
-            _networkFlow.calculateConstraints(_animSkeleton, _internalPoseSet._relativePoses, _internalPoseSet._absolutePoses);
         }
     } else {
         _internalFlow.cleanUp();
-        _networkFlow.cleanUp();
     }
 }
 

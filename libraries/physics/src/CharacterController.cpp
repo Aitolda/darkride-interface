@@ -180,6 +180,10 @@ void CharacterController::recordContacts() {
         }
         ObjectMotionState* other = PhysicsEngine::motionStateOf(lock.GetBody());
         if (other) {
+            // a frame's copy of its interior (round 8): the contact is with the part the sub-shape copies
+            if (ObjectMotionState* part = other->interiorPartAt(contact.mSubShapeIDB)) {
+                other = part;
+            }
             _world->recordCharacterContact(other, joltToGLM(contact.mPosition), joltToGLM(contact.mContactNormal), contact.mDistance);
         }
     }
@@ -208,6 +212,9 @@ void CharacterController::substep(float dt) {
     if (!_character || !_inWorld || !_world) {
         return;
     }
+    // where this substep starts from, for the presentation (getPositionAndOrientation)
+    _substepStartPosition = joltToGLM(_character->GetPosition());
+    _substepStartStep = ObjectMotionState::getWorldSimulationStep();
 
     // scan down for nearby floor
     const float FLOOR_PROXIMITY_THRESHOLD = 0.3f * _radius;
@@ -480,24 +487,32 @@ void CharacterController::setPositionAndOrientation(
         const glm::quat& orientation) {
     updateUpAxis(orientation);
     _rotation = orientation;
-    glm::vec3 bodyPosition = position;
     const float UNCHANGED_DISTANCE2 = 1.0e-8f; // a tenth of a millimetre, squared
-    if (glm::distance2(position, _handedOutPosition) < UNCHANGED_DISTANCE2) {
-        // the pose read ahead at the last harvest came back untouched: the body stays where the simulation
-        // left it, so the read-ahead is not integrated twice
-        bodyPosition -= _readAhead;
+    if (_character && glm::distance2(position, _handedOutPosition) < UNCHANGED_DISTANCE2) {
+        // the pose handed out at the last harvest came back untouched: it was the presentation, a substep
+        // behind, so the body stays where the simulation left it; only the rotation is taken, and the shape's
+        // offset swings with it about the avatar's origin
+        glm::quat bodyRotation = joltToGLM(_character->GetRotation());
+        _position = joltToGLM(_character->GetPosition()) + orientation * _shapeLocalOffset - bodyRotation * _shapeLocalOffset;
+        return;
     }
-    _position = bodyPosition + orientation * _shapeLocalOffset;
+    // placed from outside (a teleport, a script, the follow helper): the body goes there, with no blend from where it was
+    _position = position + orientation * _shapeLocalOffset;
+    _substepStartStep = 0;
 }
 
-// The pose is read ahead to the present along the character's velocity (ObjectMotionState::getLeftoverTime),
-// as every simulated object's is; setPositionAndOrientation takes the read-ahead back out when the pose
-// comes back unchanged.
+// The pose as presented: the character's position blended between the start and the end of its last substep
+// by the leftover time, as every simulated object's is (ObjectMotionState::getPresentedBodyTransform), so
+// walking is even at any display rate; setPositionAndOrientation keeps the body where it is when this pose
+// comes back unchanged. The rotation is the avatar's own and is not simulated.
 void CharacterController::getPositionAndOrientation(glm::vec3& position, glm::quat& rotation) const {
     if (_character) {
         rotation = joltToGLM(_character->GetRotation());
-        _readAhead = ObjectMotionState::getLeftoverTime() * joltToGLM(_character->GetLinearVelocity());
-        position = joltToGLM(_character->GetPosition()) + _readAhead - rotation * _shapeLocalOffset;
+        glm::vec3 bodyPosition = joltToGLM(_character->GetPosition());
+        if (ObjectMotionState::getInterpolatePresentation() && _substepStartStep == ObjectMotionState::getWorldSimulationStep()) {
+            bodyPosition = glm::mix(_substepStartPosition, bodyPosition, ObjectMotionState::getPresentationAlpha());
+        }
+        position = bodyPosition - rotation * _shapeLocalOffset;
         _handedOutPosition = position;
     }
 }

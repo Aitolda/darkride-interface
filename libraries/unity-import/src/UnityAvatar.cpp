@@ -853,14 +853,14 @@ WrittenAvatar writeAvatar(const unity::Package& package, const AvatarSource& ava
     }
 
     // Spring bones, their colliders and the contacts, from the prefab and the prefabs nested in it, written as data
-    // for the engine (UnitySpringBones.h); the engine does not simulate them yet.
+    // for the engine (UnitySpringBones.h), which simulates them (libraries/animation/src/SpringBones.h).
     const bool sortChildrenByName = unity::toNumber(importer.value("meshes").toMap().value("sortHierarchyByName"), 1.0) != 0.0;
     const SpringBoneData springBones = springBoneData(prefabComponents(package, avatar.prefabGuid), avatar.modelGuid, *hfmModel,
                                                 paths, skeletonNames, sortChildrenByName);
     QStringList springBoneLines;
     if (springBones.bones + springBones.contacts > 0) {
         springBoneLines << "springBones = " + QString::fromUtf8(QJsonDocument(springBones.json).toJson(QJsonDocument::Compact));
-        notes << QString("%1 spring bones moving %2 joints, %3 colliders and %4 contacts written as data; not simulated yet")
+        notes << QString("%1 spring bones moving %2 joints, %3 colliders and %4 contacts written for the engine to simulate")
                      .arg(springBones.bones).arg(springBones.joints).arg(springBones.colliders).arg(springBones.contacts);
     }
     notes << springBones.notes;
