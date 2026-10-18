@@ -52,6 +52,10 @@ public:
     void setTextures(const QVariantMap& textureMap);
 
     virtual bool areTexturesLoaded() const;
+
+    // The textures of the model's materials not yet loaded load at this priority for this owner (a model the textures
+    // are drawn on) until they first arrive, then go back to their own (the mips' order).
+    void setTextureLoadPriority(QObject* owner, float priority) const;
     const QUrl& getAnimGraphOverrideUrl() const { return _animGraphOverrideUrl; }
     const QVariantHash& getMapping() const { return _mapping; }
 

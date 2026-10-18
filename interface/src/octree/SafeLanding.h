@@ -87,7 +87,7 @@ private:
     using SequenceSet = std::set<OCTREE_PACKET_SEQUENCE, SequenceLessThan>;
     SequenceSet _sequenceNumbers;
 
-    static CalculateEntityLoadingPriority entityLoadingOperatorElevateCollidables;
+    float loadingPriority(const EntityItem& entityItem) const;
     CalculateEntityLoadingPriority _prevEntityLoadingPriorityOperator { nullptr };
 };
 

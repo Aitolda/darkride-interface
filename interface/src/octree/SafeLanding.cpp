@@ -19,10 +19,35 @@
 #include "avatar/AvatarManager.h"
 
 
-CalculateEntityLoadingPriority SafeLanding::entityLoadingOperatorElevateCollidables = [](const EntityItem& entityItem) {
-    const int COLLIDABLE_ENTITY_PRIORITY = 10.0f;
-    return entityItem.getCollisionless() * COLLIDABLE_ENTITY_PRIORITY;
-};
+// While landing, what the landing waits for loads first: with whole-world loading, the entities within the radius of
+// the avatar whose models and textures the screen waits for; then the solid ones physics waits for; and within each,
+// the usual order (the nearest and biggest first). High Fidelity's rule here put the collisionless first, by mistake,
+// and dropped the distance, so a world's nearby models loaded no sooner than its far ones.
+float SafeLanding::loadingPriority(const EntityItem& entityItem) const {
+    const float WAITED_FOR_PRIORITY = 20.0f;
+    const float COLLIDABLE_PRIORITY = 10.0f;
+    float priority = _prevEntityLoadingPriorityOperator ? _prevEntityLoadingPriorityOperator(entityItem) : 0.0f;
+    if (!entityItem.getCollisionless()) {
+        priority += COLLIDABLE_PRIORITY;
+    }
+    if (_waitForVisuals) {
+        float radius = _visualsRadius.load();
+        bool waitedFor = true;
+        if (radius > 0.0f) {
+            bool success = false;
+            AABox box = entityItem.getAABox(success);
+            if (success) {
+                glm::vec3 center = DependencyManager::get<AvatarManager>()->getMyAvatar()->getWorldPosition();
+                glm::vec3 closest = glm::clamp(center, box.getMinimumPoint(), box.getMaximumPoint());
+                waitedFor = glm::distance(center, closest) <= radius;
+            }
+        }
+        if (waitedFor) {
+            priority += WAITED_FOR_PRIORITY;
+        }
+    }
+    return priority;
+}
 
 namespace {
     template<typename T> bool lessThanWraparound(int32_t a, int32_t b) {
@@ -60,7 +85,7 @@ void SafeLanding::startTracking(QSharedPointer<EntityTreeRenderer> entityTreeRen
                 &EntityTree::deletingEntity, this, &SafeLanding::deleteTrackedEntity);
 
             _prevEntityLoadingPriorityOperator = EntityTreeRenderer::getEntityLoadingPriorityOperator();
-            EntityTreeRenderer::setEntityLoadingPriorityFunction(entityLoadingOperatorElevateCollidables);
+            EntityTreeRenderer::setEntityLoadingPriorityFunction([this](const EntityItem& item) { return loadingPriority(item); });
         }
     }
 }
@@ -114,8 +139,8 @@ void SafeLanding::updateTracking() {
         Locker lock(_lock);
         bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
             _waitForVisuals;
-        // whole-world loading may wait only for what is drawn near the avatar: a far entity that is ready for physics
-        // but not yet drawn stays tracked (the avatar may yet be placed nearer it) without holding the landing up
+        // whole-world loading may wait only for what is near the avatar: a far entity not yet ready stays tracked (the
+        // avatar may yet be placed nearer it) without holding the landing up
         float visualsRadius = _waitForVisuals ? _visualsRadius.load() : 0.0f;
         glm::vec3 center = visualsRadius > 0.0f ? DependencyManager::get<AvatarManager>()->getMyAvatar()->getWorldPosition() : glm::vec3(0.0f);
         auto entityMapIter = _trackedEntities.begin();
@@ -134,8 +159,10 @@ void SafeLanding::updateTracking() {
                 entityMapIter = _trackedEntities.erase(entityMapIter);
                 continue;
             }
+            // whole-world loading waits only for what is near the arrival, for physics and drawing alike: the whole
+            // world is tracked, and a far model's collision shape is no more needed on arrival than its textures
             bool waitedFor = true;
-            if (isPhysicsReady && visualsRadius > 0.0f) {
+            if (visualsRadius > 0.0f) {
                 bool success = false;
                 AABox box = entity->getAABox(success);
                 if (success) {
