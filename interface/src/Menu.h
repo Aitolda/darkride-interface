@@ -243,6 +243,7 @@ namespace MenuOption {
     const QString ImpostorCards = "Impostor Cards";
     const QString AutomaticLods = "Automatic LODs";
     const QString ShowImpostorsAndLods = "Show Impostors and LODs";
+    const QString ShowModelsStillLoading = "Show Models Still Loading";
     const QString AmbientOcclusion = "Ambient Occlusion";
     const QString NotificationSounds = "play_notification_sounds";
     const QString NotificationSoundsSnapshot = "play_notification_sounds_snapshot";

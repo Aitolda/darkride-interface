@@ -1537,10 +1537,16 @@ void ModelEntityRenderer::setCullWithParent(bool value) {
     }
 }
 
+std::atomic<bool> ModelEntityRenderer::_showModelsStillLoading { false };
+
 // NOTE: this only renders the "meta" portion of the Model, namely it renders debugging items
 void ModelEntityRenderer::doRender(RenderArgs* args) {
     DETAILED_PROFILE_RANGE(render_detail, "MetaModelRender");
     DETAILED_PERFORMANCE_TIMER("RMEIrender");
+
+    if (!_showModelsStillLoading) {
+        return;
+    }
 
     // If the model doesn't have visual geometry, render our bounding box as a magenta wireframe
     static glm::vec4 magentaColor(0.913f, 0.117f, 0.388f, 1.0f);

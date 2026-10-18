@@ -39,6 +39,7 @@
 
 #include "Application.h"
 #include "LODManager.h"
+#include <RenderableModelEntityItem.h>
 #include "AccountManager.h"
 #include "assets/ATPAssetMigrator.h"
 #include "audio/AudioScope.h"
@@ -654,6 +655,12 @@ Menu::Menu() {
     action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::ShowImpostorsAndLods, 0, false);
     connect(action, &QAction::triggered, [action] {
         DependencyManager::get<LODManager>()->setShowImpostorsAndLods(action->isChecked());
+    });
+    // Developer > Render > Show Models Still Loading: a model whose file hasn't loaded yet, or failed to, shows as a
+    // magenta wire box where it will be, as High Fidelity always drew it; off, nothing shows there until it's ready
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::ShowModelsStillLoading, 0, false);
+    connect(action, &QAction::triggered, [action] {
+        render::entities::ModelEntityRenderer::setShowModelsStillLoading(action->isChecked());
     });
 
     addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::WorldAxes);
