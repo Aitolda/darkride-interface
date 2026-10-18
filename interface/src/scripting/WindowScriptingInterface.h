@@ -450,6 +450,15 @@ public slots:
     bool isPhysicsEnabled();
 
     /**jsdoc
+     * Makes the arrival in a world wait, while a loading screen is up, for what is near the avatar: physics starts only
+     * once the nearby entities are ready for physics and drawn (their models and textures loaded), as interstitial mode
+     * does, even where the zone allows moving at once (ghosting).
+     * @function Window.setArrivalWaitsForNearby
+     * @param {boolean} wait - <code>true</code> while the loading screen is up, <code>false</code> once it has gone.
+     */
+    Q_INVOKABLE void setArrivalWaitsForNearby(bool wait);
+
+    /**jsdoc
      * Sets what to show on the PC display. For entity camera view, the entity camera is configured using 
      * {@link Camera.setCameraEntity} and {@link Camera|Camera.mode}.
      * @function Window.setDisplayTexture

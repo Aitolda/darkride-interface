@@ -499,6 +499,10 @@ void WindowScriptingInterface::displayAnnouncement(const QString& message) {
     emit announcement(message);
 }
 
+void WindowScriptingInterface::setArrivalWaitsForNearby(bool wait) {
+    qApp->setArrivalWaitsForNearby(wait);
+}
+
 bool WindowScriptingInterface::isPhysicsEnabled() {
     return qApp->isPhysicsEnabled();
 }

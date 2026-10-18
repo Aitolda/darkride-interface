@@ -17,10 +17,11 @@
 //    out: {"type": "screen", "up": <bool>, "world", "author", "picture", "status"} whenever any of it changes (for
 //         scripts; the same goes to Window.setLoadingScreen), and "up": false fades it out.
 //  The screen lifts once the client has left the old world (its physics or its connection gone), the new world is
-//  connected, its physics is on (the avatar can move) and the avatar's own model has loaded
+//  connected, its physics is on and the avatar's own model has loaded
 //  (MyAvatar.isSkeletonModelLoaded; at most 10 s more after physics). A cancel, a refused connection, or 90 s without
-//  arriving lifts it anyway. At the first arrival, the launch screen (sign-in's navy cover) is released once this one
-//  covers the view.
+//  arriving lifts it anyway. While it is up, the arrival waits for what is near the avatar to be ready for physics and
+//  drawn, even where the zone would let the avatar move at once (Window.setArrivalWaitsForNearby): no pop-in under the
+//  avatar. At the first arrival, the launch screen (sign-in's navy cover) is released once this one covers the view.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -105,6 +106,7 @@
             physicsOnAt: 0,
             launchReleased: false
         };
+        setArrivalWaitsForNearby(true);
         if (!timer) {
             timer = Script.setInterval(tick, TICK);
         }
@@ -118,8 +120,15 @@
             timer = null;
         }
         hideCard();
+        setArrivalWaitsForNearby(false);
         send(false, "");
         releaseLaunchScreen();
+    }
+
+    function setArrivalWaitsForNearby(wait) {
+        if (Window.setArrivalWaitsForNearby) {
+            Window.setArrivalWaitsForNearby(wait);
+        }
     }
 
     function releaseLaunchScreen() {
@@ -393,6 +402,7 @@
             timer = null;
         }
         hideCard();
+        setArrivalWaitsForNearby(false);
         if (sent && sent.up) {
             if (Window.setLoadingScreen) {
                 Window.setLoadingScreen({ up: false });

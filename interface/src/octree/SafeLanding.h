@@ -14,6 +14,8 @@
 #ifndef hifi_SafeLanding_h
 #define hifi_SafeLanding_h
 
+#include <atomic>
+
 #include <QtCore/QObject>
 #include <QtCore/QSharedPointer>
 
