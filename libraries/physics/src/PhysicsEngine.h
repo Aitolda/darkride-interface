@@ -48,6 +48,14 @@ class PhysicsDebugDraw;
 // merges what the worlds report, and keeps the actions and constraints.
 class PhysicsEngine {
 public:
+    // Something stepped with the worlds, before and after every substep (the vehicles, PHYSICS.md round 6).
+    class SubstepListener {
+    public:
+        virtual ~SubstepListener() = default;
+        virtual void preSubstep(uint32_t step, float dt) = 0;
+        virtual void postSubstep(uint32_t step, float dt) = 0;
+    };
+
     class Transaction {
     public:
         void clear() {
@@ -136,6 +144,7 @@ public:
     // Worlds. The root is the domain; a frame's world is made the first time something asks for it and
     // dropped when it is empty.
     PhysicsWorld* getRootWorld() const { return _rootWorld.get(); }
+    void setSubstepListener(SubstepListener* listener) { _substepListener = listener; }
     size_t getNumFrames() const { return _frameStates.size(); }
     PhysicsWorld* getWorld(const QUuid& frameID);
     PhysicsWorld* findWorld(const QUuid& frameID) const;
@@ -148,7 +157,7 @@ public:
     // leaves at once, before it falls in a world where the platform does not exist
     QUuid frameContaining(const glm::vec3& position, const QUuid& currentFrame, bool supported = true) const;
     // the transform of a frame in the domain (its body's, or its entity's when it has no body yet)
-    bool getFrameTransform(const QUuid& frameID, glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity) const;
+    bool getFrameTransform(const QUuid& frameID, glm::vec3& position, glm::quat& rotation, glm::vec3& linearVelocity, glm::vec3& angularVelocity, bool asSimulated = false) const;
 
     JPH::TempAllocator* getTempAllocator() const;
     static ObjectMotionState* motionStateOf(const JPH::Body& body) { return PhysicsWorld::motionStateOf(body); }
@@ -161,8 +170,10 @@ private:
     void rehomeObjects();
     void registerFrame(ObjectMotionState* frameState);
     void unregisterFrame(const QUuid& frameID);
+    void refreshFrameInteriors();
     PhysicsWorld* characterWorld() const;
 
+    SubstepListener* _substepListener { nullptr };
     std::unique_ptr<JPH::TempAllocatorImpl> _tempAllocator;
     std::unique_ptr<JPH::JobSystemThreadPool> _jobSystem;
     std::unique_ptr<PhysicsWorld> _rootWorld;

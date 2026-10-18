@@ -287,6 +287,7 @@ void OtherAvatar::simulate(float deltaTime, bool inView) {
     PerformanceTimer perfTimer("simulate");
     {
         PROFILE_RANGE(simulation, "updateJoints");
+        updateAvatarMenu(deltaTime);
         if (inView) {
             Head* head = getHead();
             if (_hasNewJointData || _transit.isActive()) {

@@ -16,11 +16,16 @@
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/transform.hpp>
 
+#include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
 #include <QtCore/QString>
 #include <QtCore/QStringList>
 #include <QtCore/QThread>
 #include <QtCore/QUrlQuery>
+
+#include <ImpostorBake.h>
+#include <ImpostorSwitch.h>
 
 #include <AbstractViewStateInterface.h>
 #include <Model.h>
@@ -28,6 +33,7 @@
 #include <render/Scene.h>
 #include <DependencyManager.h>
 #include <AnimationCache.h>
+#include <procedural/ProceduralMaterialCache.h>
 #include <shared/QtHelpers.h>
 
 #include "EntityTreeRenderer.h"
@@ -1015,12 +1021,13 @@ ItemKey ModelEntityRenderer::getKey() {
 }
 
 uint32_t ModelEntityRenderer::metaFetchMetaSubItems(ItemIDs& subItems) const {
+    uint32_t count = fetchImpostorCardSubItem(subItems);
     if (_model) {
         auto metaSubItems = _model->fetchRenderItemIDs();
         subItems.insert(subItems.end(), metaSubItems.begin(), metaSubItems.end());
-        return (uint32_t)metaSubItems.size();
+        count += (uint32_t)metaSubItems.size();
     }
-    return 0;
+    return count;
 }
 
 void ModelEntityRenderer::handleBlendedVertices(int blendshapeNumber, const QVector<BlendshapeOffset>& blendshapeOffsets,
@@ -1197,6 +1204,11 @@ bool ModelEntityRenderer::needsRenderUpdateFromTypedEntity(const TypedEntityPoin
             return true;
         }
 
+        // userData changes raise no flag of their own: the lightmap entry may have changed with it
+        if (entity->getUserData() != _userData) {
+            return true;
+        }
+
         // No model to render, early exit
         if (!_hasModel) {
             return false;
@@ -1259,6 +1271,8 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
         }
     });
 
+    applyLightmap(entity);
+
     ModelPointer model;
     withReadLock([&] { model = _model; });
 
@@ -1292,7 +1306,7 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
         connect(model.get(), &Model::requestRenderUpdate, this, &ModelEntityRenderer::requestRenderUpdate);
         connect(model.get(), &Model::setURLFinished, this, [&](bool didVisualGeometryRequestSucceed) {
             setKey(didVisualGeometryRequestSucceed);
-            _model->setTagMask(getTagMask());
+            _model->setTagMask(tagMaskKeepingBake(_model));
             _model->setHifiRenderLayer(getHifiRenderLayer());
             emit requestRenderUpdate();
             if(didVisualGeometryRequestSucceed) {
@@ -1373,9 +1387,15 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
         model->setCauterized(_cauterized, scene);
     }
 
-    render::hifi::Tag tagMask = getTagMask();
+    render::hifi::Tag tagMask = tagMaskKeepingBake(model);
     if (model->getTagMask() != tagMask) {
         model->setTagMask(tagMask, scene);
+    }
+
+    // the impostor switch this model follows (IMPOSTORS.md 2.4): its own entity's card's, or a grouping ancestor's
+    auto impostorSwitch = findImpostorSwitch(entity);
+    if (model->getImpostorSwitch() != impostorSwitch) {
+        model->setImpostorSwitch(impostorSwitch, scene);
     }
 
     if (entity->blendshapesChanged()) {
@@ -1482,8 +1502,16 @@ void ModelEntityRenderer::setIsVisibleInSecondaryCamera(bool value) {
     Parent::setIsVisibleInSecondaryCamera(value);
     setKey(_didLastVisualGeometryRequestSucceed);
     if (_model) {
-        _model->setTagMask(getTagMask());
+        _model->setTagMask(tagMaskKeepingBake(_model));
     }
+}
+
+// The entity's tag mask for its model, keeping the impostor bake's tag while the baker holds it (ImpostorBaker tags the
+// model's items for the frames' duration; an update of this entity in those frames, a texture still loading say,
+// would otherwise strip the tag and leave the model out of its own bake, as the chair's plastic was)
+render::hifi::Tag ModelEntityRenderer::tagMaskKeepingBake(const ModelPointer& model) const {
+    uint8_t bake = model ? ((uint8_t)model->getTagMask() & ImpostorBake::TAG) : 0;
+    return (render::hifi::Tag)((uint8_t)getTagMask() | bake);
 }
 
 void ModelEntityRenderer::setRenderLayer(RenderLayer value) {
@@ -1572,6 +1600,81 @@ void ModelEntityRenderer::removeMaterial(graphics::MaterialPointer material, con
     if (_model && _model->fetchRenderItemIDs().size() > 0) {
         _model->removeMaterial(material, parentMaterialName);
     }
+}
+
+// The lightmap the entity's userData assigns to the whole model, as Unity assigns one per renderer (LIGHTMAPS.md §3.2):
+//   "lightmap": { "url": "....exr", "scaleOffset": [sx, sy, ox, oy], "mode": "indirect" | "full", "params": [offset, scale],
+//                 "directionalUrl": "....png" }
+// It becomes a material layer over every mesh part carrying only the map, the second texture coordinates' scale and
+// offset (uv * scale + offset, as Unity's lightmapScaleOffset) and the map's mode and params; everything else falls
+// through to the model's own materials, or a Material entity's. The layer sits above those (priority 1) so a Material
+// entity at the default priority keeps its say on everything but the lightmap
+static const quint16 LIGHTMAP_LAYER_PRIORITY = 1;
+static const std::string LIGHTMAP_LAYER_PARTS = "all";
+
+void ModelEntityRenderer::applyLightmap(const TypedEntityPointer& entity) {
+    QString userData = entity->getUserData();
+    QString spec;
+    {
+        QJsonValue lightmap = QJsonDocument::fromJson(userData.toUtf8()).object().value("lightmap");
+        if (lightmap.isObject()) {
+            spec = QString::fromUtf8(QJsonDocument(lightmap.toObject()).toJson(QJsonDocument::Compact));
+        }
+    }
+    bool changed = false;
+    withWriteLock([&] {
+        _userData = userData;
+        changed = spec != _lightmapSpec;
+        _lightmapSpec = spec;
+    });
+    if (!changed) {
+        return;
+    }
+
+    if (_lightmapMaterial) {
+        removeMaterial(_lightmapMaterial, LIGHTMAP_LAYER_PARTS);
+        _lightmapMaterial.reset();
+    }
+    QJsonObject lightmap = QJsonDocument::fromJson(spec.toUtf8()).object();
+    QString url = lightmap.value("url").toString();
+    if (url.isEmpty()) {
+        return;
+    }
+
+    auto material = std::make_shared<NetworkMaterial>();
+    // only the lightmap's own properties are this layer's
+    for (uint flag = 0; flag < graphics::Material::NUM_TOTAL_FLAGS; flag++) {
+        if (flag != graphics::MaterialKey::LIGHT_MAP_BIT && flag != graphics::MaterialKey::LIGHTMAP_DIRECTION_MAP_BIT &&
+            flag != graphics::Material::TEXCOORDTRANSFORM1 && flag != graphics::Material::LIGHTMAP_PARAMS) {
+            material->setPropertyDoesFallthrough(flag);
+        }
+    }
+    material->setLightMap(QUrl(url));
+    QString directionUrl = lightmap.value("directionalUrl").toString();
+    if (!directionUrl.isEmpty()) {
+        material->setLightMapDirection(QUrl(directionUrl));
+    }
+    // after the map: setting it resets the transform and the params to the map's own
+    glm::vec2 scale(1.0f);
+    glm::vec2 offset(0.0f);
+    QJsonArray scaleOffset = lightmap.value("scaleOffset").toArray();
+    if (scaleOffset.size() == 4) {
+        scale = glm::vec2(scaleOffset[0].toDouble(), scaleOffset[1].toDouble());
+        offset = glm::vec2(scaleOffset[2].toDouble(), scaleOffset[3].toDouble());
+    }
+    material->setTexCoordTransform(1, glm::translate(glm::vec3(offset, 0.0f)) * glm::scale(glm::vec3(scale, 1.0f)));
+    graphics::MaterialKey::LightmapMode mode = graphics::Material::DEFAULT_LIGHTMAP_MODE;
+    graphics::MaterialKey::LightmapMode named;
+    if (graphics::MaterialKey::getLightmapModeFromName(lightmap.value("mode").toString().toStdString(), named)) {
+        mode = named;
+    }
+    material->setLightmapMode(mode);
+    QJsonArray params = lightmap.value("params").toArray();
+    if (params.size() == 2 && params[0].isDouble() && params[1].isDouble()) {
+        material->setLightmapParams(glm::vec2(params[0].toDouble(), params[1].toDouble()));
+    }
+    _lightmapMaterial = material;
+    addMaterial(graphics::MaterialLayer(material, LIGHTMAP_LAYER_PRIORITY), LIGHTMAP_LAYER_PARTS);
 }
 
 void ModelEntityRenderer::processMaterials() {

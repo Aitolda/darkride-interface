@@ -5,6 +5,12 @@ export class ExploreHandler extends WebEventHandler {
 	canGoBack = false;
 	canGoForward = false;
 
+	// the system sounds: a soft blip when the pointer comes onto a world or a friend, a rising pop as you hop
+	// (both are stereo, so they play as the tablet's own sounds do, not placed in the world)
+	private hoverSound = SoundCache.getSound("qrc:/sounds/ButtonHover.wav");
+	private hopSound = SoundCache.getSound("qrc:/sounds/TabletOpen.wav");
+	private lastHover = 0;
+
 	constructor(uuid: string, button: ButtonData, otherButtons: ButtonData[]) {
 		super(uuid, button, otherButtons);
 
@@ -50,14 +56,29 @@ export class ExploreHandler extends WebEventHandler {
 		return uuid.replace("{", "").replace("}", "");
 	}
 
+	private play(sound: SoundObject) {
+		if (sound.downloaded) Audio.playSound(sound, { localOnly: true });
+	}
+
 	handleEvent(data: { key: string; value: any }) {
 		switch (data.key) {
+			case "hover":
+				// one blip per world or friend the pointer comes onto, not a burst as it sweeps across the list
+				if (Date.now() - this.lastHover > 80) {
+					this.lastHover = Date.now();
+					this.play(this.hoverSound);
+				}
+				break;
 			case "joinDomain":
+				this.play(this.hopSound);
 				Window.location.handleLookupString(data.value);
 				break;
 			case "reconnect":
+				this.play(this.hopSound);
 				Window.location.reconnect();
+				break;
 			case "joinUser":
+				this.play(this.hopSound);
 				Window.location.goToUser(data.value);
 				break;
 

@@ -34,6 +34,11 @@ static const QString DESKTOP_LOCATION = QStandardPaths::writableLocation(QStanda
 static const QString LAST_BROWSE_LOCATION_SETTING = "LastBrowseLocation";
 static const QString LAST_BROWSE_ASSETS_LOCATION_SETTING = "LastBrowseAssetsLocation";
 
+// null for a script on either engine: the QtScript engine turns a null QObject* into null (a QVariant holding nullptr
+// reaches a script as an opaque variant), and the WebAssembly engine's codec turns either into null
+static QVariant nullResult() {
+    return QVariant::fromValue<QObject*>(nullptr);
+}
 
 WindowScriptingInterface::WindowScriptingInterface() {
     const DomainHandler& domainHandler = DependencyManager::get<NodeList>()->getDomainHandler();
@@ -76,8 +81,8 @@ WindowScriptingInterface::~WindowScriptingInterface() {
     _messageBoxes.clear();
 }
 
-QScriptValue WindowScriptingInterface::hasFocus() {
-    return qApp->hasFocus();
+QVariant WindowScriptingInterface::hasFocus() {
+    return QVariant(qApp->hasFocus());
 }
 
 void WindowScriptingInterface::setFocus() {
@@ -103,21 +108,21 @@ void WindowScriptingInterface::alert(const QString& message) {
 
 /// Display a confirmation box with the options 'Yes' and 'No'
 /// \param const QString& message message to display
-/// \return QScriptValue `true` if 'Yes' was clicked, `false` otherwise
-QScriptValue WindowScriptingInterface::confirm(const QString& message) {
-    return QScriptValue((QMessageBox::Yes == OffscreenUi::question("", message, QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes)));
+/// \return `true` if 'Yes' was clicked, `false` otherwise
+QVariant WindowScriptingInterface::confirm(const QString& message) {
+    return QVariant((QMessageBox::Yes == OffscreenUi::question("", message, QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes)));
 }
 
 /// Display a prompt with a text box
 /// \param const QString& message message to display
 /// \param const QString& defaultText default text in the text box
-/// \return QScriptValue string text value in text box if the dialog was accepted, `null` otherwise.
-QScriptValue WindowScriptingInterface::prompt(const QString& message, const QString& defaultText) {
+/// \return the text in the text box if the dialog was accepted, `null` otherwise.
+QVariant WindowScriptingInterface::prompt(const QString& message, const QString& defaultText) {
     QString result = OffscreenUi::getText(nullptr, "", message, QLineEdit::Normal, defaultText);
-    if (QScriptValue(result).equals("")) {
-        return QScriptValue::NullValue;
+    if (result.isEmpty()) {
+        return nullResult();
     }
-    return QScriptValue(result);
+    return QVariant(result);
 }
 
 /// Display a prompt with a text box
@@ -217,8 +222,8 @@ void WindowScriptingInterface::ensureReticleVisible() const {
 /// working directory.
 /// \param const QString& title title of the window
 /// \param const QString& directory directory to start the directory browser at
-/// \return QScriptValue file path as a string if one was selected, otherwise `QScriptValue::NullValue`
-QScriptValue WindowScriptingInterface::browseDir(const QString& title, const QString& directory) {
+/// \return the file path as a string if one was selected, otherwise `null`
+QVariant WindowScriptingInterface::browseDir(const QString& title, const QString& directory) {
     ensureReticleVisible();
     QString path = directory;
     if (path.isEmpty()) {
@@ -231,7 +236,7 @@ QScriptValue WindowScriptingInterface::browseDir(const QString& title, const QSt
     if (!result.isEmpty()) {
         setPreviousBrowseLocation(QFileInfo(result).absolutePath());
     }
-    return result.isEmpty() ? QScriptValue::NullValue : QScriptValue(result);
+    return result.isEmpty() ? nullResult() : QVariant(result);
 }
 
 /// Display a "browse to directory" dialog.  If `directory` is an invalid file or directory the browser will start at the current
@@ -261,8 +266,8 @@ void WindowScriptingInterface::browseDirAsync(const QString& title, const QStrin
 /// \param const QString& title title of the window
 /// \param const QString& directory directory to start the file browser at
 /// \param const QString& nameFilter filter to filter filenames by - see `QFileDialog`
-/// \return QScriptValue file path as a string if one was selected, otherwise `QScriptValue::NullValue`
-QScriptValue WindowScriptingInterface::browse(const QString& title, const QString& directory, const QString& nameFilter) {
+/// \return the file path as a string if one was selected, otherwise `null`
+QVariant WindowScriptingInterface::browse(const QString& title, const QString& directory, const QString& nameFilter) {
     ensureReticleVisible();
     QString path = directory;
     if (path.isEmpty()) {
@@ -275,7 +280,7 @@ QScriptValue WindowScriptingInterface::browse(const QString& title, const QStrin
     if (!result.isEmpty()) {
         setPreviousBrowseLocation(QFileInfo(result).absolutePath());
     }
-    return result.isEmpty() ? QScriptValue::NullValue : QScriptValue(result);
+    return result.isEmpty() ? nullResult() : QVariant(result);
 }
 
 /// Display an open file dialog.  If `directory` is an invalid file or directory the browser will start at the current
@@ -308,8 +313,8 @@ void WindowScriptingInterface::browseAsync(const QString& title, const QString& 
 /// \param const QString& title title of the window
 /// \param const QString& directory directory to start the file browser at
 /// \param const QString& nameFilter filter to filter filenames by - see `QFileDialog`
-/// \return QScriptValue file path as a string if one was selected, otherwise `QScriptValue::NullValue`
-QScriptValue WindowScriptingInterface::save(const QString& title, const QString& directory, const QString& nameFilter) {
+/// \return the file path as a string if one was selected, otherwise `null`
+QVariant WindowScriptingInterface::save(const QString& title, const QString& directory, const QString& nameFilter) {
     ensureReticleVisible();
     QString path = directory;
     if (path.isEmpty()) {
@@ -322,7 +327,7 @@ QScriptValue WindowScriptingInterface::save(const QString& title, const QString&
     if (!result.isEmpty()) {
         setPreviousBrowseLocation(QFileInfo(result).absolutePath());
     }
-    return result.isEmpty() ? QScriptValue::NullValue : QScriptValue(result);
+    return result.isEmpty() ? nullResult() : QVariant(result);
 }
 
 /// Display a save file dialog.  If `directory` is an invalid file or directory the browser will start at the current
@@ -355,8 +360,8 @@ void WindowScriptingInterface::saveAsync(const QString& title, const QString& di
 /// \param const QString& title title of the window
 /// \param const QString& directory directory to start the asset browser at
 /// \param const QString& nameFilter filter to filter asset names by - see `QFileDialog`
-/// \return QScriptValue asset path as a string if one was selected, otherwise `QScriptValue::NullValue`
-QScriptValue WindowScriptingInterface::browseAssets(const QString& title, const QString& directory, const QString& nameFilter) {
+/// \return the asset path as a string if one was selected, otherwise `null`
+QVariant WindowScriptingInterface::browseAssets(const QString& title, const QString& directory, const QString& nameFilter) {
     ensureReticleVisible();
     QString path = directory;
     if (path.isEmpty()) {
@@ -372,7 +377,7 @@ QScriptValue WindowScriptingInterface::browseAssets(const QString& title, const 
     if (!result.isEmpty()) {
         setPreviousBrowseAssetLocation(QFileInfo(result).absolutePath());
     }
-    return result.isEmpty() ? QScriptValue::NullValue : QScriptValue(result);
+    return result.isEmpty() ? nullResult() : QVariant(result);
 }
 
 /// Display a select asset dialog that lets the user select an asset from the Asset Server.  If `directory` is an invalid

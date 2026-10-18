@@ -35,6 +35,8 @@
 #include <OBJSerializer.h>
 #include <PathUtils.h>
 #include <StandardSkeleton.h>
+#include <UnityPackage.h>
+#include <UnityAvatar.h>
 
 #include "Application.h"
 #include "AvatarManager.h"
@@ -212,6 +214,10 @@ using SharePointer = std::shared_ptr<Share>;
 void wearOnceItReadsBack(const SharePointer& share, const QString& url) {
     QNetworkRequest request { QUrl(url) };
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    // A check, so it neither reads nor writes the disk cache: Qt unpacks the gzip itself here and would cache the
+    // unpacked body under the gzip label, which the avatar's own load (HTTPResourceRequest) then fails to unpack.
+    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
+    request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
     QNetworkReply* reply = NetworkAccessManager::getInstance().get(request);
     QObject::connect(reply, &QNetworkReply::finished, reply, [reply, share, url]() {
         reply->deleteLater();
@@ -275,7 +281,8 @@ void shareAvatar(const QString& fstPath, const QString& name) {
     share->fstName = QFileInfo(fstPath).fileName();
     share->remoteFolder = "/avatars/" + name + "-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
     QString modelPath;
-    for (const QString& line : QString::fromUtf8(fst.readAll()).split('\n')) {
+    const QString fstText = QString::fromUtf8(fst.readAll());
+    for (const QString& line : fstText.split('\n')) {
         const QString key = line.section('=', 0, 0).trimmed();
         if (key == "texdir") {
             continue;  // the textures go up beside the model, where it looks for them anyway
@@ -302,8 +309,11 @@ void shareAvatar(const QString& fstPath, const QString& name) {
         const QFileInfo modelInfo(modelPath);
         share->files.append(modelInfo.absoluteFilePath());
         share->modelIsLocal = true;
+        // The files beside the model that it names (game rips name their textures) or that the .fst names (a
+        // converted avatar's material map names its textures).
         for (const QFileInfo& file : modelInfo.dir().entryInfoList(QDir::Files)) {
-            if (file != modelInfo && file.suffix().toLower() != "fst" && bytes.contains(file.fileName().toUtf8())) {
+            if (file != modelInfo && file.suffix().toLower() != "fst" &&
+                (bytes.contains(file.fileName().toUtf8()) || fstText.contains("\"" + file.fileName() + "\""))) {
                 share->files.append(file.absoluteFilePath());
             }
         }
@@ -419,12 +429,82 @@ void decide(const ImportPointer& import) {
     }
 }
 
+// A .unitypackage (as avatar shops sell avatars): the avatars in it, converted with libraries/unity-import. The package is
+// read and the avatar written off the main thread; the questions come back to it.
+void convertPackageAvatar(const std::shared_ptr<unity::Package>& package, const avatarimport::AvatarSource& avatar,
+                         const QString& packageName) {
+    QtConcurrent::run([package, avatar, packageName]() {
+        const QString name = avatarName(avatar.name);
+        const avatarimport::WrittenAvatar written = avatarimport::writeAvatar(*package, avatar, avatarFolder(name), name);
+        for (const QString& note : written.notes) {
+            qCDebug(interfaceapp) << "Import Avatar:" << name << "note:" << note;
+        }
+        qCDebug(interfaceapp) << "Import Avatar:" << name << (written.ok ? "converted and saved as" : "not converted:")
+                              << (written.ok ? written.fstPath : written.error);
+        QMetaObject::invokeMethod(qApp, [written, name, packageName]() {
+            if (!written.ok) {
+                warn("Could not convert " + name + ": " + written.error + ".");
+                return;
+            }
+            QStringList notYet;
+            for (const QString& note : written.notes) {
+                if (note.startsWith("not yet: ")) {
+                    notYet << note.mid(9);
+                }
+            }
+            offerToWear(written.fstPath, name,
+                        name + " from " + packageName + " is ready. Wear it now?\n\n" +
+                            (notYet.isEmpty() ? QString() : "Not carried over yet: " + notYet.join("; ") + ".\n\n") +
+                            "Saved in " + QFileInfo(written.fstPath).absolutePath() + ".");
+        }, Qt::QueuedConnection);
+    });
+}
+
+void importUnityPackage(const QString& path) {
+    QtConcurrent::run([path]() {
+        auto package = std::make_shared<unity::Package>();
+        QString error;
+        const bool opened = package->open(path, &error);
+        const QVector<avatarimport::AvatarSource> avatars = opened ? avatarimport::findAvatars(*package) : QVector<avatarimport::AvatarSource>();
+        qCDebug(interfaceapp) << "Import Avatar: read" << path << (opened ? QString("%1 avatars").arg(avatars.size()) : error);
+        QMetaObject::invokeMethod(qApp, [package, avatars, path, opened, error]() {
+            const QString packageName = QFileInfo(path).fileName();
+            if (!opened) {
+                warn("Could not read " + packageName + ": " + error + ".");
+                return;
+            }
+            if (avatars.isEmpty()) {
+                warn(packageName + " holds no avatar (no prefab with an avatar descriptor). An outfit or hair "
+                     "package goes onto its avatar, which Darkride cannot do yet.");
+                return;
+            }
+            int chosen = 0;
+            if (avatars.size() > 1) {
+                std::vector<Choice> choices;
+                for (int i = 0; i < avatars.size() && i < 3; i++) {
+                    choices.push_back({ avatars[i].name, i == 0 ? QMessageBox::AcceptRole : QMessageBox::ActionRole });
+                }
+                choices.push_back({ "Cancel", QMessageBox::RejectRole });
+                chosen = ask(packageName + " holds more than one avatar. Which one?", "The first is the PC version.", choices);
+                if (chosen < 0 || chosen >= (int)choices.size() - 1) {
+                    return;
+                }
+            }
+            convertPackageAvatar(package, avatars[chosen], packageName);
+        }, Qt::QueuedConnection);
+    });
+}
+
 }
 
 void AvatarImporter::importFile(const QString& path) {
     const QString name = avatarName(path);
     if (QFileInfo(path).suffix().toLower() == "fst") {
         offerToWear(path, name, "Wear " + name + "?");
+        return;
+    }
+    if (QFileInfo(path).suffix().toLower() == "unitypackage") {
+        importUnityPackage(path);
         return;
     }
     auto import = std::make_shared<Import>();

@@ -28,6 +28,7 @@
 
 class PhysicalEntitySimulation;
 class TrackSimulation;
+class VehicleSimulation;
 using PhysicalEntitySimulationPointer = std::shared_ptr<PhysicalEntitySimulation>;
 using SetOfEntityMotionStates = QSet<EntityMotionState*>;
 
@@ -66,6 +67,7 @@ public:
     void takeDeadAvatarEntities(SetOfEntities& deadEntities);
 
     virtual void clearEntities() override;
+    QVariantMap getVehicleStats() const override;
     void queueEraseDomainEntity(const QUuid& id) const override;
 
 signals:
@@ -94,13 +96,24 @@ public:
 
     EntityEditPacketSender* getPacketSender() { return _entityPacketSender; }
 
+    // the trains on the tracks (PHYSICS.md 4.8); the physics server takes their state publications from here
+    TrackSimulation* getTrackSimulation() const { return _trackSimulation.get(); }
+    // the driven vehicles (PHYSICS.md round 6); the physics server hands it the drivers' inputs
+    VehicleSimulation* getVehicleSimulation() const { return _vehicleSimulation.get(); }
+
     void addOwnershipBid(EntityMotionState* motionState);
     void addOwnership(EntityMotionState* motionState);
     void sendOwnershipBids(uint32_t numSubsteps);
     void sendOwnedUpdates(uint32_t numSubsteps);
 
 private:
+    // A dynamic entity this process simulates crosses between frames by where it is (PHYSICS.md 4.1, round 8): out of
+    // a frame's volume into the frame that holds it, or the domain; its pose and velocities are handed over exactly
+    // and its body is reinserted in the other world by the next transaction.
+    void updateFrameMembership(const VectorOfMotionStates& motionStates);
     void buildMotionStatesForEntitiesThatNeedThem();
+    // the workload region an entity is in; without a workload space (the physics server has none) everything is R1
+    uint8_t regionOf(const EntityItemPointer& entity) const;
 
     class ShapeRequest {
     public:
@@ -133,6 +146,7 @@ private:
 
     workload::SpacePointer _space;
     std::unique_ptr<TrackSimulation> _trackSimulation; // the trains on the tracks (PHYSICS.md 4.8)
+    std::unique_ptr<VehicleSimulation> _vehicleSimulation; // the driven vehicles (PHYSICS.md round 6)
     uint64_t _nextBidExpiry;
     uint32_t _lastStepSendPackets { 0 };
     uint32_t _lastWorkDeliveryCount { 0 };
