@@ -1358,9 +1358,14 @@ void AssetsPanel::deleteFiles(const QList<const UserFile*>& files) {
             question += QString(" The %1 hold %2 files.").arg(folders == 1 ? "folder" : "folders").arg(inside);
         }
     }
-    QMessageBox box(window());
+    // The window as the parent (the dock's style sheet hid the highlight), with the question, the warning and a
+    // Cancel button: a box with Delete alone (1ba7996d09 lost these) made Delete its escape button, so Escape and
+    // closing the box deleted the files. Cancel is the default and the escape button, named outright.
+    QMessageBox box(QMessageBox::Warning, "Delete", question + "\n\nEvery world that uses them will lose them. This cannot be undone.",
+                    QMessageBox::Cancel, window());
     QPushButton* deleteButton = box.addButton("Delete", QMessageBox::DestructiveRole);
     box.setDefaultButton(QMessageBox::Cancel);
+    box.setEscapeButton(QMessageBox::Cancel);
     box.exec();
     if (box.clickedButton() != deleteButton) {
         return;
