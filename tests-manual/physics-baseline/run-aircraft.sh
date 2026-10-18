@@ -12,7 +12,8 @@ R=${2:-"${TMPDIR:-/tmp}/physics-aircraft"}
 PORT=${3:-42102}
 LOSS=${4:-0}
 DELAY=${5:-0}
-SANDBOX=/Users/thistlequell/tivoli-sandboxes/physics
+SANDBOX=${SANDBOX:-$HOME/tivoli-sandboxes/physics}
+DOMAIN_SANDBOX=${DOMAIN_SANDBOX:-$HOME/git/tivolicloud/domain-sandbox.sh}   # darkride-ops' sandbox starter
 BIN="$APP/Contents/MacOS/interface"
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 mkdir -p "$R/pilot"
@@ -66,8 +67,8 @@ with gzip.open(path, "wt") as f:
 print("world cleaned of earlier runs' test entities:", before - len(world["Entities"]), "removed,", len(world["Entities"]), "kept")
 PY
 # the physics server is off by default (describe-settings.json); this sandbox runs it
-python3 -c 'import json, os, sys; p = sys.argv[1]; c = json.load(open(p)) if os.path.exists(p) else {}; c.setdefault("physics_server", {})["enabled"] = True; json.dump(c, open(p, "w"), indent=2)' "/Users/thistlequell/tivoli-sandboxes/physics/domain-config.json"
-/Users/thistlequell/git/tivolicloud/domain-sandbox.sh physics "$BUILD" "$PORT"
+python3 -c 'import json, os, sys; p = sys.argv[1]; c = json.load(open(p)) if os.path.exists(p) else {}; c.setdefault("physics_server", {})["enabled"] = True; json.dump(c, open(p, "w"), indent=2)' "$SANDBOX/domain-config.json"
+"$DOMAIN_SANDBOX" physics "$BUILD" "$PORT"
 # the sandbox's monitor starts six children for seven services and adds the seventh, the physics server, at its next
 # spare check (30 s)
 for i in $(seq 1 90); do
