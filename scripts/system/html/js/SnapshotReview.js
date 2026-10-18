@@ -34,9 +34,9 @@ function showSetupInstructions() {
     snapshotImagesDiv.className = "snapshotInstructions";
     snapshotImagesDiv.innerHTML = '<img class="centeredImage" src="./img/snapshotIcon.png" alt="Snapshot Instructions" width="64" height="64"/>' +
         '<br/>' +
-        '<p>Take snaps and GIFs of what you see. Signed in, they go to My Files, in Snapshots.</p>' +
+        '<p>Take Snaps and GIFs; signed in, they\'re kept in your My Files, in Snapshots.</p>' +
         "<h4>Setup Instructions</h4>" +
-        "<p>Sign in to keep your snaps in My Files, or choose where you'd like to save them on this computer:</p>" +
+        "<p>Sign in to keep your Snaps in My Files, or choose where you'd like to save them on this computer:</p>" +
         '<br/>' +
         '<div style="text-align:center;">' +
             '<input class="blueButton" style="margin-right:20px;width:130px;" type="button" value="SIGN IN" onclick="login()" />' +
@@ -52,7 +52,7 @@ function showSetupComplete() {
         '<br/>' +
         '<div style="text-align:center;font-weight:bold;">' +
             '<p>Snapshot location set.</p>' +
-            '<p>Press the big red button to take a snap!</p>' +
+            '<p>Press the big red button to take a Snap!</p>' +
         '</div>';
     document.getElementById("snap-button").disabled = false;
     isShowingSetupInstructions = false;
@@ -62,10 +62,10 @@ function showSnapshotInstructions() {
     snapshotImagesDiv.className = "snapshotInstructions";
     snapshotImagesDiv.innerHTML = '<img class="centeredImage" src="./img/snapshotIcon.png" alt="Snapshot Instructions" width="64" height="64"/>' +
         '<br/>' +
-        '<p>Take snaps and GIFs of what you see. Signed in, they go to My Files, in Snapshots.</p>' +
+        '<p>Take Snaps and GIFs; they\'re kept in your My Files, in Snapshots.</p>' +
         '<br/>' +
         '<div style="text-align:center;font-weight:bold;">' +
-            '<p>Press the big red button to take a snap!</p>' +
+            '<p>Press the big red button to take a Snap!</p>' +
         '</div>';
 }
 function chooseSnapshotLocation() {
@@ -681,9 +681,6 @@ function handleNametagsSetting(setting) {
 }
 
 window.onload = function () {
-    // Uncomment the line below to test functionality in a browser.
-    // See definition of "testInBrowser()" to modify tests.
-    //testInBrowser(4);
     openEventBridge(function () {
         // Set up a handler for receiving the data, and tell the .js we are ready to receive it.
         EventBridge.scriptEventReceived.connect(function (message) {
@@ -860,31 +857,4 @@ function printToPolaroid() {
     } else {
         setPrintButtonLoading();
     }
-}
-
-function testInBrowser(test) {
-    if (test === 0) {
-        showSetupInstructions();
-    } else if (test === 1) {
-        imageCount = 2;
-        //addImage({ localPath: 'http://lorempixel.com/553/255' });
-        addImage({ localPath: 'D:/Dropbox/Screenshots/High Fidelity Snapshots/hifi-snap-by-zfox-on-2017-05-01_13-28-58.jpg', story_id: 1338 }, true, true, false, true, false, false, true);
-        addImage({ localPath: 'D:/Dropbox/Screenshots/High Fidelity Snapshots/hifi-snap-by-zfox-on-2017-05-01_13-28-58.gif', story_id: 1337 }, true, true, false, true, false, false, true);
-    } else if (test === 2) {
-        addImage({ localPath: 'D:/Dropbox/Screenshots/High Fidelity Snapshots/hifi-snap-by-zfox-on-2017-05-01_13-28-58.jpg', story_id: 1338 }, true, true, false, true, false, false, true);
-        addImage({ localPath: 'D:/Dropbox/Screenshots/High Fidelity Snapshots/hifi-snap-by-zfox-on-2017-05-01_13-28-58.gif', story_id: 1337 }, true, true, false, true, false, false, true);
-        showConfirmationMessage("p0", 'blast');
-        showConfirmationMessage("p1", 'hifi');
-    } else if (test === 3) {
-        imageCount = 2;
-        //addImage({ localPath: 'http://lorempixel.com/553/255' });
-        addImage({ localPath: 'D:/Dropbox/Screenshots/High Fidelity Snapshots/hifi-snap-by-zfox-on-2017-05-01_13-28-58.jpg', story_id: 1338 }, true, true, false, true, false, false, true);
-        addImage({ localPath: 'D:/Dropbox/Screenshots/High Fidelity Snapshots/hifi-snap-by-zfox-on-2017-05-01_13-28-58.gif', story_id: 1337 }, true, true, false, true, false, false, true);
-        showUploadingMessage("p0", 'hifi');
-    } else if (test === 4) {
-    imageCount = 2;
-    //addImage({ localPath: 'http://lorempixel.com/553/255' });
-    addImage({ localPath: 'D:/Dropbox/Screenshots/High Fidelity Snapshots/hifi-snap-by-zfox-on-2017-05-01_13-28-58.jpg', story_id: 1338 }, false, true, false, true, false, false, true);
-    addImage({ localPath: 'D:/Dropbox/Screenshots/High Fidelity Snapshots/hifi-snap-by-zfox-on-2017-05-01_13-28-58.gif', story_id: 1337 }, false, true, false, true, false, false, true);
-}
 }
