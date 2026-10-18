@@ -1342,8 +1342,13 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     auto discoverabilityManager = DependencyManager::get<DiscoverabilityManager>();
     connect(&locationUpdateTimer, &QTimer::timeout, discoverabilityManager.data(), &DiscoverabilityManager::updateLocation);
-    connect(&locationUpdateTimer, &QTimer::timeout,
-        DependencyManager::get<AddressManager>().data(), &AddressManager::storeCurrentAddress);
+    connect(&locationUpdateTimer, &QTimer::timeout, this, [this] {
+        // nothing to remember while the sign-in screen is up, since no world is joined until someone signs in
+        // (pauseUntilLoginDetermined); the last place stays saved for after
+        if (!getLoginDialogPoppedUp()) {
+            DependencyManager::get<AddressManager>()->storeCurrentAddress();
+        }
+    });
     locationUpdateTimer.start(DATA_SERVER_LOCATION_CHANGE_UPDATE_MSECS);
 
     // if we get a domain change, immediately attempt update location in metaverse server
