@@ -20,6 +20,7 @@ static const double RADIUS = 2.0;        /* metres */
 static const double TURN_SECONDS = 8.0;  /* one orbit */
 static const double RUN_SECONDS = 12.0;  /* then the script stops itself */
 static const int32_t TIMER_CALLBACK = 1;
+static const int ADD_TRIES = 10;         /* seconds to wait for the world before giving up on the entity */
 
 static int32_t Script, MyAvatar, Entities, Vec3;
 static int32_t updateConnection;
@@ -29,6 +30,7 @@ static double elapsed;
 static double angle;
 static int frames;
 static int setFailures;
+static int addTries;
 
 static bool readVec3Property(int32_t object, const char* property, dr_vec3* out) {
     dr_bytes bytes = dr_get_property(object, property);
@@ -37,7 +39,8 @@ static bool readVec3Property(int32_t object, const char* property, dr_vec3* out)
     return ok;
 }
 
-static void addEntity(void) {
+/* Adds the entity to orbit around: false when there is no world to add it to yet (the id comes back null). */
+static bool addEntity(void) {
     cbor_writer args;
     cw_init(&args);
     cw_array(&args, 1);
@@ -67,10 +70,15 @@ static void addEntity(void) {
     char message[256];
     if (dr_is_error(result, message, sizeof(message))) {
         dr_logf(DR_LOG_ERROR, "orbit: addEntity failed: %s", message);
-    } else {
-        dr_result_text(result, entityId, sizeof(entityId));
-        dr_printf("orbit: added entity %s", entityId);
+        dr_bytes_free(result);
+        return true;  /* refused for good: not worth another try */
     }
+    if (dr_result_is_null(result)) {
+        dr_bytes_free(result);
+        return false;
+    }
+    dr_result_text(result, entityId, sizeof(entityId));
+    dr_printf("orbit: added entity %s", entityId);
     dr_bytes_free(result);
 
     /* the distance from the avatar to the entity, through the Vec3 library */
@@ -81,6 +89,23 @@ static void addEntity(void) {
     result = dr_call_args(Vec3, "distance", &args);
     cw_free(&args);
     dr_printf("orbit: Vec3.distance to the entity = %.3f", dr_result_number(result));
+    dr_bytes_free(result);
+    return true;
+}
+
+/* A timer: the host calls on_callback(TIMER_CALLBACK) once, a second from now. */
+static void startTimer(void) {
+    cbor_writer args;
+    cw_init(&args);
+    cw_array(&args, 2);
+    cw_callback(&args, TIMER_CALLBACK);
+    cw_int(&args, 1000);
+    dr_bytes result = dr_call_args(Script, "setTimeout", &args);
+    cw_free(&args);
+    char message[256];
+    if (dr_is_error(result, message, sizeof(message))) {
+        dr_logf(DR_LOG_ERROR, "orbit: setTimeout failed: %s", message);
+    }
     dr_bytes_free(result);
 }
 
@@ -105,20 +130,9 @@ void script_start(void) {
     }
     dr_printf("orbit: starting at (%.2f, %.2f, %.2f), radius %.1f m, one turn in %.0f s", center.x, center.y, center.z, RADIUS, TURN_SECONDS);
 
-    /* a timer: the host calls on_callback(TIMER_CALLBACK) once, a second from now; the entity is added then,
-       when the world has loaded (an entity added before that is refused) */
-    cbor_writer args;
-    cw_init(&args);
-    cw_array(&args, 2);
-    cw_callback(&args, TIMER_CALLBACK);
-    cw_int(&args, 1000);
-    dr_bytes result = dr_call_args(Script, "setTimeout", &args);
-    cw_free(&args);
-    char message[256];
-    if (dr_is_error(result, message, sizeof(message))) {
-        dr_logf(DR_LOG_ERROR, "orbit: setTimeout failed: %s", message);
-    }
-    dr_bytes_free(result);
+    /* the entity is added a second from now, and each second after that until the world has loaded (a script can
+       start before its world does, and an entity added before that gets no id) */
+    startTimer();
 
     updateConnection = dr_connect_signal(Script, "update");
     if (!updateConnection) {
@@ -180,7 +194,14 @@ void on_callback(int32_t callback, const uint8_t* args, int32_t length) {
     free((void*)args);
     if (callback == TIMER_CALLBACK) {
         dr_printf("orbit: the timer fired after %.2f s", elapsed);
-        addEntity();
+        if (!addEntity()) {
+            if (++addTries < ADD_TRIES) {
+                dr_print("orbit: no world to add the entity to yet; trying again in a second");
+                startTimer();
+            } else {
+                dr_printf("orbit: no world after %d s; going on without the entity", ADD_TRIES);
+            }
+        }
     }
 }
 

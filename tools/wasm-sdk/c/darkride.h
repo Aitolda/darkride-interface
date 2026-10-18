@@ -176,6 +176,9 @@ double dr_result_number(dr_bytes result);
 size_t dr_result_text(dr_bytes result, char* out, size_t capacity);
 bool dr_result_vec3(dr_bytes result, dr_vec3* out);
 int32_t dr_result_object(dr_bytes result);
+/* True when the result is null or empty: what the host gives for a value it has none of, such as the id of an entity
+   it could not add (Entities.addEntity before the world has loaded). */
+bool dr_result_is_null(dr_bytes result);
 
 void dr_print(const char* text);
 void dr_printf(const char* format, ...);
@@ -716,6 +719,12 @@ int32_t dr_result_object(dr_bytes result) {
         return 0;
     }
     return (int32_t)handle.integer;
+}
+
+bool dr_result_is_null(dr_bytes result) {
+    cbor_reader r = cr_from(result);
+    cbor_item item;
+    return !cr_next(&r, &item) || item.type == CBOR_NULL || item.type == CBOR_UNDEFINED;
 }
 
 void dr_print(const char* text) {
