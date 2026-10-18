@@ -33,12 +33,7 @@
     }
 
     function newCar() {
-        var names = ["rover-chassis", "rover-wheel-FL", "rover-wheel-FR", "rover-wheel-RL", "rover-wheel-RR"];
-        names.forEach(function (name) {
-            Entities.findEntitiesByName(name, LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE, false).forEach(function (id) {
-                Entities.deleteEntity(id);
-            });
-        });
+        LandRover.clearVehicles();
         var c = LandRover.TERRAIN_CENTER;
         car = LandRover.create(c.x, c.z, 0, LIFETIME).chassis;
         log("a fresh Land Rover on the pad: " + car);
@@ -55,7 +50,12 @@
         // the ground takes a moment; the car a moment after it
         Script.setTimeout(function () {
             car = existingCar();
-            if (car) { log("the Land Rover is already here: " + car); } else { newCar(); }
+            if (car) {
+                LandRover.clearVehicles("rover-");  // an airship or aircraft left on the pad
+                log("the Land Rover is already here: " + car);
+            } else {
+                newCar();
+            }
             log("click the car to get in; W/S A/D Space; F to get out; R for a fresh car; T back to the pad");
         }, 3000);
     }

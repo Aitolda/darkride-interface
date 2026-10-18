@@ -40,6 +40,7 @@
 
     function newShip() {
         Rig.deleteAll(LandRover.TERRAIN_CENTER, 2 * LandRover.TERRAIN_SIZE);
+        LandRover.clearVehicles();
         var c = LandRover.TERRAIN_CENTER;
         ship = Rig.create(c.x, c.z, 0, LIFETIME).hull;
         if (KIND === "airship") {
@@ -60,7 +61,12 @@
         toPad();
         Script.setTimeout(function () {
             ship = existingShip();
-            if (ship) { log("the " + KIND + " is already here: " + ship); } else { newShip(); }
+            if (ship) {
+                LandRover.clearVehicles(KIND + "-");  // a car or the other craft left on the pad
+                log("the " + KIND + " is already here: " + ship);
+            } else {
+                newShip();
+            }
             if (KIND === "aircraft") {
                 log("climb aboard and click the craft for the stick; W/S throttle, X cut, A/D roll and yaw, up/down elevator, Space tilts to hover, C tilts to forward flight, F leave; R fresh craft; T to the pad");
             } else {

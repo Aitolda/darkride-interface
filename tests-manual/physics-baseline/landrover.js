@@ -175,6 +175,29 @@ var LandRover = (function () {
         return { chassis: chassis, wheels: wheelIDs };
     }
 
+    // The playgrounds (drive-rover, fly-airship, fly-aircraft) share the pad at the terrain's centre. Each clears the
+    // other kinds of vehicle off it before it makes or keeps its own: a car left on the pad when an airship is built
+    // there rides off in the ship's frame and slides about its deck (Caity's hand test, 10-18). A name starting with
+    // keepPrefix is kept; children go with their parents.
+    var VEHICLE_PREFIXES = ["rover-chassis", "rover-wheel-", "airship-", "aircraft-"];
+    function clearVehicles(keepPrefix) {
+        var removed = 0;
+        Entities.findEntities(TERRAIN_CENTER, 2 * TERRAIN_SIZE).forEach(function (id) {
+            var name = Entities.getEntityProperties(id, ["name"]).name || "";
+            if (keepPrefix && name.indexOf(keepPrefix) === 0) {
+                return;
+            }
+            for (var i = 0; i < VEHICLE_PREFIXES.length; i++) {
+                if (name.indexOf(VEHICLE_PREFIXES[i]) === 0) {
+                    Entities.deleteEntity(id);
+                    removed++;
+                    return;
+                }
+            }
+        });
+        return removed;
+    }
+
     return {
         TERRAIN_CENTER: TERRAIN_CENTER,
         TERRAIN_SIZE: TERRAIN_SIZE,
@@ -186,6 +209,7 @@ var LandRover = (function () {
         SPEC: SPEC,
         groundHeight: groundHeight,
         createTerrain: createTerrain,
-        create: create
+        create: create,
+        clearVehicles: clearVehicles
     };
 }());
