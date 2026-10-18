@@ -68,7 +68,7 @@
                 newShip();
             }
             if (KIND === "aircraft") {
-                log("climb aboard and click the craft for the stick; W/S throttle, X cut, A/D roll and yaw, up/down elevator, Space tilts to hover, C tilts to forward flight, F leave; R fresh craft; T to the pad");
+                log("climb aboard and click the craft for the stick (the flight assistant): W/S faster and slower, X stop, A/D bank (turn in a hover), Up/Down or Space/C climb and descend, F leave; R fresh craft; T to the pad");
             } else {
                 log("walk aboard and click the ship for the helm; W/S throttle, X cut, A/D rudder, up/down elevator, Space/C up and down, B ballast, V vent, F leave; R fresh ship; T to the pad");
             }
