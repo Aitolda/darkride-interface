@@ -77,7 +77,12 @@ export class ExploreHandler extends WebEventHandler {
 				this.play(this.hopSound);
 				Messages.sendLocalMessage(
 					"Darkride-Hop",
-					JSON.stringify({ type: "start", world: data.value }),
+					JSON.stringify({
+						type: "start",
+						world: data.value.world,
+						author: data.value.author,
+						picture: data.value.picture,
+					}),
 				);
 				break;
 			case "hopCancel":
@@ -99,7 +104,8 @@ export class ExploreHandler extends WebEventHandler {
 				Window.location.reconnect();
 				break;
 			case "joinUser":
-				this.play(this.hopSound);
+				if (!this.hopping) this.play(this.hopSound);
+				this.hopping = false;
 				Window.location.goToUser(data.value);
 				break;
 

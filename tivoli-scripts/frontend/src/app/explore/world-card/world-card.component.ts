@@ -135,7 +135,7 @@ export class WorldCardComponent {
 
 	onJoin(place: Place) {
 		this.starting = true; // "Hopping..." until the Explore closes behind the client
-		this.exploreService.hopStart(this.world.label);
+		this.exploreService.hopStart(this.world.label, this.world.username, this.world.id);
 		if (place.instance != null) {
 			this.exploreService.joinInstance(place.instance);
 		} else {
@@ -147,7 +147,7 @@ export class WorldCardComponent {
 		if (this.starting || this.exploreService.hoppingWorldId != null) return;
 		this.starting = true;
 		this.exploreService.setHopping(this.world.id);
-		this.exploreService.hopStart(this.world.label);
+		this.exploreService.hopStart(this.world.label, this.world.username, this.world.id);
 		this.exploreService.startInstance(this.world.id, visibility).subscribe(
 			instance => {
 				this.exploreService.joinInstance(instance);

@@ -213,8 +213,13 @@ export class ExploreService {
 	// A hop takes the screen at the click: the loading screen (scripts/system/worldLoading.js, on the local
 	// "Darkride-Hop" channel) comes up and Explore closes, so it isn't there on arrival. If the hop fails before
 	// the client leaves, the screen lifts and Explore comes back to say why.
-	hopStart(worldName: string) {
-		this.scriptService.emitEvent("explore", "hopStart", worldName);
+	// world: the name the screen shows big ("" when there's no name to show); its author and its picture, when known
+	hopStart(world: string, author = "", worldId: string = null) {
+		const picture =
+			worldId != null
+				? this.scriptService.metaverseUrl + "/api/domain/" + worldId + "/image"
+				: "";
+		this.scriptService.emitEvent("explore", "hopStart", { world, author, picture });
 		this.scriptService.emitEvent("explore", "close");
 	}
 
