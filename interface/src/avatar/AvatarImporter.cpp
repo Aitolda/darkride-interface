@@ -141,23 +141,30 @@ QString avatarFolder(const QString& name) {
 
 struct Choice {
     QString label;
-    QMessageBox::ButtonRole role;  // AcceptRole is the default button, RejectRole the one Escape presses
+    QMessageBox::ButtonRole role;  // the first AcceptRole is the default button, RejectRole the one Escape presses
+    bool escape = false;           // Escape presses this one too, whatever its role (a Cancel placed apart)
 };
 
 // One of the importer's questions: a native dialog with buttons named for what they do (the client's own dialogs
-// only offer Yes, No and Cancel). Returns the chosen button's place in the list, or -1.
-int ask(const QString& text, const QString& details, const std::vector<Choice>& choices) {
+// only offer Yes, No and Cancel). `details`, when given, goes in the scrolling text field behind Show Details, so the
+// question itself stays short. Returns the chosen button's place in the list, or -1.
+int ask(const QString& text, const QString& informative, const std::vector<Choice>& choices,
+        const QString& details = QString()) {
     QMessageBox box;
     box.setWindowTitle(TITLE);
     box.setText(text);
-    box.setInformativeText(details);
+    box.setInformativeText(informative);
+    if (!details.isEmpty()) {
+        box.setDetailedText(details);
+    }
     std::vector<QAbstractButton*> buttons;
     for (const Choice& choice : choices) {
         QPushButton* button = box.addButton(choice.label, choice.role);
         buttons.push_back(button);
-        if (choice.role == QMessageBox::AcceptRole) {
+        if (choice.role == QMessageBox::AcceptRole && !box.defaultButton()) {
             box.setDefaultButton(button);
-        } else if (choice.role == QMessageBox::RejectRole) {
+        }
+        if (choice.role == QMessageBox::RejectRole || choice.escape) {
             box.setEscapeButton(button);
         }
     }
@@ -323,15 +330,19 @@ void shareAvatar(const QString& fstPath, const QString& name) {
     shareNext(share);
 }
 
-void offerToWear(const QString& fstPath, const QString& name, const QString& what) {
-    const int answer = ask(what, "Only you see it while it is on this computer. In My Files, everyone sees it.",
-                           { { "Wear it", QMessageBox::AcceptRole },
-                             { "Wear it and put it in My Files", QMessageBox::ActionRole },
-                             { "Not now", QMessageBox::RejectRole } });
+// Asked once an avatar is ready. Wear & Keep (wear it and put it in My Files) is the default; who sees what, and the
+// importer's notes, go in the details.
+void offerToWear(const QString& fstPath, const QString& name, const QString& notes) {
+    const int answer = ask(name + " is ready.", QString(),
+                           { { "Wear && Keep", QMessageBox::AcceptRole },
+                             { "Test Locally", QMessageBox::ActionRole },
+                             { "Not Now", QMessageBox::RejectRole } },
+                           "Test Locally: you wear it from this computer, and only you see it.\n"
+                           "Wear & Keep: it also goes into My Files, and everyone sees it.\n\n" + notes);
     if (answer == 0 || answer == 1) {
         wear(fstPath, name);
     }
-    if (answer == 1) {
+    if (answer == 0) {
         shareAvatar(fstPath, name);
     }
 }
@@ -361,7 +372,7 @@ void autoRig(const ImportPointer& import, float scale) {
                 warn("Could not save " + import->name + ": " + written.error + ".");
             } else {
                 offerToWear(written.fstPath, import->name,
-                            import->name + " is rigged with Darkride's standard skeleton. Wear it now?\n\nSaved in " +
+                            "Rigged with Darkride's standard skeleton.\n\nSaved in " +
                                 QFileInfo(written.fstPath).absolutePath() + ".");
             }
         }, Qt::QueuedConnection);
@@ -446,16 +457,17 @@ void convertPackageAvatar(const std::shared_ptr<unity::Package>& package, const 
                 warn("Could not convert " + name + ": " + written.error + ".");
                 return;
             }
+            QString notes = "From " + packageName + ".\n\n";
             QStringList notYet;
             for (const QString& note : written.notes) {
                 if (note.startsWith("not yet: ")) {
-                    notYet << note.mid(9);
+                    notYet << "- " + note.mid(9);
                 }
             }
-            offerToWear(written.fstPath, name,
-                        name + " from " + packageName + " is ready. Wear it now?\n\n" +
-                            (notYet.isEmpty() ? QString() : "Not carried over yet: " + notYet.join("; ") + ".\n\n") +
-                            "Saved in " + QFileInfo(written.fstPath).absolutePath() + ".");
+            if (!notYet.isEmpty()) {
+                notes += "Not carried over yet:\n" + notYet.join("\n") + "\n\n";
+            }
+            offerToWear(written.fstPath, name, notes + "Saved in " + QFileInfo(written.fstPath).absolutePath() + ".");
         }, Qt::QueuedConnection);
     });
 }
@@ -480,15 +492,24 @@ void importUnityPackage(const QString& path) {
             }
             int chosen = 0;
             if (avatars.size() > 1) {
-                std::vector<Choice> choices;
+                // The avatars sit side by side at the right, the first (findAvatars puts a PC version before the
+                // phone ones) the default; Cancel stands apart at the left rather than between two avatars.
+                std::vector<Choice> choices { { "Cancel", QMessageBox::ActionRole, true } };
+                bool firstIsPC = true;
                 for (int i = 0; i < avatars.size() && i < 3; i++) {
-                    choices.push_back({ avatars[i].name, i == 0 ? QMessageBox::AcceptRole : QMessageBox::ActionRole });
+                    choices.push_back({ avatars[i].name, QMessageBox::AcceptRole });
+                    const QString lower = avatars[i].name.toLower();
+                    const bool forPhones = lower.contains("mobile") || lower.contains("quest") || lower.contains("android");
+                    if (forPhones == (i == 0)) {
+                        firstIsPC = false;  // the first is for phones, or another one isn't
+                    }
                 }
-                choices.push_back({ "Cancel", QMessageBox::RejectRole });
-                chosen = ask(packageName + " holds more than one avatar. Which one?", "The first is the PC version.", choices);
-                if (chosen < 0 || chosen >= (int)choices.size() - 1) {
+                const int answer = ask(packageName + " holds more than one avatar. Which one?",
+                                       firstIsPC ? avatars[0].name + " is the PC version." : QString(), choices);
+                if (answer < 1) {
                     return;
                 }
+                chosen = answer - 1;
             }
             convertPackageAvatar(package, avatars[chosen], packageName);
         }, Qt::QueuedConnection);

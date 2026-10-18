@@ -173,6 +173,7 @@ protected:
     void updateUpAxis(const glm::quat& rotation);
     bool checkForSupport();
     void measureFloorDistance(float rayLength, bool& rayHasHit);
+    void liftOutOfFloor();
     void recordContacts();
     JPH::ObjectLayer characterLayer() const;
 
@@ -224,6 +225,7 @@ protected:
     bool _stepUpEnabled { true };
     bool _hasSupport { false };
     bool _floorBelowNow { false }; // the floor ray reached floor in this update, with none of the grace period below
+    bool _liftedOutOfFloor { false }; // the last substep found the feet under a floor and lifted them out
 
     float _currentGravity { 0.0f };
     float _gravity { DEFAULT_AVATAR_GRAVITY };
