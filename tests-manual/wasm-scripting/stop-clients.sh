@@ -1,14 +1,16 @@
 #!/bin/sh
-# Stops every client of this checkout (a client process whose command line names interface-wasm: the build
-# path, or a file URL under it), and nothing else: the other sessions' clients and Caity's are left alone.
+# Stops every client of this checkout (a client process started from this checkout's build, by the path
+# run-client.sh starts it with), and nothing else: the clients of other checkouts and other people are left alone.
 # SIGTERM first, SIGKILL after 5 s. Run it before and after every test run.
 #   tests-manual/wasm-scripting/stop-clients.sh
+CHECKOUT=$(cd "$(dirname "$0")/../.." && pwd)
+CLIENT="$CHECKOUT/build/interface/interface.app/Contents/MacOS/interface"
 my_clients() {
-    ps -ax -o pid=,command= | grep "MacOS/interface" | grep "interface-wasm" | grep -v grep | awk '{print $1}'
+    ps -ax -o pid=,command= | grep -F "$CLIENT" | grep -v grep | awk '{print $1}'
 }
 PIDS=$(my_clients)
 if [ -z "$PIDS" ]; then
-    echo "no clients of interface-wasm are running"
+    echo "no clients of $CHECKOUT are running"
     exit 0
 fi
 for P in $PIDS; do
