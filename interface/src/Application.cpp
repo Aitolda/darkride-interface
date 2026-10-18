@@ -1600,9 +1600,9 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     connect(offscreenUi.data(), &OffscreenUi::keyboardFocusActive, [this]() {
 #if !defined(Q_OS_ANDROID) && !defined(DISABLE_QML)
-        // Darkride starts on the sign-in screen when nobody is signed in: until then the avatar is hidden, no world
-        // is joined and no scripts run (pauseUntilLoginDetermined), and the screen covers the window. Signed in
-        // already, showLoginScreen goes straight on. A launcher passing --tokens has signed in for us.
+        // Darkride starts on the sign-in screen: until someone signs in, or continues as the remembered account, the
+        // avatar is hidden, no world is joined and no scripts run (pauseUntilLoginDetermined), and the screen covers
+        // the window. A launcher passing --tokens has signed in for us.
         if (arguments().indexOf("--tokens") != -1) {
             resumeAfterLoginDialogActionTaken();
             return;
@@ -3268,25 +3268,21 @@ static void addDisplayPluginToMenu(const DisplayPluginPointer& displayPlugin, in
 
 void Application::showLoginScreen() {
 #if !defined(DISABLE_QML)
-    auto accountManager = DependencyManager::get<AccountManager>();
+    // Signed in or not, the sign-in screen comes first: a remembered account ("Remember me") gets "Continue as <name>"
+    // there (LoginDialog/ContinueBody.qml), and goes in from it.
     auto dialogsManager = DependencyManager::get<DialogsManager>();
-    if (!accountManager->isLoggedIn()) {
-        if (!isHMDMode()) {
-            auto toolbar =  DependencyManager::get<ToolbarScriptingInterface>()->getToolbar("com.highfidelity.interface.toolbar.system");
-            toolbar->writeProperty("visible", false);
-        }
-        _loginDialogPoppedUp = true;
-        dialogsManager->showLoginDialog();
-        emit loginDialogFocusEnabled();
-        QJsonObject loginData = {};
-        loginData["action"] = "login dialog popped up";
-        UserActivityLogger::getInstance().logAction("encourageLoginDialog", loginData);
-        _window->setWindowTitle("Darkride");
-    } else {
-        resumeAfterLoginDialogActionTaken();
+    if (!isHMDMode()) {
+        auto toolbar =  DependencyManager::get<ToolbarScriptingInterface>()->getToolbar("com.highfidelity.interface.toolbar.system");
+        toolbar->writeProperty("visible", false);
     }
-    _loginDialogPoppedUp = !accountManager->isLoggedIn();
+    _loginDialogPoppedUp = true;
     loginDialogPoppedUp.set(_loginDialogPoppedUp);
+    dialogsManager->showLoginDialog();
+    emit loginDialogFocusEnabled();
+    QJsonObject loginData = {};
+    loginData["action"] = "login dialog popped up";
+    UserActivityLogger::getInstance().logAction("encourageLoginDialog", loginData);
+    _window->setWindowTitle("Darkride");
 #else
     resumeAfterLoginDialogActionTaken();
 #endif

@@ -280,7 +280,7 @@ Item {
             HifiControlsUit.CheckBox {
                 id: keepMeLoggedInCheckbox
                 checked: Settings.getValue("keepMeLoggedIn", true);
-                text: qsTr("Keep Me Logged In");
+                text: qsTr("Remember me");
                 boxSize: 18;
                 labelFontFamily: linkAccountBody.fontFamily
                 labelFontSize: 18;
