@@ -9,12 +9,20 @@
 #include "ChatWindow.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include <QtCore/QDateTime>
+#include <QtCore/QDir>
+#include <QtCore/QFile>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QLocale>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QStandardPaths>
 #include <QtCore/QTimer>
 #include <QtGui/QDesktopServices>
+#include <QtGui/QImageReader>
 #include <QtGui/QKeyEvent>
+#include <QtGui/QMovie>
 #include <QtGui/QPainter>
 #include <QtGui/QPainterPath>
 #include <QtWidgets/QHBoxLayout>
@@ -32,8 +40,10 @@
 #include <AccountManager.h>
 #include <ChatService.h>
 #include <SettingHandle.h>
+#include <gl/GLHelpers.h>
 
 #include "Application.h"
+#include "InterfaceLogging.h"
 #include "MainWindow.h"
 
 // the web chat's colours (darkride_chat client/src/style.css), from the Darkride website's
@@ -46,6 +56,7 @@ static const QColor COLOUR_MUTED("#9aa1bd");
 static const QColor COLOUR_CYAN("#00afff");
 static const QColor COLOUR_RED("#ff5555");
 static const QColor COLOUR_VIOLET("#a548ff");
+static const QColor COLOUR_GREEN("#50fa7b");
 // a person's or room's own colour behind its first letter, as the web chat picks it (avatar.ts)
 static const char* AVATAR_COLOURS[] = { "#0090d6", "#8a3bdc", "#2f9e5b", "#d4692b", "#c43f82", "#23a39a" };
 
@@ -53,6 +64,12 @@ static const char* AVATAR_COLOURS[] = { "#0090d6", "#8a3bdc", "#2f9e5b", "#d4692
 static const qint64 GROUP_GAP_MS = 7 * 60 * 1000;
 // the library sends a room's newest 100 messages; loading older ones stops there for now
 static const int TIMELINE_ITEMS = 100;
+// a message's picture fits in this, as Discord's do in a narrower column
+static const QSize PICTURE_MAX(400, 300);
+static const QSize PICTURE_UNKNOWN(300, 200);
+// a GIF bigger than this shows as its first frame from a thumbnail rather than playing
+static const qint64 GIF_PLAY_MAX_BYTES = 12 * 1024 * 1024;
+static const int AVATAR_FETCH_SIZE = 96;
 
 static Setting::Handle<QByteArray> chatWindowGeometry("chat/windowGeometry");
 static Setting::Handle<QString> chatLastRoom("chat/room");
@@ -62,7 +79,8 @@ enum RoomRole {
     RoomKindRole,       // header, channel, dm, invite
     RoomUnreadRole,
     RoomNotificationsRole,
-    RoomAvatarRole,     // a dm's picture
+    RoomAvatarRole,     // a dm's or group's picture
+    RoomSubtitleRole,   // "Invited", "3 Members"
 };
 
 static QColor colourFor(const QString& seed) {
@@ -107,21 +125,87 @@ static QString localpartOf(const QString& userId) {
     return colon < 0 ? id : id.left(colon);
 }
 
+// times as the system writes them (11:47 AM, or 11:47)
 static QString whenText(qint64 ms) {
     QDateTime when = QDateTime::fromMSecsSinceEpoch(ms);
     QDate today = QDate::currentDate();
-    QString clock = when.time().toString("HH:mm");
+    QLocale locale = QLocale::system();
+    QString clock = locale.toString(when.time(), QLocale::ShortFormat);
     if (when.date() == today) {
         return "Today at " + clock;
     }
     if (when.date() == today.addDays(-1)) {
         return "Yesterday at " + clock;
     }
-    return when.date().toString("dd/MM/yyyy") + " " + clock;
+    return locale.toString(when.date(), QLocale::ShortFormat) + " " + clock;
 }
 
 static QString dayText(qint64 ms) {
-    return QDateTime::fromMSecsSinceEpoch(ms).date().toString("MMMM d, yyyy");
+    return QLocale::system().toString(QDateTime::fromMSecsSinceEpoch(ms).date(), "MMMM d, yyyy");
+}
+
+static QString sizeText(qint64 bytes) {
+    if (bytes <= 0) {
+        return QString();
+    }
+    return QLocale::system().formattedDataSize(bytes, 1, QLocale::DataSizeTraditionalFormat);
+}
+
+// a picture cut round, filling the circle
+static QImage roundImage(const QImage& image, int size, qreal pixelRatio) {
+    QImage round(QSize(size, size) * pixelRatio, QImage::Format_ARGB32_Premultiplied);
+    round.setDevicePixelRatio(pixelRatio);
+    round.fill(Qt::transparent);
+    QPainter painter(&round);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    QPainterPath circle;
+    circle.addEllipse(QRectF(0, 0, size, size));
+    painter.setClipPath(circle);
+    QSize filled = image.size().scaled(QSize(size, size), Qt::KeepAspectRatioByExpanding);
+    painter.drawImage(QRectF((size - filled.width()) / 2.0, (size - filled.height()) / 2.0, filled.width(), filled.height()),
+                      image);
+    return round;
+}
+
+// a message's picture in its box, the corners rounded as Discord's
+static QImage boxedImage(const QImage& image, const QSize& box, qreal pixelRatio) {
+    QImage boxed(box * pixelRatio, QImage::Format_ARGB32_Premultiplied);
+    boxed.setDevicePixelRatio(pixelRatio);
+    boxed.fill(Qt::transparent);
+    QPainter painter(&boxed);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    QPainterPath corners;
+    corners.addRoundedRect(QRectF(0, 0, box.width(), box.height()), 6, 6);
+    painter.setClipPath(corners);
+    if (image.isNull()) {
+        painter.fillPath(corners, COLOUR_SURFACE);
+    } else {
+        QSize fitted = image.size().scaled(box, Qt::KeepAspectRatio);
+        painter.drawImage(QRectF((box.width() - fitted.width()) / 2.0, (box.height() - fitted.height()) / 2.0,
+                                 fitted.width(), fitted.height()),
+                          image);
+    }
+    return boxed;
+}
+
+// a picture's size in the conversation: its own, made to fit PICTURE_MAX, never enlarged
+static QSize pictureBox(QSize size) {
+    if (size.width() <= 0 || size.height() <= 0) {
+        return PICTURE_UNKNOWN;
+    }
+    if (size.width() > PICTURE_MAX.width() || size.height() > PICTURE_MAX.height()) {
+        size.scale(PICTURE_MAX, Qt::KeepAspectRatio);
+    }
+    return size.expandedTo(QSize(16, 16));
+}
+
+static QString compactJson(const QJsonValue& value) {
+    if (value.isObject()) {
+        return QString::fromUtf8(QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact));
+    }
+    return value.toString();
 }
 
 // plain text as rich text: escaped, web addresses made links, line breaks kept
@@ -140,7 +224,7 @@ public:
 
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override {
         QString kind = index.data(RoomKindRole).toString();
-        return QSize(option.rect.width(), kind == "header" ? 34 : kind == "dm" ? 42 : 34);
+        return QSize(option.rect.width(), kind == "header" ? 34 : kind == "channel" ? 34 : 42);
     }
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
@@ -186,7 +270,7 @@ public:
         }
 
         int x = row.left() + 8;
-        if (kind == "dm" || kind == "invite") {
+        if (kind != "channel") {
             QImage picture = index.data(RoomAvatarRole).value<QImage>();
             int size = 28;
             painter->drawImage(QRectF(x, row.center().y() - size / 2.0, size, size), picture);
@@ -230,16 +314,18 @@ public:
         painter->setFont(font);
         painter->setPen(bright ? COLOUR_TEXT : COLOUR_MUTED);
         QRect textRect(x, row.top(), right - x, row.height());
-        if (kind == "invite") {
+        QString subtitle = index.data(RoomSubtitleRole).toString();
+        if (!subtitle.isEmpty()) {
             QFontMetrics metrics(font);
-            painter->drawText(textRect.adjusted(0, 0, 0, -12), Qt::AlignLeft | Qt::AlignVCenter,
+            painter->drawText(textRect.adjusted(0, 0, 0, -14), Qt::AlignLeft | Qt::AlignVCenter,
                               metrics.elidedText(name, Qt::ElideRight, textRect.width()));
             QFont sub = font;
             sub.setPixelSize(12);
             sub.setWeight(QFont::Normal);
             painter->setFont(sub);
             painter->setPen(COLOUR_MUTED);
-            painter->drawText(textRect.adjusted(0, 16, 0, 0), Qt::AlignLeft | Qt::AlignVCenter, "Invited");
+            painter->drawText(textRect.adjusted(0, 18, 0, 0), Qt::AlignLeft | Qt::AlignVCenter,
+                              QFontMetrics(sub).elidedText(subtitle, Qt::ElideRight, textRect.width()));
         } else {
             painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
                               QFontMetrics(font).elidedText(name, Qt::ElideRight, textRect.width()));
@@ -257,6 +343,9 @@ QKeySequence ChatWindow::shortcut() {
 }
 
 void ChatWindow::toggle() {
+    // a window coming or going beside the viewer's also changes the GL view's surface on macOS: no frame is drawn to
+    // it meanwhile (gl::ViewChangeGuard); opening chat crashed in Apple's GL driver as build mode's panels had
+    gl::ViewChangeGuard guard;
     if (!_instance) {
         _instance = new ChatWindow(qApp->getWindow());
     }
@@ -320,10 +409,11 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
     auto sidebarLayout = new QVBoxLayout(sidebar);
     sidebarLayout->setContentsMargins(0, 0, 0, 0);
     sidebarLayout->setSpacing(0);
-    auto sidebarHead = new QLabel("Darkride", sidebar);
-    sidebarHead->setObjectName("ChatSidebarHead");
-    sidebarHead->setFixedHeight(48);
-    sidebarLayout->addWidget(sidebarHead);
+    _spaceTitle = new QLabel("Darkride", sidebar);
+    _spaceTitle->setObjectName("ChatSidebarHead");
+    _spaceTitle->setFixedHeight(48);
+    _spaceTitle->setTextFormat(Qt::PlainText);
+    sidebarLayout->addWidget(_spaceTitle);
     _roomList = new QListWidget(sidebar);
     _roomList->setObjectName("ChatRooms");
     _roomList->setItemDelegate(new RoomDelegate(_roomList));
@@ -447,12 +537,22 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
     conversationLayout->addWidget(composerArea);
     _pages->addWidget(conversation);
 
-    connect(_timeline, &QTextBrowser::anchorClicked, this, [](const QUrl& url) {
+    connect(_timeline, &QTextBrowser::anchorClicked, this, [this](const QUrl& url) {
         if (url.scheme() == "https" || url.scheme() == "http") {
             QDesktopServices::openUrl(url);
+        } else if (url.scheme() == "chatopen") {
+            int index = url.path().toInt();
+            if (index >= 0 && index < _links.size()) {
+                openMedia(_links[index].value("media").toObject(), _links[index].value("name").toString());
+            }
         }
     });
     connect(_timeline->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
+        if (_rendering) {
+            // a redraw starts the document again at the top: not the reader scrolling there
+            return;
+        }
+        _stickToBottom = value >= _timeline->verticalScrollBar()->maximum() - 4;
         auto service = DependencyManager::get<ChatService>();
         if (value == 0 && service && !_room.isEmpty() && !_roomStart && !_loadingOlder && !_items.isEmpty() &&
             _items.size() < TIMELINE_ITEMS) {
@@ -461,6 +561,12 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
             service->loadOlder(_room);
         }
         markReadIfSeen();
+    });
+    // at the bottom, the conversation stays there as what's below grows (a picture coming in, a line laid out late)
+    connect(_timeline->verticalScrollBar(), &QScrollBar::rangeChanged, this, [this](int, int maximum) {
+        if (!_rendering && _stickToBottom) {
+            _timeline->verticalScrollBar()->setValue(maximum);
+        }
     });
     connect(_composer->document(), &QTextDocument::contentsChanged, this, &ChatWindow::fitComposer);
     connect(_roomList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* item) {
@@ -471,7 +577,10 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
 
     // the menu's shortcut hides it again from here too (on Windows the menu's shortcuts work only in the main window)
     auto hideShortcut = new QShortcut(shortcut(), this);
-    connect(hideShortcut, &QShortcut::activated, this, &QWidget::hide);
+    connect(hideShortcut, &QShortcut::activated, this, [this] {
+        gl::ViewChangeGuard guard;
+        hide();
+    });
 
     if (auto service = DependencyManager::get<ChatService>()) {
         connect(service.data(), &ChatService::stateChanged, this, &ChatWindow::updateState);
@@ -479,6 +588,8 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
         connect(service.data(), &ChatService::timelineChanged, this, &ChatWindow::updateTimeline);
         connect(service.data(), &ChatService::commandDone, this, &ChatWindow::commandDone);
         connect(service.data(), &ChatService::syncStateChanged, this, &ChatWindow::updateSync);
+        connect(service.data(), &ChatService::profileChanged, this, &ChatWindow::updateState);
+        connect(service.data(), &ChatService::mediaReady, this, &ChatWindow::mediaReady);
         connect(service.data(), &ChatService::commandFailed, this, [this](const QString& op, const QString& message) {
             if (op == "send" || op == "join" || op == "leave" || op == "open") {
                 _composerNote->setText("Couldn't " + op + ": " + message);
@@ -500,9 +611,11 @@ void ChatWindow::updateState() {
 
     QString username = DependencyManager::get<AccountManager>()->getAccountInfo().getUsername();
     QString userId = service ? service->userId() : QString();
-    _userName->setText(username.isEmpty() ? QString("Not signed in") : username);
-    _userAvatar->setPixmap(QPixmap::fromImage(
-        avatarImage(userId.isEmpty() ? username : userId, username.isEmpty() ? "?" : username, 32, devicePixelRatioF())));
+    QString shownName = service && ready && !service->profileName().isEmpty() ? service->profileName() : username;
+    _userName->setText(shownName.isEmpty() ? QString("Not signed in") : shownName);
+    _userAvatar->setPixmap(QPixmap::fromImage(roundAvatar(userId.isEmpty() ? username : userId,
+                                                          shownName.isEmpty() ? "?" : shownName,
+                                                          service && ready ? service->profileAvatar() : QString(), 32)));
     updateSync(service ? service->syncState() : QString());
 
     if (!ready) {
@@ -537,15 +650,21 @@ void ChatWindow::updateSync(const QString& state) {
 
 void ChatWindow::updateRooms(const QJsonArray& rooms) {
     _rooms = rooms;
+    auto service = DependencyManager::get<ChatService>();
+    QJsonArray spaces = service ? service->spaces() : QJsonArray();
+    QString spaceName = spaces.isEmpty() ? QString() : spaces.first().toObject().value("name").toString();
+    _spaceTitle->setText(spaceName.isEmpty() ? QString("Darkride") : spaceName);
+    // channels are the rooms the space lists; direct messages, and rooms outside the space, are conversations, as
+    // the web chat files them
     QList<QJsonObject> invites, channels, dms;
     for (const QJsonValue& value : rooms) {
         QJsonObject room = value.toObject();
         if (room.value("invited").toBool()) {
             invites << room;
-        } else if (room.value("dm").toBool()) {
-            dms << room;
-        } else {
+        } else if (!room.value("dm").toBool() && !room.value("space").toString().isEmpty()) {
             channels << room;
+        } else {
+            dms << room;
         }
     }
     // channels stay put, by name, as a server's channels do in Discord; direct messages come newest first, as the
@@ -572,7 +691,12 @@ void ChatWindow::updateRooms(const QJsonArray& rooms) {
         item->setData(RoomUnreadRole, room.value("unread").toInt());
         item->setData(RoomNotificationsRole, room.value("notifications").toInt());
         if (kind != "channel") {
-            item->setData(RoomAvatarRole, avatarImage(id, name, 28, devicePixelRatioF()));
+            item->setData(RoomAvatarRole, roundAvatar(id, name, room.value("avatar").toString(), 28));
+        }
+        if (kind == "invite") {
+            item->setData(RoomSubtitleRole, "Invited");
+        } else if (kind == "group") {
+            item->setData(RoomSubtitleRole, QString("%1 Members").arg(room.value("members").toInt()));
         }
         if (id == _room) {
             current = item;
@@ -591,7 +715,7 @@ void ChatWindow::updateRooms(const QJsonArray& rooms) {
     if (!dms.isEmpty()) {
         addHeader("Direct Messages");
         for (const auto& room : dms) {
-            addRoom(room, "dm");
+            addRoom(room, room.value("dm").toBool() ? "dm" : "group");
         }
     }
     if (current) {
@@ -649,9 +773,17 @@ void ChatWindow::selectRoom(const QString& room) {
     }
     _room = room;
     _items = QJsonArray();
+    qDeleteAll(_movies);
+    _movies.clear();
+    _pictureUses.clear();
+    // the last room's pictures go with its document; the files stay for coming back
+    _timeline->document()->clear();
+    _resources.clear();
+    _pictured.clear();
     _roomStart = false;
     _loadingOlder = false;
     _anchorBottom = false;
+    _stickToBottom = true;
     _composerNote->clear();
     chatLastRoom.set(room);
     for (int i = 0; i < _roomList->count(); i++) {
@@ -671,13 +803,14 @@ void ChatWindow::showRoomPage() {
     QJsonObject room = roomById(_room);
     bool dm = room.value("dm").toBool();
     QString name = room.value("name").toString();
-    _roomTitle->setText((dm ? "@ " : "# ") + name);
+    QString mark = dm ? "@" : room.value("space").toString().isEmpty() ? "" : "#";
+    _roomTitle->setText(mark.isEmpty() ? name : mark + " " + name);
     if (room.value("invited").toBool()) {
         _inviteText->setText(dm ? name + " wants to talk with you." : "You're invited to " + name + ".");
         _pages->setCurrentIndex(1);
         return;
     }
-    _composer->setPlaceholderText("Message " + QString(dm ? "@" : "#") + name);
+    _composer->setPlaceholderText("Message " + mark + name);
     if (_pages->currentIndex() != 2) {
         _pages->setCurrentIndex(2);
         if (isActiveWindow()) {
@@ -714,20 +847,241 @@ void ChatWindow::commandDone(const QJsonObject& done) {
     }
 }
 
-QString ChatWindow::avatarSource(const QString& seed, const QString& name) {
-    QString key = seed + "\n" + initialOf(name);
-    QString source = "avatar:" + QString::number(qHash(key));
-    if (!_avatars.contains(key)) {
-        _timeline->document()->addResource(QTextDocument::ImageResource, QUrl(source),
-                                           avatarImage(seed, name, 40, devicePixelRatioF()));
-        _avatars.insert(key);
+QImage ChatWindow::roundAvatar(const QString& seed, const QString& name, const QString& mxc, int size) {
+    if (!mxc.isEmpty()) {
+        auto found = _avatarImages.constFind(mxc);
+        if (found != _avatarImages.constEnd() && !found->isNull()) {
+            return roundImage(*found, size, devicePixelRatioF());
+        }
+        requestMedia("avatar|" + mxc, QJsonObject { { "url", mxc } }, AVATAR_FETCH_SIZE, AVATAR_FETCH_SIZE, true);
     }
-    return source;
+    return avatarImage(seed, name, size, devicePixelRatioF());
+}
+
+QString ChatWindow::avatarSource(const QString& seed, const QString& name, const QString& mxc) {
+    QUrl source("avatar:" + QString::number(qHash(seed + "\n" + initialOf(name) + "\n" + mxc)));
+    bool loaded = !mxc.isEmpty() && _avatarImages.contains(mxc);
+    if (!_resources.contains(source) || (loaded && !_pictured.contains(source))) {
+        _timeline->document()->addResource(QTextDocument::ImageResource, source, roundAvatar(seed, name, mxc, 40));
+        _resources.insert(source);
+        if (loaded) {
+            _pictured.insert(source);
+        }
+    }
+    if (!mxc.isEmpty() && !loaded) {
+        // the letter until the picture comes
+        _pictureUses.insert("avatar|" + mxc, { source, QSize(40, 40), true });
+    }
+    return source.toString();
+}
+
+QString ChatWindow::mediaHtml(const QJsonObject& item) {
+    QString kind = item.value("kind").toString();
+    QString body = item.value("body").toString();
+    QJsonObject media = item.value("media").toObject();
+    QString muted = COLOUR_MUTED.name();
+    QString mimetype = media.value("mimetype").toString();
+    qint64 size = (qint64)media.value("size").toDouble();
+    QJsonValue source = media.value("source");
+    QJsonValue thumbnail = media.value("thumbnail_source");
+    bool encrypted = source.toObject().contains("file");
+
+    int link = _links.size();
+    _links.append(QJsonObject { { "media", media }, { "name", body } });
+    QString open = QString("chatopen:%1").arg(link);
+
+    // a picture, or a video's still: what to fetch to show it, and how big
+    QString key;
+    QJsonValue shownSource;
+    int width = 0, height = 0;
+    QSize own((int)media.value("width").toDouble(), (int)media.value("height").toDouble());
+    if (kind == "image" && mimetype == "image/gif" && !encrypted && (size == 0 || size <= GIF_PLAY_MAX_BYTES)) {
+        key = "file|" + compactJson(source);   // the whole GIF, to play it
+        shownSource = source;
+    } else if (kind == "image" || kind == "video") {
+        QSize box = pictureBox(own);
+        if (!thumbnail.isNull() && !thumbnail.isUndefined() && (encrypted || kind == "video")) {
+            // an encrypted picture's server can't make thumbnails of it: the sender's own, decrypted here
+            key = "file|" + compactJson(thumbnail);
+            shownSource = thumbnail;
+        } else if (kind == "image" && !encrypted) {
+            width = (int)std::ceil(box.width() * devicePixelRatioF());
+            height = (int)std::ceil(box.height() * devicePixelRatioF());
+            key = QString("thumb|%1|%2x%3").arg(compactJson(source)).arg(width).arg(height);
+            shownSource = source;
+        } else if (kind == "image") {
+            key = "file|" + compactJson(source);
+            shownSource = source;
+        }
+    }
+
+    QString html;
+    if (!key.isEmpty()) {
+        QSize box = pictureBox(_pictureSizes.value(key, own));
+        QUrl resource("picture:" + QString::number(qHash(key + QString("|%1x%2").arg(box.width()).arg(box.height()))));
+        _pictureUses.insert(key, { resource, box, false });
+        if (_mediaFiles.contains(key)) {
+            if (QMovie* movie = _movies.value(key)) {
+                if (!_resources.contains(resource)) {
+                    _timeline->document()->addResource(QTextDocument::ImageResource, resource,
+                                                       boxedImage(movie->currentImage(), box, devicePixelRatioF()));
+                }
+            } else if (!_resources.contains(resource)) {
+                showPicture(key, _mediaFiles.value(key));
+            }
+        } else {
+            if (!_resources.contains(resource)) {
+                _timeline->document()->addResource(QTextDocument::ImageResource, resource,
+                                                   boxedImage(QImage(), box, devicePixelRatioF()));
+            }
+            requestMedia(key, shownSource, width, height);
+        }
+        _resources.insert(resource);
+        html += QString("<a href=\"%1\"><img src=\"%2\" width=\"%3\" height=\"%4\"></a>")
+                    .arg(open, resource.toString())
+                    .arg(box.width())
+                    .arg(box.height());
+        if (kind == "image") {
+            return html;
+        }
+        html += "<br>";
+    }
+    // a file, a sound, or a video under its still: its name to open it by, and its size
+    static const QMap<QString, QString> words { { "file", "File" }, { "video", "Video" }, { "audio", "Sound" },
+                                               { "image", "Picture" } };
+    html += QString("<span style=\"color:%1;\">%2:</span> <a href=\"%3\">%4</a>")
+                .arg(muted, words.value(kind), open, body.toHtmlEscaped());
+    QString bytes = sizeText(size);
+    if (!bytes.isEmpty()) {
+        html += QString(" <span style=\"color:%1; font-size:12px;\">%2</span>").arg(muted, bytes);
+    }
+    return html;
+}
+
+void ChatWindow::requestMedia(const QString& key, const QJsonValue& source, int width, int height, bool crop) {
+    auto service = DependencyManager::get<ChatService>();
+    if (!service || _mediaFiles.contains(key) || _mediaWanted.contains(key) || _mediaFailed.contains(key)) {
+        return;
+    }
+    _mediaWanted.insert(key);
+    service->fetchMedia(key, source, width, height, crop);
+}
+
+void ChatWindow::mediaReady(const QString& key, const QString& path, const QString& error) {
+    if (!_mediaWanted.remove(key)) {
+        return;
+    }
+    if (path.isEmpty()) {
+        // asked for once: a picture the server hasn't got stays a letter or an empty frame
+        qCDebug(interfaceapp) << "chat: no media for" << key << error;
+        _mediaFailed.insert(key);
+        _opening.remove(key);
+        return;
+    }
+    _mediaFiles.insert(key, path);
+
+    if (key.startsWith("avatar|")) {
+        QString mxc = key.mid(7);
+        QImage image(path);
+        if (image.isNull()) {
+            return;
+        }
+        _avatarImages.insert(mxc, image);
+        for (const PictureUse& use : _pictureUses.values(key)) {
+            _timeline->document()->addResource(QTextDocument::ImageResource, use.resource,
+                                               roundImage(image, use.box.width(), devicePixelRatioF()));
+            _pictured.insert(use.resource);
+        }
+        _pictureUses.remove(key);
+        _timeline->viewport()->update();
+        // the room list and the corner have their own copies
+        updateState();
+        return;
+    }
+
+    auto opening = _opening.find(key);
+    if (opening != _opening.end()) {
+        QString name = opening.value();
+        _opening.erase(opening);
+        // under its own name, so the system knows what opens it
+        QString folder = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath("darkride-chat");
+        QDir().mkpath(folder);
+        QString safe = name;
+        safe.replace(QRegularExpression(R"([/\\:*?"<>|])"), "_");
+        if (safe.trimmed().isEmpty()) {
+            safe = "download";
+        }
+        QString copy = QDir(folder).filePath(safe);
+        QFile::remove(copy);
+        if (QFile::copy(path, copy)) {
+            QDesktopServices::openUrl(QUrl::fromLocalFile(copy));
+        }
+    }
+    if (_pictureUses.contains(key)) {
+        showPicture(key, path);
+    }
+}
+
+void ChatWindow::showPicture(const QString& key, const QString& path) {
+    QImageReader reader(path);
+    QSize own = reader.size();
+    if (own.isValid() && !_pictureSizes.contains(key)) {
+        // a message that didn't say how big its picture is: laid out again at the picture's own size
+        QList<PictureUse> uses = _pictureUses.values(key);
+        if (!uses.isEmpty() && uses.first().box == PICTURE_UNKNOWN && pictureBox(own) != PICTURE_UNKNOWN) {
+            _pictureSizes.insert(key, own);
+            QTimer::singleShot(0, this, [this] { renderTimeline(); });
+            return;
+        }
+    }
+    if (reader.supportsAnimation() && reader.imageCount() > 1) {
+        if (_movies.contains(key)) {
+            return;
+        }
+        auto movie = new QMovie(path, QByteArray(), this);
+        _movies.insert(key, movie);
+        connect(movie, &QMovie::frameChanged, this, [this, key] {
+            QMovie* movie = _movies.value(key);
+            if (!movie) {
+                return;
+            }
+            QImage frame = movie->currentImage();
+            for (const PictureUse& use : _pictureUses.values(key)) {
+                _timeline->document()->addResource(QTextDocument::ImageResource, use.resource,
+                                                   boxedImage(frame, use.box, devicePixelRatioF()));
+            }
+            _timeline->viewport()->update();
+        });
+        movie->start();
+        return;
+    }
+    QImage image = reader.read();
+    for (const PictureUse& use : _pictureUses.values(key)) {
+        _timeline->document()->addResource(QTextDocument::ImageResource, use.resource,
+                                           boxedImage(image, use.box, devicePixelRatioF()));
+    }
+    _timeline->viewport()->update();
+}
+
+void ChatWindow::openMedia(const QJsonObject& media, const QString& name) {
+    QJsonValue source = media.value("source");
+    if (source.isUndefined() || source.isNull()) {
+        return;
+    }
+    QString key = "file|" + compactJson(source);
+    _opening.insert(key, name);
+    if (_mediaFiles.contains(key)) {
+        _mediaWanted.insert(key);
+        mediaReady(key, _mediaFiles.value(key), QString());
+        return;
+    }
+    _composerNote->setText("Opening " + name + "…");
+    QTimer::singleShot(4000, _composerNote, &QLabel::clear);
+    requestMedia(key, source);
 }
 
 void ChatWindow::renderTimeline() {
     QScrollBar* scroll = _timeline->verticalScrollBar();
-    bool atBottom = scroll->value() >= scroll->maximum() - 4;
     int fromBottom = scroll->maximum() - scroll->value();
     int fromTop = scroll->value();
 
@@ -735,6 +1089,9 @@ void ChatWindow::renderTimeline() {
     QString name = room.value("name").toString();
     bool dm = room.value("dm").toBool();
     QString muted = COLOUR_MUTED.name();
+    // made again below, as the messages are; the GIFs playing carry on
+    _pictureUses.clear();
+    _links.clear();
 
     QString html = "<html><body style=\"font-size:15px;\">";
     if (_items.isEmpty() && !_roomStart) {
@@ -773,6 +1130,29 @@ void ChatWindow::renderTimeline() {
 
         QString kind = item.value("kind").toString();
         QString body = item.value("body").toString();
+        if (kind == "member") {
+            // "Judas joined.", "Caitlyn invited Judas.": a line of its own, as the web chat draws it
+            QString user = item.value("user_name").toString().toHtmlEscaped();
+            QString by = senderName.toHtmlEscaped();
+            QString change = item.value("change").toString();
+            static const QMap<QString, QString> lines {
+                { "joined", "%1 joined." }, { "left", "%1 left." }, { "invited", "%2 invited %1." },
+                { "kicked", "%2 removed %1." }, { "banned", "%2 banned %1." },
+                { "declined", "%1 declined the invitation." }, { "uninvited", "%2 took back %1's invitation." } };
+            QString form = lines.value(change, "%1 changed.");
+            QString userHtml = "<span style=\"color:" + COLOUR_TEXT.name() + ";\">" + user + "</span>";
+            QString byHtml = "<span style=\"color:" + COLOUR_TEXT.name() + ";\">" + by + "</span>";
+            QString line = form.contains("%2") ? form.arg(userHtml, byHtml) : form.arg(userHtml);
+            bool away = change == "left" || change == "kicked" || change == "banned";
+            html += QString("<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin-top:10px;\"><tr>"
+                            "<td width=\"72\" align=\"center\" style=\"color:%1;\">%2</td>"
+                            "<td style=\"color:%3; padding-right:16px;\">%4&nbsp;&nbsp;"
+                            "<span style=\"font-size:12px;\">%5</span></td></tr></table>")
+                        .arg(away ? COLOUR_RED.name() : COLOUR_GREEN.name(), away ? "←" : "→", muted, line,
+                             whenText(ts));
+            lastSender.clear();
+            continue;
+        }
         QString text;
         if (kind == "text") {
             text = richBody(body);
@@ -781,9 +1161,7 @@ void ChatWindow::renderTimeline() {
         } else if (kind == "emote") {
             text = "<i>* " + senderName.toHtmlEscaped() + " " + richBody(body) + "</i>";
         } else if (kind == "image" || kind == "file" || kind == "video" || kind == "audio") {
-            static const QMap<QString, QString> words {
-                { "image", "Picture" }, { "file", "File" }, { "video", "Video" }, { "audio", "Sound" } };
-            text = QString("<span style=\"color:%1;\">[%2] %3</span>").arg(muted, words.value(kind), body.toHtmlEscaped());
+            text = mediaHtml(item);
         } else if (kind == "undecryptable") {
             text = QString("<i style=\"color:%1;\">An encrypted message this device can't read yet.</i>").arg(muted);
         } else {
@@ -795,7 +1173,11 @@ void ChatWindow::renderTimeline() {
         } else if (state == "failed") {
             text += QString(" <span style=\"color:%1; font-size:12px;\">Not sent</span>").arg(COLOUR_RED.name());
         }
-        text = "<span style=\"white-space:pre-wrap;\">" + text + "</span>";
+        if (kind != "image" && kind != "video") {
+            text = "<span style=\"white-space:pre-wrap;\">" + text + "</span>";
+        } else {
+            text = "<div style=\"margin-top:4px;\">" + text + "</div>";
+        }
 
         bool grouped = sender == lastSender && ts - lastTs < GROUP_GAP_MS;
         if (grouped) {
@@ -809,32 +1191,32 @@ void ChatWindow::renderTimeline() {
                             "<td valign=\"top\" style=\"padding-right:16px;\">"
                             "<span style=\"color:%2; font-weight:500;\">%3</span>&nbsp;&nbsp;"
                             "<span style=\"color:%4; font-size:12px;\">%5</span><br>%6</td></tr></table>")
-                        .arg(avatarSource(sender, senderName), COLOUR_CYAN.name(), senderName.toHtmlEscaped(), muted,
+                        .arg(avatarSource(sender, senderName, item.value("avatar").toString()), COLOUR_CYAN.name(),
+                             senderName.toHtmlEscaped(), muted,
                              whenText(ts), text);
         }
         lastSender = sender;
         lastTs = ts;
     }
     html += "<p style=\"margin:0 0 12px 0;\"></p></body></html>";
+    _rendering = true;
     _timeline->setHtml(html);
+    // laid out whole now: left to itself the document lays out a long conversation in steps afterwards, and "the
+    // bottom" would be found too soon
+    _timeline->document()->size();
 
     // stay at the bottom when there; keep one's place when reading back; older messages loading come in above
-    auto place = [this, atBottom, fromBottom, fromTop, anchorBottom = _anchorBottom] {
-        QScrollBar* scroll = _timeline->verticalScrollBar();
-        if (anchorBottom) {
-            scroll->setValue(scroll->maximum() - fromBottom);
-        } else if (atBottom) {
-            scroll->setValue(scroll->maximum());
-        } else {
-            scroll->setValue(fromTop);
-        }
-    };
+    if (_anchorBottom) {
+        scroll->setValue(scroll->maximum() - fromBottom);
+    } else if (_stickToBottom) {
+        scroll->setValue(scroll->maximum());
+    } else {
+        scroll->setValue(fromTop);
+    }
+    _rendering = false;
     if (!_items.isEmpty()) {
         _anchorBottom = false;
     }
-    place();
-    // the document may still be laying itself out
-    QTimer::singleShot(0, this, place);
 }
 
 void ChatWindow::sendMessage() {
@@ -849,7 +1231,8 @@ void ChatWindow::sendMessage() {
     service->send(_room, text);
     _composer->clear();
     _composerNote->clear();
-    // one's own message is the newest: down to it
+    // one's own message is the newest: down to it, and staying there as it comes in
+    _stickToBottom = true;
     QScrollBar* scroll = _timeline->verticalScrollBar();
     scroll->setValue(scroll->maximum());
 }
@@ -890,6 +1273,13 @@ bool ChatWindow::eventFilter(QObject* watched, QEvent* event) {
 void ChatWindow::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
     markReadIfSeen();
+}
+
+void ChatWindow::closeEvent(QCloseEvent* event) {
+    // the close button hides it, under the guard (toggle)
+    event->ignore();
+    gl::ViewChangeGuard guard;
+    hide();
 }
 
 void ChatWindow::hideEvent(QHideEvent* event) {

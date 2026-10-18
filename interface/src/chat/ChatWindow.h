@@ -13,16 +13,20 @@
 #ifndef hifi_ChatWindow_h
 #define hifi_ChatWindow_h
 
+#include <QtCore/QHash>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
 #include <QtCore/QPointer>
 #include <QtCore/QSet>
+#include <QtCore/QUrl>
+#include <QtGui/QImage>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QWidget>
 
 class QLabel;
 class QListWidget;
 class QListWidgetItem;
+class QMovie;
 class QPlainTextEdit;
 class QPushButton;
 class QStackedWidget;
@@ -39,6 +43,7 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
     void changeEvent(QEvent* event) override;
 
 private:
@@ -56,12 +61,24 @@ private:
     void sendMessage();
     void markReadIfSeen();
     void fitComposer();
-    // a round picture with the first letter of the name, on the person's or room's own colour
-    QString avatarSource(const QString& seed, const QString& name);
     void saveGeometrySetting();
+
+    // a person's or room's round picture: theirs once fetched (mxc), until then the first letter of the name on a
+    // colour of their own; avatarSource names it in the conversation's document, at 40 px
+    QImage roundAvatar(const QString& seed, const QString& name, const QString& mxc, int size);
+    QString avatarSource(const QString& seed, const QString& name, const QString& mxc);
+    // a message's picture, file, video or sound as rich text: a picture shown at most 400 x 300, the rest as a link
+    QString mediaHtml(const QJsonObject& item);
+    void requestMedia(const QString& key, const QJsonValue& source, int width = 0, int height = 0, bool crop = false);
+    void mediaReady(const QString& key, const QString& path, const QString& error);
+    // fills the conversation's pictures waiting for this media, a GIF playing
+    void showPicture(const QString& key, const QString& path);
+    // the whole file, opened by the system's own app (Preview, Photos, a player)
+    void openMedia(const QJsonObject& media, const QString& name);
 
     static QPointer<ChatWindow> _instance;
 
+    QLabel* _spaceTitle { nullptr };
     QListWidget* _roomList { nullptr };
     QLabel* _userAvatar { nullptr };
     QLabel* _userName { nullptr };
@@ -81,7 +98,26 @@ private:
     bool _roomStart { false };    // its first message is among them: nothing older to load
     bool _loadingOlder { false };
     bool _anchorBottom { false }; // the next render keeps the distance from the bottom (older messages came in above)
-    QSet<QString> _avatars;   // the pictures already given to the timeline's document
+    bool _stickToBottom { true }; // the reader is at the newest message: the conversation keeps them there
+    bool _rendering { false };    // the document is being made again: its scroll changes are not the reader's
+
+    // where the conversation shows a picture: its name in the document and its size there
+    struct PictureUse {
+        QUrl resource;
+        QSize box;
+        bool round { false };
+    };
+    QSet<QUrl> _resources;                      // the pictures already given to the conversation's document
+    QSet<QUrl> _pictured;                       // the avatars among them that show the person's own picture
+    QHash<QString, QString> _mediaFiles;        // media key → its file
+    QSet<QString> _mediaWanted;                 // asked for, not answered yet
+    QSet<QString> _mediaFailed;                 // asked for and refused: not asked again this session
+    QMultiHash<QString, PictureUse> _pictureUses;   // media key → where the conversation shows it
+    QHash<QString, QSize> _pictureSizes;        // media key → a picture's own size, when its message didn't say
+    QHash<QString, QImage> _avatarImages;       // mxc → a person's or room's picture
+    QHash<QString, QMovie*> _movies;            // media key → a GIF playing in the conversation
+    QHash<QString, QString> _opening;           // media key → the name to open the file under, once it is here
+    QVector<QJsonObject> _links;                // chatopen:<n> in the conversation → {media, name}
 };
 
 #endif // hifi_ChatWindow_h

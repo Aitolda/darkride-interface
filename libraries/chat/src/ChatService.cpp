@@ -187,6 +187,9 @@ void ChatService::freeLibrary() {
     _libraryUser.clear();
     _syncState.clear();
     _rooms = QJsonArray();
+    _spaces = QJsonArray();
+    _profileName.clear();
+    _profileAvatar.clear();
 }
 
 void ChatService::receiveEvent(const char* event, void* userData) {
@@ -210,6 +213,7 @@ void ChatService::handleEvent(const QByteArray& json) {
         emit syncStateChanged(_syncState);
     } else if (kind == "rooms") {
         _rooms = event.value("rooms").toArray();
+        _spaces = event.value("spaces").toArray();
         if (_state == State::Ready) {
             emit roomsChanged(_rooms);
         }
@@ -217,6 +221,12 @@ void ChatService::handleEvent(const QByteArray& json) {
         if (_state == State::Ready) {
             emit timelineChanged(event.value("room").toString(), event.value("items").toArray());
         }
+    } else if (kind == "profile") {
+        _profileName = event.value("name").toString();
+        _profileAvatar = event.value("avatar").toString();
+        emit profileChanged();
+    } else if (kind == "media") {
+        emit mediaReady(event.value("key").toString(), event.value("path").toString(), event.value("error").toString());
     } else if (kind == "done") {
         emit commandDone(event);
     } else if (kind == "error") {
@@ -340,6 +350,19 @@ void ChatService::leave(const QString& room) {
     if (_state == State::Ready) {
         command({ { "op", "leave" }, { "room", room } });
     }
+}
+
+void ChatService::fetchMedia(const QString& key, const QJsonValue& source, int width, int height, bool crop) {
+    if (_state != State::Ready) {
+        return;
+    }
+    QJsonObject command { { "op", "media" }, { "key", key }, { "source", source } };
+    if (width > 0 && height > 0) {
+        command["width"] = width;
+        command["height"] = height;
+        command["crop"] = crop;
+    }
+    this->command(command);
 }
 
 void ChatService::retry() {

@@ -52,8 +52,13 @@ public:
     QString userId() const { return _userId; }
     // the sync's state: running, offline (waiting for the server), error, idle, terminated
     QString syncState() const { return _syncState; }
-    // [{id, name, dm, encrypted, invited, unread, notifications}]
+    // [{id, name, dm, encrypted, invited, unread, notifications, members, avatar?, space?}]
     QJsonArray rooms() const { return _rooms; }
+    // the joined spaces (Darkride's): [{id, name, avatar?}]
+    QJsonArray spaces() const { return _spaces; }
+    // who you are in chat: the display name and the picture's mxc address, once the server has said
+    QString profileName() const { return _profileName; }
+    QString profileAvatar() const { return _profileAvatar; }
 
     void open(const QString& room, int count = 50);
     void close(const QString& room);
@@ -62,6 +67,9 @@ public:
     void markRead(const QString& room);
     void join(const QString& room);
     void leave(const QString& room);
+    // a picture or file into the chat's folder, answered by mediaReady with the same key: source as a message's
+    // media has it ({"url": mxc} or {"file": {...}}); a width and height ask for a thumbnail (crop: cut to fill)
+    void fetchMedia(const QString& key, const QJsonValue& source, int width = 0, int height = 0, bool crop = false);
     // tries again after Unavailable
     void retry();
 
@@ -74,6 +82,9 @@ signals:
     // a command finished: {op, room?, start?}; start: the room's first message is in, there's nothing older
     void commandDone(const QJsonObject& done);
     void commandFailed(const QString& op, const QString& message);
+    void profileChanged();
+    // path: the file; error: why there is none
+    void mediaReady(const QString& key, const QString& path, const QString& error);
 
 private slots:
     void onAccountLoggedIn();
@@ -112,6 +123,9 @@ private:
     QString _userId;
     QString _syncState;
     QJsonArray _rooms;
+    QJsonArray _spaces;
+    QString _profileName;
+    QString _profileAvatar;
     QTimer _retryTimer;
 };
 

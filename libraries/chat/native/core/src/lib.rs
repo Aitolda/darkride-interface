@@ -14,13 +14,27 @@
 //!   join {room}                  accept an invite, or join by id or alias
 //!   leave {room}
 //!   create_dm {user, encrypted?} a DM with someone, inviting them (encrypted when asked)
+//!   media {key, source, width?, height?, crop?}
+//!                                a picture or file into the data folder's media/ (decrypted when it is encrypted):
+//!                                source as a timeline item's media has it ({"url": mxc} or {"file": {...}}), or an
+//!                                avatar's mxc address as {"url": ...}; width and height ask the server for a
+//!                                thumbnail (crop: cut to fill it, for avatars), else the whole file
 //!   logout
 //! Events: {"event": ...}
 //!   state {state: signed_out|starting|ready, user?, reason?}
 //!   sync {state: running|offline|error|idle|terminated, message?}   offline: waiting for the server, by itself
-//!   rooms {rooms: [{id, name, dm, encrypted, invited, unread, notifications}]}
-//!   timeline {room, items: [{id, sender, name, body, kind, ts, own, encrypted, state}]}
-//!                                state: sending, waiting (for the server), sent, failed
+//!   rooms {rooms: [{id, name, dm, encrypted, invited, unread, notifications, members, avatar?, space?}],
+//!          spaces: [{id, name, avatar?}]}
+//!                                space: the joined space that lists the room among its children; a DM is named
+//!                                after the other person; avatar: an mxc address
+//!   profile {name?, avatar?}     who you are, once signed in
+//!   timeline {room, items: [{id, sender, name, avatar?, body, kind, ts, own, encrypted, state, media?, change?,
+//!          user?, user_name?}]}
+//!                                kind: text, emote, notice, image, file, video, audio, undecryptable, other, member;
+//!                                state: sending, waiting (for the server), sent, failed; media (image, file, video,
+//!                                audio): {source, thumbnail_source?, mimetype?, width?, height?, size?}; member:
+//!                                change (joined, left, invited, kicked, banned, ...) of user, named user_name
+//!   media {key, path?, error?}   a media command finished: the file, or why not
 //!   done {op, room?, start?}     a command finished (open, back, create_dm, join, leave); start: the room's
 //!                                first message is in, there's nothing older
 //!   error {op, message}
@@ -30,6 +44,7 @@
 
 use std::{
     collections::HashMap,
+    hash::{DefaultHasher, Hash, Hasher},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -43,15 +58,21 @@ use futures_util::StreamExt;
 use matrix_sdk::{
     Client, Room, RoomState, SessionChange,
     authentication::matrix::MatrixSession,
+    deserialized_responses::RawSyncOrStrippedState,
+    media::{MediaFormat, MediaRequestParameters, MediaThumbnailSettings},
     ruma::{
-        OwnedRoomId, RoomAliasId, RoomId, RoomOrAliasId, UserId,
-        api::client::{receipt::create_receipt::v3::ReceiptType, room::create_room},
+        OwnedRoomId, RoomAliasId, RoomId, RoomOrAliasId, UInt, UserId,
+        api::client::{
+            media::get_content_thumbnail::v3::Method, receipt::create_receipt::v3::ReceiptType, room::create_room,
+        },
         events::{
             InitialStateEvent,
             room::{
+                MediaSource,
                 encryption::RoomEncryptionEventContent,
                 message::{MessageType, RoomMessageEventContent},
             },
+            space::child::SpaceChildEventContent,
         },
     },
 };
@@ -59,7 +80,9 @@ use matrix_sdk_ui::{
     eyeball_im::Vector,
     room_list_service::{RoomListItem, filters::new_filter_non_left},
     sync_service::{State as SyncState, SyncService},
-    timeline::{EventSendState, RoomExt, Timeline, TimelineItem},
+    timeline::{
+        EventSendState, MembershipChange, RoomExt, Timeline, TimelineDetails, TimelineItem, TimelineItemContent,
+    },
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -309,6 +332,14 @@ async fn handle(state: &Arc<State>, op: &str, command: &Value) -> Result<()> {
             state.emit(json!({ "event": "done", "op": "create_dm", "room": room.room_id() }));
             Ok(())
         }
+        "media" => {
+            let key = arg(command, "key")?.to_owned();
+            match fetch_media(state, command).await {
+                Ok(path) => state.emit(json!({ "event": "media", "key": key, "path": path })),
+                Err(e) => state.emit(json!({ "event": "media", "key": key, "error": format!("{e:#}") })),
+            }
+            Ok(())
+        }
         "logout" => {
             forget(state, true).await;
             state.emit(json!({ "event": "state", "state": "signed_out" }));
@@ -443,30 +474,92 @@ async fn started(state: &Arc<State>, client: Client) -> Result<()> {
             for diff in diffs {
                 diff.apply(&mut list);
             }
+            // the joined spaces (Darkride's), and which rooms each lists as its children: the channels
+            let mut spaces = Vec::new();
+            let mut parents: HashMap<OwnedRoomId, OwnedRoomId> = HashMap::new();
+            for item in list.iter().filter(|item| item.is_space() && item.state() == RoomState::Joined) {
+                for child in space_children(item).await {
+                    parents.entry(child).or_insert_with(|| item.room_id().to_owned());
+                }
+                spaces.push(json!({
+                    "id": item.room_id(),
+                    "name": item.cached_display_name().map(|n| n.to_string()).unwrap_or_default(),
+                    "avatar": item.avatar_url(),
+                }));
+            }
             let mut out = Vec::with_capacity(list.len());
             for item in list.iter() {
                 if item.is_space() {
                     continue;
                 }
-                out.push(room_json(item).await);
+                out.push(room_json(item, parents.get(item.room_id())).await);
             }
-            rooms_state.emit(json!({ "event": "rooms", "rooms": out }));
+            rooms_state.emit(json!({ "event": "rooms", "rooms": out, "spaces": spaces }));
         }
     }));
     *state.tasks.lock().unwrap() = tasks;
     state.emit(json!({ "event": "state", "state": "ready", "user": client.user_id() }));
+
+    // who you are, for the panel's corner: asked of the server once
+    let profile_state = state.clone();
+    let account = client.account();
+    tokio::spawn(async move {
+        let name = account.get_display_name().await.ok().flatten();
+        let avatar = account.get_avatar_url().await.ok().flatten();
+        profile_state.emit(json!({ "event": "profile", "name": name, "avatar": avatar }));
+    });
     Ok(())
 }
 
-async fn room_json(room: &Room) -> Value {
-    let name = match room.cached_display_name() {
+/// The rooms a space lists as its children (m.space.child state events; one with no "via" has been taken out)
+async fn space_children(space: &Room) -> Vec<OwnedRoomId> {
+    let Ok(events) = space.get_state_events_static::<SpaceChildEventContent>().await else { return Vec::new() };
+    events
+        .iter()
+        .filter_map(|raw| {
+            let json = match raw {
+                RawSyncOrStrippedState::Sync(event) => event.json().get(),
+                RawSyncOrStrippedState::Stripped(event) => event.json().get(),
+            };
+            let event: Value = serde_json::from_str(json).ok()?;
+            if event["content"]["via"].as_array().is_none_or(|via| via.is_empty()) {
+                return None;
+            }
+            OwnedRoomId::try_from(event["state_key"].as_str()?).ok()
+        })
+        .collect()
+}
+
+async fn room_json(room: &Room, space: Option<&OwnedRoomId>) -> Value {
+    let mut name = match room.cached_display_name() {
         Some(name) => name.to_string(),
         None => room.display_name().await.map(|n| n.to_string()).unwrap_or_default(),
     };
+    let mut avatar = room.avatar_url().map(|url| url.to_string());
+    let dm = room.is_direct().await.unwrap_or(false);
+    if dm {
+        // named and pictured after the other person, as the web chat does: without the server's summary of who is
+        // in it, the name computed for a DM can be "2 people"
+        let other = room.direct_targets().iter().find_map(|target| target.as_user_id().map(|user| user.to_owned()));
+        if let Some(other) = other {
+            match room.get_member_no_sync(&other).await {
+                Ok(Some(member)) => {
+                    name = member.name().to_owned();
+                    if avatar.is_none() {
+                        avatar = member.avatar_url().map(|url| url.to_string());
+                    }
+                }
+                _ => name = other.localpart().to_owned(),
+            }
+        }
+    }
     json!({
         "id": room.room_id(),
         "name": name,
-        "dm": room.is_direct().await.unwrap_or(false),
+        "avatar": avatar,
+        "space": space,
+        "members": room.joined_members_count(),
+        "dm": dm,
         "encrypted": room.encryption_state().is_encrypted(),
         "invited": room.state() == RoomState::Invited,
         "unread": room.num_unread_messages(),
@@ -545,6 +638,8 @@ fn timeline_json(room: &OwnedRoomId, items: &Vector<Arc<TimelineItem>>) -> Value
         .filter_map(|item| {
             let event = item.as_event()?;
             let content = event.content();
+            let mut media = Value::Null;
+            let mut member = Value::Null;
             let (kind, body) = if content.is_unable_to_decrypt() {
                 ("undecryptable", String::new())
             } else if let Some(message) = content.as_message() {
@@ -552,19 +647,81 @@ fn timeline_json(room: &OwnedRoomId, items: &Vector<Arc<TimelineItem>>) -> Value
                     MessageType::Text(_) => "text",
                     MessageType::Emote(_) => "emote",
                     MessageType::Notice(_) => "notice",
-                    MessageType::Image(_) => "image",
-                    MessageType::File(_) => "file",
-                    MessageType::Video(_) => "video",
-                    MessageType::Audio(_) => "audio",
+                    MessageType::Image(image) => {
+                        let info = image.info.as_deref();
+                        media = media_json(
+                            &image.source,
+                            info.and_then(|i| i.thumbnail_source.as_ref()),
+                            info.and_then(|i| i.mimetype.as_deref()),
+                            info.and_then(|i| i.width),
+                            info.and_then(|i| i.height),
+                            info.and_then(|i| i.size),
+                        );
+                        "image"
+                    }
+                    MessageType::File(file) => {
+                        let info = file.info.as_deref();
+                        media = media_json(
+                            &file.source,
+                            info.and_then(|i| i.thumbnail_source.as_ref()),
+                            info.and_then(|i| i.mimetype.as_deref()),
+                            None,
+                            None,
+                            info.and_then(|i| i.size),
+                        );
+                        "file"
+                    }
+                    MessageType::Video(video) => {
+                        let info = video.info.as_deref();
+                        media = media_json(
+                            &video.source,
+                            info.and_then(|i| i.thumbnail_source.as_ref()),
+                            info.and_then(|i| i.mimetype.as_deref()),
+                            info.and_then(|i| i.width),
+                            info.and_then(|i| i.height),
+                            info.and_then(|i| i.size),
+                        );
+                        "video"
+                    }
+                    MessageType::Audio(audio) => {
+                        let info = audio.info.as_deref();
+                        media = media_json(
+                            &audio.source,
+                            None,
+                            info.and_then(|i| i.mimetype.as_deref()),
+                            None,
+                            None,
+                            info.and_then(|i| i.size),
+                        );
+                        "audio"
+                    }
                     _ => "other",
                 };
                 (kind, message.body().to_owned())
+            } else if let TimelineItemContent::MembershipChange(change) = content {
+                // joined, left and invited lines, as the web chat shows them
+                let what = match change.change()? {
+                    MembershipChange::Joined | MembershipChange::InvitationAccepted => "joined",
+                    MembershipChange::Left => "left",
+                    MembershipChange::Invited => "invited",
+                    MembershipChange::Kicked => "kicked",
+                    MembershipChange::Banned | MembershipChange::KickedAndBanned => "banned",
+                    MembershipChange::InvitationRejected => "declined",
+                    MembershipChange::InvitationRevoked => "uninvited",
+                    _ => return None,
+                };
+                member = json!({
+                    "change": what,
+                    "user": change.user_id(),
+                    "user_name": change.display_name().unwrap_or_else(|| change.user_id().localpart().to_owned()),
+                });
+                ("member", String::new())
             } else {
                 return None;
             };
-            let name = match event.sender_profile() {
-                matrix_sdk_ui::timeline::TimelineDetails::Ready(profile) => profile.display_name.clone(),
-                _ => None,
+            let (name, avatar) = match event.sender_profile() {
+                TimelineDetails::Ready(profile) => (profile.display_name.clone(), profile.avatar_url.clone()),
+                _ => (None, None),
             };
             let send = match event.send_state() {
                 None | Some(EventSendState::Sent { .. }) => "sent",
@@ -577,6 +734,11 @@ fn timeline_json(room: &OwnedRoomId, items: &Vector<Arc<TimelineItem>>) -> Value
                 "id": event.event_id().map(|e| e.to_string()).unwrap_or_else(|| format!("{:?}", event.identifier())),
                 "sender": event.sender(),
                 "name": name,
+                "avatar": avatar,
+                "media": media,
+                "change": member["change"],
+                "user": member["user"],
+                "user_name": member["user_name"],
                 "body": body,
                 "kind": kind,
                 "ts": event.timestamp().0,
@@ -587,6 +749,56 @@ fn timeline_json(room: &OwnedRoomId, items: &Vector<Arc<TimelineItem>>) -> Value
         })
         .collect();
     json!({ "event": "timeline", "room": room, "items": shown })
+}
+
+fn media_json(
+    source: &MediaSource,
+    thumbnail: Option<&MediaSource>,
+    mimetype: Option<&str>,
+    width: Option<UInt>,
+    height: Option<UInt>,
+    size: Option<UInt>,
+) -> Value {
+    json!({
+        "source": source,
+        "thumbnail_source": thumbnail,
+        "mimetype": mimetype,
+        "width": width,
+        "height": height,
+        "size": size,
+    })
+}
+
+/// A media command: the file kept in the data folder's media/, fetched (and decrypted) the first time
+async fn fetch_media(state: &Arc<State>, command: &Value) -> Result<String> {
+    let client = state.client()?;
+    let source: MediaSource = serde_json::from_value(command["source"].clone()).context("the media's source")?;
+    let format = match (command["width"].as_u64(), command["height"].as_u64()) {
+        (Some(width), Some(height)) => {
+            let method = if command["crop"].as_bool().unwrap_or(false) { Method::Crop } else { Method::Scale };
+            MediaFormat::Thumbnail(MediaThumbnailSettings::with_method(
+                method,
+                UInt::try_from(width)?,
+                UInt::try_from(height)?,
+            ))
+        }
+        _ => MediaFormat::File,
+    };
+    let request = MediaRequestParameters { source, format };
+    // a name from what was asked for, so the same picture at the same size is fetched once
+    let mut hasher = DefaultHasher::new();
+    serde_json::to_string(&request)?.hash(&mut hasher);
+    let folder = state.config.data_dir.join("media");
+    let path = folder.join(format!("{:016x}", hasher.finish()));
+    if !path.exists() {
+        // the SDK's own cache would keep a second copy in its database
+        let bytes = client.media().get_media_content(&request, false).await?;
+        std::fs::create_dir_all(&folder)?;
+        let partial = path.with_extension("part");
+        std::fs::write(&partial, bytes)?;
+        std::fs::rename(&partial, &path)?;
+    }
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Signed out: everything stopped and waited for (Windows can't remove files still open), the server told when asked
