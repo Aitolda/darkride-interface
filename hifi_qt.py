@@ -38,10 +38,17 @@ endif()
         self.path = os.path.join(self.basePath, self.version)
         self.fullPath = os.path.join(self.path, 'qt5-install')
 
+        # where BUILD_WINDOWS.md's aqtinstall command puts the official Qt, used when QT_CMAKE_PREFIX_PATH isn't set
+        windowsQtCmakePath = 'C:/Qt/5.15.2/msvc2019_64/lib/cmake'
+
         self.hasQt = False
         if os.getenv("QT_CMAKE_PREFIX_PATH"):
             self.hasQt = True
             self.cmakePath = os.getenv("QT_CMAKE_PREFIX_PATH")
+        elif platform.system() == 'Windows' and not args.android and os.path.isdir(windowsQtCmakePath):
+            self.hasQt = True
+            self.cmakePath = windowsQtCmakePath
+            print("Using the Qt in {}".format(os.path.dirname(os.path.dirname(windowsQtCmakePath))))
         else:
             self.cmakePath = os.path.join(self.fullPath, 'lib/cmake')
 
@@ -63,7 +70,9 @@ endif()
 
         if arch == "x86_64" or arch == "amd64":
             if system == 'Windows':
-                self.qtUrl = baseQtUrl + 'tivoli-qt5-install-5.15.2-windows.tar.gz'
+                # Tivoli's CDN is gone; Overte hosts its build of the same Qt 5.15.2 for MSVC 2019 (x64), 1.65 GB,
+                # in the layout this script expects (qt5-install/lib/cmake)
+                self.qtUrl = 'https://build-deps.overte.org/dependencies/vcpkg/qt5-install-5.15.2-windows.tar.gz'
             elif system == 'Darwin':
                 self.qtUrl = baseQtUrl + 'tivoli-qt5-install-5.15.2-macos.tar.gz'
             elif system == 'Linux':

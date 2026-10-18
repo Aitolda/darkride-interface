@@ -18,6 +18,7 @@
 #include <QMutex>
 #include <QScriptValue>
 #include <vector>
+#include <ScriptCallback.h>
 #include <JointData.h>
 #include <QReadWriteLock>
 
@@ -27,6 +28,7 @@
 #include "AnimUtil.h"
 #include "Flow.h"
 #include "SpringBones.h"
+#include "RotationConstraints.h"
 #include "AvatarConstants.h"
 
 class Rig;
@@ -41,7 +43,8 @@ public:
     struct StateHandler {
         AnimVariantMap results;
         QStringList propertyNames;
-        QScriptValue function;
+        QScriptValue function;       // a QtScript handler
+        ScriptCallback callback;     // or a WebAssembly script's function (one of the two is set)
         bool useNames;
     };
 
@@ -209,6 +212,10 @@ public:
     QScriptValue addAnimationStateHandler(QScriptValue handler, QScriptValue propertiesList);
     void removeAnimationStateHandler(QScriptValue handler);
     void animationStateHandlerResult(int identifier, QScriptValue result);
+    // The same for a handler on the WebAssembly script engine: the handler's id back, 0 when refused
+    int addAnimationStateCallback(const ScriptCallback& handler, const QStringList& propertyNames, bool useNames);
+    void removeAnimationStateCallback(int identifier);
+    void animationStateCallbackResult(int identifier, const QVariant& result);
 
     // rig space
     bool getModelRegistrationPoint(glm::vec3& modelRegistrationPointOut) const;
@@ -225,6 +232,19 @@ public:
 
     void copyJointsIntoJointData(QVector<JointData>& jointDataVec) const;
     void copyJointsFromJointData(const QVector<JointData>& jointDataVec);
+
+    // Joint poses an avatar's menu sets (avatars-renderer's AvatarMenu): the parts each sets replace the
+    // animated pose's, after script overrides and before rotation constraints and flow. On other people's avatars only
+    // the scale is taken from here; their rotations and translations arrive in the joint data.
+    struct AvatarMenuPose {
+        bool hasTranslation { false };
+        bool hasRotation { false };
+        bool hasScale { false };
+        glm::vec3 translation;
+        glm::quat rotation;
+        glm::vec3 scale { 1.0f };
+    };
+    void setAvatarMenuPoses(const std::vector<std::pair<int, AvatarMenuPose>>& poses) { _avatarMenuPoses = poses; }
     void computeExternalPoses(const glm::mat4& modelOffsetMat);
 
     void computeAvatarBoundingCapsule(const HFMModel& hfmModel, float& radiusOut, float& heightOut, glm::vec3& offsetOut) const;
@@ -437,6 +457,8 @@ protected:
     NetworkAnimState _networkAnimState;
     HandAnimState _rightHandAnimState;
     HandAnimState _leftHandAnimState;
+    float _rightHandAnimAlpha { 0.0f };  // how far a hand's override shows over its other animation, fading in and out
+    float _leftHandAnimAlpha { 0.0f };
     std::map<QString, RoleAnimState> _roleAnimStates;
     int _evaluationCount{ 0 };
 
@@ -483,6 +505,9 @@ protected:
     ControllerParameters _previousControllerParameters;
     Flow _internalFlow;
     springbones::Solver _springBones;
+    RotationConstraints _rotationConstraints;  // twist bones and the like, from the .fst
+    std::vector<std::pair<int, AvatarMenuPose>> _avatarMenuPoses;
+    void applyAvatarMenuPoses(AnimPoseVec& relativePoses, bool scaleOnly) const;
 };
 
 #endif /* defined(__hifi__Rig__) */

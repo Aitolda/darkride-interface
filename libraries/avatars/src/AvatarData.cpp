@@ -13,6 +13,7 @@
 #include "AvatarData.h"
 
 #include <cstdio>
+#include <map>
 #include <cstring>
 #include <stdint.h>
 
@@ -2002,11 +2003,28 @@ int AvatarData::getFauxJointIndex(const QString& name) const {
 
 int AvatarData::getJointIndex(const QString& name) const {
     int result = getFauxJointIndex(name);
+    if (result == -1) {
+        // an avatar this process does not draw: its joints are named by the skeleton its client sent
+        _avatarSkeletonDataLock.withReadLock([&] {
+            for (const auto& joint : _avatarSkeletonData) {
+                if (joint.jointName == name) {
+                    result = joint.jointIndex;
+                    break;
+                }
+            }
+        });
+    }
     return result;
 }
 
 QStringList AvatarData::getJointNames() const {
-    return QStringList();
+    QStringList names;
+    _avatarSkeletonDataLock.withReadLock([&] {
+        for (const auto& joint : _avatarSkeletonData) {
+            names << joint.jointName;
+        }
+    });
+    return names;
 }
 
 glm::quat AvatarData::getOrientationOutbound() const {
@@ -2047,7 +2065,14 @@ void AvatarData::processAvatarIdentity(
         // set the store identity sequence number to match the incoming identity
         _identitySequenceNumber = incomingSequenceNumber;
 
-        if (identity.skeletonModelURL != _skeletonModelURL) {
+        // An identity carries the wire-safe address, blank for an avatar worn from its owner's machine (file:, qrc:).
+        // Someone else's blank stands for the default avatar, which this client has too: a new avatar starts with no
+        // address, so a blank compared as is would never load a body. The mixer sends our own identity back once
+        // when we join, and that blank must not swap our local avatar for the default one.
+        const bool ownEcho = isMyAvatar() && identity.skeletonModelURL == getWireSafeSkeletonModelURL();
+        const QUrl incoming = identity.skeletonModelURL.isEmpty() && !isMyAvatar()
+            ? AvatarData::defaultFullAvatarModelUrl() : identity.skeletonModelURL;
+        if (!ownEcho && incoming != _skeletonModelURL) {
             setSkeletonModelURL(identity.skeletonModelURL);
             identityChanged = true;
             skeletonModelURLChanged = true;
@@ -2253,6 +2278,8 @@ QByteArray AvatarData::packTraitInstance(AvatarTraits::TraitType traitType, Avat
         traitBinaryData = packAvatarEntityTraitInstance(traitInstanceID);
     } else if (traitType == AvatarTraits::Grab) {
         traitBinaryData = packGrabTraitInstance(traitInstanceID);
+    } else if (traitType == AvatarTraits::AvatarMenuParameters) {
+        traitBinaryData = avatarMenuTraitPayload();
     }
 
     return traitBinaryData;
@@ -2270,6 +2297,20 @@ void AvatarData::processTraitInstance(AvatarTraits::TraitType traitType,
         storeAvatarEntityDataPayload(instanceID, traitBinaryData);
     } else if (traitType == AvatarTraits::Grab) {
         updateAvatarGrabData(instanceID, traitBinaryData);
+    } else if (traitType == AvatarTraits::AvatarMenuParameters) {
+        // the menu parameters, with the gaze style beside them under GazeStyle::traitKey()
+        const QString gazeStyle = QJsonDocument::fromJson(traitBinaryData).object().value(GazeStyle::traitKey()).toString();
+        bool gazeChanged = false;
+        _avatarMenuParametersLock.withWriteLock([&] {
+            _avatarMenuParameters = traitBinaryData;
+            _avatarMenuParametersChanged = true;
+            const QString worn = GazeStyle::isKnown(gazeStyle) && gazeStyle != GazeStyle::defaultName() ? gazeStyle : QString();
+            gazeChanged = worn != _gazeStyle;
+            _gazeStyle = worn;
+        });
+        if (gazeChanged) {
+            emit gazeStyleChanged();
+        }
     }
 }
 
@@ -2278,6 +2319,17 @@ void AvatarData::processDeletedTraitInstance(AvatarTraits::TraitType traitType, 
         clearAvatarEntity(instanceID);
     } else if (traitType == AvatarTraits::Grab) {
         clearAvatarGrabData(instanceID);
+    } else if (traitType == AvatarTraits::AvatarMenuParameters) {
+        bool gazeChanged = false;
+        _avatarMenuParametersLock.withWriteLock([&] {
+            _avatarMenuParameters = QByteArray();
+            _avatarMenuParametersChanged = true;
+            gazeChanged = !_gazeStyle.isEmpty();
+            _gazeStyle = QString();
+        });
+        if (gazeChanged) {
+            emit gazeStyleChanged();
+        }
     }
 }
 
@@ -2291,7 +2343,95 @@ void AvatarData::prepareResetTraitInstances() {
                 _clientTraitsHandler->markInstancedTraitUpdated(AvatarTraits::Grab, grabID);
             }
         });
+        if (!avatarMenuTraitPayload().isEmpty()) {
+            _clientTraitsHandler->markInstancedTraitUpdated(AvatarTraits::AvatarMenuParameters,
+                                                            AvatarTraits::AVATAR_MENU_PARAMETERS_ID);
+        }
     }
+}
+
+void AvatarData::setAvatarMenuParameters(const QByteArray& parameters) {
+    bool changed = false;
+    _avatarMenuParametersLock.withWriteLock([&] {
+        if (parameters != _avatarMenuParameters) {
+            _avatarMenuParameters = parameters.isEmpty() ? QByteArray() : parameters;
+            changed = true;
+        }
+    });
+    if (changed) {
+        markAvatarMenuTrait();
+    }
+}
+
+// The AvatarMenuParameters trait's bytes: the menu parameters' JSON object, with the gaze style added under
+// GazeStyle::traitKey() when one is worn (a menu skips a key it doesn't know). An avatar with neither sends nothing.
+QByteArray AvatarData::avatarMenuTraitPayload() const {
+    QByteArray parameters;
+    QString gazeStyle;
+    _avatarMenuParametersLock.withReadLock([&] {
+        parameters = _avatarMenuParameters;
+        gazeStyle = _gazeStyle;
+    });
+    if (gazeStyle.isEmpty()) {
+        return parameters;
+    }
+    QJsonObject object = QJsonDocument::fromJson(parameters).object();
+    object.insert(GazeStyle::traitKey(), gazeStyle);
+    return QJsonDocument(object).toJson(QJsonDocument::Compact);
+}
+
+void AvatarData::markAvatarMenuTrait() {
+    if (!_clientTraitsHandler) {
+        return;
+    }
+    if (avatarMenuTraitPayload().isEmpty()) {
+        _clientTraitsHandler->markInstancedTraitDeleted(AvatarTraits::AvatarMenuParameters,
+                                                        AvatarTraits::AVATAR_MENU_PARAMETERS_ID);
+    } else {
+        _clientTraitsHandler->markInstancedTraitUpdated(AvatarTraits::AvatarMenuParameters,
+                                                        AvatarTraits::AVATAR_MENU_PARAMETERS_ID);
+    }
+}
+
+QString AvatarData::getGazeStyle() const {
+    const QString style = _avatarMenuParametersLock.resultWithReadLock<QString>([&] { return _gazeStyle; });
+    return style.isEmpty() ? GazeStyle::defaultName() : style;
+}
+
+// Any thread: the style is under the parameters' lock and the traits handler has its own, so a script reads back what
+// it just set.
+void AvatarData::setGazeStyle(const QString& name) {
+    if (!GazeStyle::isKnown(name)) {
+        qCWarning(avatars) << "setGazeStyle: no gaze style named" << name << "; the styles are" << GazeStyle::names();
+        return;
+    }
+    const QString style = name == GazeStyle::defaultName() ? QString() : name;
+    bool changed = false;
+    _avatarMenuParametersLock.withWriteLock([&] {
+        changed = style != _gazeStyle;
+        _gazeStyle = style;
+    });
+    if (changed) {
+        markAvatarMenuTrait();
+        emit gazeStyleChanged();
+    }
+}
+
+QStringList AvatarData::getGazeStyles() const {
+    return GazeStyle::names();
+}
+
+QByteArray AvatarData::getAvatarMenuParameters() const {
+    return _avatarMenuParametersLock.resultWithReadLock<QByteArray>([&] { return _avatarMenuParameters; });
+}
+
+bool AvatarData::takeAvatarMenuParametersChanged() {
+    bool changed = false;
+    _avatarMenuParametersLock.withWriteLock([&] {
+        changed = _avatarMenuParametersChanged;
+        _avatarMenuParametersChanged = false;
+    });
+    return changed;
 }
 
 QByteArray AvatarData::identityByteArray(bool setIsReplicated) const {
@@ -2946,13 +3086,90 @@ void AvatarData::setOrientationViaScript(const glm::quat& orientation) {
     SpatiallyNestable::setWorldOrientation(orientation);
 }
 
+// An avatar this process does not draw (every other avatar, in an assignment-client agent) has no rig, so its joints'
+// poses come from the skeleton its client sent (names, parents, rest pose) and its latest joint data, built the way the
+// client's rig builds them (Rig::buildAbsoluteRigPoses):
+// - a joint's rotation arrives in the rig frame, and so does the skeleton's rest rotation (Rig::copyJointsIntoJointData);
+// - its translation from its parent arrives in the model's own units (centimetres for most files), and is scaled into the
+//   rig frame by the model-to-rig scale, which is not sent as such: the skeleton gives each joint's own scale over it
+//   (Avatar::getSkeletonDefaultData), and a joint's own scale is 1, so the most common value is its inverse;
+// - the client places the model so the root's rest position is the rig frame's origin (Rig::getModelRegistrationPoint).
+// A joint the client left at its rest pose takes the skeleton's. Measured against the drawing client: see body language.
+bool AvatarData::getSkeletonPosesInRigFrame(std::vector<glm::quat>& rotations, std::vector<glm::vec3>& translations) const {
+    const std::vector<AvatarSkeletonTrait::UnpackedJointData> skeleton = getSkeletonData();
+    if (skeleton.empty()) {
+        return false;
+    }
+    QVector<JointData> joints;
+    {
+        QReadLocker readLock(&_jointDataLock);
+        joints = _jointData;
+    }
+    const int count = (int)skeleton.size();
+    rotations.assign(count, glm::quat());
+    translations.assign(count, glm::vec3(0.0f));
+    std::vector<int> slot(count, -1);  // a joint index's place in the skeleton
+    for (int i = 0; i < count; i++) {
+        if (skeleton[i].jointIndex >= 0 && skeleton[i].jointIndex < count) {
+            slot[skeleton[i].jointIndex] = i;
+        }
+    }
+    std::map<float, int> scaleVotes;
+    for (const auto& joint : skeleton) {
+        if (joint.defaultScale > 0.0f) {
+            scaleVotes[joint.defaultScale]++;
+        }
+    }
+    float modelToRig = 1.0f;
+    int votes = 0;
+    for (const auto& vote : scaleVotes) {
+        if (vote.second > votes) {
+            votes = vote.second;
+            modelToRig = 1.0f / vote.first;
+        }
+    }
+    // parents usually come before children; a pass solves every joint whose parent is solved
+    std::vector<bool> solved(count, false);
+    int solvedCount = 0;
+    for (int pass = 0; pass < count && solvedCount < count; pass++) {
+        for (int j = 0; j < count; j++) {
+            if (solved[j] || slot[j] < 0) {
+                continue;
+            }
+            const auto& joint = skeleton[slot[j]];
+            const int parent = joint.parentIndex;
+            const bool hasParent = parent >= 0 && parent < count;
+            if (hasParent && !solved[parent]) {
+                continue;
+            }
+            const bool sentRotation = j < joints.size() && !joints[j].rotationIsDefaultPose;
+            const bool sentTranslation = j < joints.size() && !joints[j].translationIsDefaultPose;
+            rotations[j] = sentRotation ? joints[j].rotation : joint.defaultRotation;
+            const glm::vec3 fromParent = sentTranslation ? joints[j].translation : joint.defaultTranslation;
+            translations[j] = hasParent ? translations[parent] + rotations[parent] * (modelToRig * fromParent)
+                                        : modelToRig * (fromParent - joint.defaultTranslation);
+            solved[j] = true;
+            solvedCount++;
+        }
+    }
+    return true;
+}
+
 glm::quat AvatarData::getAbsoluteJointRotationInObjectFrame(int index) const {
-    assert(false);
+    std::vector<glm::quat> rotations;
+    std::vector<glm::vec3> translations;
+    if (index >= 0 && getSkeletonPosesInRigFrame(rotations, translations) && index < (int)rotations.size()) {
+        return Quaternions::Y_180 * rotations[index];
+    }
     return glm::quat();
 }
 
 glm::vec3 AvatarData::getAbsoluteJointTranslationInObjectFrame(int index) const {
-    assert(false);
+    std::vector<glm::quat> rotations;
+    std::vector<glm::vec3> translations;
+    if (index >= 0 && getSkeletonPosesInRigFrame(rotations, translations) && index < (int)translations.size()) {
+        return Quaternions::Y_180 * translations[index];
+    }
     return glm::vec3();
 }
 

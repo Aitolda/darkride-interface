@@ -14,6 +14,8 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <numeric>
+#include <unordered_map>
 
 #include <GLMHelpers.h>
 #include <hfm/HFM.h>
@@ -533,6 +535,345 @@ static bool placeJoints(const Body& body, const VoxelBody& voxels, const Options
     return true;
 }
 
+// --- the eyelids -------------------------------------------------------------------------------------------------
+
+// How much the file's own rig ties each vertex of the body to one joint and what hangs below it.
+static std::vector<float> fileWeights(const Body& body, const hfm::Model& model, int joint) {
+    std::vector<bool> under(model.joints.size(), false);
+    for (int j = 0; j < (int)model.joints.size(); j++) {
+        for (int k = j, steps = 0; k >= 0 && k < (int)model.joints.size() && steps < 256; k = model.joints[k].parentIndex, steps++) {
+            if (k == joint) {
+                under[j] = true;
+                break;
+            }
+        }
+    }
+    std::vector<float> weights(body.vertices.size(), 0.0f);
+    for (const Body::Piece& piece : body.pieces) {
+        if (piece.shapes.empty() || piece.mesh >= model.meshes.size()) {
+            continue;
+        }
+        const hfm::Shape& shape = model.shapes[piece.shapes[0]];
+        if (shape.skinDeformer >= model.skinDeformers.size()) {
+            continue;
+        }
+        const hfm::SkinDeformer& deformer = model.skinDeformers[shape.skinDeformer];
+        const hfm::Mesh& mesh = model.meshes[piece.mesh];
+        const size_t per = mesh.clusterWeightsPerVertex;
+        if (per == 0 || mesh.clusterIndices.size() < piece.vertexCount * per ||
+            mesh.clusterWeights.size() < piece.vertexCount * per) {
+            continue;
+        }
+        for (uint32_t v = 0; v < piece.vertexCount; v++) {
+            float weight = 0.0f;
+            for (size_t k = 0; k < per; k++) {
+                const uint16_t cluster = mesh.clusterIndices[v * per + k];
+                if (cluster < deformer.clusters.size()) {
+                    const uint32_t bound = deformer.clusters[cluster].jointIndex;
+                    if (bound < under.size() && under[bound]) {
+                        weight += (float)mesh.clusterWeights[v * per + k] / (float)UINT16_MAX;
+                    }
+                }
+            }
+            weights[piece.firstVertex + v] = std::min(weight, 1.0f);
+        }
+    }
+    return weights;
+}
+
+QString autorig::openEyelids(Body& body, const hfm::Model& model) {
+    auto find = [&](const QString& name) {
+        for (int j = 0; j < (int)model.joints.size(); j++) {
+            if (model.joints[j].name.section(':', -1).compare(name, Qt::CaseInsensitive) == 0) {
+                return j;
+            }
+        }
+        return -1;
+    };
+    // a turn about the left-right axis through the eye's centre; a positive angle lifts what is in front of it
+    auto turned = [](const glm::vec3& p, const glm::vec3& centre, float weight, float angle) {
+        const glm::vec3 d = p - centre;
+        const float c = std::cos(angle);
+        const float s = std::sin(angle);
+        return p + weight * (centre + glm::vec3(d.x, c * d.y + s * d.z, -s * d.y + c * d.z) - p);
+    };
+    QStringList notes;
+    for (const QString& side : { QString("Left"), QString("Right") }) {
+        const int eye = find(side + "Eye");
+        if (eye < 0) {
+            continue;
+        }
+        const glm::vec3 centre = extractTranslation(model.joints[eye].globalTransform);
+        // the eyeball's radius: its vertices follow the eye bone alone
+        const std::vector<float> eyeball = fileWeights(body, model, eye);
+        std::vector<float> distances;
+        for (uint32_t v = 0; v < body.vertices.size(); v++) {
+            if (eyeball[v] > 0.9f) {
+                distances.push_back(glm::distance(body.vertices[v], centre));
+            }
+        }
+        if (distances.size() < 12) {
+            continue;
+        }
+        std::nth_element(distances.begin(), distances.begin() + distances.size() / 2, distances.end());
+        const float radius = distances[distances.size() / 2];
+        // each lid's edge in front of the eye's middle, in eyeball radii above the centre, and where it should be
+        const struct { const char* bone; float target; bool upper; } lids[] = { { "UpEye", 0.38f, true },
+                                                                                  { "DownEye", -0.42f, false } };
+        for (const auto& lid : lids) {
+            const int bone = find(side + lid.bone);
+            if (bone < 0) {
+                continue;
+            }
+            const std::vector<float> moved = fileWeights(body, model, bone);
+            float edge = lid.upper ? std::numeric_limits<float>::max() : -std::numeric_limits<float>::max();
+            for (uint32_t v = 0; v < body.vertices.size(); v++) {
+                const glm::vec3& p = body.vertices[v];
+                if (moved[v] >= 0.5f && std::fabs(p.x - centre.x) < 0.3f * radius && p.z > centre.z + 0.3f * radius) {
+                    const float height = (p.y - centre.y) / radius;
+                    edge = lid.upper ? std::min(edge, height) : std::max(edge, height);
+                }
+            }
+            if (std::fabs(edge) > 0.95f || (lid.upper ? edge >= lid.target : edge <= lid.target)) {
+                continue;
+            }
+            const float angle = std::asin(lid.target) - std::asin(edge);
+            int count = 0;
+            for (uint32_t v = 0; v < body.vertices.size(); v++) {
+                if (moved[v] > 0.0f) {
+                    body.vertices[v] = turned(body.vertices[v], centre, moved[v], angle);
+                    count++;
+                }
+            }
+            notes << QString("%1 %2 lid opened %3 degrees (%4 vertices; its edge %5 eyeball radii from the centre, "
+                             "now %6)")
+                         .arg(side.toLower(), lid.upper ? "upper" : "lower").arg(std::fabs(glm::degrees(angle)), 0, 'f', 1)
+                         .arg(count).arg(edge, 0, 'f', 2).arg(lid.target, 0, 'f', 2);
+        }
+    }
+    if (notes.isEmpty()) {
+        return QString();
+    }
+    body.measure();
+    return "eyelids: " + notes.join("; ");
+}
+
+// --- the eyeballs ------------------------------------------------------------------------------------------------
+
+// An eyeball is a small closed piece of the head that a sphere fits, one each side of the face. Its centre is where
+// the eye turns: the eye joint goes there, and its vertices follow that joint alone, so the eyes turn with gaze
+// instead of riding the head. A layer of the same eye (an iris or a cornea shell) goes with it.
+struct Eyeball {
+    glm::vec3 center { 0.0f };
+    float radius { 0.0f };
+    std::vector<uint32_t> vertices;  // every Body vertex of the eye, seam duplicates included
+};
+
+// Least squares sphere: |p|^2 = 2 p.c + k, linear in the centre c and k = r^2 - |c|^2, solved about the points'
+// mean for precision. spread: the root mean square of each point's distance from the surface, over the radius.
+static bool fitSphere(const std::vector<glm::vec3>& points, glm::vec3& center, float& radius, float& spread) {
+    if (points.size() < 8) {
+        return false;
+    }
+    glm::dvec3 mean(0.0);
+    for (const glm::vec3& p : points) {
+        mean += glm::dvec3(p);
+    }
+    mean /= (double)points.size();
+    glm::dmat4 normal(0.0);
+    glm::dvec4 right(0.0);
+    for (const glm::vec3& point : points) {
+        const glm::dvec3 p = glm::dvec3(point) - mean;
+        const glm::dvec4 row(2.0 * p.x, 2.0 * p.y, 2.0 * p.z, 1.0);
+        normal += glm::outerProduct(row, row);
+        right += row * glm::dot(p, p);
+    }
+    if (std::fabs(glm::determinant(normal)) < 1.0e-30) {
+        return false;
+    }
+    const glm::dvec4 x = glm::inverse(normal) * right;
+    const glm::dvec3 c(x.x, x.y, x.z);
+    const double r2 = x.w + glm::dot(c, c);
+    if (r2 <= 0.0) {
+        return false;
+    }
+    const double r = std::sqrt(r2);
+    double squares = 0.0;
+    for (const glm::vec3& point : points) {
+        const double d = glm::length(glm::dvec3(point) - mean - c) - r;
+        squares += d * d;
+    }
+    center = glm::vec3(c + mean);
+    radius = (float)r;
+    spread = (float)(std::sqrt(squares / (double)points.size()) / r);
+    return true;
+}
+
+static int jointIndex(const Result& result, const QString& name) {
+    for (int i = 0; i < (int)result.joints.size(); i++) {
+        if (result.joints[i].name == name) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Finds the eyeballs, moves the eye joints onto their centres, and returns them (left, right), or none.
+static std::vector<Eyeball> findEyeballs(const Body& body, Result& result) {
+    const int neck = jointIndex(result, "Neck");
+    const int head = jointIndex(result, "Head");
+    const int top = jointIndex(result, "HeadTop_End");
+    const int leftEye = jointIndex(result, "LeftEye");
+    const int rightEye = jointIndex(result, "RightEye");
+    if (neck < 0 || head < 0 || top < 0 || leftEye < 0 || rightEye < 0) {
+        return {};
+    }
+    const float H = body.maximum.y - body.minimum.y;
+    // searched from the neck up, in front of it: a head joint placed too high (Joyce's, 10-13) still finds the eyes
+    const glm::vec3 neckJoint = result.joints[neck].position;
+    const float midX = result.joints[head].position.x;
+
+    // the pieces of the mesh: vertices joined by triangles, and by sharing a place (a seam splits them)
+    const size_t count = body.vertices.size();
+    std::vector<uint32_t> parent(count);
+    std::iota(parent.begin(), parent.end(), 0);
+    auto root = [&](uint32_t v) {
+        while (parent[v] != v) {
+            parent[v] = parent[parent[v]];
+            v = parent[v];
+        }
+        return v;
+    };
+    auto join = [&](uint32_t a, uint32_t b) {
+        a = root(a);
+        b = root(b);
+        if (a != b) {
+            parent[b] = a;
+        }
+    };
+    for (const glm::uvec3& t : body.triangles) {
+        join(t.x, t.y);
+        join(t.x, t.z);
+    }
+    const float weld = 0.0001f;
+    std::unordered_map<uint64_t, uint32_t> places;
+    for (uint32_t v = 0; v < count; v++) {
+        const glm::ivec3 q = glm::ivec3(glm::round(body.vertices[v] / weld));
+        const uint64_t key = ((uint64_t)(uint32_t)(q.x & 0x1FFFFF) << 42) | ((uint64_t)(uint32_t)(q.y & 0x1FFFFF) << 21) |
+                             (uint64_t)(uint32_t)(q.z & 0x1FFFFF);
+        auto found = places.emplace(key, v);
+        if (!found.second) {
+            join(found.first->second, v);
+        }
+    }
+    std::map<uint32_t, std::vector<uint32_t>> pieces;
+    for (uint32_t v = 0; v < count; v++) {
+        pieces[root(v)].push_back(v);
+    }
+
+    // the small round pieces inside the head
+    const float headTop = result.joints[top].position.y;
+    std::vector<Eyeball> spheres;
+    for (const auto& piece : pieces) {
+        const std::vector<uint32_t>& vertices = piece.second;
+        if (vertices.size() < 12) {
+            continue;
+        }
+        glm::vec3 low(std::numeric_limits<float>::max());
+        glm::vec3 high(-std::numeric_limits<float>::max());
+        std::vector<glm::vec3> points;
+        points.reserve(vertices.size());
+        for (uint32_t v : vertices) {
+            low = glm::min(low, body.vertices[v]);
+            high = glm::max(high, body.vertices[v]);
+            points.push_back(body.vertices[v]);
+        }
+        const glm::vec3 size = high - low;
+        if (low.y < neckJoint.y || high.y > headTop || low.z < neckJoint.z || std::fabs(low.x - midX) > 0.07f * H ||
+            std::fabs(high.x - midX) > 0.07f * H || std::max({ size.x, size.y, size.z }) > 0.03f * H) {
+            continue;
+        }
+        Eyeball eye;
+        float spread = 1.0f;
+        if (fitSphere(points, eye.center, eye.radius, spread) && spread < 0.12f && eye.radius > 0.004f * H &&
+            eye.radius < 0.012f * H) {
+            eye.vertices = vertices;
+            spheres.push_back(eye);
+        }
+    }
+
+    // the pair: one each side, mirror images of each other, an eye's width or so apart
+    int bestLeft = -1;
+    int bestRight = -1;
+    float best = 0.012f * H;
+    for (int l = 0; l < (int)spheres.size(); l++) {
+        for (int r = 0; r < (int)spheres.size(); r++) {
+            const Eyeball& a = spheres[l];
+            const Eyeball& b = spheres[r];
+            const float apart = a.center.x - b.center.x;
+            if (a.center.x <= midX || b.center.x >= midX || apart < 0.02f * H || apart > 0.05f * H) {
+                continue;
+            }
+            const float mismatch = std::fabs((a.center.x - midX) - (midX - b.center.x)) +
+                                   std::fabs(a.center.y - b.center.y) + std::fabs(a.center.z - b.center.z) +
+                                   2.0f * std::fabs(a.radius - b.radius);
+            if (mismatch < best) {
+                best = mismatch;
+                bestLeft = l;
+                bestRight = r;
+            }
+        }
+    }
+    if (bestLeft < 0) {
+        result.notes << QString("eyes: no eyeball pair among %1 small round pieces of the head; placed by proportion, "
+                                "following the head").arg(spheres.size());
+        return {};
+    }
+
+    // each eye takes its layers too: other round pieces about the same centre, wholly inside the eye
+    std::vector<Eyeball> eyes;
+    for (int chosen : { bestLeft, bestRight }) {
+        Eyeball eye = spheres[chosen];
+        for (int other = 0; other < (int)spheres.size(); other++) {
+            if (other == bestLeft || other == bestRight ||
+                glm::distance(spheres[other].center, eye.center) > 0.5f * eye.radius) {
+                continue;
+            }
+            bool inside = true;
+            for (uint32_t v : spheres[other].vertices) {
+                inside = inside && glm::distance(body.vertices[v], eye.center) < 1.15f * eye.radius;
+            }
+            if (inside) {
+                eye.vertices.insert(eye.vertices.end(), spheres[other].vertices.begin(), spheres[other].vertices.end());
+            }
+        }
+        eyes.push_back(eye);
+    }
+    result.joints[leftEye].position = eyes[0].center;
+    result.joints[rightEye].position = eyes[1].center;
+    result.notes << QString("eyes: eyeballs of radius %1 and %2 cm, %3 cm apart; %4 and %5 vertices follow the eye "
+                            "joints")
+                        .arg(eyes[0].radius * 100.0f, 0, 'f', 2).arg(eyes[1].radius * 100.0f, 0, 'f', 2)
+                        .arg((eyes[0].center.x - eyes[1].center.x) * 100.0f, 0, 'f', 2)
+                        .arg(eyes[0].vertices.size()).arg(eyes[1].vertices.size());
+    return eyes;
+}
+
+// After the skin weights: an eyeball's vertices follow its eye joint alone.
+static void bindEyeballs(const std::vector<Eyeball>& eyes, Result& result) {
+    const int joints[2] = { jointIndex(result, "LeftEye"), jointIndex(result, "RightEye") };
+    for (size_t e = 0; e < eyes.size() && e < 2; e++) {
+        for (uint32_t v : eyes[e].vertices) {
+            if (v < result.weights.size()) {
+                VertexWeights only;
+                only.joints[0] = (uint16_t)joints[e];
+                only.weights[0] = 1.0f;
+                result.weights[v] = only;
+            }
+        }
+    }
+}
+
 Result autorig::rig(const Body& body, const Options& options) {
     Result result;
     const float height = body.maximum.y - body.minimum.y;
@@ -552,8 +893,10 @@ Result autorig::rig(const Body& body, const Options& options) {
     if (!placeJoints(body, voxels, options, result)) {
         return result;
     }
+    const std::vector<Eyeball> eyes = findEyeballs(body, result);
     if (options.skin) {
         computeSkinWeights(body, voxels, options, result);
+        bindEyeballs(eyes, result);
     }
     result.ok = true;
     return result;

@@ -68,23 +68,35 @@ elseif(VCPKG_TARGET_IS_WINDOWS)
     #     DESTINATION ${CURRENT_PACKAGES_DIR}/include
     # )
 
+    # Tivoli's prebuilt zip is gone with cdn.tivolicloud.com: use mpg123's own x64 build and make
+    # the MSVC import library from its .def (the 1.26 CMake build can't target x64 under Ninja)
     vcpkg_download_distfile(
-		MPG123_ARCHIVE
-		URLS https://cdn.tivolicloud.com/dependencies/mpg123-${MPG123_VERSION}-windows.zip
-		SHA512 ef946260f4444713e8967635e76fcca7cb53c1ab645b38a0455e5cda6658a3a304622a037db2fe0d46d4e2c54d5dede28eaaec3441099078d0da80819535fec1
-		FILENAME mpg123-${MPG123_VERSION}-windows.zip
+        MPG123_ARCHIVE
+        URLS https://www.mpg123.de/download/win64/${MPG123_VERSION}/mpg123-${MPG123_VERSION}-x86-64.zip
+        SHA512 affa3fca6fe5ac72778567096f88fc8c4c794c399ac278aa9488e569418c0f6701bb5c0d70d2477f1b8a4f10338bce4a6edced1218599c492be7ee574c6d32c9
+        FILENAME mpg123-${MPG123_VERSION}-x86-64.zip
     )
-    
+
     vcpkg_extract_source_archive_ex(
         OUT_SOURCE_PATH MPG123_EXTRACTED
         ARCHIVE ${MPG123_ARCHIVE}
     )
 
-    file(INSTALL ${MPG123_EXTRACTED}/bin/ DESTINATION ${CURRENT_PACKAGES_DIR}/bin)
-    file(INSTALL ${MPG123_EXTRACTED}/debug/ DESTINATION ${CURRENT_PACKAGES_DIR}/debug)
-    file(INSTALL ${MPG123_EXTRACTED}/include/ DESTINATION ${CURRENT_PACKAGES_DIR}/include)
-    file(INSTALL ${MPG123_EXTRACTED}/lib/ DESTINATION ${CURRENT_PACKAGES_DIR}/lib)
-    file(INSTALL ${MPG123_EXTRACTED}/share/ DESTINATION ${CURRENT_PACKAGES_DIR}/share)
+    file(INSTALL ${MPG123_EXTRACTED}/mpg123.h ${MPG123_EXTRACTED}/fmt123.h DESTINATION ${CURRENT_PACKAGES_DIR}/include)
+    foreach(BUILD_DIR IN ITEMS "" "debug/")
+        if (BUILD_DIR STREQUAL "debug/" AND VCPKG_BUILD_TYPE STREQUAL "release")
+            continue()
+        endif()
+        file(INSTALL ${MPG123_EXTRACTED}/libmpg123-0.dll DESTINATION ${CURRENT_PACKAGES_DIR}/${BUILD_DIR}bin)
+        file(MAKE_DIRECTORY ${CURRENT_PACKAGES_DIR}/${BUILD_DIR}lib)
+        vcpkg_execute_required_process(
+            COMMAND lib /nologo /machine:x64 /def:${MPG123_EXTRACTED}/libmpg123-0.def /out:mpg123.lib
+            WORKING_DIRECTORY ${CURRENT_PACKAGES_DIR}/${BUILD_DIR}lib
+            LOGNAME lib-${TARGET_TRIPLET}-${BUILD_DIR}
+        )
+        file(REMOVE ${CURRENT_PACKAGES_DIR}/${BUILD_DIR}lib/mpg123.exp)
+    endforeach()
+    file(INSTALL ${MPG123_EXTRACTED}/COPYING.txt DESTINATION ${CURRENT_PACKAGES_DIR}/share/${PORT} RENAME copyright)
 
 elseif(VCPKG_TARGET_IS_OSX OR VCPKG_TARGET_IS_LINUX)
     set(MPG123_OPTIONS

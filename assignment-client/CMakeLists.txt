@@ -42,3 +42,6 @@ if (WIN32)
 endif()
 
 install_beside_console()
+
+# the JavaScript guest of the WebAssembly script engine, for the entity script server's entity scripts
+copy_javascript_guest("$<TARGET_FILE_DIR:${TARGET_NAME}>/resources")

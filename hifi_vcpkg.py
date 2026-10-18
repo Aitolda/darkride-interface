@@ -5,6 +5,7 @@ import os
 import platform
 import re
 import shutil
+import subprocess
 import tempfile
 import json
 import xml.etree.ElementTree as ET
@@ -79,7 +80,8 @@ endif()
         self.version = 1
 
         # when next vcpkg release, lets unify version again
-        if system == 'Darwin':
+        # Windows shares the macOS version: the vcpkg tool of 2021.05.12 skips Visual Studio 2022's v143 toolset
+        if system == 'Darwin' or system == 'Windows':
             self.vcpkgVersion = "5ddd7f02689b7c5aab78711d77f61db5d2e5e79c"
         else:
             self.vcpkgVersion = "2021.05.12"
@@ -96,7 +98,12 @@ endif()
             # self.vcpkgUrl = 'https://cdn.tivolicloud.com/dependencies/vcpkg/vcpkg-win32-client.zip'
             # self.vcpkgHash = 'a650db47a63ccdc9904b68ddd16af74772e7e78170b513ea8de5a3b47d032751a3b73dcc7526d88bcb500753ea3dd9880639ca842bb176e2bddb1710f9a58cd3'
             self.hostTriplet = 'x64-windows'
-            
+            # This vcpkg builds the ports with the first cmake.exe on PATH, and fetches its own CMake 3.21 only
+            # when there is none. In a Visual Studio 2026 prompt that is CMake 4, which refuses the old
+            # cmake_minimum_required() of the 2021 port sources, so CMake's directories stay off vcpkg's PATH.
+            self.buildEnv['PATH'] = os.pathsep.join(d for d in self.buildEnv.get('PATH', '').split(os.pathsep)
+                                                    if d and not os.path.isfile(os.path.join(d, 'cmake.exe')))
+
             if usePrebuilt:
                self.prebuiltArchive = "https://cdn.tivolicloud.com/dependencies/vcpkg/builds/vcpkg-win32.zip"
         
@@ -143,6 +150,51 @@ endif()
             self.androidPackagePath = os.getenv('HIFI_ANDROID_PRECOMPILED', os.path.join(self.path, 'android'))
         else:
             self.triplet = self.hostTriplet
+
+    def patchVcpkgScripts(self):
+        # This vcpkg fetches pkg-config from MSYS2's 32-bit MinGW repository, which MSYS2 has retired:
+        # fetch the last pkg-config from its x86_64 repository instead
+        # (each URL and its hash as this vcpkg's script has them, with the hash indented 24 spaces on the next line;
+        # the libwinpthread URL takes its version from program_version)
+        self.patchVcpkgScript('vcpkg_find_acquire_program.cmake', [
+            ('"https://repo.msys2.org/mingw/i686/mingw-w64-i686-pkg-config-${VERSION}-any.pkg.tar.zst"\n'
+             '                        54f8dad3b1a36a4515db47825a3214fbd2bd82f604aec72e7fb8d79068095fda3c836fb2296acd308522d6e12ce15f69e0c26dcf4eb0681fd105d057d912cdb7',
+             '"https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-pkg-config-0.29.2-6-any.pkg.tar.zst"\n'
+             '                        8dc4045e16314e24d8361336f989c97d2067ab3476d37e01c98b240cc299f24c8318ac48753653721e0118e0d69eba91f593e7ab0ec1ef3052cbd419595fbfe7'),
+            ('"https://repo.msys2.org/mingw/i686/mingw-w64-i686-libwinpthread-${program_version}-any.pkg.tar.zst"\n'
+             '                        2c3d9e6b2eee6a4c16fd69ddfadb6e2dc7f31156627d85845c523ac85e5c585d4cfa978659b1fe2ec823d44ef57bc2b92a6127618ff1a8d7505458b794f3f01c',
+             '"https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-libwinpthread-git-12.0.0.r747.g1a99f8514-1-any.pkg.tar.zst"\n'
+             '                        dd6c5ac767f6ef39afaef822796d8da65bb09ceee35d19332922012266f384cd1907f3f73efa70e5160e2287f5804f2a49788cb16af1a98ba9dffba832e4ba92'),
+            ('"${PKGCONFIG_ROOT}/mingw32/bin/pkg-config.exe"', '"${PKGCONFIG_ROOT}/mingw64/bin/pkg-config.exe"'),
+            # A current NASM instead of 2.15.05 (from 2020)
+            # (this vcpkg sets it as program_version, in the NASM branch; the hash below was replaced alone
+            # before, so the 2.15.05 download failed its check)
+            ('        set(program_name nasm)\n        set(program_version 2.15.05)\n',
+             '        set(program_name nasm)\n        set(program_version 2.16.03)\n'),
+            ('9412b8caa07e15eac8f500f6f8fab9f038d95dc25e0124b08a80645607cf5761225f98546b52eac7b894420d64f26c3cbf22c19cd286bbe583f7c964256c97ed',
+             '8e93ef2378bd5fafe505f8a2940b1e83f2a7563f994ecc82b5d081d178c7ade80a6bad17d52f693432b44e28c2420f68159b36ffea742f4b7c91ef3a855bcd0c'),
+        ])
+        # Ports look for PowerShell 7 only on the PATH vcpkg builds them with, which isn't the user's PATH:
+        # "Could not find PowerShell Core" with PowerShell 7 installed. Look where it installs, and where vcpkg
+        # downloads its own, too.
+        self.patchVcpkgScript('vcpkg_copy_tool_dependencies.cmake', [
+            ('        find_program(Z_VCPKG_POWERSHELL_CORE pwsh)\n',
+             '        find_program(Z_VCPKG_POWERSHELL_CORE pwsh PATHS "$ENV{ProgramFiles}/PowerShell/7"\n'
+             '            "${DOWNLOADS}/tools/powershell-core-7.2.0-windows")\n'),
+        ])
+
+    def patchVcpkgScript(self, name, replacements):
+        script = os.path.join(self.path, 'scripts', 'cmake', name)
+        with open(script, 'r') as f:
+            contents = f.read()
+        patched = contents
+        for old, new in replacements:
+            if new not in patched:
+                patched = patched.replace(old, new)
+        if patched != contents:
+            print("Patching vcpkg's {}".format(name))
+            with open(script, 'w') as f:
+                f.write(patched)
 
     def writeEnv(self, var, value=""):
         envPath = os.path.join(self.args.build_root, "_env")
@@ -193,9 +245,196 @@ endif()
             print("Removing {}".format(self.path))
             shutil.rmtree(self.path, ignore_errors=True)
 
+    # vcpkg's own Windows tool of this version (2021-11-24) recognises Microsoft's compilers only up to 14.3x, which
+    # Visual Studio 2022 17.10 and later and Visual Studio 2026 don't install by default. So it's built from source
+    # with one change: 14.4x counts as the v143 toolset too, as Microsoft numbers it (14.5x, v145, stays unknown).
+    # It's built with the CMake, generator and toolset Darkride is configured with (CMakeLists.txt passes them on).
+    WINDOWS_TOOL_COMMIT = "48b94a6946b8a70abd21529218927fd478d02b6c"  # vcpkg-tool 2021-11-24
+    WINDOWS_TOOL_MARKER = ".darkride-tool"
+
+    # The Visual Studio C++ component with v143 build tools, by Visual Studio's major version: in Visual Studio
+    # 2026 the workload's default "MSVC v143 - VS 2022 C++ x64/x86 build tools (v14.44-17.14)", in 2022 its own
+    V143_COMPONENTS = {
+        '18': ('Microsoft.VisualStudio.Component.VC.14.44.17.14.x86.x64',
+               'MSVC v143 - VS 2022 C++ x64/x86 build tools (v14.44-17.14)'),
+        '17': ('Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+               'MSVC v143 - VS 2022 C++ x64/x86 build tools (Latest)'),
+    }
+
+    def windowsInstancesForGenerator(self):
+        # The Visual Studio installs CMake may build with: the one CMAKE_GENERATOR_INSTANCE names, or every
+        # install of the generator's version. Each is (path, has v143 build tools).
+        generator = os.environ.get('HIFI_CMAKE_GENERATOR', '')
+        match = re.match(r'Visual Studio (\d+) ', generator)
+        vswhere = os.path.join(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'),
+                               'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
+        if not match or not os.path.isfile(vswhere):
+            return None, []
+        major = match.group(1)
+        instance = os.environ.get('HIFI_CMAKE_GENERATOR_INSTANCE', '')
+        if instance:
+            paths = [os.path.normpath(instance)]
+        else:
+            output = subprocess.run([vswhere, '-all', '-prerelease', '-products', '*', '-version',
+                                     '[{0}.0,{1}.0)'.format(major, int(major) + 1), '-property', 'installationPath'],
+                                    stdout=subprocess.PIPE, universal_newlines=True).stdout
+            paths = [line.strip() for line in output.splitlines() if line.strip()]
+
+        def hasV143(path):
+            msvc = os.path.join(path, 'VC', 'Tools', 'MSVC')
+            return os.path.isdir(msvc) and any(
+                re.match(r'14\.[34]\d\.', name) and os.path.isfile(os.path.join(msvc, name, 'bin', 'HostX64', 'x64', 'cl.exe'))
+                for name in os.listdir(msvc))
+
+        return major, [(path, hasV143(path)) for path in paths]
+
+    def v143Instructions(self, major, path):
+        componentId, componentName = self.V143_COMPONENTS.get(major, self.V143_COMPONENTS['18'])
+        installer = os.path.join(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'),
+                                 'Microsoft Visual Studio', 'Installer', 'setup.exe')
+        return ('  {0}\n'
+                '  has no v143 build tools, which Darkride and its dependencies build with. In the Visual Studio\n'
+                '  Installer, click Modify on it, and under Individual components tick\n'
+                '  "{1}". Or from a terminal:\n\n'
+                '    "{2}" modify --installPath "{0}" --add {3} --passive --norestart\n').format(
+                    path, componentName, installer, componentId)
+
+    # Tools the build runs from PATH, which it otherwise reports only deep inside vcpkg ("Could not find
+    # PowerShell Core" from a port's script), after part of the 15-30 minute dependency build
+    WINDOWS_TOOLS = [
+        ('pwsh', 'PowerShell 7', 'winget install -e --id Microsoft.PowerShell --source winget --installer-type wix',
+         'vcpkg runs its scripts with it. Windows PowerShell 5 (powershell.exe) does not count'),
+        ('git', 'Git', 'winget install -e --id Git.Git', 'vcpkg and its tool download some sources with it'),
+    ]
+
+    def checkWindowsTools(self):
+        path = self.buildEnv.get('PATH', '')
+        missing = [tool for tool in self.WINDOWS_TOOLS if not shutil.which(tool[0], path=path)]
+        # The Microsoft Store's PowerShell is only an app execution alias in WindowsApps, which CMake's
+        # find_program can't see: the ports then report "Could not find PowerShell Core"
+        pwsh = shutil.which('pwsh', path=path)
+        if pwsh and os.sep + 'WindowsApps' + os.sep in os.path.normpath(pwsh) and not os.path.isfile(
+                os.path.join(os.environ.get('ProgramFiles', r'C:\Program Files'), 'PowerShell', '7', 'pwsh.exe')):
+            print('\n  PowerShell 7 is the Microsoft Store version or winget\'s MSIX package ({0}), which vcpkg can\'t use.\n'
+                  '  Uninstall it (Settings > Apps > Installed apps > PowerShell), install the regular one with\n\n'
+                  '    winget install -e --id Microsoft.PowerShell --source winget --installer-type wix\n\n'
+                  '  then close every terminal (and VS Code), open a new one, check that "where.exe pwsh" finds\n'
+                  '  C:\\Program Files\\PowerShell\\7\\pwsh.exe, and configure again.\n'.format(pwsh))
+            raise SystemExit(1)
+        if not missing:
+            return
+        print('')
+        for exe, name, install, why in missing:
+            print('  {0} ({1}) is not on the PATH: {2}. Install it with\n\n    {3}\n'.format(name, exe, why, install))
+        print('  Then close every terminal (and VS Code), open a new one, check that "where.exe {0}" finds it,\n'
+              '  and configure again (BUILD_WINDOWS.md, step 1).\n'.format(missing[0][0]))
+        raise SystemExit(1)
+
+    def checkWindowsCompiler(self):
+        # Stop early, with the fix, when the Visual Studio CMake builds with has no v143 build tools: otherwise
+        # the first sign is an MSBuild error (MSB8020) from deep inside the vcpkg tool's build.
+        major, instances = self.windowsInstancesForGenerator()
+        if not instances:
+            return
+        missing = [path for path, has in instances if not has]
+        if len(missing) == len(instances):
+            print('\n' + '\n'.join(self.v143Instructions(major, path) for path in missing) +
+                  '\n  Then delete the build folder and configure again (BUILD_WINDOWS.md, Troubleshooting).\n')
+            raise SystemExit(1)
+        if missing:
+            print('Warning: these Visual Studio installs have no v143 build tools. If CMake picks one of them, the '
+                  'build fails: add the component, or name the install with -DCMAKE_GENERATOR_INSTANCE=<its path>')
+            for path in missing:
+                print('  ' + path)
+
+    def buildWindowsTool(self):
+        print("Building the vcpkg tool")
+        toolDir = os.path.join(self.path, 'tool')
+        if os.path.isdir(toolDir):
+            shutil.rmtree(toolDir, ignore_errors=True)
+        hifi_utils.downloadAndExtract(
+            "https://codeload.github.com/microsoft/vcpkg-tool/zip/" + self.WINDOWS_TOOL_COMMIT, toolDir, isZip=True
+        )
+        sourceDir = os.path.join(toolDir, "vcpkg-tool-" + self.WINDOWS_TOOL_COMMIT)
+
+        patches = [
+            ('visualstudio.cpp',
+             "else if (toolset_version_prefix.byte_at_index(3) == '3')",
+             "else if (toolset_version_prefix.byte_at_index(3) == '3' || "
+             "toolset_version_prefix.byte_at_index(3) == '4')"),
+            # It also takes a CMake from C:\Program Files\CMake, whatever is on PATH. CMake 4 refuses the
+            # cmake_minimum_required() of the 2021 ports, so it's passed over, and the tool uses its own 3.21.
+            ('tools.cpp',
+             '            return {Strings::find_exactly_one_enclosed(rc.output, "cmake version ", "\\n").to_string(),\n'
+             '                    expected_left_tag};',
+             '            auto version = Strings::find_exactly_one_enclosed(rc.output, "cmake version ", "\\n").to_string();\n'
+             '            if (!version.empty() && version[0] >= \'0\' && version[0] <= \'9\' && std::stoi(version) >= 4)\n'
+             '            {\n'
+             '                return {Strings::concat("CMake ", version, " is too new for these ports\\n"), expected_right_tag};\n'
+             '            }\n'
+             '            return {std::move(version), expected_left_tag};'),
+        ]
+        for fileName, old, new in patches:
+            sourcePath = os.path.join(sourceDir, 'src', 'vcpkg', fileName)
+            with open(sourcePath, encoding='utf-8', newline='') as f:
+                source = f.read().replace('\r\n', '\n')
+            if source.count(old) != 1:
+                raise RuntimeError("Can't patch the vcpkg tool's " + sourcePath)
+            with open(sourcePath, 'w', encoding='utf-8', newline='') as f:
+                f.write(source.replace(old, new))
+
+        cmake = os.environ.get('HIFI_CMAKE_COMMAND') or 'cmake'
+        generator = os.environ.get('HIFI_CMAKE_GENERATOR', '')
+        toolset = os.environ.get('HIFI_CMAKE_GENERATOR_TOOLSET', '')
+        instance = os.environ.get('HIFI_CMAKE_GENERATOR_INSTANCE', '')
+        buildDir = os.path.join(toolDir, 'build')
+        configure = [cmake, '-S', sourceDir, '-B', buildDir, '-DCMAKE_BUILD_TYPE=Release', '-DBUILD_TESTING=OFF',
+                     '-DVCPKG_DEVELOPMENT_WARNINGS=OFF', '-DCMAKE_POLICY_VERSION_MINIMUM=3.5']
+        if generator:
+            configure.extend(['-G', generator])
+        if generator.startswith('Visual Studio'):
+            configure.extend(['-A', 'x64'])
+            if toolset:
+                configure.extend(['-T', toolset])
+            if instance:
+                configure.append('-DCMAKE_GENERATOR_INSTANCE=' + instance)
+        try:
+            hifi_utils.executeSubprocess(configure, env=self.bootstrapEnv)
+        except RuntimeError:
+            major, instances = self.windowsInstancesForGenerator()
+            missing = [path for path, has in instances if not has]
+            if missing:
+                print('\nThe vcpkg tool could not be configured. CMake probably picked a Visual Studio without v143 '
+                      'build tools:\n\n' + '\n'.join(self.v143Instructions(major, path) for path in missing) +
+                      '\n  Then delete the build folder and configure again (BUILD_WINDOWS.md, Troubleshooting).\n')
+                raise SystemExit(1)
+            raise
+        hifi_utils.executeSubprocess([cmake, '--build', buildDir, '--config', 'Release', '--target', 'vcpkg',
+                                      '--parallel'], env=self.bootstrapEnv)
+
+        for built in [os.path.join(buildDir, 'Release', 'vcpkg.exe'), os.path.join(buildDir, 'vcpkg.exe')]:
+            if os.path.isfile(built):
+                shutil.copy(built, self.exe)
+                break
+        else:
+            raise RuntimeError("The vcpkg tool built, but vcpkg.exe isn't in " + buildDir)
+
+        # what bootstrap-vcpkg.bat -disableMetrics does
+        open(os.path.join(self.path, 'vcpkg.disable-metrics'), 'w').close()
+        open(os.path.join(self.path, self.WINDOWS_TOOL_MARKER), 'w').close()
+        shutil.rmtree(toolDir, ignore_errors=True)
+
     # Make sure the VCPKG prerequisites are all there.
     def bootstrap(self):
+        if platform.system() == 'Windows' and self.prebuiltArchive is None:
+            self.checkWindowsTools()
+            self.checkWindowsCompiler()
+
         if self.upToDate():
+            # an installation from before the tool was built here keeps its packages, and gets the new tool
+            if (platform.system() == 'Windows' and not self.noClean and self.prebuiltArchive is None and
+                    not os.path.isfile(os.path.join(self.path, self.WINDOWS_TOOL_MARKER))):
+                self.buildWindowsTool()
             return
 
         if self.prebuiltArchive is not None:
@@ -220,7 +459,7 @@ endif()
         if downloadVcpkg:
             # print("Cloning vcpkg from github to {}".format(self.path))
             # hifi_utils.executeSubprocess(['git', 'clone', 'https://github.com/microsoft/vcpkg.git', self.path])
-            
+
             print("Download vcpkg from GitHub to {}".format(self.path))
 
             hifi_utils.downloadAndExtract(
@@ -230,14 +469,16 @@ endif()
 
             for filename in os.listdir(vcpkg_extract_dir):
                 shutil.move(os.path.join(vcpkg_extract_dir, filename), os.path.join(self.path, filename))
-            
+
             os.rmdir(vcpkg_extract_dir)
 
-            if platform.system() != "Windows":
+            if platform.system() == "Windows":
+                self.buildWindowsTool()
+            else:
                 hifi_utils.executeSubprocess(["chmod", "+x", os.path.join(self.path, "bootstrap-vcpkg.sh")])
 
-            print("Bootstrapping vcpkg")
-            hifi_utils.executeSubprocess(self.bootstrapCmds, folder=self.path, env=self.bootstrapEnv)      
+                print("Bootstrapping vcpkg")
+                hifi_utils.executeSubprocess(self.bootstrapCmds, folder=self.path, env=self.bootstrapEnv)
 
         print("Replacing port files")
         portsPath = os.path.join(self.path, 'ports')
@@ -300,6 +541,9 @@ endif()
         if self.args.android:
             print("Installing Android binaries")
             self.setupAndroidDependencies()
+
+        if platform.system() == 'Windows':
+            self.patchVcpkgScripts()
 
         print("Installing host tools")
         if (self.vcpkgBuildType):

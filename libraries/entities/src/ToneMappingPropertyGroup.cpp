@@ -5,7 +5,8 @@
 //  Created by Caitlyn Meeks on 8/28/2020
 //  Copyright 2020 Tivoli Cloud VR, Inc.
 //
-//  Licensed under AGPL-3
+//  Distributed under the MIT License.
+//  See the accompanying file LICENSE-MIT or https://opensource.org/licenses/MIT
 
 
 #include "ToneMappingPropertyGroup.h"

@@ -16,7 +16,7 @@
     "hifi-deps",
     {
       "name": "leapmotion",
-      "platform": "!android & !(osx & arm64)"
+      "platform": "!android & !windows & !(osx & arm64)"
     },
     {
       "name": "liblo",
@@ -36,8 +36,8 @@
       "platform": "x64 & (windows | linux)"
     },
     {
-      "name": "ovr",
-      "platform": "windows"
+      "name": "openxr-loader",
+      "platform": "x64 & (windows | linux)"
     },
     {
       "name": "quazip",

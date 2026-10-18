@@ -762,6 +762,8 @@ void Agent::queryAvatars() {
     view.setOrientation(scriptedAvatar->getHeadOrientation());
     view.setProjection(DEFAULT_FIELD_OF_VIEW_DEGREES, DEFAULT_ASPECT_RATIO,
                        DEFAULT_NEAR_CLIP, DEFAULT_FAR_CLIP);
+    // the avatar mixer sends an avatar's joints only when it is in view: everyone inside this sphere is, behind as well
+    view.setCenterRadius(_avatarViewRadius);
     view.calculate();
     ConicalViewFrustum conicalView { view };
 

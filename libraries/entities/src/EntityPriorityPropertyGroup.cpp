@@ -4,7 +4,8 @@
 //
 //  Created by Caitlyn Meeks on 12/23/2019
 //  Copyright 2019, Tivoli Cloud VR
-//  Licensed under AGPL-3
+//  Distributed under the MIT License.
+//  See the accompanying file LICENSE-MIT or https://opensource.org/licenses/MIT
 
 #include "EntityPriorityPropertyGroup.h"
 

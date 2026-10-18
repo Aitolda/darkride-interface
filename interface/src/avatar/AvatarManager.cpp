@@ -157,7 +157,31 @@ void AvatarManager::handleTransitAnimations(AvatarTransit::Status status) {
     }
 }
 
+// Touches: every avatar's contact receivers (an imported avatar's head pats and the like) against everyone's senders,
+// from the last poses. Each client works them out for every avatar it has, since nothing about them is sent.
+void AvatarManager::updateContacts() {
+    const auto avatarMap = getHashCopy();
+    bool receivers = false;
+    for (const auto& entry : avatarMap) {
+        if (std::static_pointer_cast<Avatar>(entry)->hasContactReceivers()) {
+            receivers = true;
+            break;
+        }
+    }
+    if (!receivers) {
+        return;
+    }
+    std::vector<AvatarMenu::ContactSender> senders;
+    for (const auto& entry : avatarMap) {
+        std::static_pointer_cast<Avatar>(entry)->collectContactSenders(senders);
+    }
+    for (const auto& entry : avatarMap) {
+        std::static_pointer_cast<Avatar>(entry)->updateContacts(senders);
+    }
+}
+
 void AvatarManager::updateMyAvatar(float deltaTime) {
+    updateContacts();
     bool showWarnings = Menu::getInstance()->isOptionChecked(MenuOption::PipelineWarnings);
     PerformanceWarning warn(showWarnings, "AvatarManager::updateMyAvatar()");
 
@@ -991,19 +1015,22 @@ float AvatarManager::getAvatarSortCoefficient(const QString& name) {
 
 // HACK
 void AvatarManager::setAvatarSortCoefficient(const QString& name, const QScriptValue& value) {
-    bool somethingChanged = false;
     if (value.isNumber()) {
-        float numericalValue = (float)value.toNumber();
-        if (name == "size") {
-            AvatarData::_avatarSortCoefficientSize = numericalValue;
-            somethingChanged = true;
-        } else if (name == "center") {
-            AvatarData::_avatarSortCoefficientCenter = numericalValue;
-            somethingChanged = true;
-        } else if (name == "age") {
-            AvatarData::_avatarSortCoefficientAge = numericalValue;
-            somethingChanged = true;
-        }
+        setAvatarSortCoefficientValue(name, (float)value.toNumber());
+    }
+}
+
+void AvatarManager::setAvatarSortCoefficientValue(const QString& name, float numericalValue) {
+    bool somethingChanged = false;
+    if (name == "size") {
+        AvatarData::_avatarSortCoefficientSize = numericalValue;
+        somethingChanged = true;
+    } else if (name == "center") {
+        AvatarData::_avatarSortCoefficientCenter = numericalValue;
+        somethingChanged = true;
+    } else if (name == "age") {
+        AvatarData::_avatarSortCoefficientAge = numericalValue;
+        somethingChanged = true;
     }
     if (somethingChanged) {
         size_t packetSize = sizeof(AvatarData::_avatarSortCoefficientSize) + 

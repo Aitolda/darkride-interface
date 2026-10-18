@@ -4,7 +4,8 @@
 //
 //  Spring bones for imported avatars: the secondary animation of hair, ears, tails, ribbons and the like, driven by
 //  the avatar's own component data (the .fst line "springBones = {...}", one entry per component: the joints it
-//  moves, its forces, limits, colliders and curves, written by the importer in the components' own field names).
+//  moves, its forces, limits, colliders and curves, written by the importer in the components' own field names; the
+//  line is described in libraries/unity-import/src/UnitySpringBones.h, which writes it).
 //  A solver beside Flow (the engine's older spring bones, keyed by joint names) that shares its plumbing: the rest
 //  pose from the animated relative poses, the avatar's frame (world orientation, the avatar's translation removed),
 //  the rotations written back into the rig's poses so they travel in the avatar packet.

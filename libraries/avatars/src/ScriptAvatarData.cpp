@@ -213,6 +213,13 @@ bool ScriptAvatarData::getLookAtSnappingEnabled() const {
         return false;
     }
 }
+QString ScriptAvatarData::getGazeStyle() const {
+    if (AvatarSharedPointer sharedAvatarData = _avatarData.lock()) {
+        return sharedAvatarData->getGazeStyle();
+    } else {
+        return QString();
+    }
+}
 //
 // IDENTIFIER PROPERTIES
 // END
@@ -341,6 +348,14 @@ float ScriptAvatarData::getAudioLoudness() const {
         return sharedAvatarData->getAudioLoudness();
     } else {
         return 0.0f;
+    }
+}
+// the point the avatar's eyes are aimed at, in the world, as its client sends it
+glm::vec3 ScriptAvatarData::getLookAtPosition() const {
+    if (AvatarSharedPointer sharedAvatarData = _avatarData.lock()) {
+        return sharedAvatarData->getHeadData()->getLookAtPosition();
+    } else {
+        return glm::vec3();
     }
 }
 float ScriptAvatarData::getAudioAverageLoudness() const {

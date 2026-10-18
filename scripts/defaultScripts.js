@@ -19,6 +19,7 @@
 	"system/tablet-ui/tabletUI.js",
 	"system/emote.js",
 	"system/vehicles.js", // sit in and drive vehicles (PHYSICS.md round 6)
+	"system/avatarMenu.js", // an imported avatar's menu
 	// "system/miniTablet.js",
 	// "system/audioMuteOverlay.js", // the big text that appears when you're muted
 	"system/keyboardShortcuts/keyboardShortcuts.js"
@@ -32,7 +33,8 @@
 	"tivoli/tivoli.js",
 	"system/inspect.js",
 	"system/controllers/controllerScripts.js",
-	"system/create/edit.js"
+	"system/create/edit.js",
+	"system/impostorLodView.js" // Developer > Render > Show Impostors and LODs
 ].forEach(function (script) {
 	var runningScripts = ScriptDiscoveryService.getRunning();
 

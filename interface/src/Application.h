@@ -212,6 +212,10 @@ public:
 
     float getFarClip() { return _farClip.get(); }
     void setFarClip(float farClip);
+    // the desktop camera's near clip; the HMD keeps DEFAULT_NEAR_CLIP for the hands. A longer one gives the depth
+    // buffer precision in proportion (REVERSED-Z.md §2)
+    float getNearClip() { return _nearClip.get(); }
+    void setNearClip(float nearClip);
 
     float getHMDTabletScale() { return _hmdTabletScale.get(); }
     void setHMDTabletScale(float hmdTabletScale);
@@ -418,6 +422,7 @@ public slots:
 
     Q_INVOKABLE void loadDialog();
     void importAvatarDialog();
+    void putAvatarInMyFiles();
     Q_INVOKABLE void loadScriptURLDialog() const;
     void toggleLogDialog();
     void recreateLogWindow(int);
@@ -702,6 +707,7 @@ private:
     Setting::Handle<QString> _previousScriptLocation;
     Setting::Handle<float> _fieldOfView;
     Setting::Handle<float> _farClip;
+    Setting::Handle<float> _nearClip;
     Setting::Handle<float> _hmdTabletScale;
     Setting::Handle<float> _desktopTabletScale;
     Setting::Handle<bool> _firstRun;

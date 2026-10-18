@@ -11,11 +11,16 @@
 #include "AvatarWriter.h"
 
 #include <algorithm>
+#include <array>
 #include <map>
+#include <tuple>
 
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
+#include <QRegularExpression>
 #include <QTextStream>
 #include <QVector>
 
@@ -99,8 +104,293 @@ FBXNode layerElement(const char* type) {
 
 }
 
+// What a colour map's pixels hold: the shares its alpha leaves nearly clear and nearly solid, and the shares that are
+// pure black and nearly black. False when the image cannot be read.
+struct ColourMap {
+    bool hasAlpha { false };
+    float clear { 0.0f };
+    float solid { 0.0f };
+    float black { 0.0f };
+    float nearBlack { 0.0f };
+};
+
+static bool measureColourMap(const QString& path, ColourMap& measured) {
+    QImage image(path);
+    if (image.isNull() || image.width() <= 0 || image.height() <= 0) {
+        return false;
+    }
+    measured.hasAlpha = image.hasAlphaChannel();
+    image = image.convertToFormat(QImage::Format_ARGB32);
+    qint64 clear = 0;
+    qint64 solid = 0;
+    qint64 black = 0;
+    qint64 nearBlack = 0;
+    for (int y = 0; y < image.height(); y++) {
+        const QRgb* line = reinterpret_cast<const QRgb*>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); x++) {
+            const int alpha = qAlpha(line[x]);
+            const int brightest = std::max({ qRed(line[x]), qGreen(line[x]), qBlue(line[x]) });
+            clear += alpha < 32 ? 1 : 0;
+            solid += alpha > 223 ? 1 : 0;
+            black += brightest < 4 ? 1 : 0;
+            nearBlack += brightest >= 4 && brightest < 16 ? 1 : 0;
+        }
+    }
+    const double total = (double)image.width() * (double)image.height();
+    measured.clear = (float)(clear / total);
+    measured.solid = (float)(solid / total);
+    measured.black = (float)(black / total);
+    measured.nearBlack = (float)(nearBlack / total);
+    return true;
+}
+
+// A copy of a colour map, as PNG, whose black (brightest channel under 8) is clear and everything else solid. The clear
+// pixels then take the colour of the strands beside them, a few pixels out: the engine blends neighbouring pixels at a
+// strand's edge, and black there showed as dark fringes around the hair (10-13).
+static bool blackCutOut(const QString& path, QByteArray& png) {
+    QImage image(path);
+    if (image.isNull()) {
+        return false;
+    }
+    image = image.convertToFormat(QImage::Format_ARGB32);
+    const int width = image.width();
+    const int height = image.height();
+    std::vector<uint8_t> filled((size_t)width * height, 0);
+    for (int y = 0; y < height; y++) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < width; x++) {
+            const bool solid = std::max({ qRed(line[x]), qGreen(line[x]), qBlue(line[x]) }) >= 8;
+            line[x] = qRgba(qRed(line[x]), qGreen(line[x]), qBlue(line[x]), solid ? 255 : 0);
+            filled[(size_t)y * width + x] = solid ? 1 : 0;
+        }
+    }
+    // each pass gives every clear pixel next to a coloured one the average colour of its coloured neighbours
+    for (int pass = 0; pass < 8; pass++) {
+        std::vector<QRgb> colours;
+        std::vector<size_t> where;
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                if (filled[(size_t)y * width + x]) {
+                    continue;
+                }
+                int red = 0, green = 0, blue = 0, count = 0;
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        const int nx = x + dx;
+                        const int ny = y + dy;
+                        if (nx < 0 || ny < 0 || nx >= width || ny >= height || !filled[(size_t)ny * width + nx]) {
+                            continue;
+                        }
+                        const QRgb c = reinterpret_cast<const QRgb*>(image.constScanLine(ny))[nx];
+                        red += qRed(c);
+                        green += qGreen(c);
+                        blue += qBlue(c);
+                        count++;
+                    }
+                }
+                if (count > 0) {
+                    colours.push_back(qRgba(red / count, green / count, blue / count, 0));
+                    where.push_back((size_t)y * width + x);
+                }
+            }
+        }
+        if (where.empty()) {
+            break;
+        }
+        for (size_t i = 0; i < where.size(); i++) {
+            reinterpret_cast<QRgb*>(image.scanLine((int)(where[i] / width)))[where[i] % width] = colours[i];
+            filled[where[i]] = 1;
+        }
+    }
+    QBuffer buffer(&png);
+    buffer.open(QIODevice::WriteOnly);
+    return image.save(&buffer, "PNG");
+}
+
+// Where a texture's picture is, found the way game rips need: as written, relative to the model, by file name, then by
+// file name in any case. Empty when it is not there.
+static QString findTextureFile(const QString& written, const QDir& sourceFolder) {
+    QString path = written;
+    path.replace('\\', '/');
+    const QString fileName = QFileInfo(path).fileName();
+    for (const QString& candidate : { path, sourceFolder.filePath(path), sourceFolder.filePath(fileName) }) {
+        if (!candidate.isEmpty() && QFileInfo(candidate).isFile()) {
+            return candidate;
+        }
+    }
+    if (!fileName.isEmpty()) {
+        for (const QString& entry : sourceFolder.entryList(QDir::Files)) {
+            if (entry.compare(fileName, Qt::CaseInsensitive) == 0) {
+                return sourceFolder.filePath(entry);
+            }
+        }
+    }
+    return QString();
+}
+
+// Whether the engine draws a model's textures upside down. Inside the engine V counts down from the picture's top edge
+// (the FBX reader negates the file's V, which counts up from the bottom). Texture artists paint the two sides of every
+// UV seam (an edge the mesh draws from two places in a texture) to match, so drawn the right way up the colours across
+// a seam agree, and drawn upside down they mostly do not. Yes when the seams agree clearly better upside down; with too
+// few seams to tell, or no clear difference, no. The note says what was measured. A file read right (Chloe's rip:
+// differences 11.6 drawn, 33.1 flipped, 10-13) is kept.
+static bool drawsUpsideDown(const hfm::Model& model, const QDir& sourceFolder, QString& note) {
+    // each colour map once, by the texture's name in the model
+    std::map<QString, int> pictureOf;
+    std::vector<QImage> pictures;
+    auto pictureIndex = [&](const hfm::Texture& texture) {
+        if (texture.filename.isEmpty() && texture.content.isEmpty()) {
+            return -1;
+        }
+        const QString key = QString::fromUtf8(texture.filename) + (texture.content.isEmpty() ? "" : "#embedded");
+        auto known = pictureOf.find(key);
+        if (known != pictureOf.end()) {
+            return known->second;
+        }
+        QImage picture;
+        if (!texture.content.isEmpty()) {
+            picture = QImage::fromData(texture.content);
+        } else {
+            const QString path = findTextureFile(QString::fromUtf8(texture.filename), sourceFolder);
+            if (!path.isEmpty()) {
+                picture.load(path);
+            }
+        }
+        int index = -1;
+        if (!picture.isNull() && picture.width() > 8 && picture.height() > 8) {
+            pictures.push_back(picture.convertToFormat(QImage::Format_RGB32));
+            index = (int)pictures.size() - 1;
+        }
+        pictureOf[key] = index;
+        return index;
+    };
+    // the average colour of the 3 by 3 pixels around a point, drawn as the engine draws it or upside down
+    auto colourAt = [](const QImage& picture, const glm::vec2& uv, bool flipped) {
+        const float u = uv.x - std::floor(uv.x);
+        const float v = uv.y - std::floor(uv.y);
+        const int x = glm::clamp((int)(u * picture.width()), 0, picture.width() - 1);
+        const int y = glm::clamp((int)((flipped ? 1.0f - v : v) * picture.height()), 0, picture.height() - 1);
+        glm::vec3 sum(0.0f);
+        int count = 0;
+        for (int dy = -1; dy <= 1; dy++) {
+            const int row = y + dy;
+            if (row < 0 || row >= picture.height()) {
+                continue;
+            }
+            const QRgb* line = reinterpret_cast<const QRgb*>(picture.constScanLine(row));
+            for (int dx = -1; dx <= 1; dx++) {
+                const int column = x + dx;
+                if (column >= 0 && column < picture.width()) {
+                    sum += glm::vec3(qRed(line[column]), qGreen(line[column]), qBlue(line[column]));
+                    count++;
+                }
+            }
+        }
+        return count > 0 ? sum / (float)count : sum;
+    };
+
+    // one side of an edge: its two ends' UVs (the lower-numbered corner first) and the third corner's, to step inside
+    struct Side {
+        glm::vec2 first;
+        glm::vec2 second;
+        glm::vec2 opposite;
+    };
+    const float AGREE = 16.0f;  // colours this close (0-255, averaged over red, green and blue) agree
+    double differenceDrawn = 0.0;
+    double differenceFlipped = 0.0;
+    int agreeDrawn = 0;
+    int agreeFlipped = 0;
+    int samples = 0;
+    int seams = 0;
+    for (size_t m = 0; m < model.meshes.size(); m++) {
+        const hfm::Mesh& mesh = model.meshes[m];
+        const QVector<glm::vec2>& uvs = mesh.texCoords;
+        if (uvs.size() != mesh.vertices.size()) {
+            continue;
+        }
+        // the corners a seam splits share a position: one number per position
+        std::map<std::array<float, 3>, int> numberOf;
+        std::vector<int> corner(mesh.vertices.size());
+        for (int v = 0; v < mesh.vertices.size(); v++) {
+            const glm::vec3& p = mesh.vertices[v];
+            corner[v] = numberOf.emplace(std::array<float, 3>{ { p.x, p.y, p.z } }, (int)numberOf.size()).first->second;
+        }
+        std::map<std::tuple<int, int, int>, std::vector<Side>> edges;  // (corner, corner, picture) to the sides drawn
+        for (const hfm::Shape& shape : model.shapes) {
+            if (shape.mesh != m || shape.meshPart >= mesh.parts.size() || shape.material >= model.materials.size()) {
+                continue;
+            }
+            const int picture = pictureIndex(model.materials[shape.material].albedoTexture);
+            if (picture < 0) {
+                continue;
+            }
+            const hfm::MeshPart& part = mesh.parts[shape.meshPart];
+            for (const QVector<int>* indices : { &part.triangleIndices, &part.quadTrianglesIndices }) {
+                for (int i = 0; i + 2 < indices->size(); i += 3) {
+                    const int t[3] = { indices->at(i), indices->at(i + 1), indices->at(i + 2) };
+                    if (t[0] < 0 || t[1] < 0 || t[2] < 0 || t[0] >= uvs.size() || t[1] >= uvs.size() || t[2] >= uvs.size()) {
+                        continue;
+                    }
+                    for (int e = 0; e < 3; e++) {
+                        int a = t[e];
+                        int b = t[(e + 1) % 3];
+                        if (corner[a] == corner[b]) {
+                            continue;
+                        }
+                        if (corner[a] > corner[b]) {
+                            std::swap(a, b);
+                        }
+                        edges[std::make_tuple(corner[a], corner[b], picture)].push_back({ uvs[a], uvs[b], uvs[t[(e + 2) % 3]] });
+                    }
+                }
+            }
+        }
+        for (const auto& entry : edges) {
+            const std::vector<Side>& sides = entry.second;
+            if (sides.size() != 2 || (glm::distance(sides[0].first, sides[1].first) < 1.0e-4f &&
+                                      glm::distance(sides[0].second, sides[1].second) < 1.0e-4f)) {
+                continue;  // not a seam: one side, or both drawn from the same place
+            }
+            const QImage& picture = pictures[std::get<2>(entry.first)];
+            const glm::vec2 pixels(picture.width(), picture.height());
+            seams++;
+            for (const float along : { 0.25f, 0.5f, 0.75f }) {
+                glm::vec2 points[2];
+                for (int s = 0; s < 2; s++) {
+                    // a point on the edge, stepped 2.5 pixels into its triangle, past any padding at the seam
+                    const glm::vec2 onEdge = glm::mix(sides[s].first, sides[s].second, along);
+                    const glm::vec2 inward = sides[s].opposite - onEdge;
+                    const float length = glm::length(inward * pixels);
+                    points[s] = length > 1.0e-6f ? onEdge + inward * std::min(2.5f / length, 0.5f) : onEdge;
+                }
+                const glm::vec3 asDrawn = glm::abs(colourAt(picture, points[0], false) - colourAt(picture, points[1], false));
+                const glm::vec3 asFlipped = glm::abs(colourAt(picture, points[0], true) - colourAt(picture, points[1], true));
+                const float drawn = (asDrawn.x + asDrawn.y + asDrawn.z) / 3.0f;
+                const float flipped = (asFlipped.x + asFlipped.y + asFlipped.z) / 3.0f;
+                differenceDrawn += drawn;
+                differenceFlipped += flipped;
+                agreeDrawn += drawn < AGREE ? 1 : 0;
+                agreeFlipped += flipped < AGREE ? 1 : 0;
+                samples++;
+            }
+        }
+    }
+    if (samples < 90) {
+        note = seams > 0 ? QString("texture V kept: only %1 UV seams to read it from").arg(seams) : QString();
+        return false;
+    }
+    const double meanDrawn = differenceDrawn / samples;
+    const double meanFlipped = differenceFlipped / samples;
+    const bool upsideDown = meanFlipped < 0.6 * meanDrawn && agreeFlipped >= agreeDrawn + samples / 10;
+    note = QString("texture V %1: across %2 UV seams the colours differ by %3 as the engine draws them (%4% agree) and "
+                   "%5 upside down (%6% agree)")
+               .arg(upsideDown ? "flipped" : "kept").arg(seams).arg(meanDrawn, 0, 'f', 1).arg(100 * agreeDrawn / samples)
+               .arg(meanFlipped, 0, 'f', 1).arg(100 * agreeFlipped / samples);
+    return upsideDown;
+}
+
 WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, const Result& rig, const QString& sourcePath,
-                                   const QString& folder, const QString& name) {
+                                   const QString& folder, const QString& name, FlipV flipV) {
     WrittenAvatar written;
     if (!rig.ok || rig.joints.empty()) {
         written.error = "the character is not rigged";
@@ -116,6 +406,14 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         return written;
     }
     const QDir sourceFolder = QFileInfo(sourcePath).absoluteDir();
+    bool flipTextures = flipV == FlipV::Always;
+    if (flipV == FlipV::Detect) {
+        QString note;
+        flipTextures = drawsUpsideDown(model, sourceFolder, note);
+        if (!note.isEmpty()) {
+            written.notes << note;
+        }
+    }
 
     qint64 nextId = 1000000;
     auto newId = [&]() {
@@ -159,7 +457,7 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         connect(jointIds[j], parent >= 0 ? jointIds[parent] : 0);
     }
 
-    // textures: copied beside the FBX, found the way game rips need (relative, by file name, any case)
+    // textures: copied beside the FBX
     std::map<QString, QString> placed;
     auto placeTexture = [&](const hfm::Texture& texture) -> QString {
         QString path = QString::fromUtf8(texture.filename);
@@ -178,21 +476,7 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
                 return QString();
             }
         } else {
-            QString found;
-            for (const QString& candidate : { path, sourceFolder.filePath(path), sourceFolder.filePath(fileName) }) {
-                if (!candidate.isEmpty() && QFileInfo(candidate).isFile()) {
-                    found = candidate;
-                    break;
-                }
-            }
-            if (found.isEmpty() && !fileName.isEmpty()) {
-                for (const QString& entry : sourceFolder.entryList(QDir::Files)) {
-                    if (entry.compare(fileName, Qt::CaseInsensitive) == 0) {
-                        found = sourceFolder.filePath(entry);
-                        break;
-                    }
-                }
-            }
+            const QString found = findTextureFile(path, sourceFolder);
             if (found.isEmpty()) {
                 written.notes << "texture not found: " + path;
                 placed[path] = QString();
@@ -208,6 +492,24 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         placed[path] = fileName;
         return fileName;
     };
+    // The UV layer a texture names: the engine's reader only asks whether the name is "map1" or "UVSet0" and otherwise
+    // takes the second layer (FBXSerializer_Material; its name matcher is never called), but 3ds Max names its first
+    // layer "UVChannel_1". Chloe's textures all name it, so her normal maps were read as being on the second layer,
+    // where the engine builds no tangents, and were left out (10-13). Exporters number their layers: 3ds Max's
+    // UVChannel_N and Maya's mapN are layer N-1, UVSetN is layer N.
+    auto layerOf = [](const hfm::Texture& texture) {
+        const QString name = texture.texcoordSetName;
+        static const QRegularExpression numbered("^(UVChannel_|map|UVSet)(\\d+)$", QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch match = numbered.match(name);
+        if (match.hasMatch()) {
+            const int n = match.captured(2).toInt();
+            const int layer = match.captured(1).compare("UVSet", Qt::CaseInsensitive) == 0 ? n : n - 1;
+            if (layer == 0 || layer == 1) {
+                return layer;
+            }
+        }
+        return texture.texcoordSet == 1 ? 1 : 0;
+    };
     auto addTexture = [&](const hfm::Texture& texture, qint64 material, const char* slot) {
         if (texture.filename.isEmpty() && texture.content.isEmpty()) {
             return;
@@ -218,7 +520,7 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         }
         const qint64 id = newId();
         // the reader gives a texture the mesh's UV layer of the same name (FBXSerializer::matchTextureUVSetToAttributeChannel)
-        const QByteArray uvSet = texture.texcoordSet == 1 ? SECOND_UV_SET : FIRST_UV_SET;
+        const QByteArray uvSet = layerOf(texture) == 1 ? SECOND_UV_SET : FIRST_UV_SET;
         add(makeNode("Texture", { id, objectName(fileName, "Texture"), QByteArray("") },
                      { makeNode("Type", { QByteArray("TextureVideoClip") }), makeNode("Version", { 202 }),
                        makeNode("TextureName", { objectName(fileName, "Texture") }),
@@ -240,20 +542,71 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         const hfm::Material fallback;
         const hfm::Material& material = index < model.materials.size() ? model.materials[index] : fallback;
         const QString materialName = material.name.isEmpty() ? QString("material%1").arg(index) : material.name;
+        // The engine makes a phong material as metallic as its specular colour's brightest channel, and multiplies the
+        // colour map by the diffuse colour (FBXSerializer_Material, MaterialTextures.slh). A game rip's specular 0.9 made
+        // Chloe 90% metal, black wherever no bright reflection fell, and its default grey diffuse 0.59 darkened her
+        // textures (Caity's screenshot, 10-13). An avatar's skin, hair and cloth are not metal: its specular is black,
+        // its diffuse white under a colour map, and its shininess goes under "Shininess", the name the reader parses.
+        const bool colourMapped = !material.albedoTexture.filename.isEmpty() || !material.albedoTexture.content.isEmpty();
         const qint64 id = newId();
         add(makeNode("Material", { id, objectName(materialName, "Material"), QByteArray("") },
                      { makeNode("Version", { 102 }), makeNode("ShadingModel", { QByteArray("phong") }),
                        makeNode("MultiLayer", { 0 }),
                        makeNode("Properties70", {},
-                                { property("DiffuseColor", "Color", "", "A", vector3(material.diffuseColor)),
+                                { property("DiffuseColor", "Color", "", "A",
+                                           vector3(colourMapped ? glm::vec3(1.0f) : material.diffuseColor)),
                                   property("DiffuseFactor", "Number", "", "A", { 1.0 }),
-                                  property("SpecularColor", "Color", "", "A", vector3(material.specularColor)),
+                                  property("SpecularColor", "Color", "", "A", vector3(glm::vec3(0.0f))),
+                                  property("Shininess", "Number", "", "A", { (double)material.shininess }),
                                   property("ShininessExponent", "Number", "", "A", { (double)material.shininess }),
                                   property("EmissiveColor", "Color", "", "A", vector3(material.emissiveColor)),
                                   property("Opacity", "Number", "", "A", { (double)material.opacity }) }) }));
-        addTexture(material.albedoTexture, id, "DiffuseColor");
-        addTexture(material.normalTexture, id, "NormalMap");
-        addTexture(material.opacityTexture, id, "TransparentColor");
+        // A colour map that cuts the shape out is the opacity map too: the engine reads a colour map's alpha only when the
+        // same map is linked as the opacity map (ProceduralMaterialCache). Its alpha may cut the shape out (a game's
+        // alpha-tested hair kept the mask there); or, for hair whose alpha is solid, a pure black background between the
+        // strands does (Chloe's: 55% black, 1% near black), and a copy with that black made clear is written. A skin map
+        // keeping a shine mask in its alpha has no large clear part, and only hair has its black cut out.
+        hfm::Texture colour = material.albedoTexture;
+        hfm::Texture opacity = material.opacityTexture;
+        const bool hasColourMap = !colour.filename.isEmpty() || !colour.content.isEmpty();
+        if (opacity.filename.isEmpty() && opacity.content.isEmpty() && hasColourMap) {
+            const QString colourMap = placeTexture(colour);
+            ColourMap measured;
+            if (!colourMap.isEmpty() && measureColourMap(out.filePath(colourMap), measured)) {
+                const bool hair = materialName.contains("hair", Qt::CaseInsensitive) ||
+                                  colourMap.contains("hair", Qt::CaseInsensitive);
+                QByteArray png;
+                if (measured.hasAlpha && measured.clear >= 0.10f && measured.solid >= 0.10f) {
+                    opacity = colour;
+                    written.notes << QString("%1: %2's alpha cuts it out (%3% clear), so it is the opacity map too")
+                                         .arg(materialName, colourMap).arg(measured.clear * 100.0f, 0, 'f', 0);
+                } else if (hair && measured.clear < 0.01f && measured.black >= 0.25f && measured.nearBlack < 0.03f &&
+                           blackCutOut(out.filePath(colourMap), png)) {
+                    colour.filename = (QFileInfo(colourMap).completeBaseName() + "_cutout.png").toUtf8();
+                    colour.content = png;
+                    opacity = colour;
+                    written.notes << QString("%1: %2 is %3% pure black between the strands, so %4 has that black clear")
+                                         .arg(materialName, colourMap).arg(measured.black * 100.0f, 0, 'f', 0)
+                                         .arg(QString::fromUtf8(colour.filename));
+                } else if (hair) {
+                    written.notes << QString("%1: no cut-out in %2 (%3% clear, %4% black), so the hair is drawn solid")
+                                         .arg(materialName, colourMap).arg(measured.clear * 100.0f, 0, 'f', 0)
+                                         .arg(measured.black * 100.0f, 0, 'f', 0);
+                }
+            }
+        }
+        addTexture(colour, id, "DiffuseColor");
+        // The engine builds a normal map's tangents from the first UV layer (CalculateMeshTangentsTask), so a normal map
+        // on another layer is shaded in the wrong frame: Chloe's (game rips keep every texture on the second layer) made
+        // a faceted honeycomb over her face. Such a normal map is left out. Writing the first layer as a copy of the
+        // second instead, or swapping them, turned her untextured a moment after her textures appeared (10-13).
+        if (layerOf(material.normalTexture) == 0) {
+            addTexture(material.normalTexture, id, "NormalMap");
+        } else if (!material.normalTexture.filename.isEmpty() || !material.normalTexture.content.isEmpty()) {
+            written.notes << QString("%1: its normal map is on UV layer %2, whose tangents the engine does not build: left out")
+                                 .arg(materialName).arg(layerOf(material.normalTexture) + 1);
+        }
+        addTexture(opacity, id, "TransparentColor");
         addTexture(material.specularTexture, id, "SpecularColor");
         addTexture(material.glossTexture, id, "ShininessExponent");
         addTexture(material.emissiveTexture, id, "EmissiveColor");
@@ -320,11 +673,16 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
                                    makeNode("Normals", { doubles(normals) }) });
             layer << layerElement("LayerElementNormal");
         }
-        if (mesh.texCoords.size() == mesh.vertices.size()) {
+        // The reader negates V as it reads (FBXSerializer::createVec2Vector), so V is written negated back. The writer
+        // wrote it as read until 10-13, which drew every rigged avatar's textures upside down: Chloe's eyes from her
+        // painted chin, her jacket from her skin.
+        const QVector<glm::vec2>& firstUVs = mesh.texCoords;
+        const QVector<glm::vec2>& secondUVs = mesh.texCoords1;
+        if (firstUVs.size() == mesh.vertices.size()) {
             QVector<double> uvs;
-            uvs.reserve(mesh.texCoords.size() * 2);
-            for (const glm::vec2& uv : mesh.texCoords) {
-                uvs << uv.x << uv.y;
+            uvs.reserve(firstUVs.size() * 2);
+            for (const glm::vec2& uv : firstUVs) {
+                uvs << uv.x << -(flipTextures ? 1.0f - uv.y : uv.y);
             }
             geometry << makeNode("LayerElementUV", { 0 },
                                  { makeNode("Version", { 101 }), makeNode("Name", { FIRST_UV_SET }),
@@ -335,11 +693,11 @@ WrittenAvatar autorig::writeAvatar(const hfm::Model& model, const Body& body, co
         }
         // a second UV layer: game rips often keep their textures on it (Chloe's all use "UVChannel_1")
         FBXNodeList secondLayer;
-        if (mesh.texCoords1.size() == mesh.vertices.size()) {
+        if (secondUVs.size() == mesh.vertices.size()) {
             QVector<double> uvs;
-            uvs.reserve(mesh.texCoords1.size() * 2);
-            for (const glm::vec2& uv : mesh.texCoords1) {
-                uvs << uv.x << uv.y;
+            uvs.reserve(secondUVs.size() * 2);
+            for (const glm::vec2& uv : secondUVs) {
+                uvs << uv.x << -(flipTextures ? 1.0f - uv.y : uv.y);
             }
             geometry << makeNode("LayerElementUV", { 1 },
                                  { makeNode("Version", { 101 }), makeNode("Name", { SECOND_UV_SET }),
