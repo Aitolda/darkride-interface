@@ -15,6 +15,7 @@
 				')'
 		}"
 		(click)="onHop()"
+		(mouseenter)="scriptService.emitEvent('explore', 'hover')"
 	>
 		<div class="chips">
 			<span class="chip presence" *ngIf="people > 0">
@@ -61,6 +62,7 @@
 				[class.starting]="starting"
 				[disabled]="starting || !canHop"
 				(click)="onHop()"
+				(mouseenter)="scriptService.emitEvent('explore', 'hover')"
 			>
 				<mat-icon
 					svgIcon="dr-rabbit"

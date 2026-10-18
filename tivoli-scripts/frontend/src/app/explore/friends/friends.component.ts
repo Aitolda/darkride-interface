@@ -48,6 +48,10 @@ export class FriendsComponent implements OnInit, OnDestroy {
 		this.scriptService.emitEvent("explore", "close");
 	}
 
+	onHoverFriend() {
+		this.scriptService.emitEvent("explore", "hover");
+	}
+
 	refresh() {
 		this.subs.push(
 			this.exploreService.friends$.subscribe(friends => {
