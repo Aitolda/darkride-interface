@@ -20,6 +20,7 @@
     var lowestY = null;
     var skipped = false;
     var done = false;
+    var snapped = false;
 
     function now() {
         return (Date.now() - start) / 1000;
@@ -45,6 +46,12 @@
         var state = Window.getWorldLoading();
         if (state.active) {
             mark("loadingScreenUp");
+            if (!snapped && t > 6) {
+                snapped = true;
+                Window.takeSnapshot(false, false, 0);   // what the loading screen looks like, into the snapshots folder
+                print("WORLD-LOADING snapshot of the loading screen at " + t.toFixed(1) + " s: received " + state.received +
+                      ", ready " + state.ready + ", server done " + state.serverDone);
+            }
             if (state.serverDone) {
                 mark("wholeWorldReceived");
             }

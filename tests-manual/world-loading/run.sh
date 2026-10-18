@@ -1,7 +1,9 @@
 #!/bin/zsh
-# One arrival in a test world, in either loading mode, on this session's own sandbox:
+# One arrival in a test world, in either loading mode, on this session's own sandbox (the client skips the sign-in
+# screen with --tokens "{}", so the arrival is timed from the connection):
 #   tests-manual/world-loading/run.sh <build dir> <results dir> <whole|progressive> [world dir] [skip after s] [udp port]
-# LOADING_RADIUS=<metres> sets the domain's loading.radius (default 100; 0 waits for every model in the world).
+# LOADING_RADIUS=<metres> sets the domain's loading.radius (default 100; 0 waits for every model in the world), and
+# LOADING_TIME_LIMIT=<seconds> its loading.time_limit (default 60).
 # The world dir has the snapshot layout of instances/tivoli-instance.sh (models.json.gz, config.json with the spawn
 # point, assets/map.json and assets/files/<sha256>); the default is the Tivoli Town copy in ~/tivoli-test-worlds.
 # The sandbox ("loading", ~/tivoli-sandboxes/loading) gets a fresh copy of the world and the domain's loading
@@ -38,7 +40,7 @@ import json, os, sys
 path, world_config, mode = sys.argv[1:4]
 config = json.load(open(path)) if os.path.exists(path) else {}
 world = json.load(open(world_config)) if os.path.exists(world_config) else {}
-config["loading"] = {"whole_world": mode == "whole", "time_limit": 60}
+config["loading"] = {"whole_world": mode == "whole", "time_limit": int(os.environ.get("LOADING_TIME_LIMIT") or 60)}
 if os.environ.get("LOADING_RADIUS"):
     config["loading"]["radius"] = int(os.environ["LOADING_RADIUS"])  # metres; 0 waits for the whole world
 if world.get("paths"):
@@ -55,7 +57,7 @@ echo "{\"snapshotsLocation\": \"$RUN/snaps\"}" > "$RUN/config/Tivoli Cloud VR - 
 { echo "var ARRIVAL_SKIP_AFTER = $SKIP;"; cat "$D/arrival.js"; } > "$RUN/arrival.js"
 echo "client: $BIN  mode: $MODE  world: $WORLD  results: $RUN"
 XDG_CONFIG_HOME="$RUN/config" XDG_CACHE_HOME="$RUN/cache" TIVOLI_APP_DATA_DIR="$RUN/data" HIFI_METAVERSE_URL=https://vr.darkride.ai \
-    "$BIN" --allowMultipleInstances --url "hifi://localhost:$PORT" --testScript "$RUN/arrival.js" \
+    "$BIN" --allowMultipleInstances --url "hifi://localhost:$PORT" --tokens "{}" --testScript "$RUN/arrival.js" \
     --testResultsLocation "$RUN" > "$RUN/client.log" 2>&1 || true
 
 # the sandbox off again, by its pids

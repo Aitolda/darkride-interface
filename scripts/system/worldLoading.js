@@ -29,7 +29,8 @@
     var SPHERE_URL = Script.resolvePath("/~/system/assets/models/black-sphere.fbx");
     var LOGO_URL = Script.resourcesPath() + "images/darkride-logo.png";
 
-    var CARD_DISTANCE = 2.2;     // metres in front of the camera
+    var CARD_DISTANCE = 1.1;     // metres in front of the camera: nearer than the avatar's body in third person
+    var SCALE = CARD_DISTANCE / 2.2;   // the card's sizes below are for 2.2 m; nearer, smaller, so it looks the same
     var CARD_WIDTH = 1.6;
     var CARD_HEIGHT = 0.9;
     var BAR_WIDTH = 1.36;
@@ -40,9 +41,15 @@
     var ids = {};                // the screen's entities while it is up
     var textTimer = null;
     var shownProgress = 0.0;
+    var peakWaiting = 0;
 
     function worldName() {
         return location.placename || location.hostname || "this world";
+    }
+
+    // a point or a size on the card, from the card's units
+    function card(x, y, z) {
+        return { x: SCALE * x, y: SCALE * y, z: SCALE * z };
     }
 
     function text(name, properties) {
@@ -53,8 +60,8 @@
             unlit: true,
             backgroundAlpha: 0.0,
             textColor: COLOR_TEXT,
-            leftMargin: 0.0,
-            topMargin: 0.0,
+            leftMargin: SCALE * 0.0,
+            topMargin: SCALE * 0.0,
             ignorePickIntersection: true,
             collisionless: true,
             drawInFront: true  // over anything inside the sphere, the avatar's own body included
@@ -90,7 +97,7 @@
             parentJointIndex: cameraJoint,
             localPosition: { x: 0, y: 0, z: -CARD_DISTANCE },
             localRotation: { x: 0, y: 0, z: 0, w: 1 },
-            dimensions: { x: CARD_WIDTH, y: CARD_HEIGHT, z: 0.01 },
+            dimensions: card(CARD_WIDTH, CARD_HEIGHT, 0.01),
             text: "",
             unlit: true,
             backgroundColor: COLOR_BG,
@@ -108,60 +115,61 @@
             imageURL: LOGO_URL,
             emissive: true,
             keepAspectRatio: true,
-            localPosition: { x: left + 0.07, y: 0.30, z: 0.006 },
-            dimensions: { x: 0.14, y: 0.14, z: 0.01 },
+            localPosition: card(left + 0.07, 0.30, 0.006),
+            dimensions: card(0.14, 0.14, 0.01),
             ignorePickIntersection: true,
             collisionless: true,
             drawInFront: true
         }, "local");
         ids.title = text("title", {
             text: "Loading " + worldName(),
-            lineHeight: 0.085,
-            localPosition: { x: 0.10, y: 0.30, z: 0.006 },
-            dimensions: { x: CARD_WIDTH - 0.44, y: 0.12, z: 0.01 }
+            lineHeight: SCALE * 0.085,
+            localPosition: card(0.10, 0.30, 0.006),
+            dimensions: card(CARD_WIDTH - 0.44, 0.12, 0.01)
         });
         ids.status = text("status", {
             text: "Waiting for the world",
-            lineHeight: 0.05,
+            lineHeight: SCALE * 0.05,
             textColor: COLOR_MUTED,
-            localPosition: { x: 0, y: 0.10, z: 0.006 },
-            dimensions: { x: BAR_WIDTH, y: 0.08, z: 0.01 }
+            localPosition: card(0, 0.10, 0.006),
+            dimensions: card(BAR_WIDTH, 0.08, 0.01)
         });
         ids.track = text("track", {
             text: "",
             backgroundColor: COLOR_TRACK,
             backgroundAlpha: 1.0,
-            localPosition: { x: 0, y: -0.02, z: 0.006 },
-            dimensions: { x: BAR_WIDTH, y: BAR_HEIGHT, z: 0.01 }
+            localPosition: card(0, -0.02, 0.006),
+            dimensions: card(BAR_WIDTH, BAR_HEIGHT, 0.01)
         });
         ids.fill = text("fill", {
             text: "",
             backgroundColor: COLOR_CYAN,
             backgroundAlpha: 1.0,
-            localPosition: { x: -BAR_WIDTH / 2 + 0.005, y: -0.02, z: 0.008 },
-            dimensions: { x: 0.01, y: BAR_HEIGHT, z: 0.01 }
+            localPosition: card(-BAR_WIDTH / 2 + 0.005, -0.02, 0.008),
+            dimensions: card(0.01, BAR_HEIGHT, 0.01)
         });
         ids.countdown = text("countdown", {
             text: "",
-            lineHeight: 0.04,
+            lineHeight: SCALE * 0.04,
             textColor: COLOR_MUTED,
-            localPosition: { x: -0.24, y: -0.27, z: 0.006 },
-            dimensions: { x: 0.88, y: 0.07, z: 0.01 }
+            localPosition: card(-0.24, -0.27, 0.006),
+            dimensions: card(0.88, 0.07, 0.01)
         });
         ids.button = text("button", {
             text: "Show me now",
-            lineHeight: 0.05,
+            lineHeight: SCALE * 0.05,
             textColor: COLOR_NIGHT,
             backgroundColor: COLOR_CYAN,
             backgroundAlpha: 1.0,
-            leftMargin: 0.06,
-            topMargin: 0.025,
-            localPosition: { x: CARD_WIDTH / 2 - 0.12 - 0.19, y: -0.27, z: 0.006 },
-            dimensions: { x: 0.38, y: 0.1, z: 0.01 },
+            leftMargin: SCALE * 0.06,
+            topMargin: SCALE * 0.025,
+            localPosition: card(CARD_WIDTH / 2 - 0.12 - 0.19, -0.27, 0.006),
+            dimensions: card(0.38, 0.1, 0.01),
             ignorePickIntersection: false
         });
 
         shownProgress = 0.0;
+        peakWaiting = 0;
         textTimer = Script.setInterval(updateCard, TEXT_INTERVAL);
         updateCard();
     }
@@ -198,10 +206,13 @@
             status = state.received > 0 ? "Receiving the world: " + formatCount(state.received) + " things so far" :
                 "Waiting for the world";
         } else {
-            var total = Math.max(1, state.received);
-            progress = 0.15 + 0.85 * (state.ready / total);
-            status = "Loading models and textures: " + formatCount(state.ready) + " of " + formatCount(state.received) +
-                " ready";
+            // what is still loading near the arrival (the farther ones count as ready), against the most that ever
+            // waited, so the bar moves while the last models load rather than resting at 99 %
+            var waiting = Math.max(0, state.received - state.ready);
+            peakWaiting = Math.max(peakWaiting, waiting, 1);
+            progress = 0.15 + 0.85 * (1 - waiting / peakWaiting);
+            status = waiting > 0 ? "Loading models and textures: " + formatCount(waiting) + " still to come" :
+                "Settling textures";
         }
         // never backwards, and eased so a jump in the counts does not jerk the bar
         var target = Math.max(shownProgress, Math.min(progress, 1.0));
@@ -209,8 +220,8 @@
 
         var fillWidth = Math.max(0.01, BAR_WIDTH * shownProgress);
         Entities.editEntity(ids.fill, {
-            localPosition: { x: -BAR_WIDTH / 2 + fillWidth / 2, y: -0.02, z: 0.008 },
-            dimensions: { x: fillWidth, y: BAR_HEIGHT, z: 0.01 }
+            localPosition: card(-BAR_WIDTH / 2 + fillWidth / 2, -0.02, 0.008),
+            dimensions: card(fillWidth, BAR_HEIGHT, 0.01)
         });
         Entities.editEntity(ids.status, { text: status });
         Entities.editEntity(ids.countdown, {
