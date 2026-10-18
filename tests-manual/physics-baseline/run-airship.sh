@@ -62,7 +62,7 @@ URL="hifi://localhost:$PORT"
 echo "domain: $URL; the pilot under packet loss $LOSS and a delay of $DELAY ms"
 client crew --url "$URL" --testScript "$R/airship-crew.js" --testResultsLocation "$R/crew" &
 CREW=$!
-sleep 12
+wait_for_client crew
 TIVOLI_PACKET_LOSS="$LOSS" TIVOLI_PACKET_DELAY_MS="$DELAY" \
     client pilot --url "$URL" --testScript "$R/airship-pilot.js" --testResultsLocation "$R/pilot" || true
 wait $CREW || true

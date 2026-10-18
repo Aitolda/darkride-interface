@@ -57,7 +57,7 @@ URL="hifi://localhost:$PORT"
 echo "domain: $URL; the driver under packet loss $LOSS and a delay of $DELAY ms"
 client passenger --url "$URL" --testScript "$R/rover-passenger.js" --testResultsLocation "$R/passenger" &
 PASSENGER=$!
-sleep 12
+wait_for_client passenger
 TIVOLI_PACKET_LOSS="$LOSS" TIVOLI_PACKET_DELAY_MS="$DELAY" \
     client driver --url "$URL" --testScript "$R/rover-driver.js" --testResultsLocation "$R/driver" || true
 wait $PASSENGER || true

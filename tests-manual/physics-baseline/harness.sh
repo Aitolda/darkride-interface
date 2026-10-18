@@ -22,6 +22,10 @@
 #                                    (the sandbox's monitor adds the seventh service at its spare check, up to 30 s)
 #   sandbox_copy_logs                copies the sandbox's assignment-client and domain-server logs beside the results
 #                                    (a restart overwrites them)
+#   wait_for_client <name> [s]       waits until the client's log says its physics is on (its loading screen has lifted:
+#                                    the world is in), up to s seconds (180): the second client of a pair must not start
+#                                    before the first has the world, or it misses the cabin (a cold cache under 5 % loss
+#                                    took 90 s to load the sandbox's world on 10-19, 20 s without loss)
 
 SANDBOX=${SANDBOX:-$HOME/tivoli-sandboxes/physics}
 DOMAIN_SANDBOX=${DOMAIN_SANDBOX:-$HOME/git/tivolicloud/domain-sandbox.sh}   # darkride-ops' sandbox starter
@@ -82,6 +86,15 @@ sandbox_start() {
         sleep 1
     done
     echo "physics-server in the domain after ${_i}s"
+}
+
+wait_for_client() {
+    _name=$1; _limit=${2:-180}; _i=0
+    while [ "$_i" -lt "$_limit" ]; do
+        grep -q "Physics enabled" "$R/$_name.log" 2>/dev/null && break
+        _i=$((_i + 1)); sleep 1
+    done
+    echo "$_name has the world after ${_i}s"
 }
 
 sandbox_copy_logs() {

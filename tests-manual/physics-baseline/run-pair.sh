@@ -30,7 +30,7 @@ sandbox_start "$BUILD" "$PORT"
 # the observer first, so that it is in the domain before the cabin appears (the mover's boot phase is 8 s)
 client observer --url "$URL" --testScript "$D/observer.js" --testResultsLocation "$R/observer" &
 OBSERVER=$!
-sleep 12
+wait_for_client observer
 client mover --url "$URL" --testScript "$MOVER" --testResultsLocation "$R/mover" || true
 wait $OBSERVER || true
 grep "PHYSICS-BASELINE\|PHYSICS-TRACK" "$R/mover.log" || echo "no mover summary in $R/mover.log" >&2

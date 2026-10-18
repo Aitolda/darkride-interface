@@ -33,7 +33,8 @@
     var TAG = KIND === "aircraft" ? "PHYSICS-AIRCRAFT" : "PHYSICS-AIRSHIP";
     var TERRAIN_URL = config.terrainURL || "";
     var LIFETIME = config.lifetime || 600;
-    var TIMEOUT = config.timeout || 260;
+    var TIMEOUT = config.timeout || 260;    // s of course; the wait for the world before it (a cold cache took 90 s) is not counted
+    var courseT0 = -1;
     var BOOT = (config.boot !== undefined) ? config.boot : 8;
     var DECK_CAR = !!config.deckCar;         // round 8: the trolley on the deck; the crew rides it instead of walking the deck
     var CRUISE_HEIGHT = 35;                  // m above the pad's ground
@@ -116,7 +117,7 @@
 
     function now() { return Date.now() / 1000 - t0; }
     function log(s) { print(TAG + " " + s); }
-    function setMode(m) { mode = m; modeT0 = now(); events.push({ t: now(), mode: m }); log("mode " + m + " at " + now().toFixed(2) + " s"); }
+    function setMode(m) { mode = m; modeT0 = now(); events.push({ t: now(), mode: m }); log("mode " + m + " at " + now().toFixed(2) + " s"); if (m === "course" && courseT0 < 0) { courseT0 = now(); } }
     function setPhase(p) {
         if (p === phase) { return; }
         phase = p;
@@ -1055,7 +1056,8 @@
     }
 
     function onUpdate(dt) {
-        if (now() > TIMEOUT) { finish("timeout"); return; }
+        if (now() > TIMEOUT + (courseT0 >= 0 ? courseT0 : 0)) { finish("timeout"); return; }
+
         if (hull && !sample(dt)) { finish("airship gone"); return; }
         if (ROLE === "pilot") { drivePilot(); } else { driveCrew(); }
     }

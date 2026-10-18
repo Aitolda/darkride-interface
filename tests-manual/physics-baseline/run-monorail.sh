@@ -94,7 +94,7 @@ sleep 5
 # the observer first, under loss, so it is in the domain before the cabin appears (the mover's boot phase is 8 s)
 TIVOLI_PACKET_LOSS="$LOSS" client observer --url "hifi://localhost:$PORT" --testScript "$D/observer.js" --testResultsLocation "$R/observer" &
 OBSERVER=$!
-sleep 12
+wait_for_client observer
 client mover --url "hifi://localhost:$PORT" --testScript "$D/track.js" --testResultsLocation "$R/mover" || true
 wait $OBSERVER || true
 
