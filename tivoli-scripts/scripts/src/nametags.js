@@ -128,6 +128,12 @@ export function initNametags(showSelf) {
 		delete nametags[id];
 	}
 
+	// the account the world checked when this avatar connected (usersCache), else the name it shows
+	function nameOf(id, localUser) {
+		var known = usersCache.get(id);
+		return known ? known.username : localUser.displayName;
+	}
+
 	function updateUserLocal(id) {
 		var localUser = AvatarList.getAvatar(id);
 		var nametag = nametags[id];
@@ -142,7 +148,7 @@ export function initNametags(showSelf) {
 		if (nametag==undefined) {
 			// add nametag
 			addNametag(id, {
-				username: localUser.displayName,
+				username: nameOf(id, localUser),
 				avatarURL: AccountServices.metaverseServerURL+"/api/user/-/image",
 				connection: null,
 				admin: false,
@@ -150,7 +156,7 @@ export function initNametags(showSelf) {
 		} else {
 			// update nametag
 			updateNametag(nametag, {
-				username: localUser.displayName
+				username: nameOf(id, localUser)
 			});
 		}
 
@@ -178,6 +184,7 @@ export function initNametags(showSelf) {
 			var apiUser = users[id];
 
 			updateNametag(nametag, {
+				username: apiUser.username,
 				avatarURL: apiUser.thumbnail,
 				connection: apiUser.connection,
 			});
