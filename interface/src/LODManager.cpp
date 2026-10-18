@@ -21,6 +21,7 @@
 
 Setting::Handle<int> desktopWorldDetailQuality("desktopWorldDetailQuality", (int)DEFAULT_WORLD_DETAIL_QUALITY);
 Setting::Handle<int> hmdWorldDetailQuality("hmdWorldDetailQuality", (int)DEFAULT_WORLD_DETAIL_QUALITY);
+Setting::Handle<float> impostorAngleDegSetting("impostorAngleDeg", 0.0f);
 
 LODManager::LODManager() {
     // set lod manager to manual since automatic will often
@@ -28,6 +29,7 @@ LODManager::LODManager() {
     // lod needs to be fixed before we can use it again
     setAutomaticLODAdjust(false);
     setVisibilityDistance(DEFAULT_VISIBILITY_DISTANCE_FOR_UNIT_ELEMENT);
+    _impostorAngleDeg = impostorAngleDegSetting.get();
 }
 
 // We use a "time-weighted running average" of the maxRenderTime and compare it against min/max thresholds
@@ -199,6 +201,27 @@ void LODManager::setLODAngleDeg(float lodAngle) {
     auto newLODAngleDeg = std::max(0.001f, std::min(lodAngle, 90.f));
     auto newLODHalfAngle = glm::radians(newLODAngleDeg * 0.5f);
     _lodHalfAngle = newLODHalfAngle;
+}
+
+const float IMPOSTOR_ANGLE_LOD_FACTOR = 4.0f;
+const float IMPOSTOR_ANGLE_MAX_DEG = 179.0f;   // not quite a half turn, whose half tangent is infinite
+
+float LODManager::getImpostorAngleDeg() const {
+    if (_impostorAngleDeg > 0.0f) {
+        return _impostorAngleDeg;
+    }
+    return std::min(IMPOSTOR_ANGLE_LOD_FACTOR * getLODAngleDeg(), IMPOSTOR_ANGLE_MAX_DEG);
+}
+
+void LODManager::setImpostorAngleDeg(float angle) {
+    angle = std::max(0.0f, std::min(angle, IMPOSTOR_ANGLE_MAX_DEG));
+    _impostorAngleDeg = angle;
+    impostorAngleDegSetting.set(angle);
+}
+
+float LODManager::getImpostorAngleHalfTanSq() const {
+    float halfTan = tanf(glm::radians(0.5f * getImpostorAngleDeg()));
+    return halfTan * halfTan;
 }
 
 void LODManager::setSmoothScale(float t) {

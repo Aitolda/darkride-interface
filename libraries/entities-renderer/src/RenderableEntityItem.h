@@ -19,6 +19,8 @@
 #include "EntityTreeRenderer.h"
 
 class EntityTreeRenderer;
+class ImpostorCard;
+class ImpostorSwitch;
 
 namespace render { namespace entities {
 
@@ -69,6 +71,12 @@ public:
 
     virtual uint32_t metaFetchMetaSubItems(ItemIDs& subItems) const override;
     virtual Item::Bound getBound() override;
+
+    // the impostor switch of this entity's card (ImpostorCard, IMPOSTORS.md 2.3-2.4): null without an "impostor" entry
+    std::shared_ptr<ImpostorSwitch> getImpostorSwitch() const;
+    // the switch an entity's models follow: its own card's, or the nearest ancestor's (a group's card, Unity's empty
+    // parent with Model children, stands in for its children's models); null when none has a card
+    static std::shared_ptr<ImpostorSwitch> findImpostorSwitch(const EntityItemPointer& entity);
 
     enum ZoneCullingState {
         ZoneCull_Inactive,
@@ -147,6 +155,17 @@ protected:
 
     static void makeStatusGetters(const EntityItemPointer& entity, Item::Status::Getters& statusGetters);
     const Transform& getModelTransform() const;
+
+    // the impostor card, a second render item beside the entity's own, made when the entity's userData gains an
+    // "impostor" entry and removed when it loses it (main thread, from the synchronous update)
+    void updateImpostorCard(const ScenePointer& scene, Transaction& transaction, const EntityItemPointer& entity);
+    void removeImpostorCard(Transaction& transaction);
+    bool impostorCardVisible(const EntityItemPointer& entity) const;
+    uint32_t fetchImpostorCardSubItem(ItemIDs& subItems) const;
+    std::shared_ptr<ImpostorCard> _impostorCard;
+    ItemID _impostorCardItemID { Item::INVALID_ITEM_ID };
+    QString _impostorUserData;   // the userData the entry was last read from
+    QString _impostorSpec;       // the entry it held
 
     Item::Bound _bound;
     SharedSoundPointer _collisionSound;

@@ -11,6 +11,8 @@
 
 #include "MeshPartPayload.h"
 
+#include "ImpostorSwitch.h"
+
 #include <QProcess>
 
 #include <PerfStat.h>
@@ -289,6 +291,7 @@ ModelMeshPartPayload::ModelMeshPartPayload(ModelPointer model,
     _deformerIndex = shape.skinDeformer;
 
     initCache(model);
+    _impostorSwitch = model->getImpostorSwitch();
 
 #if defined(Q_OS_MACOS) || defined(Q_OS_ANDROID)
     // On mac AMD, we specifically need to have a _meshBlendshapeBuffer bound when using a deformed mesh pipeline
@@ -482,6 +485,10 @@ void ModelMeshPartPayload::render(RenderArgs* args) {
     PerformanceTimer perfTimer("ModelMeshPartPayload::render");
 
     if (!args || (args->_renderMode == RenderArgs::RenderMode::DEFAULT_RENDER_MODE && _cauterized)) {
+        return;
+    }
+    // the model's impostor card stands in for it in this view (IMPOSTORS.md 2.4)
+    if (_impostorSwitch && _impostorSwitch->hidesModel(args)) {
         return;
     }
 

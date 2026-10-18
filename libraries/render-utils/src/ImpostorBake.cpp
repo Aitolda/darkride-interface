@@ -90,6 +90,7 @@ namespace {
             _cachedArgsPointer->_displayMode = args->_displayMode;
             _cachedArgsPointer->_renderMode = args->_renderMode;
             _cachedArgsPointer->_stencilMaskMode = args->_stencilMaskMode;
+            _cachedArgsPointer->_impostorAngleHalfTanSq = args->_impostorAngleHalfTanSq;
 
             gpu::FramebufferPointer target = frame ? frame->albedoFramebuffer : ImpostorBake::instance().idleFramebuffer();
             args->_blitFramebuffer = target;
@@ -97,6 +98,8 @@ namespace {
             args->_displayMode = RenderArgs::MONO;
             args->_renderMode = RenderArgs::RenderMode::SECONDARY_CAMERA_RENDER_MODE;
             args->_stencilMaskMode = StencilMaskMode::NONE;
+            // the subject's models, never their card (ImpostorSwitch), whatever the frame's camera subtends
+            args->_impostorAngleHalfTanSq = 0.0f;
 
             gpu::doInBatch("BakeBegin::run", args->_context, [&](gpu::Batch& batch) {
                 batch.disableContextStereo();
@@ -214,6 +217,7 @@ namespace {
                 args->_displayMode = cachedArgs->_displayMode;
                 args->_renderMode = cachedArgs->_renderMode;
                 args->_stencilMaskMode = cachedArgs->_stencilMaskMode;
+                args->_impostorAngleHalfTanSq = cachedArgs->_impostorAngleHalfTanSq;
             }
             args->popViewFrustum();
 

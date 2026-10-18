@@ -139,7 +139,10 @@ void ImpostorBaker::start(const QUuid& entityID, int size) {
     _job->center = glm::inverse(rotation) * (center - position);
     _job->radius = radius;
     QString name = entity->getName().isEmpty() ? QString("entity") : entity->getName();
-    _job->name = EditorUpload::safeFileName(name) + "-" + entityID.toString().mid(1, 8) + ".impostor";
+    // the bake's time in the name: a rebake gets new URLs, since the texture cache keeps what it loaded by URL and
+    // would go on showing the earlier atlases (the earlier files of this entity are removed when the new are written)
+    _job->stem = EditorUpload::safeFileName(name) + "-" + entityID.toString().mid(1, 8);
+    _job->name = _job->stem + "-" + QDateTime::currentDateTimeUtc().toString("yyyyMMdd-hhmmss") + ".impostor";
 
     // the six frames
     const float distance = CAMERA_DISTANCE * radius;
@@ -231,6 +234,12 @@ void ImpostorBaker::compose() {
     _job->frames.clear();
 
     QDir().mkpath(folder());
+    {
+        QDir dir(folder());
+        for (const QString& old : dir.entryList(QStringList() << (_job->stem + "-*.impostor.*.png"), QDir::Files)) {
+            dir.remove(old);
+        }
+    }
     QString albedoPath = folder() + _job->name + ".albedo.png";
     QString normalPath = folder() + _job->name + ".normal.png";
     QByteArray albedoPng;

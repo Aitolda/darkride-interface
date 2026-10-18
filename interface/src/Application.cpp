@@ -6979,6 +6979,8 @@ void Application::updateRenderArgs(float deltaTime) {
                 lodManager->getBoundaryLevelAdjust(), lodManager->getLODHalfAngleTan(), RenderArgs::DEFAULT_RENDER_MODE,
                 RenderArgs::MONO, RenderArgs::DEFERRED, RenderArgs::RENDER_DEBUG_NONE);
             appRenderArgs._renderArgs._scene = getMain3DScene();
+            appRenderArgs._renderArgs._impostorAngleHalfTanSq = lodManager->getImpostorAngleHalfTanSq();
+            appRenderArgs._renderArgs._impostorDebug = lodManager->getImpostorDebug();
 
             {
                 QMutexLocker viewLocker(&_viewMutex);

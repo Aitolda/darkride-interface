@@ -18,6 +18,7 @@
 
 #include <AABox.h>
 #include <AbstractViewStateInterface.h>
+#include <DeferredLightingEffect.h>
 #include <DependencyManager.h>
 #include <EntityTree.h>
 #include <GeometryUtil.h>
@@ -139,8 +140,18 @@ ShapePipelinePointer terrainPipelineFactory(const ShapePlumber& plumber, const S
                     state->setFillMode(gpu::State::FILL_LINE);
                 }
                 auto shaderProgram = gpu::Shader::createProgram(forward ? program::terrain_forward : program::terrain);
+                // the forward variant binds the frame's lighting itself, as the lit pipelines' batch setter does
+                // (RenderPipelines' lightBatchSetter); without one it saw what the pipeline before it left bound
+                ShapePipeline::BatchSetter batchSetter = nullptr;
+                if (forward) {
+                    batchSetter = [](const ShapePipeline&, gpu::Batch& batch, RenderArgs* args) {
+                        auto deferredLightingEffect = DependencyManager::get<DeferredLightingEffect>();
+                        deferredLightingEffect->setupKeyLightBatch(args, batch);
+                        deferredLightingEffect->setupFrameLightingBatch(batch, args);
+                    };
+                }
                 _pipelines[std::make_pair(forward != 0, wireframe != 0)] =
-                    std::make_shared<ShapePipeline>(gpu::Pipeline::create(shaderProgram, state), nullptr, nullptr, nullptr);
+                    std::make_shared<ShapePipeline>(gpu::Pipeline::create(shaderProgram, state), nullptr, batchSetter, nullptr);
             }
         }
     }

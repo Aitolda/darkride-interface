@@ -24,6 +24,9 @@
 #include <QtCore/QThread>
 #include <QtCore/QUrlQuery>
 
+#include <ImpostorBake.h>
+#include <ImpostorSwitch.h>
+
 #include <AbstractViewStateInterface.h>
 #include <Model.h>
 #include <PerfStat.h>
@@ -1018,12 +1021,13 @@ ItemKey ModelEntityRenderer::getKey() {
 }
 
 uint32_t ModelEntityRenderer::metaFetchMetaSubItems(ItemIDs& subItems) const {
+    uint32_t count = fetchImpostorCardSubItem(subItems);
     if (_model) {
         auto metaSubItems = _model->fetchRenderItemIDs();
         subItems.insert(subItems.end(), metaSubItems.begin(), metaSubItems.end());
-        return (uint32_t)metaSubItems.size();
+        count += (uint32_t)metaSubItems.size();
     }
-    return 0;
+    return count;
 }
 
 void ModelEntityRenderer::handleBlendedVertices(int blendshapeNumber, const QVector<BlendshapeOffset>& blendshapeOffsets,
@@ -1302,7 +1306,7 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
         connect(model.get(), &Model::requestRenderUpdate, this, &ModelEntityRenderer::requestRenderUpdate);
         connect(model.get(), &Model::setURLFinished, this, [&](bool didVisualGeometryRequestSucceed) {
             setKey(didVisualGeometryRequestSucceed);
-            _model->setTagMask(getTagMask());
+            _model->setTagMask(tagMaskKeepingBake(_model));
             _model->setHifiRenderLayer(getHifiRenderLayer());
             emit requestRenderUpdate();
             if(didVisualGeometryRequestSucceed) {
@@ -1383,9 +1387,15 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
         model->setCauterized(_cauterized, scene);
     }
 
-    render::hifi::Tag tagMask = getTagMask();
+    render::hifi::Tag tagMask = tagMaskKeepingBake(model);
     if (model->getTagMask() != tagMask) {
         model->setTagMask(tagMask, scene);
+    }
+
+    // the impostor switch this model follows (IMPOSTORS.md 2.4): its own entity's card's, or a grouping ancestor's
+    auto impostorSwitch = findImpostorSwitch(entity);
+    if (model->getImpostorSwitch() != impostorSwitch) {
+        model->setImpostorSwitch(impostorSwitch, scene);
     }
 
     if (entity->blendshapesChanged()) {
@@ -1492,8 +1502,16 @@ void ModelEntityRenderer::setIsVisibleInSecondaryCamera(bool value) {
     Parent::setIsVisibleInSecondaryCamera(value);
     setKey(_didLastVisualGeometryRequestSucceed);
     if (_model) {
-        _model->setTagMask(getTagMask());
+        _model->setTagMask(tagMaskKeepingBake(_model));
     }
+}
+
+// The entity's tag mask for its model, keeping the impostor bake's tag while the baker holds it (ImpostorBaker tags the
+// model's items for the frames' duration; an update of this entity in those frames, a texture still loading say,
+// would otherwise strip the tag and leave the model out of its own bake, as the chair's plastic was)
+render::hifi::Tag ModelEntityRenderer::tagMaskKeepingBake(const ModelPointer& model) const {
+    uint8_t bake = model ? ((uint8_t)model->getTagMask() & ImpostorBake::TAG) : 0;
+    return (render::hifi::Tag)((uint8_t)getTagMask() | bake);
 }
 
 void ModelEntityRenderer::setRenderLayer(RenderLayer value) {

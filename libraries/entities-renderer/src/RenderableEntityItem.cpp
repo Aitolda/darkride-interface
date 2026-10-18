@@ -23,6 +23,7 @@
 #include "RenderableZoneEntityItem.h"
 #include "RenderableMaterialEntityItem.h"
 #include "RenderableTerrainEntityItem.h"
+#include "ImpostorCard.h"
 
 using namespace render;
 using namespace render::entities;
@@ -190,8 +191,17 @@ ItemKey EntityRenderer::getKey() {
 }
 
 uint32_t EntityRenderer::metaFetchMetaSubItems(ItemIDs& subItems) const {
+    uint32_t count = fetchImpostorCardSubItem(subItems);
     if (Item::isValidID(_renderItemID)) {
         subItems.emplace_back(_renderItemID);
+        count++;
+    }
+    return count;
+}
+
+uint32_t EntityRenderer::fetchImpostorCardSubItem(ItemIDs& subItems) const {
+    if (Item::isValidID(_impostorCardItemID)) {
+        subItems.emplace_back(_impostorCardItemID);
         return 1;
     }
     return 0;
@@ -313,6 +323,7 @@ bool EntityRenderer::addToScene(const ScenePointer& scene, Transaction& transact
 
 void EntityRenderer::removeFromScene(const ScenePointer& scene, Transaction& transaction) {
     onRemoveFromScene(_entity);
+    removeImpostorCard(transaction);
     transaction.removeItem(_renderItemID);
     Item::clearID(_renderItemID);
     _entity->bumpAncestorChainRenderableVersion();
@@ -375,6 +386,11 @@ bool EntityRenderer::needsRenderUpdateFromEntity(const EntityItemPointer& entity
     auto newModelTransform = _entity->getTransformToCenter(success);
     // FIXME can we use a stale model transform here?
     if (success && newModelTransform != _modelTransform) {
+        return true;
+    }
+
+    // userData changes raise no flag of their own: the impostor entry may have come or gone with it
+    if (entity->getUserData() != _impostorUserData) {
         return true;
     }
 
@@ -445,6 +461,127 @@ void EntityRenderer::doRenderUpdateSynchronous(const ScenePointer& scene,
         _cauterized = entity->getCauterized();
         entity->setNeedsRenderUpdate(hasChanged);
     });
+
+    updateImpostorCard(scene, transaction, entity);
+}
+
+// The impostor card (IMPOSTORS.md 2.3): a second render item that stands in for the entity's models at a distance,
+// made from the "impostor" entry of the entity's userData (the baker's), kept at the entity's world position and
+// rotation (the entry's centre and radius are in the entity's frame at bake time), and removed with the entry.
+// The models it stands for, the entity's own and its descendants', follow its switch (findImpostorSwitch), so
+// when the entry comes or goes they are asked to update and fetch it again.
+void EntityRenderer::updateImpostorCard(const ScenePointer& scene, Transaction& transaction, const EntityItemPointer& entity) {
+    QString userData = entity->getUserData();
+    if (userData != _impostorUserData) {
+        _impostorUserData = userData;
+        ImpostorEntry entry = ImpostorEntry::parse(userData);
+        QString spec = entry.valid ? entry.spec : QString();
+        if (spec != _impostorSpec) {
+            _impostorSpec = spec;
+            bool hadCard = _impostorCard != nullptr;
+            if (entry.valid) {
+                if (!_impostorCard) {
+                    _impostorCard = std::make_shared<ImpostorCard>();
+                    _impostorCardItemID = scene->allocateID();
+                    transaction.resetItem(_impostorCardItemID, std::make_shared<PayloadProxyInterface::ProxyPayload>(_impostorCard));
+                }
+                _impostorCard->setEntry(entry);
+            } else {
+                removeImpostorCard(transaction);
+            }
+            if (hadCard != (_impostorCard != nullptr)) {
+                // the models under this entity take or drop the switch at their next update
+                auto renderer = DependencyManager::get<EntityTreeRenderer>();
+                if (renderer) {
+                    if (entity->getType() == EntityTypes::Model) {
+                        renderer->onEntityChanged(entity->getID());
+                    }
+                    entity->forEachDescendant([&](const SpatiallyNestablePointer& descendant) {
+                        auto item = std::dynamic_pointer_cast<EntityItem>(descendant);
+                        if (item && item->getType() == EntityTypes::Model) {
+                            renderer->onEntityChanged(item->getID());
+                        }
+                    });
+                }
+            }
+        }
+    }
+    if (!_impostorCard) {
+        return;
+    }
+    bool success = false;
+    glm::quat rotation = entity->getWorldOrientation(success);
+    _impostorCard->setFrame(entity->getWorldPosition(), success ? rotation : glm::quat());
+    _impostorCard->setVisible(impostorCardVisible(entity));
+    _impostorCard->setKeyBits(getTagMask(), getHifiRenderLayer(), _cullWithParent);
+    if (_impostorCard->waitingForTextures()) {
+        emit requestRenderUpdate();
+    }
+    auto card = _impostorCard;
+    transaction.updateItem<PayloadProxyInterface>(_impostorCardItemID, [card](PayloadProxyInterface& self) {
+        card->update();
+    });
+}
+
+void EntityRenderer::removeImpostorCard(Transaction& transaction) {
+    if (_impostorCard) {
+        transaction.removeItem(_impostorCardItemID);
+        Item::clearID(_impostorCardItemID);
+        _impostorCard.reset();
+    }
+}
+
+// The card shows where the entity does; and where the entity is one hidden by its own visible flag that groups
+// Model children (a Unity export's empty parent), it shows for them, while any of them is visible.
+bool EntityRenderer::impostorCardVisible(const EntityItemPointer& entity) const {
+    if (_visible) {
+        return true;
+    }
+    if (!entity->getLocallyVisible() || _zoneCullState == ZoneCullingState::ZoneCull_Culled || entity->getVisible() ||
+        entity->getType() == EntityTypes::Model) {
+        return false;
+    }
+    bool anyVisibleModel = false;
+    entity->forEachDescendantTest([&](const SpatiallyNestablePointer& descendant) {
+        auto item = std::dynamic_pointer_cast<EntityItem>(descendant);
+        if (item && item->getType() == EntityTypes::Model && item->getVisible() && item->getLocallyVisible()) {
+            anyVisibleModel = true;
+            return false;
+        }
+        return true;
+    });
+    return anyVisibleModel;
+}
+
+std::shared_ptr<ImpostorSwitch> EntityRenderer::getImpostorSwitch() const {
+    return _impostorCard ? _impostorCard->getSwitch() : nullptr;
+}
+
+std::shared_ptr<ImpostorSwitch> EntityRenderer::findImpostorSwitch(const EntityItemPointer& entity) {
+    auto entityTreeRenderer = DependencyManager::get<EntityTreeRenderer>();
+    if (!entityTreeRenderer || !entity) {
+        return nullptr;
+    }
+    const int MAX_DEPTH = 16;
+    SpatiallyNestablePointer nestable = entity;
+    for (int depth = 0; nestable && depth < MAX_DEPTH; depth++) {
+        auto item = std::dynamic_pointer_cast<EntityItem>(nestable);
+        if (item) {
+            auto renderer = entityTreeRenderer->renderableForEntityId(item->getID());
+            if (renderer) {
+                auto impostorSwitch = renderer->getImpostorSwitch();
+                if (impostorSwitch) {
+                    return impostorSwitch;
+                }
+            }
+        }
+        bool success = false;
+        nestable = nestable->getParentPointer(success);
+        if (!success) {
+            break;
+        }
+    }
+    return nullptr;
 }
 
 // Bool = if the state has changed or not

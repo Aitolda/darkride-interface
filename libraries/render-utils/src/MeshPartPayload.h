@@ -22,6 +22,7 @@
 
 #include "Model.h"
 
+class ImpostorSwitch;
 class Model;
 
 class MeshPartPayload {
@@ -127,6 +128,9 @@ public:
 
     void setShapeKey(bool invalidateShapeKey, PrimitiveMode primitiveMode, bool useDualQuaternionSkinning);
     void setCauterized(bool cauterized) { _cauterized = cauterized; }
+    // the model's impostor switch (Model::setImpostorSwitch): this part draws only in the views where it says the
+    // model shows rather than its card
+    void setImpostorSwitch(const std::shared_ptr<ImpostorSwitch>& impostorSwitch) { _impostorSwitch = impostorSwitch; }
 
     // ModelMeshPartPayload functions to perform render
     void bindMesh(gpu::Batch& batch) override;
@@ -160,6 +164,7 @@ private:
     render::ShapeKey _shapeKey{ render::ShapeKey::Builder::invalid() };
     bool _prevUseDualQuaternionSkinning{ false };
     bool _cauterized{ false };
+    std::shared_ptr<ImpostorSwitch> _impostorSwitch;
 };
 
 namespace render {

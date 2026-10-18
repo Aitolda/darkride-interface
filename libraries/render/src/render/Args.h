@@ -126,6 +126,12 @@ namespace render {
         int _boundaryLevelAdjust { 0 };
         float _lodAngleHalfTan{ 0.1f };
         float _lodAngleHalfTanSq{ _lodAngleHalfTan  * _lodAngleHalfTan };
+        // the impostor switch (IMPOSTORS.md 2.4, ImpostorSwitch): an entity whose bounding sphere subtends less than
+        // this (the square of the angle's half tangent, as _lodAngleHalfTanSq) is drawn as its card; 0 shows no card
+        float _impostorAngleHalfTanSq{ 0.0f };
+        // the impostor card's debug view (LODManager.impostorDebug, impostor.slf): 0 draws the card, other values paint
+        // what the shader reads
+        int _impostorDebug{ 0 };
 
         RenderMode _renderMode { DEFAULT_RENDER_MODE };
         DisplayMode _displayMode { MONO };

@@ -52,7 +52,8 @@ private:
         std::vector<ImpostorBake::FramePointer> frames;
         glm::vec3 center;       // the bounding sphere, in the entity's own frame
         float radius { 0.0f };
-        QString name;
+        QString stem;           // <name>-<id8>: the entity's files, whatever their bake time
+        QString name;           // the stem, the bake time and ".impostor"
         QString albedoUrl;
         QString normalUrl;
         int uploadsLeft { 0 };

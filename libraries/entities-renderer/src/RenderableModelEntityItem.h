@@ -169,6 +169,7 @@ protected:
     virtual void doRenderUpdateSynchronousTyped(const ScenePointer& scene, Transaction& transaction, const TypedEntityPointer& entity) override;
 
     void setIsVisibleInSecondaryCamera(bool value) override;
+    render::hifi::Tag tagMaskKeepingBake(const ModelPointer& model) const;
     void setRenderLayer(RenderLayer value) override;
     void setPrimitiveMode(PrimitiveMode value) override;
     void setCullWithParent(bool value) override;

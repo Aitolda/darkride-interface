@@ -44,6 +44,11 @@
 #define ENTITIES_BUFFER_TERRAIN_CHUNK 13
 #define ENTITIES_BUFFER_TERRAIN_MAPS 3
 
+// the impostor card (ImpostorCard, IMPOSTORS.md 2.3): its two atlases and its parameters
+#define ENTITIES_TEXTURE_IMPOSTOR_ALBEDO 0
+#define ENTITIES_TEXTURE_IMPOSTOR_NORMAL 1
+#define ENTITIES_BUFFER_IMPOSTOR 1
+
 
 
 // <!
@@ -61,6 +66,8 @@ enum Texture {
     TerrainTop = ENTITIES_TEXTURE_TERRAIN_TOP,
     TerrainNormals = ENTITIES_TEXTURE_TERRAIN_NORMALS,
     TerrainMasks = ENTITIES_TEXTURE_TERRAIN_MASKS,
+    ImpostorAlbedo = ENTITIES_TEXTURE_IMPOSTOR_ALBEDO,
+    ImpostorNormal = ENTITIES_TEXTURE_IMPOSTOR_NORMAL,
 };
 } // namespace texture
 
@@ -70,6 +77,7 @@ enum Buffer {
     TerrainLayers = ENTITIES_BUFFER_TERRAIN_LAYERS,
     TerrainChunk = ENTITIES_BUFFER_TERRAIN_CHUNK,
     TerrainMaps = ENTITIES_BUFFER_TERRAIN_MAPS,
+    Impostor = ENTITIES_BUFFER_IMPOSTOR,
 };
 } // namespace buffer
 

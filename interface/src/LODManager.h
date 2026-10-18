@@ -114,6 +114,9 @@ class AABox;
  *     it to be rendered, in degrees. The angular dimension is calculated as a sphere of radius half the diagonal of the 
  *     entity's AA box.
  *
+ * @property {number} impostorAngleDeg - The angular size (degrees) below which an entity with an impostor card draws the card
+ *     instead of its model, down to <code>lodAngleDeg</code>. <code>0</code> (the default) means four times <code>lodAngleDeg</code>;
+ *     reads back the angle in use.
  * @property {number} pidKp - <em>Not used.</em>
  * @property {number} pidKi - <em>Not used.</em>
  * @property {number} pidKd - <em>Not used.</em>
@@ -149,6 +152,8 @@ class LODManager : public QObject, public Dependency {
         Q_PROPERTY(float lodTargetFPS READ getLODTargetFPS)
 
         Q_PROPERTY(float lodAngleDeg READ getLODAngleDeg WRITE setLODAngleDeg)
+        Q_PROPERTY(float impostorAngleDeg READ getImpostorAngleDeg WRITE setImpostorAngleDeg)
+        Q_PROPERTY(int impostorDebug READ getImpostorDebug WRITE setImpostorDebug)
 
         Q_PROPERTY(float pidKp READ getPidKp WRITE setPidKp)
         Q_PROPERTY(float pidKi READ getPidKi WRITE setPidKi)
@@ -287,6 +292,15 @@ public:
     float getLODAngleDeg() const;
     void setLODAngleDeg(float lodAngle);
     float getLODHalfAngleTan() const;
+    // the impostor switch (IMPOSTORS.md 2.4): an entity with an impostor card draws its model while it subtends more
+    // than this angle and the card below it, down to lodAngleDeg; 0 (the default) means four times lodAngleDeg
+    float getImpostorAngleDeg() const;
+    void setImpostorAngleDeg(float angle);
+    // the angle as RenderArgs::_impostorAngleHalfTanSq takes it
+    float getImpostorAngleHalfTanSq() const;
+    // the card shader's debug view (impostor.slf), not saved: 0 draws the card
+    int getImpostorDebug() const { return _impostorDebug; }
+    void setImpostorDebug(int mode) { _impostorDebug = mode; }
     float getLODAngle() const;
     float getVisibilityDistance() const;
     void setVisibilityDistance(float distance);
@@ -371,6 +385,8 @@ private:
     float _hmdTargetFPS { QUALITY_TO_FPS_HMD[_hmdWorldDetailQuality] };
 
     float _lodHalfAngle = getHalfAngleFromVisibilityDistance(DEFAULT_VISIBILITY_DISTANCE_FOR_UNIT_ELEMENT);
+    float _impostorAngleDeg { 0.0f };   // 0: automatic, four times the LOD angle
+    int _impostorDebug { 0 };
     int _boundaryLevelAdjust = 0;
 
     glm::vec4 _pidCoefs{ 1.0f, 0.0f, 0.0f, 1.0f }; // Kp, Ki, Kd, Kv
