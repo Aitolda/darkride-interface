@@ -2669,6 +2669,14 @@ QUrl MyAvatar::getDefaultFullAvatarURL() {
     return Avatar::defaultFullAvatarModelUrl();
 }
 
+bool MyAvatar::isSkeletonModelLoaded() const {
+    if (!_skeletonModel || !_skeletonModel->isLoaded()) {
+        return false;
+    }
+    auto networkModel = _skeletonModel->getNetworkModel();
+    return networkModel && networkModel->areTexturesLoaded();
+}
+
 void MyAvatar::useFullAvatarURL(const QUrl& fullAvatarURL, const QString& modelName) {
 
     if (QThread::currentThread() != thread()) {
