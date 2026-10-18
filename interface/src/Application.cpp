@@ -6422,8 +6422,14 @@ void Application::updateSecondaryCameraViewFrustum() {
 
 static bool domainLoadingInProgress = false;
 
+void Application::setArrivalWaitsForNearby(bool wait) {
+    _arrivalWaitsForNearby = wait;
+    _octreeProcessor.setSafeLandingWaitsForVisuals(wait);
+}
+
 void Application::tryToEnablePhysics() {
-    bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled();
+    bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
+        _arrivalWaitsForNearby;
     if (gpuTextureMemSizeStable() || !enableInterstitial) {
         _fullSceneCounterAtLastPhysicsCheck = _fullSceneReceivedCounter;
         _lastQueriedViews.clear();  // Force new view.
@@ -6470,8 +6476,9 @@ void Application::update(float deltaTime) {
         } else {
             _octreeProcessor.updateSafeLanding();
             
-            if (DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed() 
-             || _octreeProcessor.safeLandingIsComplete()) { 
+            // ghosting lets the avatar move before the world near it is in, unless a loading screen waits for that
+            bool ghosting = DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed() && !_arrivalWaitsForNearby;
+            if (ghosting || _octreeProcessor.safeLandingIsComplete()) {
                 tryToEnablePhysics();
             }
         }
