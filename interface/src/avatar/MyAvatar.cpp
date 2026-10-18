@@ -2835,6 +2835,17 @@ void MyAvatar::prepareForPhysicsSimulation() {
     if (inFrame) {
         _characterController.setPositionAndOrientation(getLocalPosition(), getLocalOrientation());
     } else {
+        if (!hasParent()) {
+            // A free-standing avatar stands upright. A pose left tilted (stepping out of a car lying on its side, a
+            // script's orientation) is levelled here, before the character takes it: the character hands its pose back
+            // after the step, so a tilt it is given is kept for ever.
+            const float LEVEL_EPSILON = 1.0e-6f;  // about 0.2 degrees
+            glm::quat orientation = getWorldOrientation();
+            glm::quat level = cancelOutRollAndPitch(orientation);
+            if (1.0f - glm::abs(glm::dot(orientation, level)) > LEVEL_EPSILON) {
+                setWorldOrientation(level);
+            }
+        }
         _characterController.setPositionAndOrientation(getWorldPosition(), getWorldOrientation());
     }
     auto headPose = getControllerPoseInAvatarFrame(controller::Action::HEAD);

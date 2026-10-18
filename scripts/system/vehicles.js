@@ -170,13 +170,15 @@
                 Entities.editEntity(vehicleID, { vehicle: { driver: Uuid.NULL } });
             }
         }
-        // step out beside the vehicle
+        // step out beside the vehicle, upright whatever way up the vehicle lies: the level right of where the seat
+        // faces, half a metre up. goToLocation, not setting position and orientation: those race the physics step,
+        // which hands back the pose the avatar had in the seat (a tilted one in a car on its side); goToLocation is
+        // applied between steps and finds a free spot if the one asked for is inside something
         var position = MyAvatar.position;
-        var orientation = MyAvatar.orientation;
-        var right = Quat.getRight(orientation);
+        var level = Quat.cancelOutRollAndPitch(MyAvatar.orientation);
+        var right = Quat.getRight(level);
         MyAvatar.parentID = Uuid.NULL;
-        MyAvatar.position = Vec3.sum(position, Vec3.sum(Vec3.multiply(1.5, right), { x: 0, y: 0.5, z: 0 }));
-        MyAvatar.orientation = Quat.fromPitchYawRollDegrees(0, Quat.safeEulerAngles(orientation).y, 0);
+        MyAvatar.goToLocation(Vec3.sum(position, Vec3.sum(Vec3.multiply(1.5, right), { x: 0, y: 0.5, z: 0 })), true, level, false);
         for (var i = 0; i < DRIVE_KEYS.length; i++) {
             MyAvatar.enableDriveKey(DRIVE_KEYS[i]);
         }
