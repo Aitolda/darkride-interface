@@ -337,17 +337,17 @@ void AvatarManager::updateOtherAvatars(float deltaTime) {
             if (_useAvatarPlaceholders) avatar->updateOrbPosition();
             // TODO: to help us scale to more avatars it would be nice to not have to poll this stuff every update
             if (avatar->getSkeletonModel()->isLoaded()) {
-                // hide the orb if it is there
-                if (!_useAvatarPlaceholders) avatar->setOrbVisible(false);
+                // the model replaces its loading silhouette, unless placeholders are on
+                if (!_useAvatarPlaceholders) avatar->arrived();
                 else avatar->setOrbVisible(true);
 
                 if (avatar->needsPhysicsUpdate()) {
                     _otherAvatarsToChangeInPhysics.insert(avatar);
                 }
-            } 
-            /*else {
+            } else {
+                // the silhouette stands where they are while the model loads
                 avatar->updateOrbPosition();
-            }*/
+            }
 
             // for ALL avatars...
             if (_shouldRender) {
