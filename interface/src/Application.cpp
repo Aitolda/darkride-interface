@@ -196,6 +196,7 @@
 #include "scripting/RatesScriptingInterface.h"
 #include "scripting/SelectionScriptingInterface.h"
 #include "editor/Editor.h"
+#include "editor/ImpostorBaker.h"
 #include "editor/ui/ViewportContainer.h"
 #include "scripting/WalletScriptingInterface.h"
 #include "scripting/TTSScriptingInterface.h"
@@ -940,6 +941,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     DependencyManager::set<ResourceManager>();
     DependencyManager::set<SelectionScriptingInterface>();
     DependencyManager::set<Editor>();
+    DependencyManager::set<ImpostorBaker>();
     DependencyManager::set<Ledger>();
     DependencyManager::set<Wallet>();
     DependencyManager::set<WalletScriptingInterface>();
@@ -1036,6 +1038,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     _previousScriptLocation("LastScriptLocation", DESKTOP_LOCATION),
     _fieldOfView("fieldOfView", DEFAULT_FIELD_OF_VIEW_DEGREES),
     _farClip("farClip", DEFAULT_FAR_CLIP),
+    _nearClip("nearClip", DEFAULT_NEAR_CLIP),
     _hmdTabletScale("hmdTabletScale", DEFAULT_HMD_TABLET_SCALE_PERCENT),
     _desktopTabletScale("desktopTabletScale", DEFAULT_DESKTOP_TABLET_SCALE_PERCENT),
     _firstRun(Settings::firstRun, true),
@@ -3873,6 +3876,13 @@ void Application::setFarClip(float farClip) {
     }
 }
 
+void Application::setNearClip(float nearClip) {
+    if (nearClip != _nearClip.get()) {
+        _nearClip.set(nearClip);
+        resizeGL();   // the projection is rebuilt there
+    }
+}
+
 void Application::setHMDTabletScale(float hmdTabletScale) {
     _hmdTabletScale.set(hmdTabletScale);
 }
@@ -4012,7 +4022,7 @@ void Application::resizeGL() {
     float fovY = verticalFieldOfView(_fieldOfView.get(), aspectRatio);
     _myCamera.setProjection(
         glm::perspective(
-            glm::radians(fovY), aspectRatio, DEFAULT_NEAR_CLIP, getFarClip()
+            glm::radians(fovY), aspectRatio, getNearClip(), getFarClip()
         )
     );
     // Possible change in aspect ratio
@@ -6972,11 +6982,13 @@ void Application::updateRenderArgs(float deltaTime) {
             PROFILE_RANGE(render, "/buildFrustrumAndArgs");
             {
                 QMutexLocker viewLocker(&_viewMutex);
-                // adjust near clip plane to account for sensor scaling.
+                // adjust near clip plane to account for sensor scaling. This is rebuilt every frame, so the near
+                // clip setting (Render.nearClip, desktop only: an HMD keeps the short one for the hands) is read here
                 float aspectRatio = getActiveDisplayPlugin()->getRecommendedAspectRatio();
                 float fovY = verticalFieldOfView(_fieldOfView.get(), aspectRatio);
+                float nearClip = isHMDMode() ? DEFAULT_NEAR_CLIP : getNearClip();
                 auto adjustedProjection = glm::perspective(
-                    glm::radians(fovY), aspectRatio, DEFAULT_NEAR_CLIP * sensorToWorldScale, getFarClip()
+                    glm::radians(fovY), aspectRatio, nearClip * sensorToWorldScale, getFarClip()
                 );
                 _viewFrustum.setProjection(adjustedProjection);
                 _viewFrustum.calculate();
@@ -6985,6 +6997,11 @@ void Application::updateRenderArgs(float deltaTime) {
                 lodManager->getBoundaryLevelAdjust(), lodManager->getLODHalfAngleTan(), RenderArgs::DEFAULT_RENDER_MODE,
                 RenderArgs::MONO, RenderArgs::DEFERRED, RenderArgs::RENDER_DEBUG_NONE);
             appRenderArgs._renderArgs._scene = getMain3DScene();
+            appRenderArgs._renderArgs._impostorAngleHalfTanSq = lodManager->getImpostorAngleHalfTanSq();
+            appRenderArgs._renderArgs._impostorDebug = lodManager->getImpostorDebug();
+            appRenderArgs._renderArgs._impostorCrossfade = lodManager->getImpostorCrossfade();
+            appRenderArgs._renderArgs._meshLodErrorPixels = lodManager->getMeshLodErrorPixelsInEffect();
+            appRenderArgs._renderArgs._meshLodForceLevel = lodManager->getMeshLodForceLevel();
 
             {
                 QMutexLocker viewLocker(&_viewMutex);
@@ -7777,6 +7794,7 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
 
     scriptEngine->registerGlobalObject("Scene", DependencyManager::get<SceneScriptingInterface>().data());
     scriptEngine->registerGlobalObject("Render", RenderScriptingInterface::getInstance());
+    scriptEngine->registerGlobalObject("Impostors", DependencyManager::get<ImpostorBaker>().data());
     scriptEngine->registerGlobalObject("Workload", _gameWorkload._engine->getConfiguration().get());
 
     GraphicsScriptingInterface::registerMetaTypes(scriptEngine.data());

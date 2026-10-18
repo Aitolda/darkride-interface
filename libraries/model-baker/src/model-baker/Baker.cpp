@@ -22,6 +22,7 @@
 #include "PrepareJointsTask.h"
 #include "CalculateTransformedExtentsTask.h"
 #include "BuildDracoMeshTask.h"
+#include "BuildMeshLodsTask.h"
 #include "ParseFlowDataTask.h"
 #include <hfm/HFMModelMath.h>
 
@@ -221,6 +222,11 @@ namespace baker {
             // Build the graphics::MeshPointer for each hfm::Mesh
             const auto buildGraphicsMeshInputs = BuildGraphicsMeshTask::Input(meshesIn, url, meshIndicesToModelNames, normalsPerMesh, tangentsPerMesh, shapesIn, skinDeformersIn).asVarying();
             const auto graphicsMeshes = model.addJob<BuildGraphicsMeshTask>("BuildGraphicsMesh", buildGraphicsMeshInputs);
+
+            // Add the automatic LODs to those meshes, in place, before any later job reads them
+            // NOTE: This task is disabled by default; the client's model cache enables it (AUTOMATIC-LODS.md)
+            const auto buildMeshLodsInputs = BuildMeshLodsTask::Input(meshesIn, graphicsMeshes, url, normalsPerMesh).asVarying();
+            model.addJob<BuildMeshLodsTask>("BuildMeshLods", buildMeshLodsInputs);
 
             // Prepare joint information
             const auto prepareJointsInputs = PrepareJointsTask::Input(jointsIn, mapping).asVarying();

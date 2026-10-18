@@ -31,7 +31,8 @@
 	"tivoli/tivoli.js",
 	"system/inspect.js",
 	"system/controllers/controllerScripts.js",
-	"system/create/edit.js"
+	"system/create/edit.js",
+	"system/impostorLodView.js" // Developer > Render > Show Impostors and LODs
 ].forEach(function (script) {
 	var runningScripts = ScriptDiscoveryService.getRunning();
 
