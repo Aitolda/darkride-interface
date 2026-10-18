@@ -40,6 +40,7 @@
 #include "Application.h"
 #include "LODManager.h"
 #include <RenderableModelEntityItem.h>
+#include <ToneMapAndResampleTask.h>
 #include "AccountManager.h"
 #include "assets/ATPAssetMigrator.h"
 #include "audio/AudioScope.h"
@@ -661,6 +662,12 @@ Menu::Menu() {
     action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::ShowModelsStillLoading, 0, false);
     connect(action, &QAction::triggered, [action] {
         render::entities::ModelEntityRenderer::setShowModelsStillLoading(action->isChecked());
+    });
+    // Developer > Render > Show NaN Pixels: a fragment whose shading came out NaN (not a number) is painted magenta, so
+    // the fault can be found; off, it is black, which players barely notice
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::ShowNaNPixels, 0, false);
+    connect(action, &QAction::triggered, [action] {
+        ToneMapAndResample::setShowNaNPixels(action->isChecked());
     });
 
     addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::WorldAxes);
