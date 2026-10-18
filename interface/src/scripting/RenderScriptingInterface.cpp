@@ -101,6 +101,16 @@ void RenderScriptingInterface::forceRenderMethod(RenderMethod renderMethod) {
         );
         if (secondaryConfig) secondaryConfig->setBranch((int)renderMethod);
 
+        // the mirror views render by the frame's method too: left on the switch's first branch, they drew deferred
+        // under the forward default, and their reflections lost the zone's ambient light (MIRRORS.md section 5)
+        for (int slot = 0; slot < Mirrors::SLOT_COUNT; ++slot) {
+            auto mirrorConfig = dynamic_cast<render::SwitchConfig*>(
+                qApp->getRenderEngine()->getConfiguration()->getConfig(
+                    "RenderMirrors.MirrorView" + QString::number(slot) + ".DeferredForwardSwitch"
+                )
+            );
+            if (mirrorConfig) mirrorConfig->setBranch((int)renderMethod);
+        }
     });
 }
 
