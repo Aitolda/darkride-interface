@@ -292,6 +292,10 @@ public:
 
     bool isAboutToQuit() const { return _aboutToQuit; }
     bool isPhysicsEnabled() const { return _physicsEnabled; }
+
+    // While a loading screen is up, the arrival in a world waits for what is near the avatar to be ready for physics
+    // and drawn (as interstitial mode does), even where the zone allows moving at once (ghosting).
+    void setArrivalWaitsForNearby(bool wait);
     PhysicsEnginePointer getPhysicsEngine() { return _physicsEngine; }
     bool isEditMode() const;
 
@@ -798,6 +802,7 @@ private:
     bool _isForeground = true;  // starts out assumed to be in foreground
     bool _isGLInitialized{ false };
     bool _physicsEnabled{ false };
+    std::atomic<bool> _arrivalWaitsForNearby { false };
     bool _failedToConnectToEntityServer{ false };
 
     bool _reticleClickPressed{ false };
