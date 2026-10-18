@@ -29,7 +29,7 @@ public:
 class BuildMeshLodsTask {
 public:
     using Config = BuildMeshLodsConfig;
-    using Input = baker::VaryingSet3<std::vector<hfm::Mesh>, std::vector<graphics::MeshPointer>, hifi::URL>;
+    using Input = baker::VaryingSet4<std::vector<hfm::Mesh>, std::vector<graphics::MeshPointer>, hifi::URL, baker::NormalsPerMesh>;
     using JobModel = baker::Job::ModelI<BuildMeshLodsTask, Input, Config>;
 
     void configure(const Config& config) {}

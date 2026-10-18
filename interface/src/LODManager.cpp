@@ -11,9 +11,16 @@
 
 #include "LODManager.h"
 
+#include <QtCore/QThread>
+
 #include <SettingHandle.h>
 #include <Util.h>
 #include <shared/GlobalAppProperties.h>
+#include <shared/QtHelpers.h>
+#include <EntityTreeRenderer.h>
+#include <ImpostorSwitch.h>
+#include <Model.h>
+#include <RenderableModelEntityItem.h>
 
 #include "Application.h"
 #include "ui/DialogsManager.h"
@@ -22,6 +29,7 @@
 Setting::Handle<int> desktopWorldDetailQuality("desktopWorldDetailQuality", (int)DEFAULT_WORLD_DETAIL_QUALITY);
 Setting::Handle<int> hmdWorldDetailQuality("hmdWorldDetailQuality", (int)DEFAULT_WORLD_DETAIL_QUALITY);
 Setting::Handle<float> impostorAngleDegSetting("impostorAngleDeg", 0.0f);
+Setting::Handle<float> meshLodErrorPixelsSetting("meshLodErrorPixels", 1.0f);
 
 LODManager::LODManager() {
     // set lod manager to manual since automatic will often
@@ -30,6 +38,7 @@ LODManager::LODManager() {
     setAutomaticLODAdjust(false);
     setVisibilityDistance(DEFAULT_VISIBILITY_DISTANCE_FOR_UNIT_ELEMENT);
     _impostorAngleDeg = impostorAngleDegSetting.get();
+    _meshLodErrorPixels = std::max(0.0f, meshLodErrorPixelsSetting.get());
 }
 
 // We use a "time-weighted running average" of the maxRenderTime and compare it against min/max thresholds
@@ -220,8 +229,91 @@ void LODManager::setImpostorAngleDeg(float angle) {
 }
 
 float LODManager::getImpostorAngleHalfTanSq() const {
+    if (!_impostorsEnabled) {
+        return 0.0f;   // no card anywhere: every entity draws its model
+    }
     float halfTan = tanf(glm::radians(0.5f * getImpostorAngleDeg()));
     return halfTan * halfTan;
+}
+
+void LODManager::setShowImpostorsAndLods(bool show) {
+    const int TINT_DEBUG_VIEW = 10;   // impostor.slf's tint, the Inspector's Tint Cards
+    _showImpostorsAndLods = show;
+    _impostorDebug = show ? TINT_DEBUG_VIEW : 0;
+}
+
+void LODManager::setMeshLodErrorPixels(float pixels) {
+    _meshLodErrorPixels = std::max(0.0f, pixels);
+    meshLodErrorPixelsSetting.set(_meshLodErrorPixels);
+}
+
+QVariantMap LODManager::describeEntity(const QUuid& entityID) const {
+    // the renderers and the models' render items belong to the main thread
+    if (QThread::currentThread() != thread()) {
+        QVariantMap result;
+        BLOCKING_INVOKE_METHOD(const_cast<LODManager*>(this), "describeEntity", Q_RETURN_ARG(QVariantMap, result),
+                               Q_ARG(QUuid, entityID));
+        return result;
+    }
+    QVariantMap result;
+    auto treeRenderer = DependencyManager::get<EntityTreeRenderer>();
+    auto tree = treeRenderer ? treeRenderer->getTree() : nullptr;
+    EntityItemPointer entity = tree ? tree->findEntityByID(entityID) : nullptr;
+    if (!entity) {
+        return result;
+    }
+    result["name"] = entity->getName();
+
+    // the card: the entity's own, or its nearest ancestor's (EntityRenderer::findImpostorSwitch's walk)
+    const int MAX_DEPTH = 16;
+    SpatiallyNestablePointer nestable = entity;
+    for (int depth = 0; nestable && depth < MAX_DEPTH; depth++) {
+        auto item = std::dynamic_pointer_cast<EntityItem>(nestable);
+        auto renderer = item ? treeRenderer->renderableForEntityId(item->getID()) : nullptr;
+        auto impostorSwitch = renderer ? renderer->getImpostorSwitch() : nullptr;
+        if (impostorSwitch) {
+            float share = impostorSwitch->getShownShare();
+            QVariantMap card;
+            card["ownerID"] = item->getID();
+            card["ownerName"] = item->getName();
+            card["showing"] = !impostorSwitch->isCardReady() ? "loading"
+                : (share >= 1.0f ? "card" : (share <= 0.0f ? "model" : "dissolving"));
+            card["angleDeg"] = impostorSwitch->getShownAngleDeg();
+            card["switchAngleDeg"] = getImpostorAngleDeg();
+            card["enabled"] = _impostorsEnabled;
+            result["card"] = card;
+            break;
+        }
+        bool success = false;
+        nestable = nestable->getParentPointer(success);
+        if (!success) {
+            break;
+        }
+    }
+
+    // the automatic LODs of a model entity's meshes (AUTOMATIC-LODS.md)
+    auto modelRenderer = std::dynamic_pointer_cast<render::entities::ModelEntityRenderer>(
+        treeRenderer->renderableForEntityId(entityID));
+    ModelPointer model = modelRenderer ? modelRenderer->getModelForBake() : nullptr;
+    if (model && model->isLoaded()) {
+        QVariantList parts;
+        for (const auto& part : model->getPartLods()) {
+            QVariantMap entry;
+            entry["full"] = part.full;
+            QVariantList levels;
+            for (int triangles : part.levels) {
+                levels.push_back(triangles);
+            }
+            entry["levels"] = levels;
+            entry["shown"] = part.shown;
+            parts.push_back(entry);
+        }
+        QVariantMap lods;
+        lods["parts"] = parts;
+        lods["enabled"] = getMeshLodErrorPixelsInEffect() > 0.0f;
+        result["lods"] = lods;
+    }
+    return result;
 }
 
 void LODManager::setSmoothScale(float t) {

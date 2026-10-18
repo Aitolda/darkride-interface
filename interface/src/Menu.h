@@ -239,6 +239,9 @@ namespace MenuOption {
     const QString LocalShadowStaticCaching = "Cache Static Shadow Casters";
     const QString Mirrors = "Mirrors";
     const QString MirrorsHalfResolution = "Half-Resolution Mirrors";
+    const QString ImpostorCards = "Impostor Cards";
+    const QString AutomaticLods = "Automatic LODs";
+    const QString ShowImpostorsAndLods = "Show Impostors and LODs";
     const QString AmbientOcclusion = "Ambient Occlusion";
     const QString NotificationSounds = "play_notification_sounds";
     const QString NotificationSoundsSnapshot = "play_notification_sounds_snapshot";

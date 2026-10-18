@@ -225,7 +225,7 @@ namespace baker {
 
             // Add the automatic LODs to those meshes, in place, before any later job reads them
             // NOTE: This task is disabled by default; the client's model cache enables it (AUTOMATIC-LODS.md)
-            const auto buildMeshLodsInputs = BuildMeshLodsTask::Input(meshesIn, graphicsMeshes, url).asVarying();
+            const auto buildMeshLodsInputs = BuildMeshLodsTask::Input(meshesIn, graphicsMeshes, url, normalsPerMesh).asVarying();
             model.addJob<BuildMeshLodsTask>("BuildMeshLods", buildMeshLodsInputs);
 
             // Prepare joint information

@@ -985,6 +985,21 @@ void Model::setImpostorSwitch(const std::shared_ptr<ImpostorSwitch>& impostorSwi
     }
 }
 
+std::vector<Model::PartLods> Model::getPartLods() const {
+    std::vector<PartLods> parts;
+    for (const auto& payload : _modelMeshRenderItems) {
+        if (!payload) {
+            continue;
+        }
+        PartLods part;
+        part.full = payload->getFullTriangles();
+        part.levels = payload->getLodTriangles();
+        part.shown = payload->getShownLodLevel();
+        parts.push_back(part);
+    }
+    return parts;
+}
+
 void Model::setPrimitiveMode(PrimitiveMode primitiveMode) {
     if (_primitiveMode != primitiveMode) {
         _primitiveMode = primitiveMode;

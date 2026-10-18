@@ -91,6 +91,8 @@ namespace {
             _cachedArgsPointer->_renderMode = args->_renderMode;
             _cachedArgsPointer->_stencilMaskMode = args->_stencilMaskMode;
             _cachedArgsPointer->_impostorAngleHalfTanSq = args->_impostorAngleHalfTanSq;
+            _cachedArgsPointer->_meshLodErrorPixels = args->_meshLodErrorPixels;
+            _cachedArgsPointer->_meshLodForceLevel = args->_meshLodForceLevel;
 
             gpu::FramebufferPointer target = frame ? frame->albedoFramebuffer : ImpostorBake::instance().idleFramebuffer();
             args->_blitFramebuffer = target;
@@ -100,6 +102,9 @@ namespace {
             args->_stencilMaskMode = StencilMaskMode::NONE;
             // the subject's models, never their card (ImpostorSwitch), whatever the frame's camera subtends
             args->_impostorAngleHalfTanSq = 0.0f;
+            // and their full meshes, never their automatic LODs
+            args->_meshLodErrorPixels = 0.0f;
+            args->_meshLodForceLevel = -1;
 
             gpu::doInBatch("BakeBegin::run", args->_context, [&](gpu::Batch& batch) {
                 batch.disableContextStereo();
@@ -226,6 +231,8 @@ namespace {
                 args->_renderMode = cachedArgs->_renderMode;
                 args->_stencilMaskMode = cachedArgs->_stencilMaskMode;
                 args->_impostorAngleHalfTanSq = cachedArgs->_impostorAngleHalfTanSq;
+                args->_meshLodErrorPixels = cachedArgs->_meshLodErrorPixels;
+                args->_meshLodForceLevel = cachedArgs->_meshLodForceLevel;
             }
             args->popViewFrustum();
 

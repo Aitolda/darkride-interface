@@ -37,6 +37,7 @@
 #include <ui/types/TivoliWebEngineProfile.h>
 
 #include "Application.h"
+#include "LODManager.h"
 #include "AccountManager.h"
 #include "assets/ATPAssetMigrator.h"
 #include "audio/AudioScope.h"
@@ -627,6 +628,26 @@ Menu::Menu() {
     // Developer > Render > Half-Resolution Mirrors: a mirror's picture at half its size on screen, a quarter of the cost
     action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::MirrorsHalfResolution, 0, false);
     connect(action, &QAction::triggered, [action] { Mirrors::instance().setResolutionScale(action->isChecked() ? 0.5f : 1.0f); });
+
+    // Developer > Render > Impostor Cards: entities with an impostor card draw it at a distance (IMPOSTORS.md); off,
+    // every entity draws its model. Not saved.
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::ImpostorCards, 0, true);
+    connect(action, &QAction::triggered, [action] {
+        DependencyManager::get<LODManager>()->setImpostorsEnabled(action->isChecked());
+    });
+    // Developer > Render > Automatic LODs: meshes draw their simplified versions where those look the same
+    // (AUTOMATIC-LODS.md); off, every mesh draws in full. Not saved.
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::AutomaticLods, 0, true);
+    connect(action, &QAction::triggered, [action] {
+        DependencyManager::get<LODManager>()->setMeshLodsEnabled(action->isChecked());
+    });
+    // Developer > Render > Show Impostors and LODs: every card tinted blue, and what the view draws of the thing at its
+    // centre, card or model and its LOD level, written at the top of the view (scripts/system/impostorLodView.js reads
+    // LODManager.showImpostorsAndLods). Not saved.
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::ShowImpostorsAndLods, 0, false);
+    connect(action, &QAction::triggered, [action] {
+        DependencyManager::get<LODManager>()->setShowImpostorsAndLods(action->isChecked());
+    });
 
     addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::WorldAxes);
     // addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::DefaultSkybox, Qt::Key_Asterisk, true);

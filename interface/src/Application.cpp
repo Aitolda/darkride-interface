@@ -6982,6 +6982,8 @@ void Application::updateRenderArgs(float deltaTime) {
             appRenderArgs._renderArgs._impostorAngleHalfTanSq = lodManager->getImpostorAngleHalfTanSq();
             appRenderArgs._renderArgs._impostorDebug = lodManager->getImpostorDebug();
             appRenderArgs._renderArgs._impostorCrossfade = lodManager->getImpostorCrossfade();
+            appRenderArgs._renderArgs._meshLodErrorPixels = lodManager->getMeshLodErrorPixelsInEffect();
+            appRenderArgs._renderArgs._meshLodForceLevel = lodManager->getMeshLodForceLevel();
 
             {
                 QMutexLocker viewLocker(&_viewMutex);

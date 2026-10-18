@@ -119,6 +119,16 @@ public:
     const std::shared_ptr<ImpostorSwitch>& getImpostorSwitch() const { return _impostorSwitch; }
     void setImpostorSwitch(const std::shared_ptr<ImpostorSwitch>& impostorSwitch, const render::ScenePointer& scene);
 
+    // the automatic LODs of each render item (mesh part, AUTOMATIC-LODS.md): its triangles in full and at each level,
+    // and the level the main view draws now (0 for full detail); main thread
+    class PartLods {
+    public:
+        int full { 0 };
+        std::vector<int> levels;
+        int shown { 0 };
+    };
+    std::vector<PartLods> getPartLods() const;
+
     void setPrimitiveMode(PrimitiveMode primitiveMode);
     PrimitiveMode getPrimitiveMode() const { return _primitiveMode; }
 
