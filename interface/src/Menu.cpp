@@ -448,8 +448,8 @@ Menu::Menu() {
     MenuWrapper* developerMenu = addMenu("Developer", "Developer");
     
 
-    // Developer > Tivoli Options >>>
-    MenuWrapper* tivoliOptionsMenu = developerMenu->addMenu("Tivoli Options");
+    // Developer > Darkride Options >>>
+    MenuWrapper* tivoliOptionsMenu = developerMenu->addMenu("Darkride Options");
 
     addCheckableActionToQMenuAndActionHash(tivoliOptionsMenu, MenuOption::StopRendering);
 
@@ -457,7 +457,7 @@ Menu::Menu() {
                                                     qApp->getLoadCompleteEntityTreeSetting());
  
 
-    //// Developer > Tivoli Options > Test Zone Culling (test)
+    //// Developer > Darkride Options > Test Zone Culling (test)
     //addCheckableActionToQMenuAndActionHash(tivoliOptionsMenu, MenuOption::TestZoneCulling, 0, false);
 
 
@@ -1007,7 +1007,7 @@ Menu::Menu() {
     // Help/Application menu ----------------------------------
     MenuWrapper * helpMenu = addMenu("Help");
 
-    action = addActionToQMenuAndActionHash(helpMenu, "About Tivoli Cloud VR");
+    action = addActionToQMenuAndActionHash(helpMenu, "About Darkride");
     connect(action, &QAction::triggered, [] {
         qApp->showDialog(QString("hifi/dialogs/AboutDialog.qml"),
             QString("hifi/dialogs/TabletAboutDialog.qml"), "AboutDialog");

@@ -6,7 +6,7 @@
 //  one PARITY line per check; the two logs are diffed. Every line is a value a script could depend on. Lines
 //  that must differ by nature (timings, generated ids) are not here.
 //
-//  Run serverless on both engines:  tests-manual/wasm-scripting/parity.sh [path/to/interface.app]
+//  Run serverless on both engines:  tests-manual/wasm-scripting/parity.sh [path/to/Darkride.app]
 //
 //  Written in ES5 on purpose.
 //

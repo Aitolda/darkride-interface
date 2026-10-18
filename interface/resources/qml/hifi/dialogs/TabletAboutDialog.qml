@@ -41,7 +41,7 @@ Rectangle {
         }
         Item { height: 10; width: 1 }
         RobotoRegular {
-            text: "Tivoli Cloud VR"
+            text: "Darkride"
             size: 20
             color: "white"
         }
@@ -92,7 +92,7 @@ Rectangle {
         
         RobotoRegular {
             color: "white"
-            text: "Copyright 2020 Tivoli Cloud VR, Inc. All rights reserved."
+            text: "Built on Tivoli Cloud VR and High Fidelity, under the Apache License 2.0."
             size: 14
         }
     }

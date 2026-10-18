@@ -1,6 +1,6 @@
 #!/bin/zsh
 # PHYSICS.md round 6: the Land Rover on the terrain, driven over a scripted course (rover.js, landrover.js).
-#   tests-manual/physics-baseline/run-rover.sh [path/to/interface.app] [results dir] [udp port|serverless] [loss] [delay_ms]
+#   tests-manual/physics-baseline/run-rover.sh [path/to/Darkride.app] [results dir] [udp port|serverless] [loss] [delay_ms]
 # make-terrain.py writes the terrain file into the results dir, which is served over HTTP on <port>+78 (the physics server
 # and the clients fetch it from there); rover.js and landrover.js are copied beside it with the two one-line wrapper
 # scripts that name the role and the terrain URL. Serverless: one client, the driver, in world.json (the fallback path).
@@ -11,13 +11,13 @@
 # log of the run (the physics server's lines are in it under [physics-server]) is copied beside them.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
-APP=${1:-"$D/../../build/interface/interface.app"}
+APP=${1:-"$D/../../build/interface/Darkride.app"}
 R=${2:-"${TMPDIR:-/tmp}/physics-rover"}
 PORT=${3:-42102}
 LOSS=${4:-0}
 DELAY=${5:-0}
 SANDBOX=/Users/thistlequell/tivoli-sandboxes/physics
-BIN="$APP/Contents/MacOS/interface"
+BIN="$APP/Contents/MacOS/Darkride"
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 mkdir -p "$R/driver" "$R/passenger"
 export HIFI_METAVERSE_URL=${HIFI_METAVERSE_URL:-https://vr.darkride.ai}

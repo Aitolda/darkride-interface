@@ -2,12 +2,12 @@
 # Drive the Land Rover yourself (PHYSICS.md round 6): a client on the physics sandbox (the server drives the car, you
 # drive the server) with the terrain and the car made for you. Click the car to get in, W/S A/D Space, F to get out,
 # R for a fresh car on the pad, T back to the pad.
-#   tests-manual/physics-baseline/drive-rover.sh [path/to/interface.app] [udp port|serverless]
+#   tests-manual/physics-baseline/drive-rover.sh [path/to/Darkride.app] [udp port|serverless]
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
-APP=${1:-"$D/../../build/interface/interface.app"}
+APP=${1:-"$D/../../build/interface/Darkride.app"}
 PORT=${2:-42102}
-BIN="$APP/Contents/MacOS/interface"
+BIN="$APP/Contents/MacOS/Darkride"
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 R=${TMPDIR:-/tmp}/rover-playground
 mkdir -p "$R"

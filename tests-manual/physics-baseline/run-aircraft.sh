@@ -1,19 +1,19 @@
 #!/bin/zsh
 # PHYSICS.md round 8: the tilt-thrust aircraft over the terrain, flown through a scripted course by airship.js in its
 # aircraft form (aircraft-rig.js): the pilot alone (there is no deck to walk).
-#   tests-manual/physics-baseline/run-aircraft.sh [path/to/interface.app] [results dir] [udp port|serverless] [loss] [delay_ms]
+#   tests-manual/physics-baseline/run-aircraft.sh [path/to/Darkride.app] [results dir] [udp port|serverless] [loss] [delay_ms]
 # Serverless: one client in world.json. On a domain (the physics sandbox, restarted here from the client's build with
 # the earlier runs' test entities taken out of its world): the pilot under TIVOLI_PACKET_LOSS and TIVOLI_PACKET_DELAY_MS
 # when given. The summary (PHYSICS-AIRCRAFT lines) is printed; the samples land in <results dir>/pilot/physics-airship.json.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
-APP=${1:-"$D/../../build/interface/interface.app"}
+APP=${1:-"$D/../../build/interface/Darkride.app"}
 R=${2:-"${TMPDIR:-/tmp}/physics-aircraft"}
 PORT=${3:-42102}
 LOSS=${4:-0}
 DELAY=${5:-0}
 SANDBOX=/Users/thistlequell/tivoli-sandboxes/physics
-BIN="$APP/Contents/MacOS/interface"
+BIN="$APP/Contents/MacOS/Darkride"
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 mkdir -p "$R/pilot"
 export HIFI_METAVERSE_URL=${HIFI_METAVERSE_URL:-https://vr.darkride.ai}

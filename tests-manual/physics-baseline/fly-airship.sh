@@ -3,12 +3,12 @@
 # orders) with the terrain and the ship made for you. Walk aboard and click the ship to take the helm: W/S set the
 # throttle (X cuts it), A/D rudder, up/down elevator, Space/C the vertical thruster up and down, B drops ballast, V vents
 # gas, F leaves the helm. R for a fresh ship on the pad, T back to the pad.
-#   tests-manual/physics-baseline/fly-airship.sh [path/to/interface.app] [udp port|serverless]
+#   tests-manual/physics-baseline/fly-airship.sh [path/to/Darkride.app] [udp port|serverless]
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
-APP=${1:-"$D/../../build/interface/interface.app"}
+APP=${1:-"$D/../../build/interface/Darkride.app"}
 PORT=${2:-42102}
-BIN="$APP/Contents/MacOS/interface"
+BIN="$APP/Contents/MacOS/Darkride"
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 R=${TMPDIR:-/tmp}/airship-playground
 mkdir -p "$R"

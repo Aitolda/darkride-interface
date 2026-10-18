@@ -1,7 +1,7 @@
 #!/bin/zsh
 # PHYSICS.md round 5's acceptance test: the monorail with the physics server driving, twenty bot riders aboard and
 # twenty bots walking below, two real clients measuring, one of them under packet loss.
-#   tests-manual/physics-baseline/run-monorail.sh [path/to/interface.app] [results dir] [udp port] [riders] [walkers] [loss]
+#   tests-manual/physics-baseline/run-monorail.sh [path/to/Darkride.app] [results dir] [udp port] [riders] [walkers] [loss]
 # The sandbox domain is restarted from the app's build (domain-sandbox.sh, which starts the physics server with the other
 # services) with the bots as the domain's persistent scripts; then observer.js runs with TIVOLI_PACKET_LOSS=<loss>
 # (0.05 by default: five per cent of its datagrams dropped, in and out) and track.js makes the track and the cabin, boards
@@ -9,7 +9,7 @@
 # summaries (PHYSICS-TRACK, PHYSICS-OBSERVER) are printed and their samples land under <results dir>.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
-APP=${1:-"$D/../../build/interface/interface.app"}
+APP=${1:-"$D/../../build/interface/Darkride.app"}
 R=${2:-"${TMPDIR:-/tmp}/physics-monorail"}
 PORT=${3:-42102}
 RIDERS=${4:-20}
@@ -18,7 +18,7 @@ LOSS=${6:-0.05}
 BUILD=$(cd "$APP/../.." && pwd)
 SANDBOX=/Users/thistlequell/tivoli-sandboxes/physics
 CONFIG="$SANDBOX/domain-config.json"
-BIN="$APP/Contents/MacOS/interface"
+BIN="$APP/Contents/MacOS/Darkride"
 # an agent refuses a script from the local filesystem, so the bots are served over HTTP from this folder
 BOT_PORT=$((PORT + 78))
 BOT="http://127.0.0.1:$BOT_PORT/monorail-bot.js"
