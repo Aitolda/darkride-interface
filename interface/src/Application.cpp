@@ -6840,6 +6840,9 @@ void Application::update(float deltaTime) {
     {
         QMutexLocker viewLocker(&_viewMutex);
         _myCamera.loadViewFrustum(_viewFrustum);
+        // where a model shown as its impostor card fetches its mesh (ENTITY-STREAMING.md 3.1)
+        getEntities()->setImpostorLoadView(_viewFrustum.getPosition(),
+                                           DependencyManager::get<LODManager>()->getImpostorLoadHalfTanSq());
 
         _conicalViews.clear();
         _conicalViews.push_back(_viewFrustum);
