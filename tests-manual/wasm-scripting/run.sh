@@ -12,7 +12,7 @@ R=${2:-"${TMPDIR:-/tmp}/wasm-baseline"}
 SECONDS_MAX=${3:-300}
 mkdir -p "$R/config" "$R/data"
 BIN="$APP/Contents/MacOS/Darkride"
-BIN=$(cd "$(dirname "$BIN")" && pwd)/interface
+BIN=$(cd "$(dirname "$BIN")" && pwd)/Darkride
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 echo "client: $BIN"
 echo "results: $R"
