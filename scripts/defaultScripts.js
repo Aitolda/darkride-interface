@@ -18,6 +18,7 @@
 	// "system/commerce/wallet.js",
 	"system/tablet-ui/tabletUI.js",
 	"system/emote.js",
+	"system/avatarMenu.js", // an imported avatar's menu
 	// "system/miniTablet.js",
 	// "system/audioMuteOverlay.js", // the big text that appears when you're muted
 	"system/keyboardShortcuts/keyboardShortcuts.js"

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <vector>
 
+#include <QJsonDocument>
 #include <QBuffer>
 
 #include <glm/gtx/norm.hpp>
@@ -900,6 +901,11 @@ void MyAvatar::simulate(float deltaTime, bool inView) {
         updateViewBoom();
     }
 
+    // The avatar's menu (an imported avatar's menu and effects layer) sets clothes, shape keys and joint poses
+    // before the rig animates.
+    updateAvatarMenu(deltaTime);
+    sendAvatarMenuParameters();
+
     // Head's look at blending needs updating
     // before we perform rig animations and IK.
     {
@@ -1218,6 +1224,36 @@ void MyAvatar::restoreAnimation() {
         return;
     }
     _skeletonModel->getRig().restoreAnimation();
+}
+
+QVariantMap MyAvatar::getAvatarMenu() const {
+    return QVariantMap { { "menu", _avatarMenu.getMenu().toVariantMap() }, { "parameters", _avatarMenu.getParameters() },
+                         { "emotes", _avatarMenu.getEmotes().toVariantList() } };
+}
+
+bool MyAvatar::setAvatarParameter(const QString& name, float value) {
+    return _avatarMenu.setParameter(name, value);
+}
+
+float MyAvatar::getAvatarParameter(const QString& name) const {
+    return _avatarMenu.getParameter(name);
+}
+
+// Others' clients run the avatar's menu too, from its synced parameters: send those when they change, at most ten
+// times a second while a control moves (the AvatarMenuParameters trait carries them).
+void MyAvatar::sendAvatarMenuParameters() {
+    const QByteArray parameters = _avatarMenu.isActive()
+        ? QJsonDocument(_avatarMenu.getSyncedParameters()).toJson(QJsonDocument::Compact) : QByteArray();
+    if (parameters == getAvatarMenuParameters()) {
+        return;
+    }
+    const quint64 MIN_SEND_INTERVAL = 100 * USECS_PER_MSEC;
+    const quint64 now = usecTimestampNow();
+    if (!parameters.isEmpty() && now - _avatarMenuParametersSent < MIN_SEND_INTERVAL) {
+        return;  // the latest values go on a later frame
+    }
+    setAvatarMenuParameters(parameters);
+    _avatarMenuParametersSent = now;
 }
 
 void MyAvatar::restoreHandAnimation(bool isLeft) {
@@ -2149,6 +2185,7 @@ static float lookAtCostFunction(const glm::vec3& myForward, const glm::vec3& myP
 
     const float GREATEST_LOOKING_AT_DISTANCE = 10.0f;  // meters
     const float MAX_MY_ANGLE = PI / 8.0f; // 22.5 degrees, Don't look too far away from the head facing.
+    const float MAX_UP_DOWN_ANGLE = PI / 3.0f;  // 60 degrees: a small avatar looks up at a tall one close by, and back
     const float MAX_OTHER_ANGLE = (3.0f * PI) / 4.0f;  // 135 degrees, Don't stare at the back of another avatars head.
 
     glm::vec3 d = otherPosition - myPosition;
@@ -2156,8 +2193,14 @@ static float lookAtCostFunction(const glm::vec3& myForward, const glm::vec3& myP
     glm::vec3 dUnit = d / distance;
     float myAngle = acosf(glm::dot(myForward, dUnit));
     float otherAngle = acosf(glm::dot(otherForward, -dUnit));
+    // the head's facing limits the angle side to side; up and down has its own, looser limit (myForward is level)
+    const glm::vec3 level(d.x, 0.0f, d.z);
+    const float levelDistance = glm::length(level);
+    const float sideAngle = levelDistance > EPSILON ? acosf(glm::clamp(glm::dot(myForward, level / levelDistance), -1.0f, 1.0f)) : 0.0f;
+    const float upDownAngle = fabsf(atan2f(d.y, levelDistance));
 
-    if (distance > GREATEST_LOOKING_AT_DISTANCE || myAngle > MAX_MY_ANGLE || otherAngle > MAX_OTHER_ANGLE) {
+    if (distance > GREATEST_LOOKING_AT_DISTANCE || sideAngle > MAX_MY_ANGLE || upDownAngle > MAX_UP_DOWN_ANGLE ||
+        otherAngle > MAX_OTHER_ANGLE) {
         return FLT_MAX;
     } else {
         return (DISTANCE_FACTOR * distance +
@@ -6890,11 +6933,14 @@ void MyAvatar::updateEyesLookAtPosition(float deltaTime) {
                 if (headPose.isValid()) {
                     lookAtSpot = transformPoint(headPose.getMatrix(), glm::vec3(0.0f, 0.0f, TREE_SCALE));
                 } else {
+                    // (the spot before the gaze style's rest, so the rest is never added on top of itself)
                     lookAtSpot = _shouldTurnToFaceCamera ?
-                                 myHead->getLookAtPosition() :
+                                 (_gazeBase == glm::vec3() ? myHead->getLookAtPosition() : _gazeBase) :
                                  myHead->getEyePosition() + getHeadJointFrontVector() * (float)TREE_SCALE;
                 }
             }
+            _gazeBase = lookAtSpot;
+            lookAtSpot = restTheGaze(lookAtSpot, deltaTime);
         }
     }
     _eyesLookAtTarget.set(lookAtSpot);
@@ -6961,7 +7007,7 @@ void MyAvatar::resetLookAtRotation(const glm::vec3& avatarPosition, const glm::q
 void MyAvatar::updateHeadLookAt(float deltaTime) {
     if (_skeletonModel->isLoaded()) {
         glm::vec3 lookAtTarget = _scriptControlsHeadLookAt ? _lookAtScriptTarget : _lookAtCameraTarget;
-        glm::vec3 aimVector = lookAtTarget - getDefaultEyePosition();
+        glm::vec3 aimVector = styleHeadAim(lookAtTarget - getDefaultEyePosition(), deltaTime);
         glm::vec3 lookAtBlend = MyAvatar::aimToBlendValues(aimVector, getWorldOrientation());
         if (isSeated()) {
             _skeletonModel->getRig().setDirectionalBlending(HEAD_BLEND_DIRECTIONAL_ALPHA_NAME, lookAtBlend,
@@ -6984,6 +7030,84 @@ void MyAvatar::updateHeadLookAt(float deltaTime) {
             }
         }
     }
+}
+
+// Where the eyes go in the avatar's gaze style (GazeStyle.h): a look at the spot (someone's eyes, or straight ahead)
+// lasts lookSeconds, then the gaze rests awaySeconds beside it, below it for a shy or sleepy style, and a slow style
+// drifts between the two instead of jumping. The owner's client does this, so everyone sees the same look-at point.
+glm::vec3 MyAvatar::restTheGaze(const glm::vec3& spot, float deltaTime) {
+    const GazeStyle& gaze = GazeStyle::named(getGazeStyle());
+    const glm::vec3 eyes = getHead()->getEyePosition();
+    const glm::vec3 toSpot = spot - eyes;
+    if (glm::length(toSpot) < EPSILON) {
+        return spot;
+    }
+    if (gaze.name != _gazeStyleTimed) {
+        _gazeStyleTimed = gaze.name;  // a new style starts its own looks and rests now
+        _gazeAway = true;
+        _gazeTimer = 0.0f;
+    }
+    _gazeTimer -= deltaTime;
+    if (_gazeTimer <= 0.0f) {
+        const float VARIATION = 0.6f;  // a look or a rest lasts 70% to 130% of the style's seconds
+        _gazeAway = !_gazeAway && gaze.awaySeconds > 0.0f;
+        _gazeSide = randFloat() < 0.5f ? -1.0f : 1.0f;
+        _gazeTimer = (_gazeAway ? gaze.awaySeconds : gaze.lookSeconds) * (1.0f - 0.5f * VARIATION + VARIATION * randFloat());
+    }
+    glm::vec3 direction = glm::normalize(toSpot);
+    if (_gazeAway) {
+        const glm::quat orientation = getWorldOrientation();
+        const glm::quat aside = glm::angleAxis(glm::radians(gaze.restYaw * _gazeSide), orientation * IDENTITY_UP) *
+                                glm::angleAxis(glm::radians(gaze.restPitch), orientation * IDENTITY_RIGHT);
+        direction = aside * direction;
+    }
+    // a slow style turns the gaze by angle from the eyes, and its distance separately, so going from a face nearby
+    // to the far distance is a drift and not a swing
+    const float distance = glm::length(toSpot);
+    if (gaze.glanceSpeed >= 1.0f || !_gazeShownValid) {
+        _gazeShownDirection = direction;
+        _gazeShownDistance = distance;
+        _gazeShownValid = true;
+    } else {
+        const float NOMINAL_FRAME_RATE = 60.0f;
+        const float t = 1.0f - powf(1.0f - gaze.glanceSpeed, NOMINAL_FRAME_RATE * deltaTime);
+        const glm::vec3 mixed = glm::mix(_gazeShownDirection, direction, t);
+        if (glm::length(mixed) > EPSILON) {
+            _gazeShownDirection = glm::normalize(mixed);
+        }
+        _gazeShownDistance = glm::mix(_gazeShownDistance, distance, t);
+    }
+    return eyes + _gazeShownDirection * _gazeShownDistance;
+}
+
+// The head's share of the gaze style: it turns part of the way toward where the eyes look (headFollow), is held down
+// or up (headPitch), and a sleepy style dips and recovers (nodPeriod, nodDegrees).
+glm::vec3 MyAvatar::styleHeadAim(const glm::vec3& aimVector, float deltaTime) {
+    const GazeStyle& gaze = GazeStyle::named(getGazeStyle());
+    glm::vec3 aim = aimVector;
+    const float length = glm::length(aim);
+    if (length < EPSILON) {
+        return aim;
+    }
+    if (gaze.headFollow > 0.0f && !_lookAtTargetAvatar.expired()) {
+        // only toward someone: with nobody, the eyes rest beside the head's own facing, and following that would
+        // walk the head and the eyes off together
+        const glm::vec3 eyesAim = _eyesLookAtTarget.get() - getDefaultEyePosition();
+        if (glm::length(eyesAim) > EPSILON) {
+            aim = glm::normalize(glm::mix(aim / length, glm::normalize(eyesAim), gaze.headFollow)) * length;
+        }
+    }
+    float pitch = gaze.headPitch;
+    if (gaze.nodPeriod > 0.0f) {
+        _gazeNodPhase = fmodf(_gazeNodPhase + deltaTime / gaze.nodPeriod, 1.0f);
+        pitch -= gaze.nodDegrees * (0.5f - 0.5f * cosf(TWO_PI * _gazeNodPhase));  // a smooth dip and recovery
+    } else {
+        _gazeNodPhase = 0.0f;
+    }
+    if (pitch != 0.0f) {
+        aim = glm::angleAxis(glm::radians(pitch), getWorldOrientation() * IDENTITY_RIGHT) * aim;
+    }
+    return aim;
 }
 
 void MyAvatar::setHeadLookAt(const glm::vec3& lookAtTarget) {

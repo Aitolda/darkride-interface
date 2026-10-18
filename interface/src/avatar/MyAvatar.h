@@ -161,6 +161,10 @@ public:
      *     mixer rather than Interface clients. The result is unique among all avatars present in the domain at the time.
      * @property {boolean} lookAtSnappingEnabled=true - <code>true</code> if the avatar's eyes snap to look at another avatar's
      *     eyes when the other avatar is in the line of sight and also has <code>lookAtSnappingEnabled == true</code>.
+     * @property {string} gazeStyle="calm" - How the avatar's eyes behave, for everyone to see: <code>"calm"</code>,
+     *     <code>"excited"</code>, <code>"shy"</code>, <code>"sleepy"</code> or <code>"intent"</code>. A style sets how often
+     *     and how far the eyes dart, where they rest and how much they meet other people's eyes, what the head does with
+     *     them, and how the lids blink.
      * @property {string} skeletonModelURL - The avatar's FST file.
      * @property {AttachmentData[]} attachmentData - Information on the avatar's attachments.
      *     <p class="important">Deprecated: This property is deprecated and will be removed. Use avatar entities instead.</p>
@@ -757,6 +761,34 @@ public:
      * }, 3000);
      */
     Q_INVOKABLE void restoreHandAnimation(bool isLeft);
+
+    /**jsdoc
+     * Gets the avatar's menu: an imported avatar's menu, the parameters its menu and its animator use, each with its
+     * type, value and default, and the emotes its menu picks. All are empty when the avatar has none.
+     * @function MyAvatar.getAvatarMenu
+     * @returns {object} <code>{menu: {controls: [...]}, parameters: [{name, type, value, default, saved, synced,
+     *     builtin}], emotes: [{parameter, value, name, seated, loop, hold, own}]}</code>
+     */
+    Q_INVOKABLE QVariantMap getAvatarMenu() const;
+
+    /**jsdoc
+     * Sets one of the avatar's parameters (as the menu does), and the avatar follows: clothes shown or
+     * hidden, shape keys and bones set by its effects layer. Others see the change too, in worlds whose avatar
+     * mixer passes avatar menus on.
+     * @function MyAvatar.setAvatarParameter
+     * @param {string} name - The parameter's name.
+     * @param {number} value - Its value; a bool takes 0 or 1.
+     * @returns {boolean} <code>true</code> if the avatar has the parameter.
+     */
+    Q_INVOKABLE bool setAvatarParameter(const QString& name, float value);
+
+    /**jsdoc
+     * Gets one of the avatar's parameters.
+     * @function MyAvatar.getAvatarParameter
+     * @param {string} name - The parameter's name.
+     * @returns {number} Its value, 0 if the avatar has no such parameter.
+     */
+    Q_INVOKABLE float getAvatarParameter(const QString& name) const;
 
     /**jsdoc
      * Gets the current animation roles.
@@ -2725,6 +2757,7 @@ private:
 
     void simulate(float deltaTime, bool inView) override;
     void saveAvatarUrl();
+    void sendAvatarMenuParameters();
     virtual void render(RenderArgs* renderArgs) override;
     virtual bool shouldRenderHead(const RenderArgs* renderArgs) const override;
     void setShouldRenderLocally(bool shouldRender) { _shouldRender = shouldRender; setEnableMeshVisible(shouldRender); }
@@ -2770,6 +2803,8 @@ private:
     bool cameraInsideHead(const glm::vec3& cameraPosition) const;
 
     void updateEyeContactTarget(float deltaTime);
+    glm::vec3 restTheGaze(const glm::vec3& spot, float deltaTime);  // the gaze style's rests and glances
+    glm::vec3 styleHeadAim(const glm::vec3& aimVector, float deltaTime);  // its head lean, follow and nod
 
     // These are made private for MyAvatar so that you will use the "use" methods instead
     /**jsdoc
@@ -2832,10 +2867,21 @@ private:
     AvatarWeakPointer _lookAtTargetAvatar;
     glm::vec3 _targetAvatarPosition;
     bool _shouldRender { true };
+    quint64 _avatarMenuParametersSent { 0 };
     float _oculusYawOffset;
 
     eyeContactTarget _eyeContactTarget;
     float _eyeContactTargetTimer { 0.0f };
+    // the gaze style's rests and nods (restTheGaze, styleHeadAim)
+    glm::vec3 _gazeBase;  // the eyes' spot before the style's rest is added
+    QString _gazeStyleTimed;  // the style the looks and rests are timed for
+    bool _gazeAway { false };
+    float _gazeTimer { 0.0f };
+    float _gazeSide { 1.0f };
+    glm::vec3 _gazeShownDirection;
+    float _gazeShownDistance { 0.0f };
+    bool _gazeShownValid { false };
+    float _gazeNodPhase { 0.0f };
     ThreadSafeValueCache<glm::vec3> _eyesLookAtTarget { glm::vec3() };
     bool _scriptControlsEyesLookAt{ false };
     float _scriptEyesControlTimer{ 0.0f };

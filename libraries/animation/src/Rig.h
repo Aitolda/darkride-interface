@@ -27,6 +27,7 @@
 #include "SimpleMovingAverage.h"
 #include "AnimUtil.h"
 #include "Flow.h"
+#include "RotationConstraints.h"
 #include "AvatarConstants.h"
 
 class Rig;
@@ -230,6 +231,19 @@ public:
 
     void copyJointsIntoJointData(QVector<JointData>& jointDataVec) const;
     void copyJointsFromJointData(const QVector<JointData>& jointDataVec);
+
+    // Joint poses an avatar's menu sets (avatars-renderer's AvatarMenu): the parts each sets replace the
+    // animated pose's, after script overrides and before rotation constraints and flow. On other people's avatars only
+    // the scale is taken from here; their rotations and translations arrive in the joint data.
+    struct AvatarMenuPose {
+        bool hasTranslation { false };
+        bool hasRotation { false };
+        bool hasScale { false };
+        glm::vec3 translation;
+        glm::quat rotation;
+        glm::vec3 scale { 1.0f };
+    };
+    void setAvatarMenuPoses(const std::vector<std::pair<int, AvatarMenuPose>>& poses) { _avatarMenuPoses = poses; }
     void computeExternalPoses(const glm::mat4& modelOffsetMat);
 
     void computeAvatarBoundingCapsule(const HFMModel& hfmModel, float& radiusOut, float& heightOut, glm::vec3& offsetOut) const;
@@ -439,6 +453,8 @@ protected:
     NetworkAnimState _networkAnimState;
     HandAnimState _rightHandAnimState;
     HandAnimState _leftHandAnimState;
+    float _rightHandAnimAlpha { 0.0f };  // how far a hand's override shows over its other animation, fading in and out
+    float _leftHandAnimAlpha { 0.0f };
     std::map<QString, RoleAnimState> _roleAnimStates;
     int _evaluationCount{ 0 };
 
@@ -484,6 +500,9 @@ protected:
     SnapshotBlendPoseHelper _hipsBlendHelper;
     ControllerParameters _previousControllerParameters;
     Flow _internalFlow;
+    RotationConstraints _rotationConstraints;  // twist bones and the like, from the .fst
+    std::vector<std::pair<int, AvatarMenuPose>> _avatarMenuPoses;
+    void applyAvatarMenuPoses(AnimPoseVec& relativePoses, bool scaleOnly) const;
     Flow _networkFlow;
 };
 
