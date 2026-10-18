@@ -2,6 +2,7 @@
 	class="world-card"
 	[class.has-people]="people > 0"
 	[class.selected]="exploreService.chooserWorldId == world.id"
+	[class.hopping-target]="exploreService.hoppingWorldId == world.id"
 >
 	<div
 		class="thumbnail"
