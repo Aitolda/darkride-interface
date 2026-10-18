@@ -55,6 +55,7 @@ for i in {1..60}; do curl -s "localhost:$((PORT - 2))/nodes.json" | grep -q enti
 # one walled-off client, with a fresh cache
 RUN="$R/$MODE-$(date +%H%M%S)"
 mkdir -p "$RUN/config/Tivoli Cloud VR - dev" "$RUN/data" "$RUN/snaps" "$RUN/cache"
+# CLIENT_WRAPPER="<command and args>" runs the client under it, e.g. lldb --batch -o run -k "thread backtrace all" --
 # CARD=1: the loading screen's headset card on the desktop too, to see it in the snapshots
 CARD_SETTING=""
 [ -n "$CARD" ] && CARD_SETTING=", \"worldLoading/cardOnDesktop\": true"
@@ -69,7 +70,7 @@ if [ -n "$HOP" ]; then
 fi
 echo "client: $BIN  mode: $MODE  world: $WORLD  results: $RUN"
 XDG_CONFIG_HOME="$RUN/config" XDG_CACHE_HOME="$RUN/cache" TIVOLI_APP_DATA_DIR="$RUN/data" HIFI_METAVERSE_URL=https://vr.darkride.ai \
-    "$BIN" --allowMultipleInstances --url "$URL" --tokens "{}" --testScript "$TEST_SCRIPT" \
+    ${=CLIENT_WRAPPER} "$BIN" --allowMultipleInstances --url "$URL" --tokens "{}" --testScript "$TEST_SCRIPT" \
     --testResultsLocation "$RUN" > "$RUN/client.log" 2>&1 || true
 
 # the sandbox off again, by its pids

@@ -44,6 +44,13 @@
         if (finished) {
             return;
         }
+        // the old world gone (its physics or its connection dropped), then the new one connected with physics on
+        if (domainChanged && (!Window.isPhysicsEnabled() || !location.isConnected)) {
+            mark("leftOldWorld");
+        }
+        if (events.leftOldWorld !== undefined && location.isConnected && Window.isPhysicsEnabled()) {
+            mark("landed");
+        }
         var up = screenUp();
         if (up) {
             mark("screenUp");
@@ -58,13 +65,6 @@
             gaps++;       // up again after coming down
         }
         wasUp = up;
-        // the old world gone (its physics or its connection dropped), then the new one connected with physics on
-        if (domainChanged && (!Window.isPhysicsEnabled() || !location.isConnected)) {
-            mark("leftOldWorld");
-        }
-        if (events.leftOldWorld !== undefined && location.isConnected && Window.isPhysicsEnabled()) {
-            mark("landed");
-        }
         if (Window.getWorldLoading && Window.getWorldLoading().active) {   // only in clients with whole-world loading
             mark("wholeWorldLoading");
         }
