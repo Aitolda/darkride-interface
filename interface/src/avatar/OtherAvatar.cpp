@@ -88,25 +88,24 @@ void OtherAvatar::arrived() {
 
     const float scale = getTargetScale();
     const float height = silhouetteHeight(scale);
-    const glm::vec3 feet = silhouetteCentre(getWorldPosition(), scale) - glm::vec3(0.0f, 0.5f * height, 0.0f);
 
     EntityItemProperties properties;
     properties.setType(EntityTypes::ParticleEffect);
     properties.setName("Avatar Arrival " + getID().toString());
     properties.setIgnorePickIntersection(true);
-    properties.setPosition(feet + glm::vec3(0.0f, 0.05f * height, 0.0f));
+    // the same place and height as the silhouette it replaces
+    properties.setPosition(silhouetteCentre(getWorldPosition(), scale));
     properties.setTextures(PathUtils::resourcesUrl() + "images/avatar-arrival-sparkle.png");
-    properties.setMaxParticles(120);
-    properties.setLifespan(1.3f);
-    properties.setEmitRate(90.0f);
-    // from anywhere in a flat disc around the feet, upwards in a narrow cone, slowing as they fade
-    properties.setEmitDimensions(glm::vec3(0.5f, 0.05f, 0.5f) * scale);
+    properties.setMaxParticles(150);
+    properties.setLifespan(1.2f);
+    properties.setEmitRate(120.0f);
+    // from all through a column the size of the body (the emitter's z is up, its y is depth), drifting upward
+    properties.setEmitDimensions(glm::vec3(0.5f * scale, 0.3f * scale, 0.9f * height));
     properties.setEmitRadiusStart(0.0f);
-    properties.setPolarFinish(0.35f);
-    properties.setEmitSpeed(1.4f * scale);
-    properties.setSpeedSpread(0.4f * scale);
-    properties.setEmitAcceleration(glm::vec3(0.0f, -0.3f, 0.0f) * scale);
-    properties.setAccelerationSpread(glm::vec3(0.1f, 0.0f, 0.1f) * scale);
+    properties.setEmitSpeed(0.04f * scale);
+    properties.setSpeedSpread(0.03f * scale);
+    properties.setEmitAcceleration(glm::vec3(0.0f, 0.35f, 0.0f) * scale);
+    properties.setAccelerationSpread(glm::vec3(0.05f, 0.1f, 0.05f) * scale);
     properties.setParticleRadius(0.02f * scale);
     properties.setRadiusStart(0.03f * scale);
     properties.setRadiusFinish(0.0f);
