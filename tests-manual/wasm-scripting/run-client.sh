@@ -3,8 +3,11 @@
 # settings and data under results/<name>, a hard time limit, and every client of this checkout stopped before
 # and after. Prints the client's pid; the log is results/<name>/client.log.
 #   tests-manual/wasm-scripting/run-client.sh <name> <seconds> [client arguments...]
-# Environment: DARKRIDE_RUN_JS_ON_WASM=1 runs the JavaScript scripts on the WebAssembly engine.
+# Environment: DARKRIDE_RUN_JS_ON_WASM=1 runs the JavaScript scripts on the WebAssembly engine; HIFI_METAVERSE_URL
+# names the metaverse server (https://vr.darkride.ai unless given).
 set -e
+# The metaverse server the client signs in to and finds worlds on; the client's built-in default is out of date.
+export HIFI_METAVERSE_URL=${HIFI_METAVERSE_URL:-https://vr.darkride.ai}
 D=$(cd "$(dirname "$0")" && pwd)
 NAME=$1
 SECONDS_MAX=$2
