@@ -195,13 +195,19 @@
         print("vehicles.js: standing up from " + vehicleID);
     }
 
+    var HELM_REACH = 20;  // m from the vehicle's centre: farther, the helm is left
+
     function update(dt) {
         if (!seated) {
             return;
         }
-        var properties = Entities.getEntityProperties(seated.vehicleID, ["position", "rotation", "velocity", "vehicle"]);
-        if (!properties || !properties.position) {
-            stand();   // the vehicle is gone
+        var properties = Entities.getEntityProperties(seated.vehicleID, ["id", "position", "rotation", "velocity", "vehicle"]);
+        if (!properties || properties.id !== seated.vehicleID) {
+            stand();   // the vehicle is gone (a deleted entity's properties come back as defaults, a null id among them)
+            return;
+        }
+        if (seated.airship && Vec3.distance(MyAvatar.position, properties.position) > HELM_REACH) {
+            stand();   // at a helm without a seat, so whoever is taken away from it (a teleport) has left it
             return;
         }
         var front = Quat.getFront(properties.rotation);
