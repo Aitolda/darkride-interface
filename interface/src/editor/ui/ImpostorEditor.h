@@ -4,10 +4,12 @@
 //
 //  The Impostor section of an entity's Inspector (IMPOSTORS.md): what the entity's replacement card is, if it has
 //  one (when it was baked, the frames' size, the bounding sphere's radius, the three atlases as thumbnails: albedo,
-//  normal and depth, roughness and metallic), a size to bake at, Bake (the ImpostorBaker, as Build > Bake Impostor)
-//  and Remove (the entry taken off userData, one undo step), and the switch angle every card shares
-//  (LODManager.impostorAngleDeg; 0 is automatic, four times the LOD angle). The row's value is the entry's JSON,
-//  read and written through the "userData:impostor" property (PropertySpec).
+//  normal and depth, roughness and metallic), what the view shows of it now (the card, the model, or the two
+//  dissolving, and how big the sphere looks from the camera against the switch angle), a size to bake at, Bake (the
+//  ImpostorBaker, as Build > Bake Impostor) and Remove (the entry taken off userData, one undo step), the switch angle
+//  every card shares (LODManager.impostorAngleDeg; 0 is automatic, four times the LOD angle) and Tint Cards (every
+//  card drawn tinted blue, to tell it from its model; not saved). The row's value is the entry's JSON, read and
+//  written through the "userData:impostor" property (PropertySpec).
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -23,8 +25,10 @@
 
 #include "PropertyEditors.h"
 
+class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QTimer;
 class QNetworkReply;
 class QPushButton;
 
@@ -49,8 +53,13 @@ private:
     void bake();
     void remove();
     void showAtlas(Atlas& atlas, const QString& url);
+    // the line saying what the view shows of the entity now, from its card's switch
+    void showState();
 
     QLabel* _summary { nullptr };
+    QLabel* _state { nullptr };
+    QTimer* _stateTimer { nullptr };
+    QCheckBox* _tint { nullptr };
     Atlas _albedo;
     Atlas _normal;
     Atlas _material;

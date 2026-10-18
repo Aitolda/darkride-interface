@@ -113,21 +113,35 @@ bool inFrame(vec2 uv) {
 }
 
 // Whether a frame sees a surface along its axis through the point, and where: the height of that surface along
-// the frame's backward axis (the depth is 0 at the sphere's near face, 1 at the far face). The nearest texel of the
-// first mip, unblended: a filtered read at the edge of a thin surface (a table top is two texels thick seen from the
-// side) mixes in the empty neighbour's far-face depth and would put the surface short of where it is.
+// the frame's backward axis (the depth is 0 at the sphere's near face, 1 at the far face). The four texels of the
+// first mip around the point, read together (textureGather: the coverage from the albedo's alpha, the depth from
+// the normal atlas's alpha), unblended: the point counts as covered where any of the four is, at the depth of the
+// front-most covered one. That widens each frame's outline by half a texel, which a thin plate seen edge-on needs:
+// the school chair's backrest is a curved plate one or two texels thick from the side, and the nearest single texel
+// put many points on its face just outside that thin profile, which showed as see-through speckles and ragged
+// edges on the card (2026-10-18). A filtered read would mix the empty neighbours' far-face depth into a thin
+// surface's edge and put it short of where it is; the front-most covered depth does not. The footprint is kept
+// inside the frame (texel centres half a texel to one texel in from its edges), so a neighbouring frame's border
+// never lends its coverage. (Measured against the nearest texel for the march with this widening only for the
+// parallax hits: the table read 7.5 % bright at 2.2 m with holes at its edges, since the hull and the colour read
+// must agree on the outline; widened everywhere, a thin tube is a texel thicker instead, which is the trade taken.)
 // Straight-line code throughout the hull, no early returns, breaks or switches inside loops: the macOS GLSL compiler
 // mishandled the control flow the cross-compiler made of those (the first build's hull said "inside" everywhere).
 bool frameSurface(int frame, vec3 point, float radius, out float height) {
     vec2 uv = frameUV(frame, point, radius);
     bool within = inFrame(uv);
-    vec2 at = atlasUV(frame, clamp(uv, 0.0, 1.0));
-    ivec2 albedoSize = textureSize(albedoAtlas, 0);
-    ivec2 albedoTexel = ivec2(clamp(at * vec2(albedoSize), vec2(0.0), vec2(albedoSize) - 1.0));
-    ivec2 normalSize = textureSize(normalAtlas, 0);
-    ivec2 normalTexel = ivec2(clamp(at * vec2(normalSize), vec2(0.0), vec2(normalSize) - 1.0));
-    bool covered = within && (texelFetch(albedoAtlas, albedoTexel, 0).a >= COVERED);
-    float depth = texelFetch(normalAtlas, normalTexel, 0).a;
+    float frameTexels = params.material.z;
+    // the frame's texel coordinates in the atlas's orientation (rows run down), kept where the 2 x 2 footprint
+    // (the texel below the coordinate's centre and the next one) stays inside the frame
+    vec2 texelInFrame = vec2(uv.x, 1.0 - uv.y) * frameTexels;
+    texelInFrame = clamp(texelInFrame, vec2(0.5), vec2(frameTexels - 1.0));
+    vec2 at = (vec2(float(frame % 3), float(frame / 3)) * frameTexels + texelInFrame) / (vec2(3.0, 2.0) * frameTexels);
+    vec4 coverage = textureGather(albedoAtlas, at, 3);
+    vec4 depths = textureGather(normalAtlas, at, 3);
+    vec4 hits = step(vec4(COVERED), coverage);
+    vec4 nearest = mix(vec4(1.0), depths, hits);
+    float depth = min(min(nearest.x, nearest.y), min(nearest.z, nearest.w));
+    bool covered = within && (hits.x + hits.y + hits.z + hits.w > 0.0);
     height = covered ? radius * (1.0 - 2.0 * depth) : -radius;
     return covered;
 }
@@ -200,8 +214,10 @@ void main(void) {
     //   7: the normal atlas's colour at the first facing frame's coordinates
     //   8: the atlases' sizes over 1024 (red, green: the albedo's; blue: the normal's width)
     //   9: the card's point in the subject's frame over the radius
+    //   10: not a debug view: the card drawn as it is, its albedo tinted blue (the Inspector's Tint Cards), so a card
+    //       is told from its model at a glance
     int debugMode = int(params.flags.x + 0.5);
-    if (debugMode > 0) {
+    if (debugMode > 0 && debugMode < 10) {
         vec3 debugColor = vec3(0.0);
         if (debugMode >= 1 && debugMode <= 3) {
             int frame = frames[debugMode - 1];
@@ -344,8 +360,17 @@ void main(void) {
         float height;
         bool covered = frameSurface(frame, hit, radius, height);
         bool seen = covered && abs(dot(hit, frameBackward(frame)) - height) <= SEEN_TEXELS * texel;
-        float shareAny = (weight >= LEAST_WEIGHT && inFrame(uv)) ? weight * step(COVERED, color.a) : 0.0;
+        // the frame covers the hit where the nearest texel of its first mip does: the outline the frames' pictures
+        // draw, without the hull's half-texel widening (frameSurface) or the filter's (a filtered alpha passes half
+        // a texel beyond the edge, which drew a fringe round the chair's back and lumps on the table's legs)
+        ivec2 albedoSize = textureSize(albedoAtlas, 0);
+        ivec2 nearestTexel = ivec2(clamp(at * vec2(albedoSize), vec2(0.0), vec2(albedoSize) - 1.0));
+        float coveredHere = step(COVERED, texelFetch(albedoAtlas, nearestTexel, 0).a);
+        float shareAny = (weight >= LEAST_WEIGHT && inFrame(uv)) ? weight * coveredHere : 0.0;
         float share = seen ? shareAny : 0.0;
+        // the atlas's colour is its coverage times the colour (an empty texel is black), so a filtered read at an
+        // edge or a far mip mixes black in: divided by the filtered coverage, it is the covered texels' own colour
+        color.rgb = color.rgb / max(color.a, 1.0e-3);
         albedo += color.rgb * share;
         normal += frameNormal * share;
         surfaceSum += frameSurfaceValues * share;
@@ -364,6 +389,7 @@ void main(void) {
         discard;
     }
     albedo /= total;
+    albedo = (debugMode == 10) ? mix(albedo, vec3(0.1, 0.45, 1.0), 0.6) : albedo;
     float roughness = clamp(surfaceSum.x / total, 0.0, 1.0);
     float metallic = clamp(surfaceSum.y / total, 0.0, 1.0);
     float normalLength = length(normal);

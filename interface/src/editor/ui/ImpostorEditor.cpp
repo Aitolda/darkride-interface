@@ -14,6 +14,8 @@
 #include <QtCore/QUrl>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
+#include <QtCore/QTimer>
+#include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QHBoxLayout>
@@ -22,7 +24,11 @@
 #include <QtWidgets/QVBoxLayout>
 
 #include <DependencyManager.h>
+#include <EntityTree.h>
+#include <EntityTreeRenderer.h>
+#include <ImpostorSwitch.h>
 #include <NetworkAccessManager.h>
+#include <RenderableEntityItem.h>
 
 #include "../ImpostorBaker.h"
 #include "../../LODManager.h"
@@ -32,6 +38,8 @@ namespace {
     const int ATLAS_HEIGHT = 60;
     const int SIZES[] = { 128, 256, 512, 1024 };
     const int DEFAULT_SIZE_INDEX = 1;
+    const int STATE_REFRESH_MS = 250;
+    const int TINT_DEBUG_VIEW = 10;   // impostor.slf: the card drawn as it is, tinted blue
 }
 
 ImpostorEditor::ImpostorEditor(const PropertySpec& spec, QWidget* parent) : PropertyEditor(spec, parent) {
@@ -42,6 +50,10 @@ ImpostorEditor::ImpostorEditor(const PropertySpec& spec, QWidget* parent) : Prop
     _summary = new QLabel(this);
     _summary->setWordWrap(true);
     layout->addWidget(_summary);
+    _state = new QLabel(this);
+    _state->setWordWrap(true);
+    _state->setToolTip("What the view draws of this entity now. The card shows where its bounding sphere looks smaller than the switch angle; the change is a short dissolve.");
+    layout->addWidget(_state);
 
     auto atlases = new QHBoxLayout();
     atlases->setSpacing(4);
@@ -92,6 +104,9 @@ ImpostorEditor::ImpostorEditor(const PropertySpec& spec, QWidget* parent) : Prop
     angleRow->addWidget(_angle);
     angleRow->addStretch();
     layout->addLayout(angleRow);
+    _tint = new QCheckBox("Tint Cards", this);
+    _tint->setToolTip("Draws every card tinted blue, so that a card is told from its model at a glance. Not saved.");
+    layout->addWidget(_tint);
 
     auto lodManager = DependencyManager::get<LODManager>();
     if (lodManager) {
@@ -102,6 +117,18 @@ ImpostorEditor::ImpostorEditor(const PropertySpec& spec, QWidget* parent) : Prop
             lodManager->setImpostorAngleDeg((float)value);
         }
     });
+    if (lodManager) {
+        _tint->setChecked(lodManager->getImpostorDebug() == TINT_DEBUG_VIEW);
+    }
+    connect(_tint, &QCheckBox::toggled, this, [](bool on) {
+        if (auto lodManager = DependencyManager::get<LODManager>()) {
+            lodManager->setImpostorDebug(on ? TINT_DEBUG_VIEW : 0);
+        }
+    });
+    _stateTimer = new QTimer(this);
+    _stateTimer->setInterval(STATE_REFRESH_MS);
+    connect(_stateTimer, &QTimer::timeout, this, &ImpostorEditor::showState);
+    _stateTimer->start();
     connect(_bake, &QPushButton::clicked, this, &ImpostorEditor::bake);
     connect(_remove, &QPushButton::clicked, this, &ImpostorEditor::remove);
     auto baker = DependencyManager::get<ImpostorBaker>();
@@ -123,14 +150,23 @@ QWidget* ImpostorEditor::createLabel(QWidget* parent) {
 }
 
 void ImpostorEditor::setValue(const QVariant& value, bool mixed) {
+    bool changed = value.toString() != _entryText;
     _entryText = value.toString();
     _mixed = mixed;
     QJsonObject entry = QJsonDocument::fromJson(_entryText.toUtf8()).object();
     bool has = !mixed && !entry.isEmpty();
+    if (changed && has) {
+        // a new entry: the size menu offers its frame size again (the Inspector refreshes the value every moment,
+        // so only a new entry moves the menu, never the person's own choice)
+        int index = _size->findData(entry.value("size").toInt(256));
+        if (index >= 0) {
+            _size->setCurrentIndex(index);
+        }
+    }
     if (mixed) {
         _summary->setText("—");
     } else if (!has) {
-        _summary->setText(_baking.isEmpty() ? "No card: the models draw at every distance" : "Baking…");
+        _summary->setText(_baking.isEmpty() ? "No card of its own" : "Baking…");
     } else {
         QString baked = entry.value("baked").toString();
         QDateTime when = QDateTime::fromString(baked, Qt::ISODate);
@@ -147,6 +183,37 @@ void ImpostorEditor::setValue(const QVariant& value, bool mixed) {
     showAtlas(_material, has ? entry.value("material").toString() : QString());
     _remove->setEnabled(has);
     _bake->setEnabled(!_ids.isEmpty() && _baking.isEmpty());
+}
+
+void ImpostorEditor::showState() {
+    if (!isVisible()) {
+        return;
+    }
+    if (_ids.size() != 1 || _mixed) {
+        _state->setText(QString());
+        return;
+    }
+    // the entity's own card's switch, or the nearest ancestor's: a model under a group's card follows that card
+    auto treeRenderer = DependencyManager::get<EntityTreeRenderer>();
+    auto tree = treeRenderer ? treeRenderer->getTree() : nullptr;
+    EntityItemPointer entity = tree ? tree->findEntityByID(_ids.first()) : nullptr;
+    auto renderer = treeRenderer ? treeRenderer->renderableForEntityId(_ids.first()) : nullptr;
+    auto ownSwitch = renderer ? renderer->getImpostorSwitch() : nullptr;
+    auto impostorSwitch = ownSwitch ? ownSwitch : (entity ? render::entities::EntityRenderer::findImpostorSwitch(entity) : nullptr);
+    if (!impostorSwitch) {
+        _state->setText(QString());
+        return;
+    }
+    QString whose = ownSwitch ? QString() : QStringLiteral(" (its parent's card)");
+    auto lodManager = DependencyManager::get<LODManager>();
+    float switchAngle = lodManager ? lodManager->getImpostorAngleDeg() : 0.0f;
+    float share = impostorSwitch->getShownShare();
+    float angle = impostorSwitch->getShownAngleDeg();
+    QString now = !impostorSwitch->isCardReady() ? QStringLiteral("the model (the card's pictures are loading)")
+        : (share >= 1.0f ? QStringLiteral("the card") : (share <= 0.0f ? QStringLiteral("the model") : QStringLiteral("the two, dissolving")));
+    QString looks = (angle >= 180.0f) ? QStringLiteral("the camera is inside its sphere")
+        : QString("it looks %1° across").arg(angle, 0, 'f', angle < 10.0f ? 2 : 1);
+    _state->setText(QString("Showing %1%2: %3, the card shows below %4°").arg(now, whose, looks).arg(switchAngle, 0, 'f', 1));
 }
 
 void ImpostorEditor::bake() {
@@ -199,6 +266,7 @@ void ImpostorEditor::showAtlas(Atlas& atlas, const QString& url) {
     }
     atlas.view->setText(QStringLiteral("…"));
     QNetworkRequest request(address);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);   // the files host redirects to the CDN
     atlas.reply = NetworkAccessManager::getInstance().get(request);
     QPointer<QNetworkReply> reply = atlas.reply;
     QLabel* view = atlas.view;

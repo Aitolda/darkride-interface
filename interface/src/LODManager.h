@@ -115,8 +115,13 @@ class AABox;
  *     entity's AA box.
  *
  * @property {number} impostorAngleDeg - The angular size (degrees) below which an entity with an impostor card draws the card
- *     instead of its model, down to <code>lodAngleDeg</code>. <code>0</code> (the default) means four times <code>lodAngleDeg</code>;
- *     reads back the angle in use.
+ *     instead of its model, down to <code>lodAngleDeg</code>. <code>0</code> (the default) means four times <code>lodAngleDeg</code>
+ *     and reads back as <code>0</code>, so that a script can save and restore it.
+ * @property {number} impostorAngleInEffectDeg - The impostor angle in use (degrees): <code>impostorAngleDeg</code>, or four
+ *     times <code>lodAngleDeg</code> while that is <code>0</code>. <em>Read-only.</em>
+ * @property {number} impostorDebug - The impostor card's debug view: <code>0</code> draws the cards as they are,
+ *     <code>10</code> tints them blue (the Inspector's Tint Cards), <code>1</code> to <code>9</code> paint what the card's
+ *     shader reads. Not saved.
  * @property {number} pidKp - <em>Not used.</em>
  * @property {number} pidKi - <em>Not used.</em>
  * @property {number} pidKd - <em>Not used.</em>
@@ -152,7 +157,8 @@ class LODManager : public QObject, public Dependency {
         Q_PROPERTY(float lodTargetFPS READ getLODTargetFPS)
 
         Q_PROPERTY(float lodAngleDeg READ getLODAngleDeg WRITE setLODAngleDeg)
-        Q_PROPERTY(float impostorAngleDeg READ getImpostorAngleDeg WRITE setImpostorAngleDeg)
+        Q_PROPERTY(float impostorAngleDeg READ getImpostorAngleSetting WRITE setImpostorAngleDeg)
+        Q_PROPERTY(float impostorAngleInEffectDeg READ getImpostorAngleDeg)
         Q_PROPERTY(int impostorDebug READ getImpostorDebug WRITE setImpostorDebug)
         Q_PROPERTY(float impostorCrossfade READ getImpostorCrossfade WRITE setImpostorCrossfade)
 

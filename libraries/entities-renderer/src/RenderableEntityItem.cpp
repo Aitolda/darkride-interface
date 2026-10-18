@@ -423,6 +423,7 @@ void EntityRenderer::doRenderUpdateSynchronous(const ScenePointer& scene,
                                                Transaction& transaction,
                                                const EntityItemPointer& entity) {
     DETAILED_PROFILE_RANGE(simulation_physics, __FUNCTION__);
+    const bool wasVisible = _visible;
     withWriteLock([&] {
         auto transparent = isTransparent();
         auto fading = isFading();
@@ -462,7 +463,32 @@ void EntityRenderer::doRenderUpdateSynchronous(const ScenePointer& scene,
         entity->setNeedsRenderUpdate(hasChanged);
     });
 
+    // A group's card shows while any of its Model children is visible (impostorCardVisible), which the group's own
+    // update decides: a model that was shown or hidden (its visible flag, locally, by zone culling) asks the nearest
+    // ancestor with a card to update, or the card would stay up with its models hidden
+    if (wasVisible != _visible && entity->getType() == EntityTypes::Model) {
+        updateImpostorAncestor(entity);
+    }
     updateImpostorCard(scene, transaction, entity);
+}
+
+void EntityRenderer::updateImpostorAncestor(const EntityItemPointer& entity) {
+    auto entityTreeRenderer = DependencyManager::get<EntityTreeRenderer>();
+    if (!entityTreeRenderer || !entity) {
+        return;
+    }
+    const int MAX_DEPTH = 16;
+    bool success = false;
+    SpatiallyNestablePointer nestable = entity->getParentPointer(success);
+    for (int depth = 0; success && nestable && depth < MAX_DEPTH; depth++) {
+        auto item = std::dynamic_pointer_cast<EntityItem>(nestable);
+        auto renderer = item ? entityTreeRenderer->renderableForEntityId(item->getID()) : nullptr;
+        if (renderer && renderer->getImpostorSwitch()) {
+            entityTreeRenderer->onEntityChanged(item->getID());
+            return;
+        }
+        nestable = nestable->getParentPointer(success);
+    }
 }
 
 // The impostor card (IMPOSTORS.md 2.3): a second render item that stands in for the entity's models at a distance,

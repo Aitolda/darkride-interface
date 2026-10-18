@@ -77,6 +77,8 @@ public:
     // the switch an entity's models follow: its own card's, or the nearest ancestor's (a group's card, Unity's empty
     // parent with Model children, stands in for its children's models); null when none has a card
     static std::shared_ptr<ImpostorSwitch> findImpostorSwitch(const EntityItemPointer& entity);
+    // asks the nearest ancestor with a card to update (its card's visibility follows its Model descendants')
+    static void updateImpostorAncestor(const EntityItemPointer& entity);
 
     enum ZoneCullingState {
         ZoneCull_Inactive,

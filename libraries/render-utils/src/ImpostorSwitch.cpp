@@ -57,6 +57,8 @@ ImpostorSwitch::View ImpostorSwitch::evaluate(const RenderArgs* args) {
                 glm::vec3 toCamera = args->getViewFrustum().getPosition() - _center;
                 float distanceSq = glm::dot(toCamera, toCamera);
                 float radiusSq = _radius * _radius;
+                _shownAngleDeg.store(distanceSq > radiusSq ? glm::degrees(2.0f * atanf(_radius / sqrtf(distanceSq))) : 180.0f,
+                                     std::memory_order_relaxed);
                 if (distanceSq <= radiusSq) {
                     target = false;
                 } else if (_mainViewShowsCard) {
@@ -80,6 +82,7 @@ ImpostorSwitch::View ImpostorSwitch::evaluate(const RenderArgs* args) {
                 float t = (float)(now - _fadeStart) / (CROSSFADE_SECONDS * (float)USECS_PER_SECOND);
                 _share = (t >= 1.0f) ? goal : glm::mix(_fadeFrom, goal, glm::max(t, 0.0f));
             }
+            _shownShare.store(_share, std::memory_order_relaxed);
         }
         // the shadow pass takes the main view's state as it stands (its own camera is the light's)
         view.share = _share;

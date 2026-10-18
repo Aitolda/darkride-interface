@@ -20,6 +20,7 @@
 #ifndef hifi_ImpostorSwitch_h
 #define hifi_ImpostorSwitch_h
 
+#include <atomic>
 #include <memory>
 
 #include <glm/glm.hpp>
@@ -40,8 +41,8 @@ public:
     float getRadius() const { return _radius; }
 
     // both atlases loaded: until then the model draws whatever the angle
-    void setCardReady(bool ready) { _cardReady = ready; }
-    bool isCardReady() const { return _cardReady; }
+    void setCardReady(bool ready) { _cardReady.store(ready, std::memory_order_relaxed); }
+    bool isCardReady() const { return _cardReady.load(std::memory_order_relaxed); }
 
     // What this view draws of the entity: its card, its model, or during the main view's dissolve both, each clipped
     // to its share (share: the card's, 0 none of it, 1 all of it).
@@ -53,6 +54,10 @@ public:
     View evaluate(const RenderArgs* args);
     // the main view's dissolve is under way: the model's parts take their fade pipeline for it
     bool isFading() const { return _share > 0.0f && _share < 1.0f; }
+    // what the main view drew last, for the Inspector (any thread): the card's share (0 the model, 1 the card) and the
+    // sphere's angular size from the camera, degrees (180 from inside)
+    float getShownShare() const { return _shownShare.load(std::memory_order_relaxed); }
+    float getShownAngleDeg() const { return _shownAngleDeg.load(std::memory_order_relaxed); }
     // the dissolve's parameters for this view (FadeObjectParams: the LOD category, the threshold the card's share),
     // to bind at RENDER_UTILS_BUFFER_FADE_OBJECT_PARAMS
     const gpu::BufferView& fadeParams(const RenderArgs* args);
@@ -62,7 +67,7 @@ private:
 
     glm::vec3 _center { 0.0f };
     float _radius { 0.0f };
-    bool _cardReady { false };
+    std::atomic<bool> _cardReady { false };   // the render thread writes it, the Inspector reads it
     bool _mainViewShowsCard { false };   // the hysteresis state: what the main view's dissolve goes to
     float _share { 0.0f };               // the card's share of the main view's dissolve
     float _fadeFrom { 0.0f };
@@ -71,6 +76,8 @@ private:
     gpu::StructBuffer<FadeObjectParams> _plainParams;   // the other views': no dissolve
     float _mainParamsShare { -1.0f };
     bool _plainParamsSet { false };
+    std::atomic<float> _shownShare { 0.0f };
+    std::atomic<float> _shownAngleDeg { 0.0f };
 };
 
 using ImpostorSwitchPointer = std::shared_ptr<ImpostorSwitch>;
