@@ -5,16 +5,23 @@
 //
 //  The loading screen of whole-world loading. A domain's owner can ask (the domain's settings, Loading) that visitors
 //  see the world only once all of it has arrived and its models and textures have loaded. While the client loads it
-//  (Window.getWorldLoading().active), this puts a dark sphere round the camera and a card in front of it: the world's
+//  (loadingState().active), this puts a dark sphere round the camera and a card in front of it: the world's
 //  name, how much has arrived and loaded, a progress bar, the time left before the screen lifts anyway, and a
 //  "Show me now" button (or Enter) that lifts it at once. Everything here is local entities that follow the camera,
 //  so it works on a desktop and in a headset alike.
+//
+//  A hop takes the screen too. A script that sends the avatar to another world (Explore's Hop) says so the moment the
+//  hop starts, on the local message channel "Darkride-Hop": {"type": "start", "world": "<the world's name>"}, and
+//  {"type": "cancel"} should it fail before the client goes. The screen comes up at once ("Hopping to <world>") and
+//  stays through the world's start, the connection and the arrival: until the new world's physics is on (the avatar
+//  can move), or, when that world loads whole, until its loading is done. A hop that has not arrived after 90 s, or a
+//  refused connection, lifts it.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
 //
 
-/* global Script, Entities, MyAvatar, Window, Controller, location */
+/* global Script, Entities, MyAvatar, Window, Controller, Messages, location */
 
 (function () {
     // Darkride's colours (the website's --dr-* tokens)
@@ -38,10 +45,22 @@
     var SPHERE_SIZE = 6.0;       // hides everything farther than 3 m
     var TEXT_INTERVAL = 100;     // ms between updates of the card's text
 
+    var HOP_CHANNEL = "Darkride-Hop";
+    var HOP_TIME_LIMIT = 90;     // s: a hop that never arrives lifts the screen anyway
+
+    // whole-world loading (Window.getWorldLoading and the rest) is in clients built with it; without it, hops only
+    var NOT_LOADING = { active: false };
+
     var ids = {};                // the screen's entities while it is up
+    var hop = null;              // a hop under way: { world, started, arrivedAt, physicsWentOff }
+    var shownTitle = "";
     var textTimer = null;
     var shownProgress = 0.0;
     var peakWaiting = 0;
+
+    function loadingState() {
+        return Window.getWorldLoading ? Window.getWorldLoading() : NOT_LOADING;
+    }
 
     function worldName() {
         return location.placename || location.hostname || "this world";
@@ -121,8 +140,9 @@
             collisionless: true,
             drawInFront: true
         }, "local");
+        shownTitle = hop && !loadingState().active ? "Hopping to " + hop.world : "Loading " + worldName();
         ids.title = text("title", {
-            text: "Loading " + worldName(),
+            text: shownTitle,
             lineHeight: SCALE * 0.085,
             localPosition: card(0.10, 0.30, 0.006),
             dimensions: card(CARD_WIDTH - 0.44, 0.12, 0.01)
@@ -193,19 +213,53 @@
         return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     }
 
+    function endHop() {
+        hop = null;
+        if (!loadingState().active) {
+            hide();
+        }
+    }
+
+    function setTitle(title) {
+        if (title !== shownTitle) {
+            shownTitle = title;
+            Entities.editEntity(ids.title, { text: title });
+        }
+    }
+
     function updateCard() {
-        var state = Window.getWorldLoading();
-        if (!state.active) {
+        var state = loadingState();
+        var progress, status, countdown = "";
+        if (!state.active && hop) {
+            // on the way: the world starting, the connection, then the arrival until the avatar can move
+            var now = Date.now();
+            if (hop.arrivedAt && !Window.isPhysicsEnabled()) {
+                hop.physicsWentOff = true;
+            }
+            if ((hop.physicsWentOff && Window.isPhysicsEnabled()) || now - hop.started > HOP_TIME_LIMIT * 1000) {
+                endHop();
+                return;
+            }
+            setTitle("Hopping to " + hop.world);
+            if (!hop.arrivedAt) {
+                progress = 0.08 * (1.0 - Math.exp(-(now - hop.started) / 8000));
+                status = "Starting the world";
+            } else {
+                progress = 0.08 + 0.07 * (1.0 - Math.exp(-(now - hop.arrivedAt) / 2000));
+                status = "Arriving";
+            }
+        } else if (!state.active) {
             hide();
             return;
-        }
-        var progress, status;
-        if (!state.serverDone) {
+        } else if (!state.serverDone) {
+            setTitle("Loading " + worldName());
             // the total is not known until the entity server has sent everything: creep towards the first part
             progress = 0.15 * (1.0 - Math.exp(-state.received / 500.0));
             status = state.received > 0 ? "Receiving the world: " + formatCount(state.received) + " things so far" :
                 "Waiting for the world";
+            countdown = "Showing the world anyway in " + Math.ceil(state.secondsLeft) + " s";
         } else {
+            setTitle("Loading " + worldName());
             // what is still loading near the arrival (the farther ones count as ready), against the most that ever
             // waited, so the bar moves while the last models load rather than resting at 99 %
             var waiting = Math.max(0, state.received - state.ready);
@@ -213,6 +267,7 @@
             progress = 0.15 + 0.85 * (1 - waiting / peakWaiting);
             status = waiting > 0 ? "Loading models and textures: " + formatCount(waiting) + " still to come" :
                 "Settling textures";
+            countdown = "Showing the world anyway in " + Math.ceil(state.secondsLeft) + " s";
         }
         // never backwards, and eased so a jump in the counts does not jerk the bar
         var target = Math.max(shownProgress, Math.min(progress, 1.0));
@@ -224,22 +279,60 @@
             dimensions: card(fillWidth, BAR_HEIGHT, 0.01)
         });
         Entities.editEntity(ids.status, { text: status });
-        Entities.editEntity(ids.countdown, {
-            text: "Showing the world anyway in " + Math.ceil(state.secondsLeft) + " s"
-        });
+        Entities.editEntity(ids.countdown, { text: countdown });
+    }
+
+    // "Show me now": the world now, if it is loading; on the way, the screen away
+    function showNow() {
+        if (loadingState().active) {
+            Window.showWorldNow();
+        } else if (hop) {
+            endHop();
+        }
     }
 
     function onWorldLoadingChanged(loading) {
         if (loading) {
             show();
         } else {
+            hop = null;   // a whole-world arrival is the end of the hop
             hide();
+        }
+    }
+
+    function onHopMessage(channel, message, sender, localOnly) {
+        if (channel !== HOP_CHANNEL || !localOnly) {
+            return;
+        }
+        var data;
+        try {
+            data = JSON.parse(message);
+        } catch (e) {
+            return;
+        }
+        if (data.type === "start") {
+            hop = { world: String(data.world || "another world"), started: Date.now(), arrivedAt: 0, physicsWentOff: false };
+            show();
+        } else if (data.type === "cancel" && hop) {
+            endHop();
+        }
+    }
+
+    function onDomainChanged() {
+        if (hop && !hop.arrivedAt) {
+            hop.arrivedAt = Date.now();
+        }
+    }
+
+    function onDomainConnectionRefused() {
+        if (hop) {
+            endHop();
         }
     }
 
     function onMousePress(entityID, event) {
         if (ids.button && entityID === ids.button && event.isPrimaryButton) {
-            Window.showWorldNow();
+            showNow();
         }
     }
 
@@ -257,24 +350,36 @@
 
     function onKeyPress(event) {
         if (ids.card && (event.key === 16777220 || event.key === 16777221)) {  // Return, Enter
-            Window.showWorldNow();
+            showNow();
         }
     }
 
-    Window.worldLoadingChanged.connect(onWorldLoadingChanged);
+    if (Window.worldLoadingChanged) {
+        Window.worldLoadingChanged.connect(onWorldLoadingChanged);
+    }
+    Window.domainChanged.connect(onDomainChanged);
+    Window.domainConnectionRefused.connect(onDomainConnectionRefused);
+    Messages.subscribe(HOP_CHANNEL);
+    Messages.messageReceived.connect(onHopMessage);
     Entities.mousePressOnEntity.connect(onMousePress);
     Entities.hoverEnterEntity.connect(onHoverEnter);
     Entities.hoverLeaveEntity.connect(onHoverLeave);
     Controller.keyPressEvent.connect(onKeyPress);
 
     // loading may already be under way when this script starts
-    if (Window.getWorldLoading().active) {
+    if (loadingState().active) {
         show();
     }
 
     Script.scriptEnding.connect(function () {
         hide();
-        Window.worldLoadingChanged.disconnect(onWorldLoadingChanged);
+        if (Window.worldLoadingChanged) {
+            Window.worldLoadingChanged.disconnect(onWorldLoadingChanged);
+        }
+        Window.domainChanged.disconnect(onDomainChanged);
+        Window.domainConnectionRefused.disconnect(onDomainConnectionRefused);
+        Messages.messageReceived.disconnect(onHopMessage);
+        Messages.unsubscribe(HOP_CHANNEL);
         Entities.mousePressOnEntity.disconnect(onMousePress);
         Entities.hoverEnterEntity.disconnect(onHoverEnter);
         Entities.hoverLeaveEntity.disconnect(onHoverLeave);

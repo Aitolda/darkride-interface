@@ -1,7 +1,7 @@
 // included scripts
 [
 	"system/request-service.js", // some http request dependancy thing
-	"system/worldLoading.js", // the loading screen when a domain asks for the whole world first
+	"system/worldLoading.js", // the loading screen: a hop to another world, and a world that loads whole first
 	// "system/progress.js", // progress bar at the bottom, to be rewritten
 	// "system/away.js",
 	"system/audio.js",

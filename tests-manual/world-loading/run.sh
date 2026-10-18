@@ -3,7 +3,9 @@
 # screen with --tokens "{}", so the arrival is timed from the connection):
 #   tests-manual/world-loading/run.sh <build dir> <results dir> <whole|progressive> [world dir] [skip after s] [udp port]
 # LOADING_RADIUS=<metres> sets the domain's loading.radius (default 100; 0 waits for every model in the world), and
-# LOADING_TIME_LIMIT=<seconds> its loading.time_limit (default 60).
+# LOADING_TIME_LIMIT=<seconds> its loading.time_limit (default 60). HOP=1 arrives by a hop instead, as Explore makes
+# one (hop.js): the client starts in a file world, says on "Darkride-Hop" that a hop has started, and goes to the
+# domain 3 s later; the loading screen must cover the whole way.
 # The world dir has the snapshot layout of instances/tivoli-instance.sh (models.json.gz, config.json with the spawn
 # point, assets/map.json and assets/files/<sha256>); the default is the Tivoli Town copy in ~/tivoli-test-worlds.
 # The sandbox ("loading", ~/tivoli-sandboxes/loading) gets a fresh copy of the world and the domain's loading
@@ -55,9 +57,16 @@ RUN="$R/$MODE-$(date +%H%M%S)"
 mkdir -p "$RUN/config/Tivoli Cloud VR - dev" "$RUN/data" "$RUN/snaps" "$RUN/cache"
 echo "{\"snapshotsLocation\": \"$RUN/snaps\"}" > "$RUN/config/Tivoli Cloud VR - dev/Interface.json"
 { echo "var ARRIVAL_SKIP_AFTER = $SKIP;"; cat "$D/arrival.js"; } > "$RUN/arrival.js"
+URL="hifi://localhost:$PORT"
+TEST_SCRIPT="$RUN/arrival.js"
+if [ -n "$HOP" ]; then
+    { echo "var HOP_URL = \"hifi://localhost:$PORT\";"; cat "$D/hop.js"; } > "$RUN/hop.js"
+    URL="file://$D/../physics-baseline/world.json"
+    TEST_SCRIPT="$RUN/hop.js"
+fi
 echo "client: $BIN  mode: $MODE  world: $WORLD  results: $RUN"
 XDG_CONFIG_HOME="$RUN/config" XDG_CACHE_HOME="$RUN/cache" TIVOLI_APP_DATA_DIR="$RUN/data" HIFI_METAVERSE_URL=https://vr.darkride.ai \
-    "$BIN" --allowMultipleInstances --url "hifi://localhost:$PORT" --tokens "{}" --testScript "$RUN/arrival.js" \
+    "$BIN" --allowMultipleInstances --url "$URL" --tokens "{}" --testScript "$TEST_SCRIPT" \
     --testResultsLocation "$RUN" > "$RUN/client.log" 2>&1 || true
 
 # the sandbox off again, by its pids
