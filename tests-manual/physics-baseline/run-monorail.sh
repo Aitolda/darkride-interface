@@ -16,7 +16,8 @@ RIDERS=${4:-20}
 WALKERS=${5:-20}
 LOSS=${6:-0.05}
 BUILD=$(cd "$APP/../.." && pwd)
-SANDBOX=/Users/thistlequell/tivoli-sandboxes/physics
+SANDBOX=${SANDBOX:-$HOME/tivoli-sandboxes/physics}
+DOMAIN_SANDBOX=${DOMAIN_SANDBOX:-$HOME/git/tivolicloud/domain-sandbox.sh}   # darkride-ops' sandbox starter
 CONFIG="$SANDBOX/domain-config.json"
 BIN="$APP/Contents/MacOS/interface"
 # an agent refuses a script from the local filesystem, so the bots are served over HTTP from this folder
@@ -85,8 +86,8 @@ with gzip.open(path, "wt") as f:
 print("world cleaned of earlier runs' test entities:", before - len(world["Entities"]), "removed,", len(world["Entities"]), "kept")
 PY
 # the physics server is off by default (describe-settings.json); this sandbox runs it
-python3 -c 'import json, os, sys; p = sys.argv[1]; c = json.load(open(p)) if os.path.exists(p) else {}; c.setdefault("physics_server", {})["enabled"] = True; json.dump(c, open(p, "w"), indent=2)' "/Users/thistlequell/tivoli-sandboxes/physics/domain-config.json"
-/Users/thistlequell/git/tivolicloud/domain-sandbox.sh physics "$BUILD" "$PORT"
+python3 -c 'import json, os, sys; p = sys.argv[1]; c = json.load(open(p)) if os.path.exists(p) else {}; c.setdefault("physics_server", {})["enabled"] = True; json.dump(c, open(p, "w"), indent=2)' "$SANDBOX/domain-config.json"
+"$DOMAIN_SANDBOX" physics "$BUILD" "$PORT"
 
 # the sandbox's own monitor adds a child only every 30 s, so the bots get a monitor of their own with a child each;
 # they ask the domain for work and take the scripted assignments. Wait for them, up to two minutes.
@@ -141,5 +142,5 @@ fi
 kill "$HTTP_PID" 2>/dev/null || true
 set_bots 0 0
 # the physics server is off by default (describe-settings.json); this sandbox runs it
-python3 -c 'import json, os, sys; p = sys.argv[1]; c = json.load(open(p)) if os.path.exists(p) else {}; c.setdefault("physics_server", {})["enabled"] = True; json.dump(c, open(p, "w"), indent=2)' "/Users/thistlequell/tivoli-sandboxes/physics/domain-config.json"
-/Users/thistlequell/git/tivolicloud/domain-sandbox.sh physics "$BUILD" "$PORT"
+python3 -c 'import json, os, sys; p = sys.argv[1]; c = json.load(open(p)) if os.path.exists(p) else {}; c.setdefault("physics_server", {})["enabled"] = True; json.dump(c, open(p, "w"), indent=2)' "$SANDBOX/domain-config.json"
+"$DOMAIN_SANDBOX" physics "$BUILD" "$PORT"

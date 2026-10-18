@@ -16,7 +16,7 @@ R=${2:-"${TMPDIR:-/tmp}/physics-rover"}
 PORT=${3:-42102}
 LOSS=${4:-0}
 DELAY=${5:-0}
-SANDBOX=/Users/thistlequell/tivoli-sandboxes/physics
+SANDBOX=${SANDBOX:-$HOME/tivoli-sandboxes/physics}
 BIN="$APP/Contents/MacOS/interface"
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 mkdir -p "$R/driver" "$R/passenger"
