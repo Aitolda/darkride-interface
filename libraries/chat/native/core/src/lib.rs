@@ -802,7 +802,7 @@ async fn fetch_media(state: &Arc<State>, command: &Value) -> Result<String> {
 }
 
 /// Signed out: everything stopped and waited for (Windows can't remove files still open), the server told when asked
-/// (it forgets the device), then the session and the stores, keys too, gone from the folder
+/// (it forgets the device), then the session, the stores (keys too) and the fetched media, gone from the folder
 async fn forget(state: &Arc<State>, tell_server: bool) {
     let mut tasks: Vec<JoinHandle<()>> = state.open.lock().unwrap().drain().map(|(_, (_, task))| task).collect();
     tasks.extend(state.tasks.lock().unwrap().drain(..));
@@ -823,6 +823,8 @@ async fn forget(state: &Arc<State>, tell_server: bool) {
         }
     }
     let _ = std::fs::remove_file(state.session_file());
+    // the pictures and files fetched for this account go too: the next person on this computer shouldn't find them
+    let _ = std::fs::remove_dir_all(state.config.data_dir.join("media"));
     let store = state.config.data_dir.join("store");
     if let Err(e) = std::fs::remove_dir_all(&store) {
         if store.exists() {
