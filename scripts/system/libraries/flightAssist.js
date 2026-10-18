@@ -201,3 +201,6 @@ var FlightAssist = (function () {
         WING_SPEED: WING_SPEED
     };
 }());
+// Script.include evaluates a file in the scope of the function that called it, so a var here is not seen by an including
+// script whose include sits inside its own function (vehicles.js's): put it on the global object as well
+Function("return this")().FlightAssist = FlightAssist;

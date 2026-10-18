@@ -117,7 +117,8 @@
         MyAvatar.position = Vec3.sum(helm, { x: 0, y: 1.0, z: 0 });
         MyAvatar.orientation = Quat.multiply(vehicle.rotation, Quat.fromPitchYawRollDegrees(0, seat.yaw || 0, 0));
         Entities.editEntity(vehicle.id, { vehicle: { driver: MyAvatar.sessionUUID } });
-        if (vehicle.vehicle.type === "aircraft") {
+        Script.update.connect(update);
+        if (vehicle.vehicle.type === "aircraft" && typeof FlightAssist !== "undefined") {
             seated.aircraft = { assist: FlightAssist.create(vehicle.vehicle.mass), previous: null, frame: 0, aboveGround: 1000, readout: null };
             previousCameraMode = Camera.mode;
             Camera.mode = "independent";
@@ -129,9 +130,11 @@
             });
             print("vehicles.js: at the stick of " + vehicle.id + ": W/S faster and slower, X stop, A/D bank (turn in a hover), Up/Down climb and descend, F leave");
         } else {
+            if (vehicle.vehicle.type === "aircraft") {
+                print("vehicles.js: the flight assistant is missing; the aircraft's own controls instead");
+            }
             print("vehicles.js: at the helm of " + vehicle.id + ": W/S throttle, X cut, A/D rudder, up/down elevator, Space/C up and down, B ballast, V vent, F leave");
         }
-        Script.update.connect(update);
     }
 
     function leaveHelm() {
@@ -144,7 +147,11 @@
             }
         }
         seated = null;
-        Script.update.disconnect(update);
+        try {
+            Script.update.disconnect(update);
+        } catch (e) {
+            // never connected (the helm was not fully taken): leaving must still give the keys back
+        }
         Entities.clearVehicleControls(vehicleID);
         var properties = Entities.getEntityProperties(vehicleID, ["vehicle"]);
         if (properties && properties.vehicle && properties.vehicle.driver === MyAvatar.sessionUUID) {
