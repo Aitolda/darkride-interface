@@ -361,7 +361,8 @@ Item {
                 font.pixelSize: linkAccountBody.textFieldFontSize
                 font.bold: linkAccountBody.fontBold
 
-                text: "<a href='" + Account.metaverseServerURL + "/?forgotPassword'> Can't access your account?</a>"
+                // the website's account recovery, in the browser
+                text: "<a href='https://darkride.ai/?forgotPassword'> Can't access your account?</a>"
 
                 verticalAlignment: Text.AlignVCenter
                 horizontalAlignment: Text.AlignHCenter
