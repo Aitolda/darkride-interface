@@ -36,12 +36,22 @@ HTTP_PID=$!
 trap 'kill $HTTP_PID 2>/dev/null || true' EXIT
 sleep 1
 
+# each client walled off in its own folder under the results (its settings, app data and caches): no client touches the
+# user's own settings, and two clients never share an identity (two on one folder were taken for one, 10-18)
+wall() {
+    mkdir -p "$R/$1-home/config/Tivoli Cloud VR - dev" "$R/$1-home/data" "$R/$1-home/snaps"
+    [ -f "$R/$1-home/config/Tivoli Cloud VR - dev/Interface.json" ] ||
+        echo "{\"snapshotsLocation\": \"$R/$1-home/snaps\"}" > "$R/$1-home/config/Tivoli Cloud VR - dev/Interface.json"
+}
+wall driver
+wall passenger
 echo "client: $BIN"
 echo "terrain: $TERRAIN_URL ($SIZE m, $HEIGHT m tall, $VOXEL m voxels)"
 echo "results: $R"
 if [ "$PORT" = "serverless" ]; then
     echo "serverless: the driver alone in world.json"
-    "$BIN" --allowMultipleInstances --url "file://$D/world.json" --testScript "$R/rover-driver.js" --testResultsLocation "$R/driver" \
+    XDG_CONFIG_HOME="$R/driver-home/config" TIVOLI_APP_DATA_DIR="$R/driver-home/data" \
+        "$BIN" --allowMultipleInstances --url "file://$D/world.json" --testScript "$R/rover-driver.js" --testResultsLocation "$R/driver" \
         > "$R/driver.log" 2>&1 || true
     grep "PHYSICS-ROVER" "$R/driver.log" || echo "no driver summary in $R/driver.log" >&2
     exit 0
@@ -49,10 +59,12 @@ fi
 
 URL="hifi://localhost:$PORT"
 echo "domain: $URL; the driver under packet loss $LOSS and a delay of $DELAY ms"
-"$BIN" --allowMultipleInstances --url "$URL" --testScript "$R/rover-passenger.js" --testResultsLocation "$R/passenger" \
+XDG_CONFIG_HOME="$R/passenger-home/config" TIVOLI_APP_DATA_DIR="$R/passenger-home/data" \
+    "$BIN" --allowMultipleInstances --url "$URL" --testScript "$R/rover-passenger.js" --testResultsLocation "$R/passenger" \
     > "$R/passenger.log" 2>&1 &
 PASSENGER=$!
 sleep 12
+XDG_CONFIG_HOME="$R/driver-home/config" TIVOLI_APP_DATA_DIR="$R/driver-home/data" \
 TIVOLI_PACKET_LOSS="$LOSS" TIVOLI_PACKET_DELAY_MS="$DELAY" "$BIN" --allowMultipleInstances --url "$URL" --testScript "$R/rover-driver.js" \
     --testResultsLocation "$R/driver" > "$R/driver.log" 2>&1 || true
 wait $PASSENGER || true
