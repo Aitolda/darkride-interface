@@ -267,6 +267,36 @@ public slots:
      */
     Q_INVOKABLE int getSpringBoneUpdates();
 
+    /**jsdoc
+     * Turns build mode on and selects these entities in the editor, so a scripted test can picture the Inspector.
+     * @function Test.selectInEditor
+     * @param {Uuid[]} ids - The entities to select.
+     */
+    Q_INVOKABLE void selectInEditor(const QStringList& ids);
+
+    /**jsdoc
+     * Frames the editor's selection in the viewport, as the F key does in build mode.
+     * @function Test.frameEditorSelection
+     */
+    Q_INVOKABLE void frameEditorSelection();
+
+    /**jsdoc
+     * Saves a picture of the Inspector's whole content, whatever is scrolled into view, as the panel draws it.
+     * @function Test.saveInspectorPicture
+     * @param {string} path - Where to save it (PNG).
+     * @returns {boolean} Whether it was saved.
+     */
+    Q_INVOKABLE bool saveInspectorPicture(const QString& path);
+
+    /**jsdoc
+     * Saves a picture of the client's window as its widgets draw it (the editor's panels; the viewport itself may come
+     * out blank, being drawn by the GPU: Window.takeSnapshot pictures that).
+     * @function Test.saveWindowPicture
+     * @param {string} path - Where to save it (PNG).
+     * @returns {boolean} Whether it was saved.
+     */
+    Q_INVOKABLE bool saveWindowPicture(const QString& path);
+
 private:
     bool waitForCondition(qint64 maxWaitMs, std::function<bool()> condition);
     QString _testResultsLocation;
