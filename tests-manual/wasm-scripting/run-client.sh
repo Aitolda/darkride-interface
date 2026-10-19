@@ -17,6 +17,15 @@ BIN="$D/../../build/interface/Darkride.app/Contents/MacOS/Darkride"
 BIN=$(cd "$(dirname "$BIN")" && pwd)/Darkride
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 R="$D/results/$NAME"
+# A scripted client (given --testScript) goes straight in, signed out: the sign-in screen would keep its script from
+# running. `--tokens` and `{}` as two arguments; safe only because this client's settings and account file are its
+# own (results/<name>). A client for a person's hands keeps the sign-in screen.
+for ARG in "$@"; do
+    if [ "$ARG" = "--testScript" ]; then
+        set -- "$@" --tokens "{}"
+        break
+    fi
+done
 "$D/stop-clients.sh" > /dev/null
 rm -rf "$R"
 mkdir -p "$R/config" "$R/data"
