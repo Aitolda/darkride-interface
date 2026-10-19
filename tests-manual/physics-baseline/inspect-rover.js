@@ -33,12 +33,12 @@
     function finish() {
         Window.stillSnapshotTaken.disconnect(onSnapshot);
         log("done");
-        Script.stop();
+        Script.setTimeout(function () { Test.quit(); }, 1000);   // the client quits with the script, as the runners' do
     }
     function start() {
         var chassis = byName("rover-chassis");
         if (!chassis) {
-            if (++tries < 90) { Script.setTimeout(start, 1000); } else { log("no car"); Script.stop(); }
+            if (++tries < 90) { Script.setTimeout(start, 1000); } else { log("no car"); Test.quit(); }
             return;
         }
         var vehicle = Entities.getEntityProperties(chassis, ["vehicle"]).vehicle || {};
@@ -58,5 +58,5 @@
         });
     }
     Script.setTimeout(start, 8000);
-    Script.setTimeout(function () { log("watchdog: stopping"); Script.stop(); }, 150000);
+    Script.setTimeout(function () { log("watchdog: quitting"); Test.quit(); }, 150000);
 })();
