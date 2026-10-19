@@ -24,6 +24,7 @@
 #include <QtWidgets/QWidget>
 
 class QLabel;
+class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
 class QMovie;
@@ -31,6 +32,7 @@ class QPlainTextEdit;
 class QPushButton;
 class QStackedWidget;
 class QTextBrowser;
+class QTimer;
 
 class ChatWindow : public QWidget {
     Q_OBJECT
@@ -69,6 +71,23 @@ private:
     void deleteMessage(const QJsonObject& item);
     // a message's reactions as rich text: one chip per emoji with its count, yours lit, a click toggling yours
     QString reactionsHtml(const QJsonObject& item, const QHash<QString, QString>& names);
+
+    // the Friends page (FriendsService, the metaverse's friends), as Discord's: Online, All, Pending and Add Friend;
+    // the sidebar's first row opens it
+    void showFriendsPage();
+    void setFriendsTab(const QString& tab);
+    void updateFriends();
+    void addFriendRow(const QString& username, const QString& status, const QList<QPushButton*>& buttons,
+                      bool dimmed = false);
+    // a friend's direct message, made when there is none yet
+    void messageFriend(const QString& username);
+    void sendFriendRequest();
+    // "who sees where I am" (the metaverse's availability), from your name at the foot of the sidebar
+    void showAvailabilityMenu();
+    // a Darkride username's chat account, on the chat's own server
+    QString userIdFor(const QString& username) const;
+    // the friends lists asked for again, unless they were a moment ago
+    void askFriends(bool now = false);
     void markReadIfSeen();
     void fitComposer();
     void saveGeometrySetting();
@@ -101,6 +120,18 @@ private:
     QTextBrowser* _timeline { nullptr };
     QPlainTextEdit* _composer { nullptr };
     QLabel* _composerNote { nullptr };
+    QWidget* _me { nullptr };
+    QStackedWidget* _friendsPages { nullptr };   // the list, or the Add Friend form
+    QListWidget* _friendsList { nullptr };
+    QLabel* _friendsEmpty { nullptr };
+    QLineEdit* _addFriendName { nullptr };
+    QLabel* _addFriendNote { nullptr };
+    QHash<QString, QPushButton*> _friendsTabs;
+    QString _friendsTab { "online" };
+    bool _friendsShown { false };               // the Friends page is up (the last room stays _room)
+    QString _dmWanted;                           // a friend's chat account whose new DM is being made, to open
+    QTimer* _friendsTimer { nullptr };          // asks for the lists again every minute while the window is up
+    qint64 _friendsAskedAt { 0 };
 
     QJsonArray _rooms;
     QString _room;            // the room shown

@@ -26,10 +26,10 @@
 //! Events: {"event": ...}
 //!   state {state: signed_out|starting|ready, user?, reason?}
 //!   sync {state: running|offline|error|idle|terminated, message?}   offline: waiting for the server, by itself
-//!   rooms {rooms: [{id, name, dm, encrypted, invited, unread, notifications, members, avatar?, space?}],
+//!   rooms {rooms: [{id, name, dm, dm_user?, encrypted, invited, unread, notifications, members, avatar?, space?}],
 //!          spaces: [{id, name, avatar?}]}
 //!                                space: the joined space that lists the room among its children; a DM is named
-//!                                after the other person; avatar: an mxc address
+//!                                after the other person, dm_user; avatar: an mxc address
 //!   profile {name?, avatar?}     who you are, once signed in
 //!   timeline {room, items: [{id, sender, name, avatar?, body, kind, ts, own, encrypted, state, media?, change?,
 //!          user?, user_name?, reactions, edited, editable}]}
@@ -594,10 +594,12 @@ async fn room_json(room: &Room, space: Option<&OwnedRoomId>) -> Value {
     };
     let mut avatar = room.avatar_url().map(|url| url.to_string());
     let dm = room.is_direct().await.unwrap_or(false);
+    let mut dm_user = None;
     if dm {
         // named and pictured after the other person, as the web chat does: without the server's summary of who is
         // in it, the name computed for a DM can be "2 people"
         let other = room.direct_targets().iter().find_map(|target| target.as_user_id().map(|user| user.to_owned()));
+        dm_user = other.clone();
         if let Some(other) = other {
             match room.get_member_no_sync(&other).await {
                 Ok(Some(member)) => {
@@ -617,6 +619,7 @@ async fn room_json(room: &Room, space: Option<&OwnedRoomId>) -> Value {
         "space": space,
         "members": room.joined_members_count(),
         "dm": dm,
+        "dm_user": dm_user,
         "encrypted": room.encryption_state().is_encrypted(),
         "invited": room.state() == RoomState::Invited,
         "unread": room.num_unread_messages(),

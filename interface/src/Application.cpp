@@ -67,6 +67,7 @@
 #include <ResourceScriptingInterface.h>
 #include <AccountManager.h>
 #include <ChatService.h>
+#include <FriendsService.h>
 #include <AddressManager.h>
 #include <AnimDebugDraw.h>
 #include <BuildInfo.h>
@@ -912,6 +913,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
 #endif
     DependencyManager::set<DiscoverabilityManager>();
     DependencyManager::set<ChatService>();
+    DependencyManager::set<FriendsService>();
     DependencyManager::set<SceneScriptingInterface>();
 #if !defined(DISABLE_QML)
     DependencyManager::set<OffscreenUi>();
@@ -2921,6 +2923,7 @@ void Application::cleanupBeforeQuit() {
     // an account not kept on this computer leaves no chat session on it either
     DependencyManager::get<ChatService>()->stop(!keepMeLoggedIn);
     DependencyManager::destroy<ChatService>();
+    DependencyManager::destroy<FriendsService>();
 
     _displayPlugin.reset();
     PluginManager::getInstance()->shutdown();

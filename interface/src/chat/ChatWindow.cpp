@@ -29,8 +29,10 @@
 #include <QtGui/QTextCursor>
 #include <QtGui/QTextFrame>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QGraphicsOpacityEffect>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
+#include <QtWidgets/QLineEdit>
 #include <QtWidgets/QListWidget>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QMessageBox>
@@ -46,7 +48,9 @@
 #include <QtWidgets/QWidgetAction>
 
 #include <AccountManager.h>
+#include <AddressManager.h>
 #include <ChatService.h>
+#include <FriendsService.h>
 #include <SettingHandle.h>
 #include <gl/GLHelpers.h>
 
@@ -73,6 +77,11 @@ static const qint64 GROUP_GAP_MS = 7 * 60 * 1000;
 // a click each in a message's menu, as in the web client (client/src/emoji.ts)
 static const QStringList QUICK_REACTIONS { "\U0001F44D", "\u2764\uFE0F", "\U0001F602", "\U0001F62E", "\U0001F622", "\U0001F389" };
 static const QColor COLOUR_CHIP("#2b3150");
+// the sidebar's first row, the Friends page
+static const QString FRIENDS_ROW = "friends:";
+// a friend's lists again at most this often when the window comes forward
+static const qint64 FRIENDS_FRESH_MS = 15 * 1000;
+static const int FRIENDS_REFRESH_MS = 60 * 1000;
 static const QColor COLOUR_CHIP_MINE("#1d3a5f");
 // a message's picture fits in this, as Discord's do in a narrower column
 static const QSize PICTURE_MAX(400, 300);
@@ -108,6 +117,27 @@ static QString initialOf(const QString& name) {
     }
     trimmed = trimmed.trimmed();
     return trimmed.isEmpty() ? QString("?") : trimmed.left(trimmed.at(0).isHighSurrogate() ? 2 : 1).toUpper();
+}
+
+static QImage friendsIcon(int size, qreal pixelRatio) {
+    QImage image(QSize(size, size) * pixelRatio, QImage::Format_ARGB32_Premultiplied);
+    image.setDevicePixelRatio(pixelRatio);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(COLOUR_SURFACE);
+    painter.drawEllipse(QRectF(0, 0, size, size));
+    // a head and shoulders, and another behind
+    auto person = [&](qreal x, qreal scale, const QColor& colour) {
+        painter.setBrush(colour);
+        qreal head = size * 0.2 * scale;
+        painter.drawEllipse(QPointF(x, size * 0.4), head, head);
+        painter.drawPie(QRectF(x - size * 0.3 * scale, size * 0.62, size * 0.6 * scale, size * 0.5 * scale), 0, 180 * 16);
+    };
+    person(size * 0.62, 0.8, COLOUR_MUTED);
+    person(size * 0.42, 1.0, COLOUR_TEXT);
+    return image;
 }
 
 static QImage avatarImage(const QString& seed, const QString& name, int size, qreal pixelRatio) {
@@ -404,6 +434,24 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
         QMenu::item:selected { background: %7; color: #091023; }
         QMenu::item:disabled { color: %4; }
         QMenu::separator { height: 1px; background: rgba(255, 255, 255, 0.08); margin: 4px 6px; }
+        #ChatFriends { background: %1; border: none; outline: 0; }
+        #ChatFriendName { color: %3; font-size: 15px; font-weight: 500; }
+        #ChatFriendStatus { color: %4; font-size: 12px; }
+        #ChatFriendsHeading { color: %4; font-size: 12px; font-weight: 600; }
+        #ChatFriendsNote { color: %4; font-size: 13px; }
+        #ChatAddFriendTitle { color: %3; font-size: 16px; font-weight: 600; }
+        QLineEdit#ChatAddFriendName {
+            background: #10142a; color: %3; border: 1px solid rgba(0, 0, 0, 0.5); border-radius: 8px; padding: 10px 12px;
+            font-size: 15px; selection-background-color: %6;
+        }
+        QPushButton#ChatTab { background: transparent; color: %4; padding: 4px 10px; }
+        QPushButton#ChatTab:hover { background: rgba(255, 255, 255, 0.06); color: %3; }
+        QPushButton#ChatTab:checked { background: %6; color: %3; }
+        QPushButton#ChatAddTab { background: #248046; color: white; padding: 4px 10px; }
+        QPushButton#ChatAddTab:checked { background: transparent; color: %8; }
+        QPushButton#ChatRowButton { background: %5; color: %3; padding: 6px 12px; }
+        QPushButton#ChatRowButton:hover { background: %6; }
+        QPushButton#ChatRowAccept { background: #248046; color: white; padding: 6px 12px; }
         QToolButton#ChatQuickReaction {
             background: %5; border: none; border-radius: 4px; font-size: 20px; min-width: 34px; min-height: 34px;
         }
@@ -414,7 +462,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
         QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
     )")
                       .arg(COLOUR_PAGE.name(), COLOUR_SIDEBAR.name(), COLOUR_TEXT.name(), COLOUR_MUTED.name(),
-                           COLOUR_SURFACE.name(), COLOUR_SELECTION.name(), COLOUR_CYAN.name()));
+                           COLOUR_SURFACE.name(), COLOUR_SELECTION.name(), COLOUR_CYAN.name(), COLOUR_GREEN.name()));
 
     auto layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -461,6 +509,10 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
     meLayout->addLayout(meText, 1);
     sidebarLayout->addWidget(me);
     layout->addWidget(sidebar);
+    _me = me;
+    _me->setCursor(Qt::PointingHandCursor);
+    _me->setToolTip("Who sees where you are");
+    _me->installEventFilter(this);
 
     // the right: the room's name, then its conversation and the message box (or why there is none)
     auto main = new QWidget(this);
@@ -556,6 +608,79 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
     conversationLayout->addWidget(composerArea);
     _pages->addWidget(conversation);
 
+    // page 3: friends, with Discord's tabs
+    auto friendsPage = new QWidget(_pages);
+    auto friendsLayout = new QVBoxLayout(friendsPage);
+    friendsLayout->setContentsMargins(0, 8, 0, 0);
+    friendsLayout->setSpacing(6);
+    auto tabs = new QHBoxLayout();
+    tabs->setContentsMargins(16, 0, 16, 0);
+    tabs->setSpacing(8);
+    static const QList<QPair<QString, QString>> TABS { { "online", "Online" }, { "all", "All" }, { "pending", "Pending" },
+                                                       { "add", "Add Friend" } };
+    for (const auto& tab : TABS) {
+        auto button = new QPushButton(tab.second, friendsPage);
+        button->setObjectName(tab.first == "add" ? "ChatAddTab" : "ChatTab");
+        button->setCheckable(true);
+        button->setCursor(Qt::PointingHandCursor);
+        QString id = tab.first;
+        connect(button, &QPushButton::clicked, this, [this, id] { setFriendsTab(id); });
+        tabs->addWidget(button);
+        _friendsTabs.insert(tab.first, button);
+    }
+    tabs->addStretch(1);
+    friendsLayout->addLayout(tabs);
+    _addFriendNote = new QLabel(friendsPage);
+    _addFriendNote->setObjectName("ChatFriendsNote");
+    _addFriendNote->setContentsMargins(16, 0, 16, 0);
+    _addFriendNote->setWordWrap(true);
+    _addFriendNote->hide();
+    friendsLayout->addWidget(_addFriendNote);
+    _friendsPages = new QStackedWidget(friendsPage);
+    friendsLayout->addWidget(_friendsPages, 1);
+    auto listPage = new QWidget(_friendsPages);
+    auto listLayout = new QVBoxLayout(listPage);
+    listLayout->setContentsMargins(0, 0, 0, 0);
+    _friendsList = new QListWidget(listPage);
+    _friendsList->setObjectName("ChatFriends");
+    _friendsList->setSelectionMode(QAbstractItemView::NoSelection);
+    _friendsList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    _friendsList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    listLayout->addWidget(_friendsList, 1);
+    _friendsEmpty = new QLabel(listPage);
+    _friendsEmpty->setObjectName("ChatState");
+    _friendsEmpty->setAlignment(Qt::AlignCenter);
+    _friendsEmpty->setWordWrap(true);
+    listLayout->addWidget(_friendsEmpty, 1);
+    _friendsPages->addWidget(listPage);
+    auto addPage = new QWidget(_friendsPages);
+    auto addLayout = new QVBoxLayout(addPage);
+    addLayout->setContentsMargins(16, 12, 16, 12);
+    addLayout->setSpacing(8);
+    auto addTitle = new QLabel("Add Friend", addPage);
+    addTitle->setObjectName("ChatAddFriendTitle");
+    addLayout->addWidget(addTitle);
+    auto addText = new QLabel("You can add friends with their Darkride username.", addPage);
+    addText->setObjectName("ChatFriendStatus");
+    addLayout->addWidget(addText);
+    auto addRow = new QHBoxLayout();
+    _addFriendName = new QLineEdit(addPage);
+    _addFriendName->setObjectName("ChatAddFriendName");
+    _addFriendName->setPlaceholderText("Their username");
+    addRow->addWidget(_addFriendName, 1);
+    auto send = new QPushButton("Send Friend Request", addPage);
+    addRow->addWidget(send);
+    addLayout->addLayout(addRow);
+    addLayout->addStretch(1);
+    _friendsPages->addWidget(addPage);
+    _pages->addWidget(friendsPage);
+    connect(send, &QPushButton::clicked, this, &ChatWindow::sendFriendRequest);
+    connect(_addFriendName, &QLineEdit::returnPressed, this, &ChatWindow::sendFriendRequest);
+    _friendsTabs.value(_friendsTab)->setChecked(true);
+    _friendsTimer = new QTimer(this);
+    _friendsTimer->setInterval(FRIENDS_REFRESH_MS);
+    connect(_friendsTimer, &QTimer::timeout, this, [this] { askFriends(true); });
+
     connect(_timeline, &QTextBrowser::anchorClicked, this, [this](const QUrl& url) {
         if (url.scheme() == "https" || url.scheme() == "http") {
             QDesktopServices::openUrl(url);
@@ -624,6 +749,28 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
         });
     }
 
+    if (auto friends = DependencyManager::get<FriendsService>()) {
+        connect(friends.data(), &FriendsService::changed, this, &ChatWindow::updateFriends);
+        connect(friends.data(), &FriendsService::availabilityChanged, this, [this] {
+            auto service = DependencyManager::get<ChatService>();
+            updateSync(service ? service->syncState() : QString());
+        });
+        connect(friends.data(), &FriendsService::actionDone, this,
+                [this](const QString& action, const QString& username, bool ok, const QString& message) {
+            if (action == "ask") {
+                _addFriendNote->setText(ok ? message : "That didn't work: " + message);
+                if (ok) {
+                    _addFriendName->clear();
+                }
+            } else if (!ok) {
+                _addFriendNote->setText("That didn't work: " + message);
+            } else {
+                _addFriendNote->clear();
+            }
+            _addFriendNote->setVisible(!_addFriendNote->text().isEmpty());
+        });
+    }
+
     QByteArray geometry = chatWindowGeometry.get();
     if (!geometry.isEmpty()) {
         restoreGeometry(geometry);
@@ -650,6 +797,7 @@ void ChatWindow::updateState() {
             service->close(_room);
         }
         _room.clear();
+        _friendsShown = false;
         _items = QJsonArray();
         _rooms = QJsonArray();
         _roomList->clear();
@@ -660,6 +808,7 @@ void ChatWindow::updateState() {
         return;
     }
     updateRooms(service->rooms());
+    askFriends();
 }
 
 void ChatWindow::updateSync(const QString& state) {
@@ -667,7 +816,12 @@ void ChatWindow::updateSync(const QString& state) {
     if (!service || service->state() != ChatService::State::Ready) {
         _userStatus->setText(service && service->state() == ChatService::State::SigningIn ? "Signing in…" : "Offline");
     } else if (state == "running" || state == "idle") {
-        _userStatus->setText("Online");
+        auto friends = DependencyManager::get<FriendsService>();
+        QString availability = friends ? friends->availability() : QString();
+        _userStatus->setText(availability == "none"      ? "Invisible"
+                             : availability == "all"     ? "Online · seen by everyone"
+                             : availability == "friends" ? "Online · seen by friends"
+                                                         : "Online");
     } else if (state == "offline" || state == "error") {
         _userStatus->setText("Reconnecting…");
     } else {
@@ -709,6 +863,17 @@ void ChatWindow::updateRooms(const QJsonArray& rooms) {
         item->setFlags(Qt::NoItemFlags);
     };
     QListWidgetItem* current = nullptr;
+    {
+        auto item = new QListWidgetItem("Friends", _roomList);
+        item->setData(RoomIdRole, FRIENDS_ROW);
+        item->setData(RoomKindRole, "friends");
+        item->setData(RoomAvatarRole, friendsIcon(28, devicePixelRatioF()));
+        auto friends = DependencyManager::get<FriendsService>();
+        item->setData(RoomNotificationsRole, friends ? friends->incoming().size() : 0);
+        if (_friendsShown) {
+            current = item;
+        }
+    }
     auto addRoom = [&](const QJsonObject& room, const QString& kind) {
         QString id = room.value("id").toString();
         QString name = room.value("name").toString();
@@ -751,7 +916,9 @@ void ChatWindow::updateRooms(const QJsonArray& rooms) {
     _roomList->verticalScrollBar()->setValue(scroll);
     blocker.unblock();
 
-    if (_room.isEmpty() || !current) {
+    if (_friendsShown) {
+        // the Friends page stays up
+    } else if (_room.isEmpty() || !current) {
         // the room shown last time, else the first channel (General)
         QString wanted = chatLastRoom.get();
         QString chosen;
@@ -791,7 +958,20 @@ QJsonObject ChatWindow::roomById(const QString& room) const {
 }
 
 void ChatWindow::selectRoom(const QString& room) {
+    if (room == FRIENDS_ROW) {
+        showFriendsPage();
+        return;
+    }
     auto service = DependencyManager::get<ChatService>();
+    if (_friendsShown) {
+        _friendsShown = false;
+        if (room == _room) {
+            // back to the room shown before the Friends page
+            showRoomPage();
+            renderTimeline();
+            return;
+        }
+    }
     if (!service || room == _room) {
         return;
     }
@@ -866,6 +1046,10 @@ void ChatWindow::commandDone(const QJsonObject& done) {
         }
     } else if (op == "join") {
         _room.clear();
+        selectRoom(room);
+    } else if (op == "create_dm" && !_dmWanted.isEmpty()) {
+        // a friend's new direct message, from the Friends page
+        _dmWanted.clear();
         selectRoom(room);
     } else if (op == "leave" && room == _room) {
         _room.clear();
@@ -1444,6 +1628,10 @@ void ChatWindow::fitComposer() {
 }
 
 bool ChatWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == _me && event->type() == QEvent::MouseButtonRelease) {
+        showAvailabilityMenu();
+        return true;
+    }
     if (watched == _composer && event->type() == QEvent::KeyPress) {
         auto key = static_cast<QKeyEvent*>(event);
         if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) && !(key->modifiers() & Qt::ShiftModifier)) {
@@ -1472,6 +1660,8 @@ bool ChatWindow::eventFilter(QObject* watched, QEvent* event) {
 void ChatWindow::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
     markReadIfSeen();
+    askFriends();
+    _friendsTimer->start();
 }
 
 void ChatWindow::closeEvent(QCloseEvent* event) {
@@ -1482,6 +1672,7 @@ void ChatWindow::closeEvent(QCloseEvent* event) {
 }
 
 void ChatWindow::hideEvent(QHideEvent* event) {
+    _friendsTimer->stop();
     saveGeometrySetting();
     QWidget::hideEvent(event);
 }
@@ -1490,7 +1681,280 @@ void ChatWindow::changeEvent(QEvent* event) {
     QWidget::changeEvent(event);
     if (event->type() == QEvent::ActivationChange) {
         markReadIfSeen();
+        if (isActiveWindow()) {
+            askFriends();
+        }
     }
+}
+
+void ChatWindow::askFriends(bool now) {
+    auto friends = DependencyManager::get<FriendsService>();
+    qint64 time = QDateTime::currentMSecsSinceEpoch();
+    if (friends && (now || time - _friendsAskedAt > FRIENDS_FRESH_MS)) {
+        _friendsAskedAt = time;
+        friends->refresh();
+    }
+}
+
+QString ChatWindow::userIdFor(const QString& username) const {
+    auto service = DependencyManager::get<ChatService>();
+    QString me = service ? service->userId() : QString();
+    return "@" + username.toLower() + ":" + me.mid(me.indexOf(':') + 1);
+}
+
+void ChatWindow::showFriendsPage() {
+    _friendsShown = true;
+    stopEditing();
+    for (int i = 0; i < _roomList->count(); i++) {
+        if (_roomList->item(i)->data(RoomIdRole).toString() == FRIENDS_ROW) {
+            QSignalBlocker blocker(_roomList);
+            _roomList->setCurrentRow(i);
+        }
+    }
+    _roomTitle->setText("Friends");
+    _pages->setCurrentIndex(3);
+    updateFriends();
+    askFriends(true);
+}
+
+void ChatWindow::setFriendsTab(const QString& tab) {
+    _friendsTab = tab;
+    for (auto i = _friendsTabs.begin(); i != _friendsTabs.end(); i++) {
+        i.value()->setChecked(i.key() == tab);
+    }
+    _addFriendNote->clear();
+    _addFriendNote->hide();
+    updateFriends();
+    if (tab == "add") {
+        _addFriendName->setFocus();
+    }
+}
+
+void ChatWindow::updateFriends() {
+    auto friends = DependencyManager::get<FriendsService>();
+    QJsonArray incoming = friends ? friends->incoming() : QJsonArray();
+    // the requests waiting for you: the sidebar row's count and the Pending tab's
+    for (int i = 0; i < _roomList->count(); i++) {
+        if (_roomList->item(i)->data(RoomIdRole).toString() == FRIENDS_ROW) {
+            _roomList->item(i)->setData(RoomNotificationsRole, incoming.size());
+        }
+    }
+    _friendsTabs.value("pending")->setText(incoming.isEmpty() ? QString("Pending") : QString("Pending (%1)").arg(incoming.size()));
+    if (!_friendsShown || !friends) {
+        return;
+    }
+    _friendsList->clear();
+    if (_friendsTab == "add") {
+        _friendsPages->setCurrentIndex(1);
+        return;
+    }
+    _friendsPages->setCurrentIndex(0);
+
+    auto button = [](const QString& text, const QString& name = "ChatRowButton") {
+        auto b = new QPushButton(text);
+        b->setObjectName(name);
+        b->setCursor(Qt::PointingHandCursor);
+        return b;
+    };
+    auto heading = [this](const QString& text) {
+        auto label = new QLabel(text);
+        label->setObjectName("ChatFriendsHeading");
+        label->setContentsMargins(16, 8, 16, 4);
+        auto item = new QListWidgetItem(_friendsList);
+        item->setFlags(Qt::NoItemFlags);
+        item->setSizeHint(QSize(0, 32));
+        _friendsList->setItemWidget(item, label);
+    };
+    QString empty;
+    if (_friendsTab == "online" || _friendsTab == "all") {
+        QList<QJsonObject> shown;
+        for (const QJsonValue& value : friends->friends()) {
+            if (_friendsTab == "all" || value.toObject().value("online").toBool()) {
+                shown.append(value.toObject());
+            }
+        }
+        if (!shown.isEmpty()) {
+            heading(QString("%1 — %2").arg(_friendsTab == "online" ? "ONLINE" : "ALL FRIENDS").arg(shown.size()));
+        }
+        for (const QJsonObject& person : shown) {
+            QString username = person.value("username").toString();
+            bool online = person.value("online").toBool();
+            QJsonObject location = person.value("location").toObject();
+            QString world = location.value("name").toString();
+            QString status = !online ? "Offline" : world.isEmpty() ? "Online" : "In " + world;
+            QList<QPushButton*> buttons;
+            auto message = button("Message");
+            connect(message, &QPushButton::clicked, this, [this, username] { messageFriend(username); });
+            buttons.append(message);
+            if (online && !location.isEmpty()) {
+                // to where they are: the metaverse checks again that they let you (AddressManager::goToUser)
+                auto join = button("Join", "ChatRowAccept");
+                connect(join, &QPushButton::clicked, this, [username] {
+                    DependencyManager::get<AddressManager>()->goToUser(username);
+                });
+                buttons.append(join);
+            }
+            auto more = button("…");
+            connect(more, &QPushButton::clicked, this, [this, more, username] {
+                QMenu* menu = new QMenu(this);
+                menu->setAttribute(Qt::WA_DeleteOnClose);
+                connect(menu->addAction("Remove Friend"), &QAction::triggered, this, [this, username] {
+                    QMessageBox question(QMessageBox::NoIcon, "Remove Friend",
+                                         QString("Remove %1 as a friend?").arg(username), QMessageBox::NoButton, this);
+                    QPushButton* remove = question.addButton("Remove Friend", QMessageBox::DestructiveRole);
+                    question.addButton(QMessageBox::Cancel);
+                    question.setDefaultButton(QMessageBox::Cancel);
+                    question.exec();
+                    auto friends = DependencyManager::get<FriendsService>();
+                    if (question.clickedButton() == remove && friends) {
+                        friends->remove(username);
+                    }
+                });
+                menu->popup(more->mapToGlobal(QPoint(0, more->height())));
+            });
+            buttons.append(more);
+            addFriendRow(username, status, buttons, !online);
+        }
+        if (shown.isEmpty()) {
+            empty = _friendsTab == "online" && !friends->friends().isEmpty()
+                        ? "None of your friends are online right now."
+                        : "No friends here yet. Add some with their Darkride username.";
+        }
+    } else {
+        QJsonArray outgoing = friends->outgoing();
+        if (!incoming.isEmpty() || !outgoing.isEmpty()) {
+            heading(QString("PENDING — %1").arg(incoming.size() + outgoing.size()));
+        }
+        for (const QJsonValue& value : incoming) {
+            QString username = value.toObject().value("username").toString();
+            auto accept = button("Accept", "ChatRowAccept");
+            connect(accept, &QPushButton::clicked, this, [username] {
+                DependencyManager::get<FriendsService>()->accept(username);
+            });
+            auto decline = button("Decline");
+            connect(decline, &QPushButton::clicked, this, [username] {
+                DependencyManager::get<FriendsService>()->decline(username);
+            });
+            addFriendRow(username, "Wants to be your friend", { accept, decline });
+        }
+        for (const QJsonValue& value : outgoing) {
+            QString username = value.toObject().value("username").toString();
+            auto cancel = button("Cancel");
+            connect(cancel, &QPushButton::clicked, this, [username] {
+                DependencyManager::get<FriendsService>()->withdraw(username);
+            });
+            addFriendRow(username, "Friend request sent", { cancel });
+        }
+        if (incoming.isEmpty() && outgoing.isEmpty()) {
+            empty = "No friend requests waiting.";
+        }
+    }
+    if (!friends->error().isEmpty()) {
+        empty = friends->error();
+    }
+    _friendsEmpty->setText(empty);
+    _friendsEmpty->setVisible(!empty.isEmpty());
+    _friendsList->setVisible(_friendsList->count() > 0);
+}
+
+void ChatWindow::addFriendRow(const QString& username, const QString& status, const QList<QPushButton*>& buttons,
+                              bool dimmed) {
+    // their picture: the one their direct message shows, if you have one with them
+    QString userId = userIdFor(username);
+    QString mxc;
+    for (const QJsonValue& value : _rooms) {
+        QJsonObject room = value.toObject();
+        if (room.value("dm_user").toString() == userId) {
+            mxc = room.value("avatar").toString();
+        }
+    }
+    auto row = new QWidget();
+    auto layout = new QHBoxLayout(row);
+    layout->setContentsMargins(16, 6, 16, 6);
+    layout->setSpacing(10);
+    auto picture = new QLabel(row);
+    picture->setFixedSize(32, 32);
+    picture->setPixmap(QPixmap::fromImage(roundAvatar(userId, username, mxc, 32)));
+    if (dimmed) {
+        auto faded = new QGraphicsOpacityEffect(picture);
+        faded->setOpacity(0.5);
+        picture->setGraphicsEffect(faded);
+    }
+    layout->addWidget(picture);
+    auto text = new QVBoxLayout();
+    text->setSpacing(0);
+    auto name = new QLabel(username, row);
+    name->setObjectName("ChatFriendName");
+    name->setTextFormat(Qt::PlainText);
+    auto line = new QLabel(status, row);
+    line->setObjectName("ChatFriendStatus");
+    line->setTextFormat(Qt::PlainText);
+    text->addWidget(name);
+    text->addWidget(line);
+    layout->addLayout(text, 1);
+    for (QPushButton* b : buttons) {
+        b->setParent(row);
+        layout->addWidget(b);
+    }
+    auto item = new QListWidgetItem(_friendsList);
+    item->setFlags(Qt::ItemIsEnabled);
+    item->setSizeHint(QSize(0, 52));
+    _friendsList->setItemWidget(item, row);
+}
+
+void ChatWindow::messageFriend(const QString& username) {
+    QString userId = userIdFor(username);
+    for (const QJsonValue& value : _rooms) {
+        QJsonObject room = value.toObject();
+        if (room.value("dm").toBool() && room.value("dm_user").toString() == userId) {
+            selectRoom(room.value("id").toString());
+            return;
+        }
+    }
+    auto service = DependencyManager::get<ChatService>();
+    if (!service || service->state() != ChatService::State::Ready) {
+        return;
+    }
+    _dmWanted = userId;
+    _addFriendNote->setText("Starting a conversation with " + username + "…");
+    _addFriendNote->show();
+    service->createDm(userId);
+}
+
+void ChatWindow::sendFriendRequest() {
+    QString username = _addFriendName->text().trimmed();
+    if (username.startsWith('@')) {
+        username.remove(0, 1);
+    }
+    auto friends = DependencyManager::get<FriendsService>();
+    if (username.isEmpty() || !friends) {
+        return;
+    }
+    _addFriendNote->setText("Sending…");
+    _addFriendNote->show();
+    friends->ask(username);
+}
+
+void ChatWindow::showAvailabilityMenu() {
+    auto friends = DependencyManager::get<FriendsService>();
+    if (!friends || !DependencyManager::get<AccountManager>()->isLoggedIn()) {
+        return;
+    }
+    QMenu* menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    menu->addAction("Who sees where I am")->setEnabled(false);
+    static const QList<QPair<QString, QString>> CHOICES { { "all", "Everyone" }, { "friends", "Friends" },
+                                                          { "none", "Nobody" } };
+    for (const auto& choice : CHOICES) {
+        QAction* action = menu->addAction(choice.second);
+        action->setCheckable(true);
+        action->setChecked(friends->availability() == choice.first);
+        QString value = choice.first;
+        connect(action, &QAction::triggered, this, [value] {
+            DependencyManager::get<FriendsService>()->setAvailability(value);
+        });
+    }
+    menu->popup(_me->mapToGlobal(QPoint(8, -menu->sizeHint().height())));
 }
 
 void ChatWindow::saveGeometrySetting() {
