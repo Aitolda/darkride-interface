@@ -172,6 +172,13 @@ void RefreshRateManager::toggleInactive() {
     }
 }
 
+void RefreshRateManager::setRefreshRateOperator(std::function<void(int)> refreshRateOperator) {
+    _refreshRateOperator = refreshRateOperator;
+    // the rate is otherwise only applied when the profile, regime or UX mode changes, and at startup none of them does:
+    // the present thread then ran with no limit at all until the sign-in screen was left (the GPU at 100% behind it)
+    updateRefreshRateController();
+}
+
 void RefreshRateManager::setRefreshRateProfile(RefreshRateManager::RefreshRateProfile refreshRateProfile) {
     if (isValidRefreshRateProfile(refreshRateProfile) && (_refreshRateProfile != refreshRateProfile)) {
         _refreshRateProfileSettingLock.withWriteLock([&] {
@@ -228,7 +235,10 @@ void RefreshRateManager::updateRefreshRateController() const {
         int targetRefreshRate = queryRefreshRateTarget(_refreshRateProfile, _refreshRateRegime, _uxMode);
         
         if (targetRefreshRate >= 900) {
-            targetRefreshRate = (int)qApp->getWindow()->windowHandle()->screen()->refreshRate();
+            // now asked as soon as the operator is set, so the window may not be on a screen yet
+            auto windowHandle = qApp->getWindow()->windowHandle();
+            auto screen = windowHandle ? windowHandle->screen() : nullptr;
+            targetRefreshRate = screen ? (int)screen->refreshRate() : 60;
             // incase refreshRate() is incorrect
             if (targetRefreshRate < 60) {
                 targetRefreshRate = 60;

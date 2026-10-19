@@ -33,7 +33,8 @@ public:
 private:
     std::chrono::time_point<std::chrono::high_resolution_clock> _startTime { std::chrono::high_resolution_clock::now() };
     std::chrono::time_point<std::chrono::high_resolution_clock> _endTime { std::chrono::high_resolution_clock::now() };
-    std::atomic<int64_t> _refreshRateLimitPeriod { 50 };
+    // 60 Hz until a rate is set (this was 50 ns, which is no limit: the present thread spun as fast as the GPU went)
+    std::atomic<int64_t> _refreshRateLimitPeriod { 1000000000 / 60 };
 
 };
 

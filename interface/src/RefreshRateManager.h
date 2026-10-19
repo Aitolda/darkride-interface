@@ -95,7 +95,7 @@ public:
     void setUXMode(UXMode uxMode);
     UXMode getUXMode() const { return _uxMode; }
 
-    void setRefreshRateOperator(std::function<void(int)> refreshRateOperator) { _refreshRateOperator = refreshRateOperator; }
+    void setRefreshRateOperator(std::function<void(int)> refreshRateOperator);
     int getActiveRefreshRate() const { return _activeRefreshRate; }
     void updateRefreshRateController() const;
 
@@ -114,7 +114,7 @@ private:
     mutable int _activeRefreshRate { 60 };
     RefreshRateProfile _refreshRateProfile { RefreshRateProfile::DISPLAY_BASED };
     RefreshRateRegime _refreshRateRegime { RefreshRateRegime::STARTUP };
-    UXMode _uxMode;
+    UXMode _uxMode { UXMode::DESKTOP };
 
     mutable ReadWriteLockable _refreshRateProfileSettingLock;
     Setting::Handle<int> _refreshRateProfileSetting { "refreshRateProfile", RefreshRateProfile::DISPLAY_BASED };
