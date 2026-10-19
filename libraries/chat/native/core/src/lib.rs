@@ -8,8 +8,11 @@
 //!   open {room, count?}          follow a room's timeline (a room id or #alias), at least count (30) of its
 //!                                newest events; "timeline" events follow
 //!   close {room}
-//!   back {room, count}           older messages
+//!   back {room, count}           older messages; the room's timeline events carry count more of its items from now on
 //!   send {room, body}
+//!   react {room, id, key}        a reaction (an emoji) on a message, or yours taken back when it is there already
+//!   edit {room, id, body}        a new text for one of your own messages
+//!   delete {room, id}            one of your own messages, gone for everyone
 //!   read {room}                  mark it read
 //!   join {room}                  accept an invite, or join by id or alias
 //!   leave {room}
@@ -29,7 +32,12 @@
 //!                                after the other person; avatar: an mxc address
 //!   profile {name?, avatar?}     who you are, once signed in
 //!   timeline {room, items: [{id, sender, name, avatar?, body, kind, ts, own, encrypted, state, media?, change?,
-//!          user?, user_name?}]}
+//!          user?, user_name?, reactions, edited, editable}]}
+//!                                the newest items: at first 100 (or the count open asked for), more after each back;
+//!                                id: the event's id ($...), or txn:<transaction id> for your own while it is sent (it
+//!                                stays good after); reactions: [{key, count, mine, senders}], the same emoji with and
+//!                                without the emoji-style mark (U+FE0F) as one; edited: its text was changed;
+//!                                editable: yours, and a text that edit can change;
 //!                                kind: text, emote, notice, image, file, video, audio, undecryptable, other, member;
 //!                                state: sending, waiting (for the server), sent, failed; media (image, file, video,
 //!                                audio): {source, thumbnail_source?, mimetype?, width?, height?, size?}; member:
@@ -59,9 +67,10 @@ use matrix_sdk::{
     Client, Room, RoomState, SessionChange,
     authentication::matrix::MatrixSession,
     deserialized_responses::RawSyncOrStrippedState,
+    room::edit::EditedContent,
     media::{MediaFormat, MediaRequestParameters, MediaThumbnailSettings},
     ruma::{
-        OwnedRoomId, RoomAliasId, RoomId, RoomOrAliasId, UInt, UserId,
+        EventId, OwnedRoomId, RoomAliasId, RoomId, RoomOrAliasId, TransactionId, UInt, UserId,
         api::client::{
             media::get_content_thumbnail::v3::Method, receipt::create_receipt::v3::ReceiptType, room::create_room,
         },
@@ -70,7 +79,7 @@ use matrix_sdk::{
             room::{
                 MediaSource,
                 encryption::RoomEncryptionEventContent,
-                message::{MessageType, RoomMessageEventContent},
+                message::{MessageType, RoomMessageEventContent, RoomMessageEventContentWithoutRelation},
             },
             space::child::SpaceChildEventContent,
         },
@@ -81,7 +90,8 @@ use matrix_sdk_ui::{
     room_list_service::{RoomListItem, filters::new_filter_non_left},
     sync_service::{State as SyncState, SyncService},
     timeline::{
-        EventSendState, MembershipChange, RoomExt, Timeline, TimelineDetails, TimelineItem, TimelineItemContent,
+        EventSendState, EventTimelineItem, MembershipChange, RoomExt, Timeline, TimelineDetails, TimelineEventItemId,
+        TimelineItem, TimelineItemContent,
     },
 };
 use serde::Deserialize;
@@ -106,7 +116,7 @@ fn default_device_name() -> String {
     "Darkride viewer".into()
 }
 
-/// How many of a timeline's newest items an event carries
+/// How many of a timeline's newest items an event carries at first; open can ask for more, and each back adds its count
 const TIMELINE_ITEMS: usize = 100;
 
 pub type EventSink = Arc<dyn Fn(String) + Send + Sync>;
@@ -179,8 +189,14 @@ struct State {
     sync: Mutex<Option<Arc<SyncService>>>,
     // the room list, the sync's state and the session's, while signed in
     tasks: Mutex<Vec<JoinHandle<()>>>,
-    // open rooms: the timeline and the task sending its events
-    open: Mutex<HashMap<OwnedRoomId, (Arc<Timeline>, JoinHandle<()>)>>,
+    open: Mutex<HashMap<OwnedRoomId, OpenRoom>>,
+}
+
+/// An open room: its timeline, the task sending its events, and how many of its newest items they carry
+struct OpenRoom {
+    timeline: Arc<Timeline>,
+    task: JoinHandle<()>,
+    shown: Arc<AtomicUsize>,
 }
 
 impl State {
@@ -218,10 +234,12 @@ async fn run(config: Config, events: EventSink, mut queue: mpsc::UnboundedReceiv
     }
 
     // signing in and out finish before the next command starts (an "open" sent right after "login_jwt" waits for
-    // it); the rest run side by side, so a long pagination doesn't hold up a send
+    // it), and so do the commands that queue something to send (they only wait for the queue, not the server), so
+    // messages go out in the order they were typed and an edit follows its message; the rest run side by side, so a
+    // long pagination doesn't hold up a send
     while let Some(command) = queue.recv().await {
         let op = command["op"].as_str().unwrap_or("").to_owned();
-        let in_turn = matches!(op.as_str(), "login_jwt" | "logout");
+        let in_turn = matches!(op.as_str(), "login_jwt" | "logout" | "send" | "edit" | "react" | "delete");
         let state = state.clone();
         let busy = busy.clone();
         let work = async move {
@@ -250,9 +268,10 @@ async fn handle(state: &Arc<State>, op: &str, command: &Value) -> Result<()> {
             // the room list syncs one event a room; a room opened shows a screenful
             let timeline = open_timeline(state, arg(command, "room")?).await?;
             let wanted = command["count"].as_u64().unwrap_or(30).min(200) as usize;
+            show_more(state, &timeline, wanted.saturating_sub(TIMELINE_ITEMS)).await;
             let mut start = false;
             for _ in 0..5 {
-                let shown = timeline.items().await.iter().filter(|item| item.as_event().is_some()).count();
+                let shown = event_count(&timeline.items().await);
                 if shown >= wanted {
                     break;
                 }
@@ -266,20 +285,58 @@ async fn handle(state: &Arc<State>, op: &str, command: &Value) -> Result<()> {
         }
         "close" => {
             let room = room_by_id_or_alias(state, arg(command, "room")?).await?;
-            if let Some((_, task)) = state.open.lock().unwrap().remove(room.room_id()) {
-                task.abort();
+            if let Some(open) = state.open.lock().unwrap().remove(room.room_id()) {
+                open.task.abort();
             }
             Ok(())
         }
         "back" => {
             let timeline = open_timeline(state, arg(command, "room")?).await?;
-            let start = timeline.paginate_backwards(command["count"].as_u64().unwrap_or(20).min(200) as u16).await?;
+            let count = command["count"].as_u64().unwrap_or(20).min(200) as u16;
+            let start = timeline.paginate_backwards(count).await?;
+            // the items loaded before but not shown come in too, even when this page brought nothing new
+            show_more(state, &timeline, count as usize).await;
             state.emit(json!({ "event": "done", "op": "back", "room": timeline.room().room_id(), "start": start }));
             Ok(())
         }
         "send" => {
             let timeline = open_timeline(state, arg(command, "room")?).await?;
             timeline.send(RoomMessageEventContent::text_plain(arg(command, "body")?).into()).await?;
+            Ok(())
+        }
+        "react" => {
+            let timeline = open_timeline(state, arg(command, "room")?).await?;
+            let id = item_id(command)?;
+            let wanted = arg(command, "key")?;
+            // the way the message's reactions already write this emoji (yours first, so a second click takes it back),
+            // else as given
+            let me = timeline.room().own_user_id().to_owned();
+            let key = find_item(&timeline, &id)
+                .await
+                .and_then(|item| {
+                    let reactions = item.content().reactions()?;
+                    let same: Vec<&String> = reactions.keys().filter(|key| same_emoji(key) == same_emoji(wanted)).collect();
+                    let mine = same.iter().find(|key| reactions[key.as_str()].contains_key(&me)).copied();
+                    mine.or(same.first().copied()).cloned()
+                })
+                .unwrap_or_else(|| wanted.to_owned());
+            timeline.toggle_reaction(&id, &key).await?;
+            Ok(())
+        }
+        "edit" => {
+            let timeline = open_timeline(state, arg(command, "room")?).await?;
+            let content = RoomMessageEventContentWithoutRelation::text_plain(arg(command, "body")?);
+            timeline.edit(&item_id(command)?, EditedContent::RoomMessage(content)).await?;
+            Ok(())
+        }
+        "delete" => {
+            let timeline = open_timeline(state, arg(command, "room")?).await?;
+            let id = item_id(command)?;
+            let item = find_item(&timeline, &id).await.ok_or_else(|| anyhow!("no such message"))?;
+            if !item.is_own() {
+                return Err(anyhow!("not your message"));
+            }
+            timeline.redact(&id, None).await?;
             Ok(())
         }
         "read" => {
@@ -306,8 +363,8 @@ async fn handle(state: &Arc<State>, op: &str, command: &Value) -> Result<()> {
         }
         "leave" => {
             let room = room_by_id_or_alias(state, arg(command, "room")?).await?;
-            if let Some((_, task)) = state.open.lock().unwrap().remove(room.room_id()) {
-                task.abort();
+            if let Some(open) = state.open.lock().unwrap().remove(room.room_id()) {
+                open.task.abort();
             }
             room.leave().await?;
             state.emit(json!({ "event": "done", "op": "leave", "room": room.room_id() }));
@@ -591,14 +648,65 @@ async fn room_by_id_or_alias(state: &State, target: &str) -> Result<Room> {
         .map_err(|_| anyhow!("not in {target}"))
 }
 
+fn event_count(items: &Vector<Arc<TimelineItem>>) -> usize {
+    items.iter().filter(|item| item.as_event().is_some()).count()
+}
+
+/// a message's id as the timeline events give it: the event's id, or txn:<transaction id>
+fn item_id(command: &Value) -> Result<TimelineEventItemId> {
+    let id = arg(command, "id")?;
+    Ok(match id.strip_prefix("txn:") {
+        Some(txn) => TimelineEventItemId::TransactionId(<&TransactionId>::from(txn).to_owned()),
+        None => TimelineEventItemId::EventId(<&EventId>::try_from(id)?.to_owned()),
+    })
+}
+
+fn item_id_text(event: &EventTimelineItem) -> String {
+    match event.identifier() {
+        TimelineEventItemId::EventId(id) => id.to_string(),
+        TimelineEventItemId::TransactionId(txn) => format!("txn:{txn}"),
+    }
+}
+
+async fn find_item(timeline: &Timeline, id: &TimelineEventItemId) -> Option<EventTimelineItem> {
+    match id {
+        TimelineEventItemId::EventId(id) => timeline.item_by_event_id(id).await,
+        // a message of yours, sent or not yet
+        TimelineEventItemId::TransactionId(txn) => timeline
+            .items()
+            .await
+            .iter()
+            .rev()
+            .filter_map(|item| item.as_event())
+            .find(|event| event.transaction_id() == Some(txn))
+            .cloned(),
+    }
+}
+
+/// the same emoji with and without its emoji-style mark (U+FE0F), which apps send either way
+fn same_emoji(key: &str) -> String {
+    key.replace('\u{fe0f}', "")
+}
+
+/// an open room's timeline events carry count more of its items from now on, starting with one now
+async fn show_more(state: &Arc<State>, timeline: &Timeline, count: usize) {
+    let room = timeline.room().room_id().to_owned();
+    let Some(shown) = state.open.lock().unwrap().get(&room).map(|open| open.shown.clone()) else { return };
+    if count == 0 {
+        return;
+    }
+    let shown = shown.fetch_add(count, Ordering::SeqCst) + count;
+    state.emit(timeline_json(&room, &timeline.items().await, shown, timeline.room().own_user_id()));
+}
+
 async fn open_timeline(state: &Arc<State>, target: &str) -> Result<Arc<Timeline>> {
     let room = room_by_id_or_alias(state, target).await?;
-    if let Some((timeline, _)) = state.open.lock().unwrap().get(room.room_id()) {
-        return Ok(timeline.clone());
+    if let Some(open) = state.open.lock().unwrap().get(room.room_id()) {
+        return Ok(open.timeline.clone());
     }
     open(state, target).await?;
     let open = state.open.lock().unwrap();
-    Ok(open.get(room.room_id()).ok_or_else(|| anyhow!("closed"))?.0.clone())
+    Ok(open.get(room.room_id()).ok_or_else(|| anyhow!("closed"))?.timeline.clone())
 }
 
 async fn open(state: &Arc<State>, target: &str) -> Result<()> {
@@ -609,16 +717,42 @@ async fn open(state: &Arc<State>, target: &str) -> Result<()> {
     let timeline = Arc::new(room.timeline().await?);
     let (items, mut stream) = timeline.subscribe().await;
     let room_id = room.room_id().to_owned();
+    let me = room.own_user_id().to_owned();
+    let shown = Arc::new(AtomicUsize::new(TIMELINE_ITEMS));
     let events = state.clone();
     let id = room_id.clone();
+    let count = shown.clone();
+    let refill = timeline.clone();
     let task = tokio::spawn(async move {
         let mut items = items;
-        events.emit(timeline_json(&id, &items));
+        let mut had = event_count(&items);
+        let refilling = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        events.emit(timeline_json(&id, &items, count.load(Ordering::SeqCst), &me));
         while let Some(diffs) = stream.next().await {
             for diff in diffs {
                 diff.apply(&mut items);
             }
-            events.emit(timeline_json(&id, &items));
+            events.emit(timeline_json(&id, &items, count.load(Ordering::SeqCst), &me));
+            // after a gap in the sync (the server skipped some events) the SDK keeps only the newest of the room's
+            // events in memory and leaves the rest in the store: they're loaded back, from the store, so the
+            // conversation doesn't shrink under the reader (and edit, react and delete still find its messages)
+            let now = event_count(&items);
+            let wanted = had.min(count.load(Ordering::SeqCst));
+            if now >= wanted {
+                had = now;
+            } else if !refilling.swap(true, Ordering::SeqCst) {
+                let timeline = refill.clone();
+                let refilling = refilling.clone();
+                tokio::spawn(async move {
+                    for _ in 0..10 {
+                        let have = event_count(&timeline.items().await);
+                        if have >= wanted || !matches!(timeline.paginate_backwards((wanted - have).min(200) as u16).await, Ok(false)) {
+                            break;
+                        }
+                    }
+                    refilling.store(false, Ordering::SeqCst);
+                });
+            }
         }
     });
     let mut open = state.open.lock().unwrap();
@@ -626,15 +760,15 @@ async fn open(state: &Arc<State>, target: &str) -> Result<()> {
         // opened twice at once: keep the first
         task.abort();
     } else {
-        open.insert(room_id, (timeline, task));
+        open.insert(room_id, OpenRoom { timeline, task, shown });
     }
     Ok(())
 }
 
-fn timeline_json(room: &OwnedRoomId, items: &Vector<Arc<TimelineItem>>) -> Value {
+fn timeline_json(room: &OwnedRoomId, items: &Vector<Arc<TimelineItem>>, count: usize, me: &UserId) -> Value {
     let shown: Vec<Value> = items
         .iter()
-        .skip(items.len().saturating_sub(TIMELINE_ITEMS))
+        .skip(items.len().saturating_sub(count))
         .filter_map(|item| {
             let event = item.as_event()?;
             let content = event.content();
@@ -731,7 +865,7 @@ fn timeline_json(room: &OwnedRoomId, items: &Vector<Arc<TimelineItem>>) -> Value
                 Some(EventSendState::SendingFailed { .. }) => "failed",
             };
             Some(json!({
-                "id": event.event_id().map(|e| e.to_string()).unwrap_or_else(|| format!("{:?}", event.identifier())),
+                "id": item_id_text(event),
                 "sender": event.sender(),
                 "name": name,
                 "avatar": avatar,
@@ -745,10 +879,40 @@ fn timeline_json(room: &OwnedRoomId, items: &Vector<Arc<TimelineItem>>) -> Value
                 "own": event.is_own(),
                 "encrypted": event.encryption_info().is_some(),
                 "state": send,
+                "reactions": reactions_json(content, me),
+                "edited": content.as_message().is_some_and(|message| message.is_edited()),
+                "editable": event.is_own() && event.is_editable() && matches!(kind, "text" | "emote" | "notice"),
             }))
         })
         .collect();
     json!({ "event": "timeline", "room": room, "items": shown })
+}
+
+/// a message's reactions by emoji (with and without U+FE0F as one): [{key as the first sender wrote it, count, mine,
+/// senders}], in the order they were first given
+fn reactions_json(content: &TimelineItemContent, me: &UserId) -> Value {
+    let mut groups: Vec<(String, String, Vec<String>, bool)> = Vec::new();
+    for (key, senders) in content.reactions().into_iter().flat_map(|reactions| reactions.iter()) {
+        let folded = same_emoji(key);
+        let group = match groups.iter().position(|group| group.0 == folded) {
+            Some(i) => &mut groups[i],
+            None => {
+                groups.push((folded, key.clone(), Vec::new(), false));
+                groups.last_mut().unwrap()
+            }
+        };
+        for sender in senders.keys() {
+            if !group.2.iter().any(|s| s == sender.as_str()) {
+                group.2.push(sender.to_string());
+            }
+            group.3 |= sender == me;
+        }
+    }
+    groups
+        .into_iter()
+        .filter(|group| !group.2.is_empty())
+        .map(|(_, key, senders, mine)| json!({ "key": key, "count": senders.len(), "mine": mine, "senders": senders }))
+        .collect()
 }
 
 fn media_json(
@@ -804,7 +968,7 @@ async fn fetch_media(state: &Arc<State>, command: &Value) -> Result<String> {
 /// Signed out: everything stopped and waited for (Windows can't remove files still open), the server told when asked
 /// (it forgets the device), then the session, the stores (keys too) and the fetched media, gone from the folder
 async fn forget(state: &Arc<State>, tell_server: bool) {
-    let mut tasks: Vec<JoinHandle<()>> = state.open.lock().unwrap().drain().map(|(_, (_, task))| task).collect();
+    let mut tasks: Vec<JoinHandle<()>> = state.open.lock().unwrap().drain().map(|(_, open)| open.task).collect();
     tasks.extend(state.tasks.lock().unwrap().drain(..));
     for task in &tasks {
         task.abort();
