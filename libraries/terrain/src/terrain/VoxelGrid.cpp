@@ -133,6 +133,7 @@ const Voxel* ChunkSamples::findAt(int levelDelta, const glm::ivec3& point) const
 void ChunkSamples::clearBlocks() {
     std::fill(std::begin(_neighbourLevels), std::end(_neighbourLevels), 0);
     _blocks.clear();
+    std::fill(std::begin(_capLow), std::end(_capLow), false);
 }
 
 // --- VoxelGrid: the grid and its chunks ---------------------------------------------------------
@@ -705,7 +706,13 @@ void VoxelGrid::sampleChunk(const ChunkKey& key, ChunkSamples& samples, bool for
     // (the region is a level-k place beside a level-k chunk, and the 2:1 rule holds), so one point says which.
     // The corner below all three low faces touches the chunk at a point only, where no cell of its meets an edge
     // of the chunk's, so the mesher never needs it.
-    for (int region = 1; region < 7; ++region) {
+    // (the corner below all three low faces is needed only for the cap along a closed low face, whose polygons at
+    // the chunk's corner take a cell of the neighbour there)
+    bool anyCapLow = false;
+    for (int axis = 0; axis < 3; ++axis) {
+        anyCapLow = anyCapLow || ((_caps & (1 << (2 * axis))) != 0 && key.getOrigin()[axis] <= 0);
+    }
+    for (int region = 1; region < (anyCapLow ? 8 : 7); ++region) {
         const glm::ivec3 below(region & 1 ? -1 : 0, region & 2 ? -1 : 0, region & 4 ? -1 : 0);
         const int level = chunkCoveringPoint(key.level, origin + below).level;
         const int delta = glm::clamp(level - key.level, -1, 1);
@@ -715,11 +722,30 @@ void VoxelGrid::sampleChunk(const ChunkKey& key, ChunkSamples& samples, bool for
         }
         SampleBlock block;
         block.levelDelta = delta;
-        block.origin = below;
         const int side = delta > 0 ? CHUNK_SIZE * 2 : CHUNK_SIZE / 2;   // the chunk's side in the block's voxels
         block.size = glm::ivec3(region & 1 ? 2 : side + 1, region & 2 ? 2 : side + 1, region & 4 ? 2 : side + 1);
+        // Along a closed low face of the box the cap's edges start a voxel further out (SurfaceNets.h), and their
+        // polygons reach the neighbours' cells a point further out along that axis: a finer neighbour's two points
+        // (its cells at -2 and -1), a coarser one's one (its cell at -1).
+        glm::ivec3 reach = below;
+        for (int axis = 0; axis < 3; ++axis) {
+            if (!(_caps & (1 << (2 * axis))) || key.getOrigin()[axis] > 0) {
+                continue;
+            }
+            if (below[axis] < 0) {
+                if (delta > 0) {
+                    reach[axis] = -2;
+                    block.size[axis] = 3;
+                }
+            } else {
+                const int extra = delta > 0 ? 2 : 1;
+                reach[axis] = -extra;
+                block.size[axis] += extra;
+            }
+        }
+        block.origin = reach;
         block.voxels.resize((size_t)block.size.x * block.size.y * block.size.z);
-        const glm::ivec3 first = key.coords * side + below;   // the chunk's origin at the block's level, then the block's
+        const glm::ivec3 first = key.coords * side + reach;   // the chunk's origin at the block's level, then the block's
         size_t index = 0;
         for (int z = 0; z < block.size.z; ++z) {
             for (int y = 0; y < block.size.y; ++y) {
@@ -729,6 +755,91 @@ void VoxelGrid::sampleChunk(const ChunkKey& key, ChunkSamples& samples, bool for
             }
         }
         samples.addBlock(std::move(block));
+    }
+    applyCaps(samples);
+}
+
+// --- the box's closed faces ---------------------------------------------------------------------
+
+void VoxelGrid::setCaps(uint8_t caps) {
+    caps &= CAP_ALL;
+    if (caps == _caps) {
+        return;
+    }
+    _caps = caps;
+    if (!_slots.empty()) {
+        markAllChunksDirty();
+    }
+}
+
+bool VoxelGrid::capsReach(const glm::ivec3& low, const glm::ivec3& high) const {
+    if (_caps == CAP_NONE) {
+        return false;
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+        if ((_caps & (1 << (2 * axis))) && low[axis] <= 0) {
+            return true;
+        }
+        if ((_caps & (2 << (2 * axis))) && high[axis] >= _voxelCount[axis] - 1) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void VoxelGrid::applyCaps(ChunkSamples& samples) const {
+    if (_caps == CAP_NONE || _slots.empty()) {
+        return;
+    }
+    const ChunkKey& key = samples.getKey();
+    const float voxel = key.getVoxelSize();   // grid voxels per voxel of the samples
+    const glm::vec3 origin(key.getOrigin());
+    // the planes half a voxel of the finest level past the grid's first and last voxels: within the layer of samples
+    // around a chunk at every level (a finer chunk's layer reaches a shorter way out), so every level meets them
+    const float past = 0.5f / (float)FINEST;
+    const glm::vec3 lowFace(-past);
+    const glm::vec3 highFace = glm::vec3(_voxelCount - 1) + past;
+    // a point's distance outside the closed faces' planes, in grid voxels: the largest over the faces, far inside when none is closed
+    auto outside = [&](const glm::vec3& p) {
+        float distance = -4.0f * SATURATED_DISTANCE;
+        for (int axis = 0; axis < 3; ++axis) {
+            if (_caps & (1 << (2 * axis))) {
+                distance = std::max(distance, lowFace[axis] - p[axis]);
+            }
+            if (_caps & (2 << (2 * axis))) {
+                distance = std::max(distance, p[axis] - highFace[axis]);
+            }
+        }
+        return distance;
+    };
+    // the field cut by the planes: a sample is at least as far out as the planes put it (the intersection with the box)
+    auto cap = [&](Voxel& sample, const glm::vec3& p, float sampleVoxel) {
+        const float planes = outside(p) / sampleVoxel;   // in the sample's own voxels
+        if (planes > sample.getDistance()) {
+            sample.setDistance(planes);
+        }
+    };
+    for (int z = -1; z <= CHUNK_SIZE; ++z) {
+        for (int y = -1; y <= CHUNK_SIZE; ++y) {
+            for (int x = -1; x <= CHUNK_SIZE; ++x) {
+                cap(samples.at(x, y, z), origin + glm::vec3(x, y, z) * voxel, voxel);
+            }
+        }
+    }
+    for (SampleBlock& block : const_cast<std::vector<SampleBlock>&>(samples.getBlocks())) {
+        // the block's lattice is the neighbour's level: its points are at origin + (block origin + local) * its voxel
+        const float blockVoxel = block.levelDelta > 0 ? voxel * 0.5f : (block.levelDelta < 0 ? voxel * 2.0f : voxel);
+        size_t index = 0;
+        for (int z = 0; z < block.size.z; ++z) {
+            for (int y = 0; y < block.size.y; ++y) {
+                for (int x = 0; x < block.size.x; ++x) {
+                    cap(block.voxels[index++], origin + glm::vec3(block.origin + glm::ivec3(x, y, z)) * blockVoxel, blockVoxel);
+                }
+            }
+        }
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+        samples.setCapLow(axis, (_caps & (1 << (2 * axis))) != 0 && key.getOrigin()[axis] <= 0);
     }
 }
 

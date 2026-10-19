@@ -191,8 +191,11 @@ void PhysicsServer::step() {
             << _statesPublished << "train states published," << _entityEditSender.getPacketsPerSecond() << "pps;"
             << _entitySimulation->getVehicleSimulation()->getNumVehicles() << "vehicles,"
             << _entitySimulation->getVehicleSimulation()->getStats().inputsReceived << "inputs received,"
-            << _entitySimulation->getVehicleSimulation()->getStats().inputsStarved << "starved,"
-            << _entitySimulation->getVehicleSimulation()->getStats().inputsDropped << "dropped;"
+            << _entitySimulation->getVehicleSimulation()->getStats().inputsStarved << "held,"
+            << _entitySimulation->getVehicleSimulation()->getStats().inputsLate << "late,"
+            << _entitySimulation->getVehicleSimulation()->getStats().inputsEarly << "early,"
+            << _entitySimulation->getVehicleSimulation()->getStats().bufferRealigned << "realigned, margin"
+            << _entitySimulation->getVehicleSimulation()->getStats().bufferMargin << ";"
             << "stream" << _streamPackets << "packets, flight max" << _streamFlightMax / 1000 << "ms, queued max"
             << _streamQueuedMax / 1000 << "ms, parse max" << _parseMaxUsec / 1000 << "ms, total" << _parseTotalUsec / 1000
             << "ms (lock wait" << _entityViewer.getAverageWaitLockPerPacket() / 1000.0f << "ms, uncompress"

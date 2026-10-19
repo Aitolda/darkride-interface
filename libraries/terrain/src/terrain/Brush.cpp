@@ -169,13 +169,34 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
             const glm::ivec3 i = point - beforeLow;
             return before[(i.z * beforeSize.y + i.y) * beforeSize.x + i.x];
         }
-        // the distance at a point of the chunk's level: the chunk's own voxel, or the grid's reading beyond it
-        float distanceAt(const VoxelGrid& grid, const glm::ivec3& point) const {
+        // the voxel at a point of the chunk's level: the chunk's own, or the grid's reading beyond it
+        Voxel voxelAt(const VoxelGrid& grid, const glm::ivec3& point) const {
             const glm::ivec3 local = point - key.coords * CHUNK_SIZE;
             if (glm::all(glm::greaterThanEqual(local, glm::ivec3(0))) && glm::all(glm::lessThan(local, glm::ivec3(CHUNK_SIZE)))) {
-                return chunk->get(local.x, local.y, local.z).getDistance();
+                return chunk->get(local.x, local.y, local.z);
             }
-            return grid.sampleAt(key.level, point).getDistance();
+            return grid.sampleAt(key.level, point);
+        }
+        float distanceAt(const VoxelGrid& grid, const glm::ivec3& point) const {
+            return voxelAt(grid, point).getDistance();
+        }
+        // The material of the ground a voxel grows out of: its neighbour's deepest in the ground, or the given one
+        // when none of them is ground.
+        uint8_t groundMaterialNear(const VoxelGrid& grid, const glm::ivec3& point, uint8_t fallback) const {
+            uint8_t material = fallback;
+            float deepest = 0.0f;
+            for (int axis = 0; axis < 3; ++axis) {
+                glm::ivec3 step(0);
+                step[axis] = 1;
+                for (const glm::ivec3& neighbour : { point - step, point + step }) {
+                    const Voxel voxel = voxelAt(grid, neighbour);
+                    if (voxel.isGround() && voxel.getDistance() < deepest) {
+                        deepest = voxel.getDistance();
+                        material = voxel.material;
+                    }
+                }
+            }
+            return material;
         }
     };
     std::vector<Region> regions;
@@ -301,8 +322,15 @@ int terrain::sculpt(VoxelGrid& grid, const Brush& brush, SculptMode mode) {
                             case SculptMode::Paint:
                                 break;
                         }
-                        if ((mode == SculptMode::Raise || mode == SculptMode::Fill) && next.isGround() && !old.isGround()) {
-                            next.material = brush.material;
+                        if (next.isGround() && !old.isGround()) {
+                            // New ground. Raise grows the ground that is there, in its own material (the chosen layer's
+                            // left voxel-sized patches of it along the rim of a raise, where the soft edge brought
+                            // single voxels over: 2026-10-18); Fill adds the chosen material.
+                            if (mode == SculptMode::Raise) {
+                                next.material = region.groundMaterialNear(grid, point, brush.material);
+                            } else if (mode == SculptMode::Fill) {
+                                next.material = brush.material;
+                            }
                         }
                         if (next != old && chunk->set(local.x, local.y, local.z, next)) {
                             record(region, local);

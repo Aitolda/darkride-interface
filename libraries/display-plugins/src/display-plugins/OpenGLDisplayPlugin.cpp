@@ -208,6 +208,17 @@ public:
             }
 #if defined(Q_OS_MACOS)
             _context->makeCurrent();
+            // After a change of the view, making the context current on this thread has Qt queue the context's update
+            // for the main thread (QCocoaGLContext::update), which there attaches the view's new surface: drawing
+            // meanwhile crashed in Apple's GL driver (10-18). The lock is let go while the main thread runs it, and the
+            // next pass draws.
+            if (gl::takeViewChanged()) {
+                _context->doneCurrent();
+                gl::globalRelease(false);
+                const int VIEW_UPDATE_WAIT_MS = 100;
+                gl::waitForMainQueue(VIEW_UPDATE_WAIT_MS);
+                continue;
+            }
 #endif
             // Execute the frame and present it to the display device.
             {

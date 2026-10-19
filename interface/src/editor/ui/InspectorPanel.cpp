@@ -21,6 +21,7 @@
 #include "../PropertySpec.h"
 #include "PropertyEditors.h"
 #include "ImpostorEditor.h"
+#include "TerrainCapsEditor.h"
 #include "TerrainLayersEditor.h"
 #include "UserDataEditor.h"
 
@@ -234,6 +235,9 @@ QWidget* InspectorPanel::buildSection(const QString& sectionId, QWidget* parent)
             connect(layers, &TerrainLayersEditor::layerChosen, this, &InspectorPanel::terrainLayerChosen);
             connect(layers, &TerrainLayersEditor::layersShown, this, &InspectorPanel::terrainLayersShown);
         }
+        if (auto caps = qobject_cast<TerrainCapsEditor*>(editor)) {
+            caps->setTerrainEditor(_terrainEditor);
+        }
         // right-click on a label: Copy and Paste the row's value, as Unity does
         label->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(label, &QWidget::customContextMenuRequested, editor, [editor, label](const QPoint& pos) {
@@ -254,6 +258,10 @@ void InspectorPanel::applyValues(const QVector<EntityItemProperties>& snapshots,
         if (auto layers = qobject_cast<TerrainLayersEditor*>(row.editor)) {
             // not a property: the terrain's own, read through the Terrain tool
             layers->showTerrain(snapshots.size() == 1 ? snapshots.first().getID() : QUuid(), snapshots.size() > 1);
+            continue;
+        }
+        if (auto caps = qobject_cast<TerrainCapsEditor*>(row.editor)) {
+            caps->showTerrain(snapshots.size() == 1 ? snapshots.first().getID() : QUuid(), snapshots.size() > 1);
             continue;
         }
         if (auto impostor = qobject_cast<ImpostorEditor*>(row.editor)) {

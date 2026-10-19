@@ -87,6 +87,11 @@ public:
     void pushTerrainLayers(const QString& text, const QUuid& id, const terrain::LayerStack& before, const terrain::LayerStack& after);
     // replaces a terrain entity's layer stack; false when the entity is not a terrain on this client
     bool applyTerrainLayers(const QUuid& id, const terrain::LayerStack& layers);
+    // a change to which faces of a terrain's box are closed (the Inspector's Closed Box row): the step applies it
+    // when pushed, and on undo and redo
+    void pushTerrainCaps(const QString& text, const QUuid& id, uint8_t before, uint8_t after);
+    // sets a terrain entity's closed faces; false when the entity is not a terrain on this client
+    bool applyTerrainCaps(const QUuid& id, uint8_t caps);
     // a terrain resampled to another voxel count, already applied: the whole grid and paint map before and after
     // (a resample changes every chunk, so the step keeps both wholesale)
     void pushTerrainResample(const QString& text, const QUuid& id, const terrain::VoxelGrid& gridBefore,

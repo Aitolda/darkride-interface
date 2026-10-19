@@ -275,7 +275,9 @@
             stats: { corrections: stats.corrections, replaySteps: stats.replaySteps, maxError: stats.maxError, inputsSent: stats.inputsSent,
                      inputsReceived: stats.inputsReceived, inputsDropped: stats.inputsDropped, inputsStarved: stats.inputsStarved, vehicles: stats.vehicles,
                      streamStatesReceived: stats.streamStatesReceived, streamExtrapolations: stats.streamExtrapolations, rttMs: stats.rttMs,
-                     delayMs: stats.delayMs, streamIntervalMs: stats.streamIntervalMs, streamJitterMs: stats.streamJitterMs },
+                     delayMs: stats.delayMs, streamIntervalMs: stats.streamIntervalMs, streamJitterMs: stats.streamJitterMs,
+                     inputsLate: stats.inputsLate, inputsEarly: stats.inputsEarly, bufferMargin: stats.bufferMargin, leadShifts: stats.leadShifts,
+                     leadJumps: stats.leadJumps, timeShiftMs: stats.timeShiftMs },
             live: stats.live && (stats.live.airship || stats.live.aircraft) ? { altitude: stats.live.altitude, airDensity: stats.live.airDensity, buoyancy: stats.live.buoyancy,
                     ballastWeight: stats.live.ballastWeight, thrust: stats.live.thrust, verticalThrust: stats.live.verticalThrust,
                     airspeed: stats.live.airspeed, sideslip: stats.live.sideslip, incidence: stats.live.incidence, ballast: stats.live.ballast,
@@ -1052,6 +1054,8 @@
             "; stream: states received " + (last.streamStatesReceived || 0) + ", extrapolated substeps " + (last.streamExtrapolations || 0) +
             ", rtt " + (last.rttMs || 0).toFixed(1) + " ms, delay " + (last.delayMs || 0).toFixed(1) + " ms, interval " + (last.streamIntervalMs || 0).toFixed(1) +
             " ms, jitter " + (last.streamJitterMs || 0).toFixed(1) + " ms" +
+            "; input buffer: margin " + (last.bufferMargin || 0) + ", lead shifts " + (last.leadShifts || 0) + " (jumps " + (last.leadJumps || 0) +
+            "), late " + (last.inputsLate || 0) + ", early " + (last.inputsEarly || 0) +
             "; crossings " + crossings.length);
         Test.saveObject({ role: ROLE, summary: summary, events: events, crossings: crossings, probes: probes, samples: samples }, "physics-airship.json");
         log("done (" + reason + "), " + samples.length + " samples");

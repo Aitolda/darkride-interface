@@ -139,6 +139,7 @@ VoxelGrid terrain::resampleGrid(const VoxelGrid& source, const glm::ivec3& targe
         return source;
     }
     VoxelGrid target(targetCount);
+    target.setCaps(source.getCaps());   // the box's closed faces are the terrain's, whatever its voxel count
     // Target voxel p lies where source voxel p * ratio does; a distance of one source voxel is one over the ratio
     // in target voxels, taken as the mean over the axes (a box scaled unevenly has no single ratio).
     const glm::vec3 ratio = glm::vec3(sourceCount) / glm::vec3(targetCount);

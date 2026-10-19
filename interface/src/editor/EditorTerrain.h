@@ -101,6 +101,12 @@ public:
     // selected terrain's, else the terrain under the pointer's, else the defaults'.
     QStringList layerNamesForTool(const QList<QUuid>& selected) const;
 
+    // Which faces of a terrain's box are closed (terrain::CAP_ bits), for the Inspector's Closed Box row: -1 when
+    // the id is not a terrain on this client. setCaps applies a change as one undo step and has the terrain saved;
+    // false when the id is not a terrain or the terrain is locked.
+    int capsOf(const QUuid& id) const;
+    bool setCaps(const QUuid& id, uint8_t caps, const QString& undoText);
+
     // a terrain's voxels changed on this client (a stroke, an undo): its file is saved a moment later, once no
     // stroke is in progress; flushSaves() saves what is waiting now (build mode ending)
     void markChanged(const QUuid& id);
