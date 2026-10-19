@@ -811,8 +811,11 @@ void EntityTreeRenderer::setZoneCullingSuspended(bool suspended) {
     _refreshAllRenderables = true;
 }
 
-void EntityTreeRenderer::evaluateZoneCullingStack() {  
-    if (_zoneCullingStack != _prevZoneCullingStack) QMetaObject::invokeMethod(qApp, "requeryOctree"); 
+void EntityTreeRenderer::evaluateZoneCullingStack() {
+    // Until 2026-10-19 a change of the zone stack also asked qApp for requeryOctree, whose new connection id made
+    // the entity server forget what this client holds and resend its whole view: once on every zone border crossed,
+    // and once about a second after every arrival, when the stack first fills (Tivoli's 14f41d044a). The client
+    // already holds what zone culling shows or hides; the recheck below is all a zone change needs.
     if (!_forceRecheckEntities && _zoneCullingStack == _prevZoneCullingStack) return; // stack hasn't changed
     _forceRecheckEntities = false;
     _zoneCullSkipList.clear();    
