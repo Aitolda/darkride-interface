@@ -26,6 +26,16 @@
 // entity query (Application.cpp INITIAL_QUERY_RADIUS); the setting is for Caity to tune.
 static Setting::Handle<float> nearbyRadiusSetting { "arrival/nearbyRadius", 10.0f };
 
+// TIVOLI_ARRIVAL_TRACE=1: a line per entity tracked and released, with the reason
+static bool arrivalTrace() {
+    static const bool trace = !qgetenv("TIVOLI_ARRIVAL_TRACE").isEmpty();
+    return trace;
+}
+
+static QString describe(const EntityItemPointer& entity) {
+    return QString("%1 '%2'").arg(EntityTypes::getEntityTypeName(entity->getType()), entity->getName());
+}
+
 
 CalculateEntityLoadingPriority SafeLanding::entityLoadingOperatorElevateCollidables = [](const EntityItem& entityItem) {
     const int COLLIDABLE_ENTITY_PRIORITY = 10.0f;
@@ -118,6 +128,11 @@ void SafeLanding::trackEntity(const EntityItemID& entityID, const EntityTreePoin
     if (entity && !entity->isLocalEntity() && entity->getCreated() < _startTime) {
         if (_trackedEntities.emplace(entityID, entity).second) {
             _addedCount++;
+            if (arrivalTrace()) {
+                qDebug() << "arrival trace: tracking" << qPrintable(describe(entity)) << "drawn" << entity->isVisuallyReady()
+                    << "collisionless" << entity->getCollisionless() << "shape" << entity->getShapeType()
+                    << (usecTimestampNow() - _startTime) / 1000 << "ms after the start";
+            }
         }
 
         int32_t trackedEntityCount = (int32_t)_trackedEntities.size();
@@ -191,18 +206,29 @@ void SafeLanding::updateTracking() {
             // level of detail, brings the whole visible world; its far models' collision shapes and textures are no
             // more needed on arrival than they are later)
             if (!isNearby(entity, avatarPosition)) {
+                if (arrivalTrace()) {
+                    qDebug() << "arrival trace: released" << qPrintable(describe(entity)) << ": beyond" << _nearbyRadius << "m,"
+                        << (usecTimestampNow() - _startTime) / 1000 << "ms after the start";
+                }
                 entityMapIter = _trackedEntities.erase(entityMapIter);
                 continue;
             }
             bool isVisuallyReady = true;
+            bool hasRenderable = true;
             if (enableInterstitial) {
                 auto entityRenderable = _entityTreeRenderer->renderableForEntityId(entityMapIter->first);
+                hasRenderable = (bool)entityRenderable;
                 if (!entityRenderable) {
                     _entityTreeRenderer->addingEntity(entityMapIter->first);
                 }
                 isVisuallyReady = entity->isVisuallyReady() || (!entityRenderable && !entity->isParentPathComplete());
             }
             if (isEntityPhysicsReady(entity) && isVisuallyReady) {
+                if (arrivalTrace()) {
+                    qDebug() << "arrival trace: released" << qPrintable(describe(entity)) << ": ready (drawn" << entity->isVisuallyReady()
+                        << "renderable" << hasRenderable << "waiting for visuals" << enableInterstitial << ")"
+                        << (usecTimestampNow() - _startTime) / 1000 << "ms after the start";
+                }
                 entityMapIter = _trackedEntities.erase(entityMapIter);
             } else {
                 entityMapIter++;
