@@ -7413,7 +7413,10 @@ void Application::updateWindowTitle() const {
     statusList.removeAll(QString(""));
     const QString status = statusList.join(", ").trimmed();
 
+    // a build's client label first, when the build has one (cmake -DCLIENT_LABEL=...): with several sessions' clients
+    // on one machine, it tells them apart at a glance (Caity, 2026-10-19)
     const QString title = (
+        (BuildInfo::CLIENT_LABEL.isEmpty() ? "" : BuildInfo::CLIENT_LABEL + " | ") +
         (status.isEmpty() ? "" : status + " - ") +
         username +
         (username.isEmpty() || currentWorldName.isEmpty() ? "" : " @ ")  +

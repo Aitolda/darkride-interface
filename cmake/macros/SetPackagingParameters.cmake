@@ -87,6 +87,9 @@ macro(SET_PACKAGING_PARAMETERS)
   # when HEAD changes (a checkout), and after a commit the hash catches up on the next cmake run.
   set(BUILD_BRANCH "")
   set(BUILD_COMMIT_SHORT "")
+  # A name for this build's clients, first in the window title, for telling one session's clients from another's
+  # on one machine: cmake -DCLIENT_LABEL="Darkride - Editor/Renderer" . (empty: none)
+  set(CLIENT_LABEL "" CACHE STRING "A name for this build's clients, shown first in the window title")
   find_package(Git QUIET)
   if (GIT_FOUND)
     execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --abbrev-ref HEAD
