@@ -37,6 +37,8 @@ namespace {
         s.ballast = 100.0f;
         s.fill = 0.9f;
         s.tilt = 0.3f;
+        s.tick = sequence + 100;
+        s.margin = (int8_t)((int)(sequence % 7) - 3);
         return s;
     }
 }
@@ -73,6 +75,8 @@ void StreamTests::statePacketRoundTrip() {
         QCOMPARE(out[i].ballast, states[i].ballast);
         QCOMPARE(out[i].fill, states[i].fill);
         QCOMPARE(out[i].tilt, states[i].tilt);
+        QCOMPARE(out[i].tick, states[i].tick);
+        QCOMPARE(out[i].margin, states[i].margin);
     }
     QCOMPARE(out[1].gear, (int8_t)-1);
     QCOMPARE(out[2].input.pitch, 1.0f);

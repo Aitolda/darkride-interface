@@ -339,6 +339,14 @@ QVariantMap PhysicalEntitySimulation::getVehicleStats() const {
     map["inputsReceived"] = stats.inputsReceived;
     map["inputsDropped"] = stats.inputsDropped;
     map["inputsStarved"] = stats.inputsStarved;
+    // the input buffer (round 10)
+    map["inputsLate"] = stats.inputsLate;
+    map["inputsEarly"] = stats.inputsEarly;
+    map["bufferRealigned"] = stats.bufferRealigned;
+    map["bufferMargin"] = stats.bufferMargin;
+    map["leadShifts"] = stats.leadShifts;
+    map["leadJumps"] = stats.leadJumps;
+    map["timeShiftMs"] = stats.timeShiftMs;
     // the state stream (round 9)
     map["streamStatesSent"] = stats.streamStatesSent;
     map["streamStatesReceived"] = stats.streamStatesReceived;

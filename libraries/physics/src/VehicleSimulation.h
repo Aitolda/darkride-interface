@@ -37,6 +37,13 @@
 //  SnapshotBuffer), extrapolating with the model when none does. Without a stream (no physics server, or a server
 //  before this round) the relay's states drive the round 6 paths as before.
 //
+//  Round 10 replaces the authority's queue of a remote driver's inputs with a time-synchronised input buffer
+//  (InputBuffer): the driver's sequence numbers are its ticks, one per substep, and the server applies each at the
+//  substep its tick names, so a stall or a burst on the way no longer moves an input to another substep (which the
+//  reconciliation read as an error at speed). Each state reports the tick applied and the buffer's margin; the
+//  driver's client reconciles its record of that tick and keeps a small lead with LeadController, by time dilation
+//  (PhysicsEngine::requestTimeShift) or, after a stall, a jump of its tick counter.
+//
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
 //
@@ -66,6 +73,8 @@
 #include <AirshipModel.h>
 #include <AircraftModel.h>
 #include <EntityItem.h>
+#include <InputBuffer.h>
+#include <LeadController.h>
 #include <SnapshotBuffer.h>
 #include <VehicleInput.h>
 #include <VehicleState.h>
@@ -93,7 +102,6 @@ public:
     static constexpr float OTHERS_BLEND_TIME = 0.25f;                  // s: everyone else's
     static constexpr int MAX_REPLAY_STEPS = 45;                        // half a second of substeps
     static constexpr int SNAPSHOT_RING = 180;                          // two seconds of substeps
-    static constexpr int MAX_QUEUED_INPUTS = 6;                        // the server keeps at most this many of a driver's inputs waiting
     static constexpr int SENT_RING = 60;                               // the authority remembers this many published poses (6 s at 10 Hz)
     static constexpr int UPDATE_STEPS = 9;                             // a client authority publishes every 9 substeps (10 Hz) while awake
     static constexpr quint64 DRIVER_SILENCE = 2 * USECS_PER_SECOND;    // no input for this long: the authority eases off and brakes
@@ -159,8 +167,16 @@ public:
         float maxError { 0.0f };        // m: the largest ever
         int inputsSent { 0 };
         int inputsReceived { 0 };
-        int inputsDropped { 0 };        // the server's queue overflowed
+        int inputsDropped { 0 };        // the server refused them: late (their substep had passed) or early (over a second ahead)
         int inputsStarved { 0 };        // the server had no input for a substep and held the last
+        // the input buffer (round 10)
+        int inputsLate { 0 };
+        int inputsEarly { 0 };
+        int bufferRealigned { 0 };      // the server set a driver's alignment again
+        int bufferMargin { 0 };         // the server's: the last margin; the driver's: the last reported
+        int leadShifts { 0 };           // the driver's: shifts of its lead asked for
+        int leadJumps { 0 };            // of them, jumps of the tick counter
+        float timeShiftMs { 0.0f };     // the driver's: the shift still to make by time dilation
         // the state stream (round 9)
         int streamStatesSent { 0 };     // the server's, to all subscribers
         int streamStatesReceived { 0 };
@@ -255,9 +271,11 @@ private:
         // inputs
         VehicleInput applied;                 // the last input applied, with its sequence
         uint32_t nextSequence { 1 };          // the driver's next
-        std::deque<VehicleInput> queue;       // the authority's: a remote driver's inputs waiting, oldest first
-        uint32_t lastQueuedSequence { 0 };
-        QUuid queueDriver;                    // whose inputs the queue holds
+        InputBuffer inputs;                   // the authority's: a remote driver's inputs by tick (round 10)
+        QUuid queueDriver;                    // whose inputs the buffer holds
+        uint32_t lastTick { 0 };              // the authority's: the driver's tick the last substep applied, for the stream
+        int lastMargin { 0 };                 // and the buffer's margin then
+        LeadController lead;                  // the driver's: its lead over the server, from the margins reported
         quint64 lastInputTime { 0 };          // when the authority last had a fresh input
         std::vector<VehicleInput> unsent;     // the driver's, since the last packet
         std::vector<VehicleInput> recent;     // the driver's last few, for redundancy

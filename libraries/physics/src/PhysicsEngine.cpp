@@ -514,6 +514,15 @@ void PhysicsEngine::stepSimulation() {
         paced -= correction;
         _pacedClockLead -= correction;
     }
+    if (_timeShiftPending != 0.0f) {
+        // time dilation (round 10): a few percent of each frame's time added or left out until the shift is in
+        float extra = paced * TIME_DILATION * (_timeShiftPending > 0.0f ? 1.0f : -1.0f);
+        if (fabsf(extra) > fabsf(_timeShiftPending)) {
+            extra = _timeShiftPending;
+        }
+        paced += extra;
+        _timeShiftPending -= extra;
+    }
     _accumulatedTime = glm::max(_accumulatedTime + paced, 0.0f);
 
     int numSubsteps = (int)(_accumulatedTime / PHYSICS_ENGINE_FIXED_SUBSTEP);

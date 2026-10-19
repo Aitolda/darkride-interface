@@ -469,6 +469,11 @@ void VehicleSimulation::preSubstep(uint32_t step, float dt) {
         if (authority != vehicle.wasAuthority) {
             vehicle.wasAuthority = authority;
             vehicle.history.clear();
+            {
+                std::lock_guard<std::mutex> lock(_inputMutex);
+                vehicle.inputs.reset();
+            }
+            vehicle.lead.reset();
             if (Physics::isServerAuthority() || authority) {
                 qCDebug(physics) << "vehicle" << vehicle.entity->getName() << (authority ? "is simulated here" : "is simulated elsewhere")
                     << (Physics::isServerAuthority() ? "(physics server)" : "");
@@ -621,21 +626,20 @@ void VehicleSimulation::chooseInput(Vehicle& vehicle, uint32_t step) {
             return;
         }
         std::lock_guard<std::mutex> lock(_inputMutex);
-        if (!vehicle.queue.empty()) {
-            if ((int)vehicle.queue.size() > MAX_QUEUED_INPUTS) {
-                // the driver's clock runs ahead of this one, or a burst arrived: catch up to the last two
-                while (vehicle.queue.size() > 2) {
-                    vehicle.queue.pop_front();
-                    ++_stats.inputsDropped;
-                }
-            }
-            vehicle.applied = vehicle.queue.front();
-            vehicle.queue.pop_front();
+        // the input buffer (round 10): this substep's input is the one the driver's tick names, held from the last
+        // when none arrived for it
+        VehicleInput input;
+        bool taken = vehicle.inputs.take(step, input);
+        vehicle.lastTick = vehicle.inputs.tickForStep(step);
+        vehicle.lastMargin = vehicle.inputs.margin(step);
+        _stats.bufferMargin = vehicle.lastMargin;
+        if (taken) {
+            vehicle.applied = input;
             vehicle.lastInputTime = now;
             return;
         }
-        if (vehicle.applied.sequence != 0 && !group.getDriver().isNull()) {
-            ++_stats.inputsStarved;   // the driver's next input is late: hold the last
+        if (vehicle.inputs.aligned() && vehicle.applied.sequence != 0 && !group.getDriver().isNull()) {
+            ++_stats.inputsStarved;   // the driver's input for this substep is not here: hold the last
         }
         if (group.getDriver().isNull() || (vehicle.lastInputTime != 0 && now - vehicle.lastInputTime > DRIVER_SILENCE)) {
             // nobody at the wheel, or the driver has gone quiet: ease off and hold the brake
@@ -874,6 +878,8 @@ VehicleState VehicleSimulation::stateFromBody(const Vehicle& vehicle, uint32_t s
     s.ballast = vehicle.airshipState.ballast;
     s.fill = vehicle.airshipState.fill;
     s.tilt = vehicle.aircraftState.tilt;
+    s.tick = vehicle.lastTick;
+    s.margin = (int8_t)glm::clamp(vehicle.lastMargin, -127, 127);
     return s;
 }
 
@@ -953,8 +959,31 @@ void VehicleSimulation::reconcileStream(Vehicle& vehicle, uint32_t step) {
     }
     const VehicleState newest = buffer.newest();
     vehicle.lastStreamTime = newest.time;
-    noteRoundTrip(vehicle, newest.input.sequence, usecTimestampNow());
+    quint64 now = usecTimestampNow();
+    noteRoundTrip(vehicle, newest.tick != 0 ? newest.tick : newest.input.sequence, now);
     correctDriver(vehicle, newest, step, driverBlendTime(vehicle));
+    if (newest.tick != 0) {
+        // the lead (round 10): the server's margin at that substep, and a shift of this client's ticks when the least
+        // over a window says so: a few ticks by time dilation, a stall's worth by a jump of the counter
+        float t = (float)((double)now * 1.0e-6);
+        vehicle.lead.note(newest.margin, t);
+        _stats.bufferMargin = newest.margin;
+        int shift = vehicle.lead.shift(t);
+        if (shift != 0) {
+            ++_stats.leadShifts;
+            if (LeadController::isJump(shift)) {
+                ++_stats.leadJumps;
+                vehicle.nextSequence += (uint32_t)shift;
+                qCDebug(physics) << "vehicle" << vehicle.entity->getName() << "lead: jumped" << shift << "ticks ahead (the least margin"
+                    << vehicle.lead.lastMinimum() << ")";
+            } else if (_engine) {
+                _engine->requestTimeShift((float)shift * PHYSICS_ENGINE_FIXED_SUBSTEP);
+                qCDebug(physics) << "vehicle" << vehicle.entity->getName() << "lead: shifting" << shift << "ticks by time dilation (the least margin"
+                    << vehicle.lead.lastMinimum() << ")";
+            }
+        }
+    }
+    _stats.timeShiftMs = _engine ? _engine->getTimeShiftPending() * 1000.0f : 0.0f;
 }
 
 // The round trip from an input's first sending to the state that acknowledges it, smoothed.
@@ -1031,7 +1060,9 @@ void VehicleSimulation::setInternalState(Vehicle& vehicle, const VehicleState& s
 // The driver's reconciliation: the record for the sequence the authority reached is compared with its state; within the
 // thresholds the prediction stands, else the world is rewound to that substep and the inputs since are replayed.
 void VehicleSimulation::correctDriver(Vehicle& vehicle, const VehicleState& pose, uint32_t step, float blendTime) {
-    uint32_t ack = pose.input.sequence;
+    // the record to compare: the tick the state's substep applied (round 10's buffer, which may have held an older
+    // input for it), or, from a relay or a server without the buffer, the input it applied
+    uint32_t ack = pose.tick != 0 ? pose.tick : pose.input.sequence;
     const Record* acked = nullptr;
     for (auto it = vehicle.history.rbegin(); it != vehicle.history.rend(); ++it) {
         if (it->sequence == ack) {
@@ -1365,17 +1396,33 @@ void VehicleSimulation::receiveInputs(const QUuid& vehicleID, const QUuid& sende
     }
     std::lock_guard<std::mutex> lock(_inputMutex);
     if (vehicle.queueDriver != sender) {
-        // a new driver counts from one again
+        // a new driver: aligned afresh from its first input
         vehicle.queueDriver = sender;
-        vehicle.queue.clear();
-        vehicle.lastQueuedSequence = 0;
+        vehicle.inputs.reset();
     }
+    uint32_t step = ObjectMotionState::getWorldSimulationStep();
+    int realigned = vehicle.inputs.counts().realigned;
     for (const VehicleInput& input : inputs) {
-        if (input.sequence > vehicle.lastQueuedSequence) {
-            vehicle.queue.push_back(input);
-            vehicle.lastQueuedSequence = input.sequence;
-            ++_stats.inputsReceived;
+        switch (vehicle.inputs.push(input, step)) {
+            case InputBuffer::Push::Stored:
+                ++_stats.inputsReceived;
+                break;
+            case InputBuffer::Push::Late:
+                ++_stats.inputsLate;
+                ++_stats.inputsDropped;
+                break;
+            case InputBuffer::Push::Early:
+                ++_stats.inputsEarly;
+                ++_stats.inputsDropped;
+                break;
+            case InputBuffer::Push::Duplicate:
+                break;
         }
+    }
+    if (vehicle.inputs.counts().realigned != realigned) {
+        _stats.bufferRealigned += vehicle.inputs.counts().realigned - realigned;
+        qCDebug(physics) << "vehicle" << vehicle.entity->getName() << "input buffer aligned again at tick" << inputs.front().sequence
+            << "(late" << vehicle.inputs.counts().late << "early" << vehicle.inputs.counts().early << "held" << vehicle.inputs.counts().holds << ")";
     }
 }
 
