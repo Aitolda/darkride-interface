@@ -77,7 +77,11 @@ private:
         QElapsedTimer clock;
     };
 
-    void start(const QUuid& entityID, int size);
+    // meshWaits: how often the job has waited for its models' meshes already
+    void start(const QUuid& entityID, int size, int meshWaits = 0);
+    // asks the models under the entity that do not draw yet for their meshes (a far model's waits behind its card,
+    // ENTITY-STREAMING.md 3.1) and says how many there are
+    int askForMeshes(const EntityItemPointer& entity) const;
     // the entity's own loaded model and its descendants'
     void collectModels(const EntityItemPointer& entity, std::vector<ModelPointer>& models, bool log) const;
     // the entities bakeAll takes, with a line each for the listing

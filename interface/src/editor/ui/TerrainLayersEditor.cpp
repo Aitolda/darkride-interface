@@ -20,6 +20,7 @@
 #include <QtGui/QDragEnterEvent>
 #include <QtGui/QDropEvent>
 #include <QtGui/QPainter>
+#include <QtGui/QStandardItemModel>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
 #include <QtWidgets/QAbstractItemView>
@@ -43,6 +44,9 @@ namespace {
     const int SWATCH_PIXELS = 22;
     const int ROW_PIXELS = 26;
     const char* LIBRARY_PATH = ":/terrain/materials/library.json";
+    // the material menu's item data besides a library index
+    const int MATERIAL_HEADING = -1;
+    const int MATERIAL_CUSTOM = -2;
     const QStringList BLEND_NAMES = { "Normal", "Multiply", "Screen", "Overlay", "Height" };
 
     // the swatches by URL, shared by every Layers section there has been
@@ -141,6 +145,7 @@ const QVector<TerrainLayersEditor::LibraryEntry>& TerrainLayersEditor::library()
                 const QJsonObject object = value.toObject();
                 LibraryEntry entry;
                 entry.name = object.value("name").toString();
+                entry.category = object.value("category").toString();
                 entry.url = object.value("url").toString();
                 entry.normal = object.value("normal").toString();
                 entry.roughness = object.value("roughness").toString();
@@ -219,8 +224,15 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
     _addButton->setPopupMode(QToolButton::InstantPopup);
     auto addMenu = new QMenu(_addButton);
     const QVector<LibraryEntry>& entries = library();
+    // a submenu a category, in the library's order (the standard materials number some forty)
+    QMenu* categoryMenu = nullptr;
+    QString category;
     for (int i = 0; i < entries.size(); ++i) {
-        addMenu->addAction(entries[i].name, this, [this, i] { addLayer(i); });
+        if (!categoryMenu || entries[i].category != category) {
+            category = entries[i].category;
+            categoryMenu = addMenu->addMenu(category.isEmpty() ? QString("Other") : category);
+        }
+        categoryMenu->addAction(entries[i].name, this, [this, i] { addLayer(i); });
     }
     if (!entries.isEmpty()) {
         addMenu->addSeparator();
@@ -275,17 +287,28 @@ TerrainLayersEditor::TerrainLayersEditor(const PropertySpec& spec, QWidget* pare
 
     _material = new QComboBox(_fields);
     _material->setToolTip("The layer's material: one of the library's, with its maps, or Custom for any textures by their URLs below");
-    for (const LibraryEntry& entry : entries) {
-        _material->addItem(entry.name);
+    // grouped under a disabled heading a category; an item's data is its library index (MATERIAL_HEADING, MATERIAL_CUSTOM)
+    QString heading;
+    for (int i = 0; i < entries.size(); ++i) {
+        if (i == 0 || entries[i].category != heading) {
+            heading = entries[i].category;
+            _material->addItem(heading.isEmpty() ? QString("Other") : heading, MATERIAL_HEADING);
+            if (auto model = qobject_cast<QStandardItemModel*>(_material->model())) {
+                auto item = model->item(_material->count() - 1);
+                item->setFlags(item->flags() & ~(Qt::ItemIsEnabled | Qt::ItemIsSelectable));
+            }
+        }
+        _material->addItem("    " + entries[i].name, i);
     }
-    _material->addItem("Custom…");
+    _material->addItem("Custom…", MATERIAL_CUSTOM);
     connect(_material, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
         auto layer = selectedLayer();
         if (_updating || !layer) {
             return;
         }
-        if (index < library().size()) {
-            const LibraryEntry& entry = library()[index];
+        const int libraryIndex = _material->itemData(index).toInt();
+        if (libraryIndex >= 0 && libraryIndex < library().size()) {
+            const LibraryEntry& entry = library()[libraryIndex];
             layer->materialURL = entry.url.toStdString();
             layer->normalURL = entry.normal.toStdString();
             layer->roughnessURL = entry.roughness.toStdString();
@@ -740,10 +763,14 @@ void TerrainLayersEditor::refreshSwatches() {
     }
     // the material menu's icons too
     const QVector<LibraryEntry>& entries = library();
-    for (int i = 0; i < entries.size() && i < _material->count(); ++i) {
+    for (int item = 0; item < _material->count(); ++item) {
+        const int i = _material->itemData(item).toInt();
+        if (i < 0 || i >= entries.size()) {
+            continue;
+        }
         auto found = swatches().find(entries[i].url);
         if (found != swatches().end() && !found->isNull()) {
-            _material->setItemIcon(i, QIcon(framed(*found, 16)));
+            _material->setItemIcon(item, QIcon(framed(*found, 16)));
         }
     }
 }
@@ -760,14 +787,14 @@ void TerrainLayersEditor::showSelected() {
         _name->setText(QString::fromStdString(layer->name));
         _name->setModified(false);
         const QString url = QString::fromStdString(layer->materialURL);
-        int materialIndex = library().size();   // Custom…
+        int materialIndex = MATERIAL_CUSTOM;
         for (int i = 0; i < library().size(); ++i) {
             if (library()[i].url == url) {
                 materialIndex = i;
                 break;
             }
         }
-        _material->setCurrentIndex(materialIndex);
+        _material->setCurrentIndex(_material->findData(materialIndex));
         _url->setText(url);
         _url->setModified(false);
         _normalURL->setText(QString::fromStdString(layer->normalURL));
@@ -835,6 +862,11 @@ void TerrainLayersEditor::addLayer(int libraryIndex) {
         const LibraryEntry& entry = library()[libraryIndex];
         layer.name = entry.name.toStdString();
         layer.materialURL = entry.url.toStdString();
+        // the maps too: only the eight defaults' would be filled in by their colour texture's URL
+        layer.normalURL = entry.normal.toStdString();
+        layer.roughnessURL = entry.roughness.toStdString();
+        layer.occlusionURL = entry.occlusion.toStdString();
+        layer.heightURL = entry.height.toStdString();
         layer.tiling = entry.tiling;
         layer.color = entry.color;
     } else {

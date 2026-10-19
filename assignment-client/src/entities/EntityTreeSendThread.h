@@ -42,7 +42,7 @@ private:
     bool addAncestorsToExtraFlaggedEntities(const QUuid& filteredEntityID, EntityItem& entityItem, EntityNodeData& nodeData);
     bool addDescendantsToExtraFlaggedEntities(const QUuid& filteredEntityID, EntityItem& entityItem, EntityNodeData& nodeData);
 
-    void startNewTraversal(const DiffTraversal::View& viewFrustum, EntityTreeElementPointer root, bool forceFirstPass = false);
+    DiffTraversal::Type startNewTraversal(const DiffTraversal::View& viewFrustum, EntityTreeElementPointer root, bool forceFirstPass = false);
     bool traverseTreeAndBuildNextPacketPayload(EncodeBitstreamParams& params, const QJsonObject& jsonFilters) override;
 
     void preDistributionProcessing() override;
@@ -56,6 +56,8 @@ private:
     quint64 _lastCompletionLog { 0 };
     EntityPriorityQueue _sendQueue;
     std::unordered_map<EntityItem*, uint64_t> _knownState;
+    quint64 _diagLastLog { 0 };       // TIVOLI_STREAM_DIAG: the last periodic line's time
+    int _diagSentSinceLog { 0 };      // TIVOLI_STREAM_DIAG: entities written out since that line
 
     // packet construction stuff
     EntityTreeElementExtraEncodeDataPointer _extraEncodeData { new EntityTreeElementExtraEncodeData() };

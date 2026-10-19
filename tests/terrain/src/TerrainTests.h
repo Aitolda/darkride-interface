@@ -45,6 +45,13 @@ private slots:
     void lodMeshesMeetWithoutACrack();
     void levelOfDetailShowsANewCutOnceItsMeshesAreIn();
     void levelOfDetailSettlesAfterAnUndoBurst();
+    void levelOfDetailDrawsTheGroundWholeAfterSmallRaises();
+    void levelOfDetailDrawsATerrainFileWhole();
+    void closedFacesCapTheGround();
+    void topSurfaceFollowsRaisedPillars();
+    void shelteredFloorsUnderALipAreTheSkysGround();
+    void writeCleanTestTerrain();
+    void fileRoundTripKeepsTheClosedFaces();
     void levelOfDetailAsksAgainForAStalledNodeAndThenShowsWithoutIt();
     void paintTilesOfCoarserNodesAverageTheMap();
     void smoothLevelsAHillUnderAWideBrush();

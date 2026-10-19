@@ -21,6 +21,8 @@
 #include "RenderDeferredTask.h"
 #include "StencilMaskPass.h"
 
+#include <FrameDiag.h>
+
 extern void initDeferredPipelines(render::ShapePlumber& plumber, const render::ShapePipeline::BatchSetter& batchSetter, const render::ShapePipeline::ItemSetter& itemSetter);
 
 using namespace render;
@@ -84,6 +86,7 @@ namespace {
         void run(const render::RenderContextPointer& renderContext, Outputs& outputs) {
             auto args = renderContext->args;
             auto frame = ImpostorBake::instance().begin();
+            FrameDiag::bake() = frame ? 1 : 0;
 
             _cachedArgsPointer->_blitFramebuffer = args->_blitFramebuffer;
             _cachedArgsPointer->_viewport = args->_viewport;

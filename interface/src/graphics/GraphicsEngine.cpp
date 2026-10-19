@@ -26,6 +26,7 @@
 #include <RenderLocalShadowTask.h>
 #include <RenderMirrorsTask.h>
 #include <ImpostorBake.h>
+#include <RenderableTerrainEntityItem.h>
 #include <RenderShadowTask.h>
 #include <ToneMapAndResampleTask.h>
 #include <SecondaryCamera.h>
@@ -38,6 +39,7 @@
 #include <display-plugins/DisplayPlugin.h>
 
 #include <display-plugins/CompositorHelper.h>
+#include <FrameDiag.h>
 #include <QMetaObject>
 #include <ColorUtils.h>
 #include "ui/Stats.h"
@@ -85,6 +87,9 @@ void GraphicsEngine::initializeRender() {
     // Set up the render engine
     render::CullFunctor cullFunctor = LODManager::shouldRender;
     _renderEngine->addJob<UpdateSceneTask>("UpdateScene");
+    // the terrain layer sets' slices due this frame, drawn before any view: their batch leaves its framebuffer and
+    // viewport bound, which a pass later in the frame must not inherit (the black frames of KNOWN-ISSUES.md)
+    _renderEngine->addJob<render::entities::DrawTerrainLayerMaps>("TerrainLayerMaps");
 #ifndef Q_OS_ANDROID
     _renderEngine->addJob<SecondaryCameraRenderTask>("SecondaryCameraJob", cullFunctor);
 #endif
@@ -380,8 +385,20 @@ void GraphicsEngine::render_performFrame() {
             renderArgs._hudTexture = qApp->getApplicationOverlay().getOverlayTexture();
             renderArgs._takingSnapshot = qApp->takeSnapshotOperators(snapshotOperators);
             renderArgs._blitFramebuffer = finalFramebuffer;
+            FrameDiag::beginFrame();
             render_runRenderFrame(&renderArgs);
         }
+    }
+
+    if (FrameDiag::enabled()) {
+        auto size = finalFramebuffer->getSize();
+        FrameDiag::log("R %llu f=%u vp=%dx%d fb=%dx%d@%p items=%d zones=%d sun=%d amb=%d bake=%d shadowMaps=%d drawn=%d static=%d lm=%x",
+                       (unsigned long long)usecTimestampNow(), (unsigned)_renderFrameCount, renderArgs._viewport.z,
+                       renderArgs._viewport.w, (int)size.x, (int)size.y, (void*)finalFramebuffer.get(),
+                       FrameDiag::mainOpaques().load(), FrameDiag::zones().load(), FrameDiag::sunLights().load(),
+                       FrameDiag::ambientLights().load(), FrameDiag::bake().load(), renderArgs._details._localShadowMaps,
+                       renderArgs._details._localShadowMapsDrawn, renderArgs._details._localShadowStaticMapsDrawn,
+                       FrameDiag::lightingFlags().load());
     }
 
     auto frame = getGPUContext()->endFrame();

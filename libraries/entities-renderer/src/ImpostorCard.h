@@ -57,8 +57,15 @@ public:
     void setFrame(const glm::vec3& positionWS, const glm::quat& rotationWS);
     void setVisible(bool visible);
     void setKeyBits(render::hifi::Tag tagMask, render::hifi::Layer layer, bool subMetaCulled, bool castShadow);
+    // the card stands in for its models, which are not all here (ImpostorSwitch::setStandIn, ENTITY-STREAMING.md 3.2)
+    void setStandIn(bool standIn);
     // the atlases are still on their way (the renderer asks for another update until they are here or have failed)
     bool waitingForTextures() const;
+    // the albedo and normal atlases are loaded, or one of them failed (main thread)
+    bool atlasesLoaded() const;
+    bool atlasesFailed() const;
+    // the sphere the card stands in, in world space, as last set (main thread): false without a valid entry
+    bool getSphere(glm::vec3& centerWS, float& radius) const;
     const ImpostorSwitchPointer& getSwitch() const { return _switch; }
 
     // render thread, from the item's update: takes what the main thread set, readies the switch and the parameters
@@ -81,6 +88,7 @@ private:
         render::hifi::Layer layer { render::hifi::LAYER_3D };
         bool subMetaCulled { false };
         bool castShadow { false };
+        bool standIn { false };
     };
 
     mutable std::mutex _mutex;     // over _pending and the network textures

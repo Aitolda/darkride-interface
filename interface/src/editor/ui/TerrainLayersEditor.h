@@ -65,6 +65,7 @@ signals:
 private:
     struct LibraryEntry {
         QString name;
+        QString category;    // the group it is listed under in the menus (library.json keeps a group's entries together)
         QString url;         // the colour texture
         QString normal;      // the maps; empty for none
         QString roughness;

@@ -545,6 +545,7 @@ void EntityRenderer::updateImpostorCard(const ScenePointer& scene, Transaction& 
     glm::quat rotation = entity->getWorldOrientation(success);
     _impostorCard->setFrame(entity->getWorldPosition(), success ? rotation : glm::quat());
     _impostorCard->setVisible(impostorCardVisible(entity));
+    _impostorCard->setStandIn(impostorCardStandsIn(entity));
     _impostorCard->setKeyBits(getTagMask(), getHifiRenderLayer(), _cullWithParent, _canCastShadow);
     if (_impostorCard->waitingForTextures()) {
         emit requestRenderUpdate();
@@ -564,7 +565,8 @@ void EntityRenderer::removeImpostorCard(Transaction& transaction) {
 }
 
 // The card shows where the entity does; and where the entity is one hidden by its own visible flag that groups
-// Model children (a Unity export's empty parent), it shows for them, while any of them is visible.
+// Model children (a Unity export's empty parent), it shows for them, while any of them is visible, and while none of
+// them has arrived (the card stands in for them, ENTITY-STREAMING.md 3.2).
 bool EntityRenderer::impostorCardVisible(const EntityItemPointer& entity) const {
     if (_visible) {
         return true;
@@ -573,16 +575,63 @@ bool EntityRenderer::impostorCardVisible(const EntityItemPointer& entity) const 
         entity->getType() == EntityTypes::Model) {
         return false;
     }
+    bool anyModel = false;
     bool anyVisibleModel = false;
     entity->forEachDescendantTest([&](const SpatiallyNestablePointer& descendant) {
         auto item = std::dynamic_pointer_cast<EntityItem>(descendant);
-        if (item && item->getType() == EntityTypes::Model && item->getVisible() && item->getLocallyVisible()) {
-            anyVisibleModel = true;
-            return false;
+        if (item && item->getType() == EntityTypes::Model) {
+            anyModel = true;
+            if (item->getVisible() && item->getLocallyVisible()) {
+                anyVisibleModel = true;
+                return false;
+            }
         }
         return true;
     });
-    return anyVisibleModel;
+    return anyVisibleModel || !anyModel;
+}
+
+// The card stands in for the models it is the card of (ENTITY-STREAMING.md 3.2) while one of those shown does not
+// draw yet (needsImpostorStandIn: its mesh waits behind the card, or it or its textures are on their way; a model
+// whose renderer is not made yet counts with them) or, for a group, while none of them has arrived.
+bool EntityRenderer::impostorCardStandsIn(const EntityItemPointer& entity) const {
+    auto entityTreeRenderer = DependencyManager::get<EntityTreeRenderer>();
+    if (!entityTreeRenderer) {
+        return false;
+    }
+    bool anyModel = false;
+    bool waiting = false;
+    auto check = [&](const EntityItemPointer& item) {
+        anyModel = true;
+        if (item->getVisible() && item->getLocallyVisible()) {
+            auto renderer = entityTreeRenderer->renderableForEntityId(item->getID());
+            if (!renderer || renderer->needsImpostorStandIn()) {
+                waiting = true;
+            }
+        }
+    };
+    if (entity->getType() == EntityTypes::Model) {
+        anyModel = true;
+        waiting = needsImpostorStandIn();
+    }
+    if (!waiting) {
+        entity->forEachDescendantTest([&](const SpatiallyNestablePointer& descendant) {
+            auto item = std::dynamic_pointer_cast<EntityItem>(descendant);
+            if (item && item->getType() == EntityTypes::Model) {
+                check(item);
+            }
+            return !waiting;
+        });
+    }
+    return waiting || !anyModel;
+}
+
+void EntityRenderer::updateImpostorOwner(const EntityItemPointer& entity) {
+    if (_impostorCard) {
+        emit requestRenderUpdate();
+    } else {
+        updateImpostorAncestor(entity);
+    }
 }
 
 std::shared_ptr<ImpostorSwitch> EntityRenderer::getImpostorSwitch() const {
@@ -614,6 +663,47 @@ std::shared_ptr<ImpostorSwitch> EntityRenderer::findImpostorSwitch(const EntityI
         }
     }
     return nullptr;
+}
+
+EntityRenderer::ImpostorStandIn EntityRenderer::findImpostorStandIn(const EntityItemPointer& entity) {
+    ImpostorStandIn standIn;
+    auto entityTreeRenderer = DependencyManager::get<EntityTreeRenderer>();
+    if (!entityTreeRenderer || !entity) {
+        return standIn;
+    }
+    const int MAX_DEPTH = 16;
+    SpatiallyNestablePointer nestable = entity;
+    for (int depth = 0; nestable && depth < MAX_DEPTH; depth++) {
+        auto item = std::dynamic_pointer_cast<EntityItem>(nestable);
+        if (item) {
+            auto renderer = entityTreeRenderer->renderableForEntityId(item->getID());
+            if (renderer && renderer->_impostorCard) {
+                if (renderer->_impostorCard->getSphere(standIn.center, standIn.radius)) {
+                    standIn.found = true;
+                    standIn.atlasesLoaded = renderer->_impostorCard->atlasesLoaded();
+                    standIn.atlasesFailed = renderer->_impostorCard->atlasesFailed();
+                    return standIn;
+                }
+            } else if (item->getUserData().contains(QStringLiteral("impostor"))) {
+                // the entry is here, its card not yet: the sphere as the card will take it (updateImpostorCard)
+                ImpostorEntry entry = ImpostorEntry::parse(item->getUserData());
+                if (entry.valid) {
+                    bool success = false;
+                    glm::quat rotation = item->getWorldOrientation(success);
+                    standIn.center = item->getWorldPosition() + (success ? rotation : glm::quat()) * entry.center;
+                    standIn.radius = entry.radius;
+                    standIn.found = true;
+                    return standIn;
+                }
+            }
+        }
+        bool success = false;
+        nestable = nestable->getParentPointer(success);
+        if (!success) {
+            break;
+        }
+    }
+    return standIn;
 }
 
 // Bool = if the state has changed or not
