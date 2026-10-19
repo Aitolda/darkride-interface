@@ -965,7 +965,7 @@ void VehicleSimulation::reconcileStream(Vehicle& vehicle, uint32_t step) {
     if (newest.tick != 0) {
         // the lead (round 10): the server's margin at that substep, and a shift of this client's ticks when the least
         // over a window says so: a few ticks by time dilation, a stall's worth by a jump of the counter
-        float t = (float)((double)now * 1.0e-6);
+        double t = (double)now * 1.0e-6;
         vehicle.lead.note(newest.margin, t);
         _stats.bufferMargin = newest.margin;
         int shift = vehicle.lead.shift(t);

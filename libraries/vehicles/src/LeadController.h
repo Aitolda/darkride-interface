@@ -31,10 +31,11 @@ public:
     static constexpr int JUMP = 9;              // ticks: a shift forward this large is a jump of the counter, not a dilation
     static constexpr int MAX_SHIFT = 90;        // ticks: no shift larger than a second
 
-    // a state's margin, at local time t (s)
-    void note(int margin, float t);
+    // a state's margin, at local time t (s; a double, since a float of the wall clock in seconds cannot tell two
+    // moments a second apart)
+    void note(int margin, double t);
     // the shift the client should make now, in ticks (positive: get further ahead), 0 for none; at most one per hold-off
-    int shift(float t);
+    int shift(double t);
     // whether a shift of this size should be a jump of the tick counter (true) or a dilation (false)
     static bool isJump(int shift) { return shift >= JUMP; }
 
@@ -43,8 +44,8 @@ public:
     void reset();
 
 private:
-    std::deque<std::pair<int, float>> _samples;        // margin, time
-    float _lastShiftTime { -1.0e9f };
+    std::deque<std::pair<int, double>> _samples;       // margin, time
+    double _lastShiftTime { -1.0e12 };
     int _lastMinimum { 0 };
     int _shifts { 0 };
 };

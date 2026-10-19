@@ -17,6 +17,9 @@ void InputBuffer::align(uint32_t tick, uint32_t step) {
     _inputs.clear();
     _newestTick = tick;
     _overfullSteps = 0;
+    for (int i = 0; i < SEEN_RING; ++i) {
+        _seenValid[i] = false;
+    }
 }
 
 InputBuffer::Push InputBuffer::push(const VehicleInput& input, uint32_t step) {
@@ -36,6 +39,11 @@ InputBuffer::Push InputBuffer::push(const VehicleInput& input, uint32_t step) {
     if ((int32_t)(tick - _newestTick) > 0) {
         _newestTick = tick;
     }
+    if (seen(tick)) {
+        ++_counts.duplicates;   // one of a packet's redundant copies, or a resend
+        return Push::Duplicate;
+    }
+    markSeen(tick);
     if (_taken && (int32_t)(targetStep - _lastTakenStep) <= 0) {
         ++_counts.late;
         return Push::Late;
@@ -43,10 +51,6 @@ InputBuffer::Push InputBuffer::push(const VehicleInput& input, uint32_t step) {
     if ((int32_t)(targetStep - step) > MAX_LEAD) {
         ++_counts.early;
         return Push::Early;
-    }
-    if (_inputs.find(tick) != _inputs.end()) {
-        ++_counts.duplicates;
-        return Push::Duplicate;
     }
     _inputs[tick] = input;
     ++_counts.stored;
@@ -109,4 +113,7 @@ void InputBuffer::reset() {
     _taken = false;
     _overfullSteps = 0;
     _counts = Counts();
+    for (int i = 0; i < SEEN_RING; ++i) {
+        _seenValid[i] = false;
+    }
 }

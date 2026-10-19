@@ -10,14 +10,14 @@
 
 #include <algorithm>
 
-void LeadController::note(int margin, float t) {
+void LeadController::note(int margin, double t) {
     _samples.push_back({ margin, t });
     while (!_samples.empty() && t - _samples.front().second > WINDOW) {
         _samples.pop_front();
     }
 }
 
-int LeadController::shift(float t) {
+int LeadController::shift(double t) {
     if (t - _lastShiftTime < HOLD_OFF || (int)_samples.size() < MIN_SAMPLES || t - _samples.front().second < WINDOW * 0.9f) {
         return 0;
     }
@@ -43,7 +43,7 @@ int LeadController::shift(float t) {
 
 void LeadController::reset() {
     _samples.clear();
-    _lastShiftTime = -1.0e9f;
+    _lastShiftTime = -1.0e12;
     _lastMinimum = 0;
     _shifts = 0;
 }

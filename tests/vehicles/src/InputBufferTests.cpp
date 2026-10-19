@@ -185,8 +185,8 @@ void InputBufferTests::realignment() {
 
 void InputBufferTests::leadAdaptation() {
     LeadController lead;
-    // a steady margin at the target: nothing to do
-    float t = 0.0f;
+    // a steady margin at the target: nothing to do (the clock is the wall clock in seconds, as the client passes it)
+    double t = 1.79e9;
     for (int i = 0; i < 40; ++i, t += 0.033f) {
         lead.note(2, t);
         QCOMPARE(lead.shift(t), 0);

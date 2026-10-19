@@ -50,8 +50,8 @@ public:
 
     struct Counts {
         int stored { 0 };
-        int duplicates { 0 };
-        int late { 0 };
+        int duplicates { 0 };  // a tick received before (every packet carries the last few, so most of each packet)
+        int late { 0 };        // a tick not received before whose substep had passed
         int early { 0 };
         int holds { 0 };      // substeps that had no input and held the last
         int realigned { 0 };  // times the alignment was set again after the first
@@ -61,7 +61,13 @@ public:
 private:
     void align(uint32_t tick, uint32_t step);
 
+    static const int SEEN_RING = 64;            // ticks remembered as received, to tell a packet's redundant copies apart
+    bool seen(uint32_t tick) const { return _seenValid[tick % SEEN_RING] && _seen[tick % SEEN_RING] == tick; }
+    void markSeen(uint32_t tick) { _seen[tick % SEEN_RING] = tick; _seenValid[tick % SEEN_RING] = true; }
+
     std::map<uint32_t, VehicleInput> _inputs;   // by tick, those not yet taken
+    uint32_t _seen[SEEN_RING];
+    bool _seenValid[SEEN_RING] { false };
     bool _aligned { false };
     uint32_t _offset { 0 };          // substep = tick + offset (wraps as the unsigned does)
     uint32_t _newestTick { 0 };      // the highest tick heard of, stored or not
