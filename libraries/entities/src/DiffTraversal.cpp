@@ -170,7 +170,8 @@ float DiffTraversal::View::computePriority(const EntityItemPointer& entity) cons
     if (impostorCards) {
         glm::vec3 cardCenter;
         float cardRadius = 0.0f;
-        if (entity->findImpostorCardSphere(cardCenter, cardRadius)) {
+        bool inherited = false;
+        if (entity->findImpostorCardSphere(cardCenter, cardRadius, inherited)) {
             for (const auto& frustum : viewFrustums) {
                 auto position = cardCenter - frustum.getPosition();
                 float distance = glm::length(position);
@@ -179,6 +180,14 @@ float DiffTraversal::View::computePriority(const EntityItemPointer& entity) cons
                     frustum.intersects(position, distance, cardRadius)) {
                     priority = std::max(priority, angularSize);
                 }
+            }
+            // A group goes before its parts. A model that reaches the client before its carded ancestor finds no
+            // card to wait behind and fetches its mesh at once (one far chair's did, in the first measurement), and
+            // the two sort by the same sphere, so a part ranks a little under whatever it would rank: the group's
+            // priority is at least the card's, and its own cube encloses every part's, so the group comes first.
+            const float PART_AFTER_GROUP = 0.99f;
+            if (inherited && priority > 0.0f) {
+                priority *= PART_AFTER_GROUP;
             }
         }
     }

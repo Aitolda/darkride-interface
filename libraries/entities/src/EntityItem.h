@@ -372,8 +372,8 @@ public:
     // a client that draws cards (ENTITY-STREAMING.md 3.3)
     bool getImpostorCardSphere(glm::vec3& center, float& radius) const;
     // the card this entity shows as from afar: its own, or else the nearest ancestor's (a group's models draw as the
-    // group's card, and wait behind it); false without either
-    bool findImpostorCardSphere(glm::vec3& center, float& radius) const;
+    // group's card, and wait behind it), inherited then true; false without either
+    bool findImpostorCardSphere(glm::vec3& center, float& radius, bool& inherited) const;
     virtual void setUserData(const QString& value); // FIXME: This is suspicious(?)
 
     QString getPrivateUserData() const;

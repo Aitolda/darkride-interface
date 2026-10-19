@@ -3364,10 +3364,12 @@ bool EntityItem::getImpostorCardSphere(glm::vec3& center, float& radius) const {
     return true;
 }
 
-bool EntityItem::findImpostorCardSphere(glm::vec3& center, float& radius) const {
+bool EntityItem::findImpostorCardSphere(glm::vec3& center, float& radius, bool& inherited) const {
+    inherited = false;
     if (getImpostorCardSphere(center, radius)) {
         return true;
     }
+    inherited = true;
     // up the parents to the nearest with a card, as the renderer's findImpostorStandIn, by ID through the tree (the
     // entity server resolves parents no other way); a bounded walk, since a chain can be long or, by a stale edit,
     // a loop
