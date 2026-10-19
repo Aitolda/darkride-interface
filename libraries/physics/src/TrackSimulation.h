@@ -66,6 +66,7 @@ public:
     // the server's side: the states that want publishing since the last call
     void takePublications(std::vector<Publication>& publications);
     void clear() { _trains.clear(); }
+    size_t getNumTrains() const { return _trains.size(); }
 
     // domain time is the entity server's clock; local time converts through this node's measured skew to it
     static quint64 domainTime(quint64 localTime);

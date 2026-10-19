@@ -38,6 +38,10 @@ PacketVersion versionForPacketType(PacketType packetType) {
             return static_cast<PacketVersion>(EntityQueryPacketVersion::ConicalFrustums);
         case PacketType::VehicleInput:
             return 2;   // the airship's pitch, lift and trim (PHYSICS.md round 7)
+        case PacketType::VehicleState:
+        case PacketType::VehicleStateRequest:
+            return 1;   // the physics server's state stream and its subscription (PHYSICS.md round 9)
+
         case PacketType::AvatarIdentity:
         case PacketType::AvatarData:
             return static_cast<PacketVersion>(AvatarMixerPacketVersion::ARKitBlendshapes);

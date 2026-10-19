@@ -7383,6 +7383,11 @@ void Application::updateWindowTitle() const {
             title = worldName;
         }
     }
+    // With several branches built on this machine, one per session, the title says which build this client is
+    // ("Darkride - physics-net"), so the right window gets closed. Dev builds only; a release shows no branch.
+    if (BuildInfo::BUILD_TYPE == BuildInfo::Dev && !BuildInfo::BUILD_BRANCH.isEmpty() && BuildInfo::BUILD_BRANCH != "HEAD") {
+        title += " - " + BuildInfo::BUILD_BRANCH;
+    }
 
 #ifndef WIN32
     // crashes with vs2013/win32

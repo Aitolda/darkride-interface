@@ -137,7 +137,10 @@ public:
         StopInjector,
         AvatarZonePresence,
         VehicleInput, // darkride: a driver's inputs for a vehicle, to the physics server (PHYSICS.md round 6)
+        VehicleState, // darkride: the physics server's state stream for the vehicles a client simulates (PHYSICS.md round 9)
+        VehicleStateRequest, // darkride: a client's subscription to that stream: the vehicles it simulates (round 9)
         NUM_PACKET_TYPE
+
     };
 
     const static QHash<PacketTypeEnum::Value, PacketTypeEnum::Value> getReplicatedPacketMapping() {
