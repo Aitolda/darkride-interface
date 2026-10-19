@@ -607,6 +607,95 @@ static JSValue js_set(JSContext* c, JSValueConst thisValue, int argc, JSValueCon
     return JS_UNDEFINED;
 }
 
+/* host.method(name), host.getter(name) and host.setter(name): a native function bound to a member's name and called
+   with the host object as `this`. A script's call reaches the host with no JavaScript function in between and with
+   its arguments encoded where they are, not copied into an array first: the shim builds every host object's
+   methods and accessors from these. */
+static JSValue js_method_call(JSContext* c, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* data) {
+    (void)c; (void)magic;
+    int32_t handle = argument_handle(thisValue);
+    size_t nameLength = 0;
+    const char* name = JS_ToCStringLen(ctx, &nameLength, data[0]);
+    if (!name) {
+        return JS_EXCEPTION;
+    }
+    cbor_writer w;
+    cw_init(&w);
+    cw_array(&w, (size_t)argc);
+    for (int i = 0; i < argc; ++i) {
+        if (!encode_value(&w, argv[i], 1)) {
+            cw_free(&w);
+            JS_FreeCString(ctx, name);
+            return JS_EXCEPTION;
+        }
+    }
+    int64_t packed = dr_call(handle, name, (int32_t)nameLength, w.data, (int32_t)w.length);
+    cw_free(&w);
+    JS_FreeCString(ctx, name);
+    return take_result(packed);
+}
+
+static JSValue js_getter_call(JSContext* c, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* data) {
+    (void)c; (void)argc; (void)argv; (void)magic;
+    int32_t handle = argument_handle(thisValue);
+    size_t nameLength = 0;
+    const char* name = JS_ToCStringLen(ctx, &nameLength, data[0]);
+    if (!name) {
+        return JS_EXCEPTION;
+    }
+    int64_t packed = dr_get(handle, name, (int32_t)nameLength);
+    JS_FreeCString(ctx, name);
+    return take_result(packed);
+}
+
+static JSValue js_setter_call(JSContext* c, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* data) {
+    (void)c; (void)magic;
+    int32_t handle = argument_handle(thisValue);
+    size_t nameLength = 0;
+    const char* name = JS_ToCStringLen(ctx, &nameLength, data[0]);
+    if (!name) {
+        return JS_EXCEPTION;
+    }
+    cbor_writer w;
+    cw_init(&w);
+    if (!encode_value(&w, argc > 0 ? argv[0] : JS_UNDEFINED, 0)) {
+        cw_free(&w);
+        JS_FreeCString(ctx, name);
+        return JS_EXCEPTION;
+    }
+    int64_t packed = dr_set(handle, name, (int32_t)nameLength, w.data, (int32_t)w.length);
+    cw_free(&w);
+    JS_FreeCString(ctx, name);
+    JSValue result = take_result(packed);
+    if (JS_IsException(result)) {
+        return result;
+    }
+    JS_FreeValue(ctx, result);
+    return JS_UNDEFINED;
+}
+
+static JSValue bind_member(int argc, JSValueConst* argv, JSCFunctionData* function, int length, const char* usage) {
+    if (argc < 1 || !JS_IsString(argv[0])) {
+        return JS_ThrowTypeError(ctx, "%s", usage);
+    }
+    return JS_NewCFunctionData(ctx, function, length, 0, 1, argv);
+}
+
+static JSValue js_method(JSContext* c, JSValueConst thisValue, int argc, JSValueConst* argv) {
+    (void)c; (void)thisValue;
+    return bind_member(argc, argv, js_method_call, 0, "method(name)");
+}
+
+static JSValue js_getter(JSContext* c, JSValueConst thisValue, int argc, JSValueConst* argv) {
+    (void)c; (void)thisValue;
+    return bind_member(argc, argv, js_getter_call, 0, "getter(name)");
+}
+
+static JSValue js_setter(JSContext* c, JSValueConst thisValue, int argc, JSValueConst* argv) {
+    (void)c; (void)thisValue;
+    return bind_member(argc, argv, js_setter_call, 1, "setter(name)");
+}
+
 static JSValue js_connect(JSContext* c, JSValueConst thisValue, int argc, JSValueConst* argv) {
     (void)c; (void)thisValue;
     if (argc < 2) {
@@ -727,6 +816,9 @@ static const JSCFunctionListEntry hostFunctions[] = {
     JS_CFUNC_DEF("call", 3, js_call),
     JS_CFUNC_DEF("get", 2, js_get),
     JS_CFUNC_DEF("set", 3, js_set),
+    JS_CFUNC_DEF("method", 1, js_method),
+    JS_CFUNC_DEF("getter", 1, js_getter),
+    JS_CFUNC_DEF("setter", 1, js_setter),
     JS_CFUNC_DEF("connect", 2, js_connect),
     JS_CFUNC_DEF("disconnect", 1, js_disconnect),
     JS_CFUNC_DEF("release", 1, js_release),

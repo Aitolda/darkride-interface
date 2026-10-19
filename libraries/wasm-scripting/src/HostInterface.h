@@ -56,8 +56,11 @@
 
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 #include <QtCore/QByteArray>
+#include <QtCore/QCborArray>
+#include <QtCore/QCborValue>
 #include <QtCore/QHash>
 #include <QtCore/QMetaMethod>
 #include <QtCore/QString>
@@ -66,11 +69,11 @@
 #include <QtCore/QVector>
 
 #include "ObjectTable.h"
+#include "WasmRuntime.h"
 
 class QMetaObject;
 class SignalRelay;
 class ValueCodec;
-class WasmInstance;
 
 class HostInterface {
 public:
@@ -154,9 +157,18 @@ private:
     void fail(const QString& entry, const QString& error);
 
     const QVector<int>& candidates(const QMetaObject* meta, const QByteArray& name);
-    bool convertArguments(const QMetaMethod& method, const QVariantList& arguments, QVariantList& converted, int& cost,
-                          QString& error);
-    QVariant invoke(QObject* object, int methodIndex, QVariantList& converted, QString& error);
+    /// A method's parameter types, resolved once (a type no library has registered yet is looked up again next time).
+    QVector<int> parameterTypes(const QMetaObject* meta, int methodIndex);
+    /// A property's index by name, looked up once per class (-1 when it has none).
+    int propertyIndex(const QMetaObject* meta, const QByteArray& name) const;
+    QVariant getByName(ObjectTable::Handle handle, const QByteArray& propertyName, QString& error) const;
+    /// The value as it came from the guest, decoded straight to the property's type.
+    bool setWithCbor(ObjectTable::Handle handle, const QByteArray& name, const QCborValue& value, QString& error);
+    /// The arguments as they came from the guest, each decoded straight to its parameter's type.
+    QVariant callWithCbor(ObjectTable::Handle handle, const QByteArray& methodName, const QCborArray& arguments, QString& error);
+    bool convertArguments(const QMetaMethod& method, const QVector<int>& types, const QCborArray& arguments,
+                          QVariantList& converted, int& cost, QString& error);
+    QVariant invoke(QObject* object, int methodIndex, const QVector<int>& types, QVariantList& converted, QString& error);
 
     WasmInstance& _instance;
     ObjectTable& _objects;
@@ -165,6 +177,9 @@ private:
     Logger _logger;
     FailureHandler _failureHandler;
     QHash<QPair<const QMetaObject*, QByteArray>, QVector<int>> _candidates;
+    QHash<QPair<const QMetaObject*, int>, QVector<int>> _parameterTypes;
+    mutable QHash<QPair<const QMetaObject*, QByteArray>, int> _propertyIndices;
+    std::vector<WasmValue> _allocResults;
     Statistics _statistics;
 };
 

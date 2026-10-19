@@ -57,6 +57,8 @@ enum { DR_LOG_PRINT = 0, DR_LOG_INFO = 1, DR_LOG_WARNING = 2, DR_LOG_ERROR = 3, 
 #define DARKRIDE_EXPORT(name) __attribute__((export_name(name)))
 
 /* --- bytes the host returned ----------------------------------------------------------------------------------- */
+/* A packed result is a pointer and a length in the module's memory, the module's to free. An empty result (0) is
+   nothing: what a method that returns nothing gives, and a property write that worked. */
 
 typedef struct {
     uint8_t* data;

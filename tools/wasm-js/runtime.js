@@ -144,9 +144,7 @@
     var warnedReadOnly = new Set();
 
     function makeMethod(name) {
-        return function () {
-            return host.call(this, name, Array.prototype.slice.call(arguments));
-        };
+        return host.method(name);
     }
 
     // One prototype per class carries the methods and toString; each wrapper gets its properties and signals
@@ -203,8 +201,8 @@
             member = properties[i];
             (function (name, writable) {
                 Object.defineProperty(object, name, {
-                    get: function () { return host.get(this, name); },
-                    set: writable ? function (value) { host.set(this, name, value); } : function () {
+                    get: host.getter(name),
+                    set: writable ? host.setter(name) : function () {
                         var key = className + "." + name;
                         if (!warnedReadOnly.has(key)) {
                             warnedReadOnly.add(key);

@@ -347,20 +347,21 @@ void HostInterfaceTests::testProperties() {
     const int32_t probe = f.probeHandle();
     QCOMPARE(f.get(probe, "count"), QVariant(0));
     QCOMPARE(f.get(probe, "label"), QVariant("probe"));
-    QCOMPARE(f.set(probe, "count", 7).userType(), int(QMetaType::Nullptr));
+    // a write that worked returns nothing: no bytes cross back
+    QCOMPARE(f.set(probe, "count", 7).userType(), int(QMetaType::UnknownType));
     QCOMPARE(f.probe.count(), 7);
     QCOMPARE(f.get(probe, "count"), QVariant(7));
     // the value is converted to the property's type
-    QCOMPARE(f.set(probe, "count", "12").userType(), int(QMetaType::Nullptr));
+    QCOMPARE(f.set(probe, "count", "12").userType(), int(QMetaType::UnknownType));
     QCOMPARE(f.probe.count(), 12);
     QVariantMap position;
     position["x"] = 1.5;
     position["y"] = 2.5;
     position["z"] = 3.5;
-    QCOMPARE(f.set(probe, "position", position).userType(), int(QMetaType::Nullptr));
+    QCOMPARE(f.set(probe, "position", position).userType(), int(QMetaType::UnknownType));
     QCOMPARE(f.probe.position(), glm::vec3(1.5f, 2.5f, 3.5f));
     QCOMPARE(f.get(probe, "position").toMap().value("y").toDouble(), 2.5);
-    QCOMPARE(f.set(probe, "mode", "Stopped").userType(), int(QMetaType::Nullptr));
+    QCOMPARE(f.set(probe, "mode", "Stopped").userType(), int(QMetaType::UnknownType));
     QCOMPARE(f.probe.mode(), Probe::Stopped);
     QCOMPARE(f.get(probe, "mode"), QVariant(10));
     // errors

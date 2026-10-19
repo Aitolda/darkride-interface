@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <deque>
 #include <thread>
 #include <type_traits>
 
@@ -17,6 +18,7 @@
 #include <wasmtime.h>
 #include <wasmtime/profiling.h>
 
+#include <QtCore/QHash>
 #include <QtCore/QLoggingCategory>
 
 Q_LOGGING_CATEGORY(wasmScripting, "hifi.wasm-scripting")
@@ -247,6 +249,15 @@ struct WasmInstance::Impl {
     wasmtime_guestprofiler_t* profiler { nullptr };
     std::chrono::steady_clock::time_point lastSample;
 
+    // An exported function, found by name once: the host calls a few of them (alloc, the entry points) many times
+    // a frame, and looking one up builds its type each time.
+    struct ExportedFunction {
+        wasmtime_func_t function;
+        size_t paramCount;
+        size_t resultCount;
+    };
+    QHash<QString, ExportedFunction> exportedFunctions;
+
     // The outermost call sets the deadline one tick out and starts the clock; at each tick the runtime asks
     // whether to go on. A call made from inside a host function (reentrant) runs under the outer call's limit.
     void beginCall() {
@@ -293,20 +304,63 @@ struct WasmInstance::Impl {
         QByteArray utf8 = name.toUtf8();
         return instantiated && wasmtime_instance_export_get(context, &instance, utf8.constData(), static_cast<size_t>(utf8.size()), &item);
     }
+
+    const ExportedFunction* findFunction(const QString& name) {
+        auto found = exportedFunctions.constFind(name);
+        if (found != exportedFunctions.constEnd()) {
+            return &found.value();
+        }
+        wasmtime_extern_t item;
+        if (!findExport(name, item) || item.kind != WASMTIME_EXTERN_FUNC) {
+            return nullptr;
+        }
+        ExportedFunction exported;
+        exported.function = item.of.func;
+        wasm_functype_t* type = wasmtime_func_type(context, &exported.function);
+        exported.paramCount = wasm_functype_params(type)->size;
+        exported.resultCount = wasm_functype_results(type)->size;
+        wasm_functype_delete(type);
+        return &exportedFunctions.insert(name, exported).value();
+    }
 };
 
 namespace {
+
+// The argument and result vectors of the host functions running on this thread, one pair per nesting depth (a host
+// function can call into the module, which can call a host function again), kept so that a call allocates nothing.
+// A deque, so that a deeper call adding a pair moves none of the outer calls' pairs.
+struct TrampolineBuffers {
+    std::vector<WasmValue> in;
+    std::vector<WasmValue> out;
+};
+thread_local std::deque<TrampolineBuffers> trampolineBuffers;
+thread_local size_t trampolineDepth = 0;
+
+struct TrampolineScope {
+    TrampolineBuffers& buffers;
+    TrampolineScope() : buffers(take()) {}
+    ~TrampolineScope() { --trampolineDepth; }
+    static TrampolineBuffers& take() {
+        if (trampolineBuffers.size() <= trampolineDepth) {
+            trampolineBuffers.emplace_back();
+        }
+        TrampolineBuffers& buffers = trampolineBuffers[trampolineDepth++];
+        buffers.in.clear();
+        buffers.out.clear();
+        return buffers;
+    }
+};
 
 // What the module calls when it calls a host function.
 wasm_trap_t* hostFunctionTrampoline(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t argCount,
                                     wasmtime_val_t* results, size_t resultCount) {
     auto entry = static_cast<HostFunctionEntry*>(env);
-    std::vector<WasmValue> in;
-    in.reserve(argCount);
+    TrampolineScope scope;
+    std::vector<WasmValue>& in = scope.buffers.in;
     for (size_t i = 0; i < argCount; ++i) {
         in.push_back(fromVal(args[i]));
     }
-    std::vector<WasmValue> out;
+    std::vector<WasmValue>& out = scope.buffers.out;
     // While the host function runs, the instance works through the caller's context: a call back into the
     // module (the guest's alloc, a callback) and its memory accesses go through it, as wasmtime requires.
     QString error = entry->instance->impl().withCallerContext(caller, [&] { return entry->function(*entry->instance, in, out); });
@@ -423,30 +477,39 @@ bool WasmInstance::hasExport(const QString& name) const {
 bool WasmInstance::call(const QString& name, const std::vector<WasmValue>& args, std::vector<WasmValue>& results,
                         QString& error) {
     results.clear();
-    wasmtime_extern_t item;
-    if (!_impl->findExport(name, item) || item.kind != WASMTIME_EXTERN_FUNC) {
+    const Impl::ExportedFunction* exported = _impl->instantiated ? _impl->findFunction(name) : nullptr;
+    if (!exported) {
         error = QString("no exported function \"%1\"").arg(name);
         return false;
     }
-    wasmtime_func_t function = item.of.func;
-    wasm_functype_t* type = wasmtime_func_type(_impl->context, &function);
-    size_t paramCount = wasm_functype_params(type)->size;
-    size_t resultCount = wasm_functype_results(type)->size;
-    wasm_functype_delete(type);
-    if (paramCount != args.size()) {
-        error = QString("\"%1\" takes %2 arguments, %3 given").arg(name).arg(paramCount).arg(args.size());
+    wasmtime_func_t function = exported->function;
+    size_t resultCount = exported->resultCount;
+    if (exported->paramCount != args.size()) {
+        error = QString("\"%1\" takes %2 arguments, %3 given").arg(name).arg(exported->paramCount).arg(args.size());
         return false;
     }
-    std::vector<wasmtime_val_t> in;
-    in.reserve(args.size());
-    for (const auto& arg : args) {
-        in.push_back(toVal(arg));
+    // the values on the stack: the host calls into the module many times a frame
+    const size_t INLINE_VALUES = 8;
+    wasmtime_val_t inlineIn[INLINE_VALUES];
+    wasmtime_val_t inlineOut[INLINE_VALUES];
+    std::vector<wasmtime_val_t> heapIn, heapOut;
+    wasmtime_val_t* in = inlineIn;
+    wasmtime_val_t* out = inlineOut;
+    if (args.size() > INLINE_VALUES) {
+        heapIn.resize(args.size());
+        in = heapIn.data();
     }
-    std::vector<wasmtime_val_t> out(resultCount);
+    if (resultCount > INLINE_VALUES) {
+        heapOut.resize(resultCount);
+        out = heapOut.data();
+    }
+    for (size_t i = 0; i < args.size(); ++i) {
+        in[i] = toVal(args[i]);
+    }
     _impl->beginCall();
     ++_impl->callDepth;
     wasm_trap_t* trap = nullptr;
-    auto result = wasmtime_func_call(_impl->context, &function, in.data(), in.size(), out.data(), out.size(), &trap);
+    auto result = wasmtime_func_call(_impl->context, &function, in, args.size(), out, resultCount, &trap);
     --_impl->callDepth;
     if (result) {
         error = takeErrorText(result);
@@ -456,9 +519,8 @@ bool WasmInstance::call(const QString& name, const std::vector<WasmValue>& args,
         error = takeTrapText(trap);
         return false;
     }
-    results.reserve(resultCount);
-    for (const auto& value : out) {
-        results.push_back(fromVal(value));
+    for (size_t i = 0; i < resultCount; ++i) {
+        results.push_back(fromVal(out[i]));
     }
     return true;
 }

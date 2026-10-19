@@ -119,7 +119,7 @@ QByteArray HostInterface::readBytes(int32_t pointer, int32_t length, QString& er
 
 int64_t HostInterface::writeToGuest(const QVariant& value, QString& error) {
     QByteArray bytes = _codec.encode(value);
-    std::vector<WasmValue> results;
+    std::vector<WasmValue>& results = _allocResults; // alloc calls no host function, so this is never in use twice
     if (!_instance.call(ALLOC_EXPORT, { int32_t(bytes.size()) }, results, error)) {
         error = "the module's alloc failed: " + error;
         return 0;
@@ -137,8 +137,12 @@ int64_t HostInterface::writeToGuest(const QVariant& value, QString& error) {
     return pack(pointer, int32_t(bytes.size()));
 }
 
-// A result for the guest; when the bytes cannot be placed, the failure is logged and 0 is returned.
+// A result for the guest; when the bytes cannot be placed, the failure is logged and 0 is returned. Nothing (a void
+// method's result) is 0 too, with no call into the guest: a guest reads an empty result as undefined.
 int64_t HostInterface::writeResult(const QVariant& value) {
+    if (!value.isValid()) {
+        return 0;
+    }
     QString error;
     int64_t packed = writeToGuest(value, error);
     if (packed == 0 && !error.isEmpty()) {
@@ -188,12 +192,18 @@ void HostInterface::install() {
         if (!error.isEmpty()) {
             return "call: " + error;
         }
-        QVariant arguments;
-        if (!argumentBytes.isEmpty() && !_codec.decode(argumentBytes, arguments, error)) {
-            return "call: the arguments are not CBOR: " + error;
+        QCborArray arguments;
+        if (!argumentBytes.isEmpty()) {
+            QCborParserError parseError;
+            QCborValue value = QCborValue::fromCbor(argumentBytes, &parseError);
+            if (parseError.error != QCborError::NoError) {
+                return QString("call: the arguments are not CBOR: malformed CBOR at byte %1: %2").arg(parseError.offset).arg(parseError.errorString());
+            }
+            if (value.isArray()) {
+                arguments = value.toArray();
+            }
         }
-        QVariantList argumentList = arguments.userType() == QMetaType::QVariantList ? arguments.toList() : QVariantList();
-        QVariant result = call(ObjectTable::Handle(std::get<int32_t>(args[0])), QString::fromUtf8(name), argumentList, error);
+        QVariant result = callWithCbor(ObjectTable::Handle(std::get<int32_t>(args[0])), name, arguments, error);
         results.push_back(writeResult(error.isEmpty() ? result : QVariant(errorRecord("CallError", error))));
         return QString();
     });
@@ -204,7 +214,7 @@ void HostInterface::install() {
         if (!error.isEmpty()) {
             return "get: " + error;
         }
-        QVariant value = get(ObjectTable::Handle(std::get<int32_t>(args[0])), QString::fromUtf8(name), error);
+        QVariant value = getByName(ObjectTable::Handle(std::get<int32_t>(args[0])), name, error);
         results.push_back(writeResult(error.isEmpty() ? value : QVariant(errorRecord("PropertyError", error))));
         return QString();
     });
@@ -216,12 +226,14 @@ void HostInterface::install() {
         if (!error.isEmpty()) {
             return "set: " + error;
         }
-        QVariant value;
-        if (!_codec.decode(valueBytes, value, error)) {
-            return "set: the value is not CBOR: " + error;
+        QCborParserError parseError;
+        QCborValue value = QCborValue::fromCbor(valueBytes, &parseError);
+        if (parseError.error != QCborError::NoError) {
+            return QString("set: the value is not CBOR: malformed CBOR at byte %1: %2").arg(parseError.offset).arg(parseError.errorString());
         }
-        bool ok = set(ObjectTable::Handle(std::get<int32_t>(args[0])), QString::fromUtf8(name), value, error);
-        results.push_back(writeResult(ok ? QVariant::fromValue(nullptr) : QVariant(errorRecord("PropertyError", error))));
+        bool ok = setWithCbor(ObjectTable::Handle(std::get<int32_t>(args[0])), name, value, error);
+        // a write that worked returns nothing (no bytes cross); one that failed, its error record
+        results.push_back(writeResult(ok ? QVariant() : QVariant(errorRecord("PropertyError", error))));
         return QString();
     });
 
@@ -461,8 +473,7 @@ const int SURPLUS_ARGUMENT_COST = 3;  // an argument an overload ignores costs a
 
 // How far a value is from a parameter's type: 0 for the type itself or its family, more for a coercion.
 // With overloads, the one whose arguments cost least is called, as QtScript scores its candidates.
-int conversionCost(const QVariant& value, int type) {
-    const int from = value.userType();
+int conversionCost(int from, int type) {
     if (type == QMetaType::QVariant || from == type) {
         return 0;
     }
@@ -495,25 +506,46 @@ int conversionCost(const QVariant& value, int type) {
 
 } // namespace
 
-bool HostInterface::convertArguments(const QMetaMethod& method, const QVariantList& arguments, QVariantList& converted,
-                                     int& cost, QString& error) {
-    const int count = method.parameterCount();
+QVector<int> HostInterface::parameterTypes(const QMetaObject* meta, int methodIndex) {
+    auto key = qMakePair(meta, methodIndex);
+    auto found = _parameterTypes.constFind(key);
+    if (found != _parameterTypes.constEnd()) {
+        return found.value();
+    }
+    QMetaMethod method = meta->method(methodIndex);
+    QVector<int> types;
+    bool complete = true;
+    for (int i = 0; i < method.parameterCount(); ++i) {
+        int type = parameterTypeOf(method, i);
+        complete = complete && type != QMetaType::UnknownType;
+        types.append(type);
+    }
+    if (complete) {
+        _parameterTypes.insert(key, types);
+    }
+    return types;
+}
+
+bool HostInterface::convertArguments(const QMetaMethod& method, const QVector<int>& types, const QCborArray& arguments,
+                                     QVariantList& converted, int& cost, QString& error) {
+    const int count = types.size();
+    const int given = int(arguments.size());
     cost = 0;
     converted.clear();
     if (count > MAX_INVOKE_ARGUMENTS) {
         error = QString("%1 takes %2 parameters, more than a call can carry").arg(QString::fromUtf8(method.methodSignature())).arg(count);
         return false;
     }
-    if (arguments.size() < count) {
-        error = QString("%1 takes %2 arguments, %3 given").arg(QString::fromUtf8(method.methodSignature())).arg(count).arg(arguments.size());
+    if (given < count) {
+        error = QString("%1 takes %2 arguments, %3 given").arg(QString::fromUtf8(method.methodSignature())).arg(count).arg(given);
         return false;
     }
     // surplus arguments are dropped, as QtScript drops them, but an overload that takes them all is preferred
-    cost = SURPLUS_ARGUMENT_COST * (arguments.size() - count);
+    cost = SURPLUS_ARGUMENT_COST * (given - count);
     converted.reserve(count);
     for (int i = 0; i < count; ++i) {
-        const int type = parameterTypeOf(method, i);
-        QVariant value = arguments[i];
+        const int type = types[i];
+        const QCborValue argument = arguments.at(i);
         if (type == QMetaType::UnknownType) {
             error = QString("%1: parameter %2 has a type the host interface cannot carry (%3)")
                 .arg(QString::fromUtf8(method.methodSignature())).arg(i + 1).arg(QString::fromUtf8(method.parameterTypes().at(i)));
@@ -526,28 +558,33 @@ bool HostInterface::convertArguments(const QMetaMethod& method, const QVariantLi
                 .arg(QString::fromUtf8(method.methodSignature())).arg(i + 1);
             return false;
         }
-        cost += conversionCost(value, type);
-        if (type != QMetaType::QVariant && value.userType() != type) {
-            bool ok = true;
-            value = _codec.fromCbor(_codec.toCbor(value), type, &ok);
-            if (!ok) {
-                error = QString("%1: argument %2 cannot be converted to %3")
-                    .arg(QString::fromUtf8(method.methodSignature())).arg(i + 1).arg(typeNameOf(type));
-                return false;
-            }
+        // scored by the type the argument has as a plain value, as QtScript scores its candidates; converted from
+        // the guest's CBOR straight to the parameter's type
+        const int from = _codec.genericTypeOf(argument);
+        cost += conversionCost(from, type);
+        if (type == QMetaType::QVariant || from == type) {
+            converted.append(_codec.fromCbor(argument));
+            continue;
+        }
+        bool ok = true;
+        QVariant value = _codec.fromCbor(argument, type, &ok);
+        if (!ok) {
+            error = QString("%1: argument %2 cannot be converted to %3")
+                .arg(QString::fromUtf8(method.methodSignature())).arg(i + 1).arg(typeNameOf(type));
+            return false;
         }
         converted.append(value);
     }
     return true;
 }
 
-QVariant HostInterface::invoke(QObject* object, int methodIndex, QVariantList& converted, QString& error) {
+QVariant HostInterface::invoke(QObject* object, int methodIndex, const QVector<int>& types, QVariantList& converted, QString& error) {
     const QMetaObject* meta = object->metaObject();
     QMetaMethod method = meta->method(methodIndex);
-    const int count = method.parameterCount();
+    const int count = types.size();
     QGenericArgument generic[MAX_INVOKE_ARGUMENTS];
     for (int i = 0; i < count; ++i) {
-        const int type = parameterTypeOf(method, i);
+        const int type = types[i];
         // QGenericArgument keeps the name pointer and the data pointer: both outlive the invoke below
         generic[i] = QGenericArgument(QMetaType::typeName(type), type == QMetaType::QVariant ? &converted[i] : converted[i].constData());
     }
@@ -580,6 +617,14 @@ QVariant HostInterface::invoke(QObject* object, int methodIndex, QVariantList& c
 }
 
 QVariant HostInterface::call(ObjectTable::Handle handle, const QString& methodName, const QVariantList& arguments, QString& error) {
+    QCborArray encoded;
+    for (const QVariant& argument : arguments) {
+        encoded.append(_codec.toCbor(argument));
+    }
+    return callWithCbor(handle, methodName.toUtf8(), encoded, error);
+}
+
+QVariant HostInterface::callWithCbor(ObjectTable::Handle handle, const QByteArray& methodName, const QCborArray& arguments, QString& error) {
     ++_statistics.calls;
     QObject* object = _objects.object(handle);
     if (!object) {
@@ -588,27 +633,27 @@ QVariant HostInterface::call(ObjectTable::Handle handle, const QString& methodNa
         return QVariant();
     }
     const QMetaObject* meta = object->metaObject();
-    QByteArray name = methodName.toUtf8();
+    const QByteArray& name = methodName;
     QVector<int> indices;
     if (name.startsWith('#')) {
         bool ok = false;
         int index = name.mid(1).toInt(&ok);
         if (!ok || index < 0 || index >= meta->methodCount()) {
-            error = QString("%1 has no method %2").arg(QString::fromUtf8(meta->className()), methodName);
+            error = QString("%1 has no method %2").arg(QString::fromUtf8(meta->className()), QString::fromUtf8(methodName));
             return QVariant();
         }
         indices.append(index);
     } else if (name.contains('(')) {
         int index = meta->indexOfMethod(QMetaObject::normalizedSignature(name.constData()).constData());
         if (index < 0) {
-            error = QString("%1 has no method %2").arg(QString::fromUtf8(meta->className()), methodName);
+            error = QString("%1 has no method %2").arg(QString::fromUtf8(meta->className()), QString::fromUtf8(methodName));
             return QVariant();
         }
         indices.append(index);
     } else {
         indices = candidates(meta, name);
         if (indices.isEmpty()) {
-            error = QString("%1 has no method %2").arg(QString::fromUtf8(meta->className()), methodName);
+            error = QString("%1 has no method %2").arg(QString::fromUtf8(meta->className()), QString::fromUtf8(methodName));
             return QVariant();
         }
     }
@@ -617,15 +662,18 @@ QVariant HostInterface::call(ObjectTable::Handle handle, const QString& methodNa
     int bestCost = 0;
     QVariantList bestArguments;
     QString firstError;
+    QVector<int> bestTypes;
     for (int index : indices) {
         QVariantList converted;
         int cost = 0;
         QString candidateError;
-        if (convertArguments(meta->method(index), arguments, converted, cost, candidateError)) {
+        QVector<int> types = parameterTypes(meta, index);
+        if (convertArguments(meta->method(index), types, arguments, converted, cost, candidateError)) {
             if (bestIndex < 0 || cost < bestCost) {
                 bestIndex = index;
                 bestCost = cost;
                 bestArguments = converted;
+                bestTypes = types;
                 if (cost == 0) {
                     break;
                 }
@@ -637,13 +685,28 @@ QVariant HostInterface::call(ObjectTable::Handle handle, const QString& methodNa
     if (bestIndex < 0) {
         error = indices.size() == 1 ? firstError
                                     : QString("no overload of %1.%2 takes these %3 arguments (%4)")
-                                          .arg(QString::fromUtf8(meta->className()), methodName).arg(arguments.size()).arg(firstError);
+                                          .arg(QString::fromUtf8(meta->className()), QString::fromUtf8(methodName)).arg(arguments.size()).arg(firstError);
         return QVariant();
     }
-    return invoke(object, bestIndex, bestArguments, error);
+    return invoke(object, bestIndex, bestTypes, bestArguments, error);
+}
+
+int HostInterface::propertyIndex(const QMetaObject* meta, const QByteArray& name) const {
+    auto key = qMakePair(meta, name);
+    auto found = _propertyIndices.constFind(key);
+    if (found != _propertyIndices.constEnd()) {
+        return found.value();
+    }
+    int index = meta->indexOfProperty(name.constData());
+    _propertyIndices.insert(key, index);
+    return index;
 }
 
 QVariant HostInterface::get(ObjectTable::Handle handle, const QString& propertyName, QString& error) const {
+    return getByName(handle, propertyName.toUtf8(), error);
+}
+
+QVariant HostInterface::getByName(ObjectTable::Handle handle, const QByteArray& propertyName, QString& error) const {
     ++const_cast<HostInterface*>(this)->_statistics.gets;
     QObject* object = _objects.object(handle);
     if (!object) {
@@ -651,20 +714,24 @@ QVariant HostInterface::get(ObjectTable::Handle handle, const QString& propertyN
         return QVariant();
     }
     const QMetaObject* meta = object->metaObject();
-    int index = meta->indexOfProperty(propertyName.toUtf8().constData());
+    int index = propertyIndex(meta, propertyName);
     if (index < 0) {
-        error = QString("%1 has no property %2").arg(QString::fromUtf8(meta->className()), propertyName);
+        error = QString("%1 has no property %2").arg(QString::fromUtf8(meta->className()), QString::fromUtf8(propertyName));
         return QVariant();
     }
     QMetaProperty property = meta->property(index);
     if (!property.isReadable()) {
-        error = QString("%1.%2 is not readable").arg(QString::fromUtf8(meta->className()), propertyName);
+        error = QString("%1.%2 is not readable").arg(QString::fromUtf8(meta->className()), QString::fromUtf8(propertyName));
         return QVariant();
     }
     return property.read(object);
 }
 
 bool HostInterface::set(ObjectTable::Handle handle, const QString& propertyName, const QVariant& value, QString& error) {
+    return setWithCbor(handle, propertyName.toUtf8(), _codec.toCbor(value), error);
+}
+
+bool HostInterface::setWithCbor(ObjectTable::Handle handle, const QByteArray& name, const QCborValue& value, QString& error) {
     ++_statistics.sets;
     QObject* object = _objects.object(handle);
     if (!object) {
@@ -672,7 +739,8 @@ bool HostInterface::set(ObjectTable::Handle handle, const QString& propertyName,
         return false;
     }
     const QMetaObject* meta = object->metaObject();
-    int index = meta->indexOfProperty(propertyName.toUtf8().constData());
+    const QString propertyName = QString::fromUtf8(name);
+    int index = propertyIndex(meta, name);
     if (index < 0) {
         error = QString("%1 has no property %2").arg(QString::fromUtf8(meta->className()), propertyName);
         return false;
@@ -682,14 +750,14 @@ bool HostInterface::set(ObjectTable::Handle handle, const QString& propertyName,
         error = QString("%1.%2 is read-only").arg(QString::fromUtf8(meta->className()), propertyName);
         return false;
     }
-    QVariant typed = value;
+    QVariant typed;
     const int type = property.userType();
     if (property.isEnumType()) {
         // QMetaProperty::write takes an int for an enum property (it resolves the enum by its unqualified type
         // name, which fails for a nested enum), so the value becomes its integer here: a key, with or without
         // the class scope, or a number
         QMetaEnum enumerator = property.enumerator();
-        if (value.userType() == QMetaType::QString) {
+        if (value.isString()) {
             QByteArray key = value.toString().toUtf8();
             int scope = key.lastIndexOf("::");
             if (scope >= 0) {
@@ -704,15 +772,18 @@ bool HostInterface::set(ObjectTable::Handle handle, const QString& propertyName,
             typed = QVariant(number);
         } else {
             bool ok = true;
-            typed = _codec.fromCbor(_codec.toCbor(value), QMetaType::Int, &ok);
+            typed = _codec.fromCbor(value, QMetaType::Int, &ok);
             if (!ok) {
                 error = QString("%1.%2: the value cannot be converted to %3").arg(QString::fromUtf8(meta->className()), propertyName, QString::fromUtf8(enumerator.name()));
                 return false;
             }
         }
-    } else if (type != QMetaType::QVariant && typed.userType() != type) {
+    } else if (type == QMetaType::QVariant || _codec.genericTypeOf(value) == type) {
+        typed = _codec.fromCbor(value);
+    } else {
+        // from the guest's CBOR straight to the property's type
         bool ok = true;
-        typed = _codec.fromCbor(_codec.toCbor(value), type, &ok);
+        typed = _codec.fromCbor(value, type, &ok);
         if (!ok) {
             error = QString("%1.%2: the value cannot be converted to %3").arg(QString::fromUtf8(meta->className()), propertyName, typeNameOf(type));
             return false;
