@@ -59,6 +59,16 @@ private:
     void showRoomPage();
     void renderTimeline();
     void sendMessage();
+    // the message under a point of the conversation (viewport coordinates): its index in _items, or -1
+    int messageAt(const QPoint& pos) const;
+    // right-click: quick reactions, Edit, Copy Text and Delete for the message there, then the browser's own
+    void showMessageMenu(const QPoint& pos);
+    // the message box edits one of your messages: Enter saves it, Esc stops
+    void startEditing(const QJsonObject& item);
+    void stopEditing();
+    void deleteMessage(const QJsonObject& item);
+    // a message's reactions as rich text: one chip per emoji with its count, yours lit, a click toggling yours
+    QString reactionsHtml(const QJsonObject& item, const QHash<QString, QString>& names);
     void markReadIfSeen();
     void fitComposer();
     void saveGeometrySetting();
@@ -118,6 +128,10 @@ private:
     QHash<QString, QMovie*> _movies;            // media key → a GIF playing in the conversation
     QHash<QString, QString> _opening;           // media key → the name to open the file under, once it is here
     QVector<QJsonObject> _links;                // chatopen:<n> in the conversation → {media, name}
+    QVector<QJsonObject> _reactionLinks;        // chatreact:<n> → {id, key}
+    QVector<int> _tableItems;                   // the document's top-level tables in order → index in _items (-1: not
+                                                // a message)
+    QString _editingId;                         // the message the message box is editing, if any
 };
 
 #endif // hifi_ChatWindow_h

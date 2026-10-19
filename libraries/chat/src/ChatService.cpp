@@ -334,6 +334,30 @@ void ChatService::send(const QString& room, const QString& body) {
     }
 }
 
+void ChatService::createDm(const QString& userId) {
+    if (_state == State::Ready && !userId.isEmpty()) {
+        command({ { "op", "create_dm" }, { "user", userId } });
+    }
+}
+
+void ChatService::react(const QString& room, const QString& id, const QString& key) {
+    if (_state == State::Ready && !id.isEmpty() && !key.isEmpty()) {
+        command({ { "op", "react" }, { "room", room }, { "id", id }, { "key", key } });
+    }
+}
+
+void ChatService::edit(const QString& room, const QString& id, const QString& body) {
+    if (_state == State::Ready && !id.isEmpty() && !body.trimmed().isEmpty()) {
+        command({ { "op", "edit" }, { "room", room }, { "id", id }, { "body", body } });
+    }
+}
+
+void ChatService::deleteMessage(const QString& room, const QString& id) {
+    if (_state == State::Ready && !id.isEmpty()) {
+        command({ { "op", "delete" }, { "room", room }, { "id", id } });
+    }
+}
+
 void ChatService::markRead(const QString& room) {
     if (_state == State::Ready) {
         command({ { "op", "read" }, { "room", room } });

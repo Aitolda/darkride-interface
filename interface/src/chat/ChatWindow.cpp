@@ -25,9 +25,15 @@
 #include <QtGui/QMovie>
 #include <QtGui/QPainter>
 #include <QtGui/QPainterPath>
+#include <QtGui/QClipboard>
+#include <QtGui/QTextCursor>
+#include <QtGui/QTextFrame>
+#include <QtWidgets/QApplication>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QListWidget>
+#include <QtWidgets/QMenu>
+#include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QScrollBar>
@@ -35,7 +41,9 @@
 #include <QtWidgets/QStackedWidget>
 #include <QtWidgets/QStyledItemDelegate>
 #include <QtWidgets/QTextBrowser>
+#include <QtWidgets/QToolButton>
 #include <QtWidgets/QVBoxLayout>
+#include <QtWidgets/QWidgetAction>
 
 #include <AccountManager.h>
 #include <ChatService.h>
@@ -62,8 +70,10 @@ static const char* AVATAR_COLOURS[] = { "#0090d6", "#8a3bdc", "#2f9e5b", "#d4692
 
 // messages from one person this close together share one name and picture, as in Discord
 static const qint64 GROUP_GAP_MS = 7 * 60 * 1000;
-// the library sends a room's newest 100 messages; loading older ones stops there for now
-static const int TIMELINE_ITEMS = 100;
+// a click each in a message's menu, as in the web client (client/src/emoji.ts)
+static const QStringList QUICK_REACTIONS { "\U0001F44D", "\u2764\uFE0F", "\U0001F602", "\U0001F62E", "\U0001F622", "\U0001F389" };
+static const QColor COLOUR_CHIP("#2b3150");
+static const QColor COLOUR_CHIP_MINE("#1d3a5f");
 // a message's picture fits in this, as Discord's do in a narrower column
 static const QSize PICTURE_MAX(400, 300);
 static const QSize PICTURE_UNKNOWN(300, 200);
@@ -389,6 +399,15 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
         }
         QPushButton:hover { background: #33c0ff; }
         QPushButton#ChatDecline { background: %5; color: %3; }
+        QMenu { background: #10142a; color: %3; border: 1px solid rgba(0, 0, 0, 0.5); padding: 6px; font-size: 14px; }
+        QMenu::item { padding: 6px 28px 6px 10px; border-radius: 3px; }
+        QMenu::item:selected { background: %7; color: #091023; }
+        QMenu::item:disabled { color: %4; }
+        QMenu::separator { height: 1px; background: rgba(255, 255, 255, 0.08); margin: 4px 6px; }
+        QToolButton#ChatQuickReaction {
+            background: %5; border: none; border-radius: 4px; font-size: 20px; min-width: 34px; min-height: 34px;
+        }
+        QToolButton#ChatQuickReaction:hover { background: %6; }
         QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
         QScrollBar::handle:vertical { background: %2; border-radius: 4px; min-height: 30px; }
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
@@ -545,8 +564,16 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
             if (index >= 0 && index < _links.size()) {
                 openMedia(_links[index].value("media").toObject(), _links[index].value("name").toString());
             }
+        } else if (url.scheme() == "chatreact") {
+            int index = url.path().toInt();
+            auto service = DependencyManager::get<ChatService>();
+            if (service && index >= 0 && index < _reactionLinks.size()) {
+                service->react(_room, _reactionLinks[index].value("id").toString(), _reactionLinks[index].value("key").toString());
+            }
         }
     });
+    _timeline->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(_timeline, &QWidget::customContextMenuRequested, this, &ChatWindow::showMessageMenu);
     connect(_timeline->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
         if (_rendering) {
             // a redraw starts the document again at the top: not the reader scrolling there
@@ -554,8 +581,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
         }
         _stickToBottom = value >= _timeline->verticalScrollBar()->maximum() - 4;
         auto service = DependencyManager::get<ChatService>();
-        if (value == 0 && service && !_room.isEmpty() && !_roomStart && !_loadingOlder && !_items.isEmpty() &&
-            _items.size() < TIMELINE_ITEMS) {
+        if (value == 0 && service && !_room.isEmpty() && !_roomStart && !_loadingOlder && !_items.isEmpty()) {
             _loadingOlder = true;
             _anchorBottom = true;
             service->loadOlder(_room);
@@ -591,7 +617,8 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
         connect(service.data(), &ChatService::profileChanged, this, &ChatWindow::updateState);
         connect(service.data(), &ChatService::mediaReady, this, &ChatWindow::mediaReady);
         connect(service.data(), &ChatService::commandFailed, this, [this](const QString& op, const QString& message) {
-            if (op == "send" || op == "join" || op == "leave" || op == "open") {
+            if (op == "send" || op == "join" || op == "leave" || op == "open" || op == "edit" || op == "delete" ||
+                op == "react") {
                 _composerNote->setText("Couldn't " + op + ": " + message);
             }
         });
@@ -784,7 +811,7 @@ void ChatWindow::selectRoom(const QString& room) {
     _loadingOlder = false;
     _anchorBottom = false;
     _stickToBottom = true;
-    _composerNote->clear();
+    stopEditing();
     chatLastRoom.set(room);
     for (int i = 0; i < _roomList->count(); i++) {
         if (_roomList->item(i)->data(RoomIdRole).toString() == room) {
@@ -1092,6 +1119,16 @@ void ChatWindow::renderTimeline() {
     // made again below, as the messages are; the GIFs playing carry on
     _pictureUses.clear();
     _links.clear();
+    _reactionLinks.clear();
+    _tableItems.clear();
+    // the names the conversation knows, for who reacted
+    QHash<QString, QString> names;
+    for (const QJsonValue& value : _items) {
+        QJsonObject item = value.toObject();
+        if (!item.value("name").toString().isEmpty()) {
+            names.insert(item.value("sender").toString(), item.value("name").toString());
+        }
+    }
 
     QString html = "<html><body style=\"font-size:15px;\">";
     if (_items.isEmpty() && !_roomStart) {
@@ -1111,8 +1148,8 @@ void ChatWindow::renderTimeline() {
     QString lastSender;
     qint64 lastTs = 0;
     QDate lastDay;
-    for (const QJsonValue& value : _items) {
-        QJsonObject item = value.toObject();
+    for (int index = 0; index < _items.size(); index++) {
+        QJsonObject item = _items[index].toObject();
         qint64 ts = (qint64)item.value("ts").toDouble();
         QString sender = item.value("sender").toString();
         QString senderName = item.value("name").toString();
@@ -1144,6 +1181,7 @@ void ChatWindow::renderTimeline() {
             QString byHtml = "<span style=\"color:" + COLOUR_TEXT.name() + ";\">" + by + "</span>";
             QString line = form.contains("%2") ? form.arg(userHtml, byHtml) : form.arg(userHtml);
             bool away = change == "left" || change == "kicked" || change == "banned";
+            _tableItems.append(-1);
             html += QString("<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin-top:10px;\"><tr>"
                             "<td width=\"72\" align=\"center\" style=\"color:%1;\">%2</td>"
                             "<td style=\"color:%3; padding-right:16px;\">%4&nbsp;&nbsp;"
@@ -1173,13 +1211,18 @@ void ChatWindow::renderTimeline() {
         } else if (state == "failed") {
             text += QString(" <span style=\"color:%1; font-size:12px;\">Not sent</span>").arg(COLOUR_RED.name());
         }
+        if (item.value("edited").toBool()) {
+            text += QString(" <span style=\"color:%1; font-size:11px;\">(edited)</span>").arg(muted);
+        }
         if (kind != "image" && kind != "video") {
             text = "<span style=\"white-space:pre-wrap;\">" + text + "</span>";
         } else {
             text = "<div style=\"margin-top:4px;\">" + text + "</div>";
         }
+        text += reactionsHtml(item, names);
 
         bool grouped = sender == lastSender && ts - lastTs < GROUP_GAP_MS;
+        _tableItems.append(index);
         if (grouped) {
             html += QString("<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin-top:2px;\"><tr>"
                             "<td width=\"72\"></td><td style=\"padding-right:16px;\">%1</td></tr></table>")
@@ -1225,6 +1268,19 @@ void ChatWindow::sendMessage() {
     while (text.endsWith('\n') || text.endsWith(' ')) {
         text.chop(1);
     }
+    if (!_editingId.isEmpty()) {
+        // an edit to nothing would be a delete: that has its own item in the message's menu
+        if (service && !text.trimmed().isEmpty()) {
+            for (const QJsonValue& value : _items) {
+                QJsonObject item = value.toObject();
+                if (item.value("id").toString() == _editingId && item.value("body").toString() != text) {
+                    service->edit(_room, _editingId, text);
+                }
+            }
+        }
+        stopEditing();
+        return;
+    }
     if (!service || _room.isEmpty() || text.trimmed().isEmpty()) {
         return;
     }
@@ -1235,6 +1291,134 @@ void ChatWindow::sendMessage() {
     _stickToBottom = true;
     QScrollBar* scroll = _timeline->verticalScrollBar();
     scroll->setValue(scroll->maximum());
+}
+
+QString ChatWindow::reactionsHtml(const QJsonObject& item, const QHash<QString, QString>& names) {
+    QJsonArray reactions = item.value("reactions").toArray();
+    if (reactions.isEmpty()) {
+        return QString();
+    }
+    QString html = "<div style=\"margin-top:4px; font-size:13px;\">";
+    for (const QJsonValue& value : reactions) {
+        QJsonObject reaction = value.toObject();
+        QStringList who;
+        for (const QJsonValue& sender : reaction.value("senders").toArray()) {
+            who.append(names.value(sender.toString(), localpartOf(sender.toString())));
+        }
+        bool mine = reaction.value("mine").toBool();
+        _reactionLinks.append(QJsonObject { { "id", item.value("id") }, { "key", reaction.value("key") } });
+        html += QString("<a href=\"chatreact:%1\" title=\"%2\"><span style=\"background-color:%3; color:%4;\">"
+                        "&nbsp;%5&nbsp;%6&nbsp;</span></a>&nbsp; ")
+                    .arg(_reactionLinks.size() - 1)
+                    .arg(who.join(", ").toHtmlEscaped(), (mine ? COLOUR_CHIP_MINE : COLOUR_CHIP).name(),
+                         (mine ? COLOUR_CYAN : COLOUR_TEXT).name(), reaction.value("key").toString().toHtmlEscaped())
+                    .arg(reaction.value("count").toInt());
+    }
+    return html + "</div>";
+}
+
+int ChatWindow::messageAt(const QPoint& pos) const {
+    // each message is a table of its own at the top of the document (renderTimeline notes them in _tableItems)
+    QTextFrame* root = _timeline->document()->rootFrame();
+    QTextFrame* frame = _timeline->cursorForPosition(pos).currentFrame();
+    if (!frame || frame == root) {
+        return -1;
+    }
+    while (frame->parentFrame() && frame->parentFrame() != root) {
+        frame = frame->parentFrame();
+    }
+    int table = root->childFrames().indexOf(frame);
+    return table >= 0 && table < _tableItems.size() ? _tableItems[table] : -1;
+}
+
+void ChatWindow::showMessageMenu(const QPoint& pos) {
+    QPoint documentPos = pos + QPoint(_timeline->horizontalScrollBar()->value(), _timeline->verticalScrollBar()->value());
+    QMenu* menu = _timeline->createStandardContextMenu(documentPos);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    auto service = DependencyManager::get<ChatService>();
+    int index = messageAt(pos);
+    QJsonObject item = index >= 0 && index < _items.size() ? _items[index].toObject() : QJsonObject();
+    QString id = item.value("id").toString();
+    bool sent = item.value("state").toString() == "sent";
+    QList<QAction*> standard = menu->actions();
+    QAction* first = standard.isEmpty() ? nullptr : standard.first();
+    if (service && !id.isEmpty() && sent && item.value("kind").toString() != "member") {
+        // a row of quick reactions on top, then the message's own items, then the browser's (Copy, Select All)
+        auto row = new QWidget(menu);
+        auto rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(4, 2, 4, 4);
+        rowLayout->setSpacing(4);
+        for (const QString& key : QUICK_REACTIONS) {
+            auto button = new QToolButton(row);
+            button->setObjectName("ChatQuickReaction");
+            button->setText(key);
+            button->setAutoRaise(true);
+            connect(button, &QToolButton::clicked, menu, [this, menu, id, key] {
+                if (auto service = DependencyManager::get<ChatService>()) {
+                    service->react(_room, id, key);
+                }
+                menu->close();
+            });
+            rowLayout->addWidget(button);
+        }
+        auto rowAction = new QWidgetAction(menu);
+        rowAction->setDefaultWidget(row);
+        menu->insertAction(first, rowAction);
+        menu->insertSeparator(first);
+        if (item.value("editable").toBool()) {
+            QAction* edit = new QAction("Edit Message", menu);
+            connect(edit, &QAction::triggered, this, [this, item] { startEditing(item); });
+            menu->insertAction(first, edit);
+        }
+        QString kind = item.value("kind").toString();
+        if (kind == "text" || kind == "emote" || kind == "notice") {
+            QAction* copy = new QAction("Copy Text", menu);
+            QString body = item.value("body").toString();
+            connect(copy, &QAction::triggered, this, [body] { QApplication::clipboard()->setText(body); });
+            menu->insertAction(first, copy);
+        }
+        if (item.value("own").toBool()) {
+            QAction* remove = new QAction("Delete Message", menu);
+            connect(remove, &QAction::triggered, this, [this, item] { deleteMessage(item); });
+            menu->insertAction(first, remove);
+        }
+        if (first) {
+            menu->insertSeparator(first);
+        }
+    }
+    menu->popup(_timeline->viewport()->mapToGlobal(pos));
+}
+
+void ChatWindow::startEditing(const QJsonObject& item) {
+    _editingId = item.value("id").toString();
+    _composer->setPlainText(item.value("body").toString());
+    _composer->moveCursor(QTextCursor::End);
+    _composerNote->setText("Editing a message: Enter saves it, Esc cancels");
+    _composer->setFocus();
+}
+
+void ChatWindow::stopEditing() {
+    if (!_editingId.isEmpty()) {
+        _editingId.clear();
+        _composer->clear();
+    }
+    _composerNote->clear();
+}
+
+void ChatWindow::deleteMessage(const QJsonObject& item) {
+    QMessageBox question(QMessageBox::NoIcon, "Delete Message", "Delete this message? It goes for everyone.",
+                         QMessageBox::NoButton, this);
+    QPushButton* remove = question.addButton("Delete", QMessageBox::DestructiveRole);
+    question.addButton(QMessageBox::Cancel);
+    question.setDefaultButton(QMessageBox::Cancel);
+    question.exec();
+    auto service = DependencyManager::get<ChatService>();
+    if (question.clickedButton() == remove && service) {
+        if (_editingId == item.value("id").toString()) {
+            stopEditing();
+        }
+        service->deleteMessage(_room, item.value("id").toString());
+    }
 }
 
 void ChatWindow::markReadIfSeen() {
@@ -1265,6 +1449,21 @@ bool ChatWindow::eventFilter(QObject* watched, QEvent* event) {
         if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) && !(key->modifiers() & Qt::ShiftModifier)) {
             sendMessage();
             return true;
+        }
+        if (key->key() == Qt::Key_Escape && !_editingId.isEmpty()) {
+            stopEditing();
+            return true;
+        }
+        // Up in an empty message box edits your newest message, as in Discord
+        if (key->key() == Qt::Key_Up && key->modifiers() == Qt::NoModifier && _editingId.isEmpty() &&
+            _composer->toPlainText().isEmpty()) {
+            for (int i = _items.size() - 1; i >= 0; i--) {
+                QJsonObject item = _items[i].toObject();
+                if (item.value("editable").toBool() && item.value("state").toString() == "sent") {
+                    startEditing(item);
+                    return true;
+                }
+            }
         }
     }
     return QWidget::eventFilter(watched, event);

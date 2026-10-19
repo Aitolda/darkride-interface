@@ -52,7 +52,7 @@ public:
     QString userId() const { return _userId; }
     // the sync's state: running, offline (waiting for the server), error, idle, terminated
     QString syncState() const { return _syncState; }
-    // [{id, name, dm, encrypted, invited, unread, notifications, members, avatar?, space?}]
+    // [{id, name, dm, dm_user?, encrypted, invited, unread, notifications, members, avatar?, space?}]
     QJsonArray rooms() const { return _rooms; }
     // the joined spaces (Darkride's): [{id, name, avatar?}]
     QJsonArray spaces() const { return _spaces; }
@@ -64,8 +64,15 @@ public:
     void close(const QString& room);
     void loadOlder(const QString& room, int count = 30);
     void send(const QString& room, const QString& body);
+    // a message's reactions, its text and the message itself, by its id in the timeline: react adds the emoji, or
+    // takes yours back; edit and deleteMessage only work on your own messages
+    void react(const QString& room, const QString& id, const QString& key);
+    void edit(const QString& room, const QString& id, const QString& body);
+    void deleteMessage(const QString& room, const QString& id);
     void markRead(const QString& room);
     void join(const QString& room);
+    // a new direct message with someone (a Matrix user id), inviting them; commandDone says {op: create_dm, room}
+    void createDm(const QString& userId);
     void leave(const QString& room);
     // a picture or file into the chat's folder, answered by mediaReady with the same key: source as a message's
     // media has it ({"url": mxc} or {"file": {...}}); a width and height ask for a thumbnail (crop: cut to fill)
@@ -77,7 +84,8 @@ signals:
     void stateChanged(State state);
     void syncStateChanged(const QString& state);
     void roomsChanged(const QJsonArray& rooms);
-    // the newest items of an open room: [{id, sender, name, body, kind, ts, own, encrypted, state}]
+    // the newest items of an open room: [{id, sender, name, body, kind, ts, own, encrypted, state, reactions,
+    // edited, editable, ...}], growing as older ones load (the library's timeline event)
     void timelineChanged(const QString& room, const QJsonArray& items);
     // a command finished: {op, room?, start?}; start: the room's first message is in, there's nothing older
     void commandDone(const QJsonObject& done);
