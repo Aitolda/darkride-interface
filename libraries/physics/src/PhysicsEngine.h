@@ -72,7 +72,16 @@ public:
 
     PhysicsEngine(const glm::vec3& offset);
     ~PhysicsEngine();
-    void init();
+    // maxWorkers caps Jolt's job system (0: the hardware's threads less one). The physics server passes a few: on a
+    // 32-core Mac 31 workers were woken 91 times a second for nothing (PHYSICS.md round 9, the idle cost).
+    void init(int maxWorkers = 0);
+    // When set, a step with no active body in any world and no frame is skipped (the clock still runs): the physics
+    // server's world with no vehicle moving costs nothing then. The caller (the server) says when it is allowed, since
+    // the engine does not know whether a train or a vehicle is about to need a step. Never on a client: the character
+    // is stepped every frame.
+    void setIdleWhenStill(bool allowed) { _idleWhenStill = allowed; }
+    bool isStill() const;
+    uint64_t getNumIdleSteps() const { return _numIdleSteps; }
 
     uint32_t getNumSubsteps() const { return _numSubsteps; }
     int32_t getNumCollisionObjects() const;
@@ -174,6 +183,8 @@ private:
     PhysicsWorld* characterWorld() const;
 
     SubstepListener* _substepListener { nullptr };
+    bool _idleWhenStill { false };
+    uint64_t _numIdleSteps { 0 };
     std::unique_ptr<JPH::TempAllocatorImpl> _tempAllocator;
     std::unique_ptr<JPH::JobSystemThreadPool> _jobSystem;
     std::unique_ptr<PhysicsWorld> _rootWorld;

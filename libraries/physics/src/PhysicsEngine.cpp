@@ -67,11 +67,14 @@ PhysicsEngine::~PhysicsEngine() {
     _tempAllocator.reset();
 }
 
-void PhysicsEngine::init() {
+void PhysicsEngine::init(int maxWorkers) {
     JoltSupport::initialize();
     if (!_rootWorld) {
         _tempAllocator.reset(new JPH::TempAllocatorImpl(TEMP_ALLOCATOR_BYTES));
         int numThreads = glm::max(1, (int)std::thread::hardware_concurrency() - 1);
+        if (maxWorkers > 0) {
+            numThreads = glm::min(numThreads, maxWorkers);
+        }
         _jobSystem.reset(new JPH::JobSystemThreadPool(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, numThreads));
         _rootWorld.reset(new PhysicsWorld(QUuid(), _tempAllocator.get(), _jobSystem.get()));
 
@@ -522,6 +525,14 @@ void PhysicsEngine::stepSimulation() {
         _accumulatedTime -= (float)numSubsteps * PHYSICS_ENGINE_FIXED_SUBSTEP;
     }
 
+    if (numSubsteps > 0 && _idleWhenStill && isStill()) {
+        // nothing to simulate: the substeps are skipped, their time dropped (a body that wakes is stepped from now),
+        // and Jolt's workers stay asleep
+        _numIdleSteps += numSubsteps;
+        numSubsteps = 0;
+        _accumulatedTime = 0.0f;
+    }
+
     uint64_t start = usecTimestampNow();
     for (int i = 0; i < numSubsteps; ++i) {
         // this substep's boundary on the wall clock: the present less the leftover and the substeps still to run
@@ -547,6 +558,19 @@ void PhysicsEngine::stepSimulation() {
             }
         }
     }
+}
+
+// No body awake in any world and no frame: a step would move nothing.
+bool PhysicsEngine::isStill() const {
+    if (!_frameWorlds.empty() || !_rootWorld || _rootWorld->getNumActiveBodies() > 0) {
+        return false;
+    }
+    for (const auto& entry : _frameWorlds) {
+        if (entry.second->getNumActiveBodies() > 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void PhysicsEngine::harvestPerformanceStats() {
