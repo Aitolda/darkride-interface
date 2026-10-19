@@ -17,6 +17,14 @@
 #include "InterfaceLogging.h"
 #include "Application.h"
 #include "avatar/AvatarManager.h"
+#include <SettingHandle.h>
+#include <PickFilter.h>
+
+// The arrival gate (WORLD-LOADING.md): the landing waits for what is near the avatar, within this many metres of its
+// body (the entity's box, not its centre: a floor you stand on counts), to be ready for physics and, while a loading
+// screen asks for it, drawn. Nothing farther holds the arrival. The default is the radius of the client's initial
+// entity query (Application.cpp INITIAL_QUERY_RADIUS); the setting is for Caity to tune.
+static Setting::Handle<float> nearbyRadiusSetting { "arrival/nearbyRadius", 10.0f };
 
 
 CalculateEntityLoadingPriority SafeLanding::entityLoadingOperatorElevateCollidables = [](const EntityItem& entityItem) {
@@ -48,6 +56,7 @@ void SafeLanding::startTracking(QSharedPointer<EntityTreeRenderer> entityTreeRen
             _maxTrackedEntityCount = 0;
             _sequenceStart = SafeLanding::INVALID_SEQUENCE;
             _sequenceEnd = SafeLanding::INVALID_SEQUENCE;
+            _firstSequence = SafeLanding::INVALID_SEQUENCE;
             _sequenceNumbers.clear();
             _trackingEntities = true;
             _startTime = usecTimestampNow();
@@ -56,6 +65,7 @@ void SafeLanding::startTracking(QSharedPointer<EntityTreeRenderer> entityTreeRen
             _notTrackedNotFound = 0;
             _notTrackedLocal = 0;
             _completionCount = 0;
+            _nearbyRadius = nearbyRadiusSetting.get();
 
             connect(std::const_pointer_cast<EntityTree>(entityTree).get(),
                 &EntityTree::addingEntity, this, &SafeLanding::addTrackedEntity, Qt::DirectConnection);
@@ -64,6 +74,23 @@ void SafeLanding::startTracking(QSharedPointer<EntityTreeRenderer> entityTreeRen
 
             _prevEntityLoadingPriorityOperator = EntityTreeRenderer::getEntityLoadingPriorityOperator();
             EntityTreeRenderer::setEntityLoadingPriorityFunction(entityLoadingOperatorElevateCollidables);
+
+            // What is already near the avatar is tracked again: a landing restarted by a teleport (the arrival's own
+            // path lookup, a hop within the world) lands among entities the tree already holds, which only an earlier
+            // landing checked, at another place
+            if (_nearbyRadius > 0.0f) {
+                glm::vec3 center = DependencyManager::get<AvatarManager>()->getMyAvatar()->getWorldPosition();
+                PickFilter::Flags flags;
+                flags.set(PickFilter::DOMAIN_ENTITIES); flags.set(PickFilter::VISIBLE); flags.set(PickFilter::INVISIBLE);
+                flags.set(PickFilter::COLLIDABLE); flags.set(PickFilter::NONCOLLIDABLE);
+                QVector<QUuid> nearby;
+                auto tree = std::const_pointer_cast<EntityTree>(entityTree);
+                tree->withReadLock([&] { tree->evalEntitiesInSphere(center, _nearbyRadius, PickFilter(flags), nearby); });
+                for (const QUuid& id : nearby) {
+                    trackEntity(id, tree);
+                }
+                _seededCount = (int)nearby.size();
+            }
         }
     }
 }
@@ -73,26 +100,47 @@ void SafeLanding::addTrackedEntity(const EntityItemID& entityID) {
         Locker lock(_lock);
         auto entityTree = _entityTreeRenderer->getTree();
         if (entityTree) {
-            EntityItemPointer entity = entityTree->findEntityByID(entityID);
-            if (!entity) {
-                _notTrackedNotFound++;
-            } else if (entity->isLocalEntity()) {
-                _notTrackedLocal++;
-            } else if (entity->getCreated() >= _startTime) {
-                _notTrackedCreatedLater++;
-            }
-            if (entity && !entity->isLocalEntity() && entity->getCreated() < _startTime) {
-                _addedCount++;
-                _trackedEntities.emplace(entityID, entity);
-
-                int32_t trackedEntityCount = (int32_t)_trackedEntities.size();
-                if (trackedEntityCount > _maxTrackedEntityCount) {
-                    _maxTrackedEntityCount = trackedEntityCount;
-                    _trackedEntityStabilityCount = 0;
-                }
-            }
+            trackEntity(entityID, entityTree);
         }
     }
+}
+
+// with _lock held
+void SafeLanding::trackEntity(const EntityItemID& entityID, const EntityTreePointer& entityTree) {
+    EntityItemPointer entity = entityTree->findEntityByID(entityID);
+    if (!entity) {
+        _notTrackedNotFound++;
+    } else if (entity->isLocalEntity()) {
+        _notTrackedLocal++;
+    } else if (entity->getCreated() >= _startTime) {
+        _notTrackedCreatedLater++;
+    }
+    if (entity && !entity->isLocalEntity() && entity->getCreated() < _startTime) {
+        if (_trackedEntities.emplace(entityID, entity).second) {
+            _addedCount++;
+        }
+
+        int32_t trackedEntityCount = (int32_t)_trackedEntities.size();
+        if (trackedEntityCount > _maxTrackedEntityCount) {
+            _maxTrackedEntityCount = trackedEntityCount;
+            _trackedEntityStabilityCount = 0;
+        }
+    }
+}
+
+// Whether the entity is within the nearby radius of the avatar: the distance from the avatar's position to the
+// entity's box (a floor you stand on counts, wherever its centre is). Without a box, it counts as near.
+bool SafeLanding::isNearby(const EntityItemPointer& entity, const glm::vec3& avatarPosition) const {
+    if (_nearbyRadius <= 0.0f) {
+        return true;
+    }
+    bool success = false;
+    AABox box = entity->getAABox(success);
+    if (!success) {
+        return true;
+    }
+    glm::vec3 closest = glm::clamp(avatarPosition, box.getMinimumPoint(), box.getMaximumPoint());
+    return glm::distance(avatarPosition, closest) <= _nearbyRadius;
 }
 
 void SafeLanding::deleteTrackedEntity(const EntityItemID& entityID) {
@@ -100,20 +148,29 @@ void SafeLanding::deleteTrackedEntity(const EntityItemID& entityID) {
     _trackedEntities.erase(entityID);
 }
 
-void SafeLanding::finishSequence(OCTREE_PACKET_SEQUENCE first, OCTREE_PACKET_SEQUENCE last) {
+// The entity server reports its initial scene complete with the sequence number after the scene's last packet. The
+// window to wait for runs from the first packet seen since tracking began to that number; when nothing was seen since
+// (the scene had nothing to add here), the window is empty and the landing can complete.
+void SafeLanding::finishSequence(OCTREE_PACKET_SEQUENCE last) {
     Locker lock(_lock);
     if (_trackingEntities) {
-        _sequenceStart = first;
+        _sequenceStart = (_firstSequence != SafeLanding::INVALID_SEQUENCE) ? _firstSequence : last;
         _sequenceEnd = last;
         _completionCount++;
         qDebug() << "safe landing: the entity server reports the initial scene complete (" << _completionCount << "), sequence"
-            << first << "to" << last << "," << _sequenceNumbers.size() << "packets seen,"
+            << _sequenceStart << "to" << last << "," << _sequenceNumbers.size() << "packets seen,"
             << (usecTimestampNow() - _startTime) / 1000 << "ms after tracking began";
     }
 }
 
 void SafeLanding::addToSequence(OCTREE_PACKET_SEQUENCE sequenceNumber) {
     Locker lock(_lock);
+    if (!_trackingEntities) {
+        return;
+    }
+    if (_firstSequence == SafeLanding::INVALID_SEQUENCE) {
+        _firstSequence = sequenceNumber;
+    }
     _sequenceNumbers.insert(sequenceNumber);
 }
 
@@ -126,9 +183,17 @@ void SafeLanding::updateTracking() {
         Locker lock(_lock);
         bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
             _waitForVisuals;
+        glm::vec3 avatarPosition = DependencyManager::get<AvatarManager>()->getMyAvatar()->getWorldPosition();
         auto entityMapIter = _trackedEntities.begin();
         while (entityMapIter != _trackedEntities.end()) {
             auto entity = entityMapIter->second;
+            // what lies beyond the nearby radius does not hold the arrival (the initial query's far view, at the lowest
+            // level of detail, brings the whole visible world; its far models' collision shapes and textures are no
+            // more needed on arrival than they are later)
+            if (!isNearby(entity, avatarPosition)) {
+                entityMapIter = _trackedEntities.erase(entityMapIter);
+                continue;
+            }
             bool isVisuallyReady = true;
             if (enableInterstitial) {
                 auto entityRenderable = _entityTreeRenderer->renderableForEntityId(entityMapIter->first);
@@ -179,8 +244,9 @@ void SafeLanding::updateTracking() {
                     }
                 }
             }
-            qDebug() << "safe landing: tracking" << _trackedEntities.size() << "of" << _maxTrackedEntityCount << "entities ("
-                << physicsWaiting << "not ready for physics," << visualsWaiting << "not drawn; added" << _addedCount
+            qDebug() << "safe landing: tracking" << _trackedEntities.size() << "of" << _maxTrackedEntityCount << "entities within"
+                << _nearbyRadius << "m (" << physicsWaiting << "not ready for physics," << visualsWaiting << "not drawn; added" << _addedCount
+                << "of which" << _seededCount << "already held"
                 << ", not tracked: created after the start" << _notTrackedCreatedLater << ", not found" << _notTrackedNotFound
                 << ", local" << _notTrackedLocal << "), sequence"
                 << _sequenceStart << "to" << _sequenceEnd << "," << _sequenceNumbers.size() << "packets seen, gaps ["
@@ -235,6 +301,7 @@ void SafeLanding::reset() {
     _maxTrackedEntityCount = 0;
     _sequenceStart = SafeLanding::INVALID_SEQUENCE;
     _sequenceEnd = SafeLanding::INVALID_SEQUENCE;
+    _firstSequence = SafeLanding::INVALID_SEQUENCE;
 }
 
 bool SafeLanding::trackingIsComplete() const {

@@ -43,8 +43,9 @@ public:
     void setWaitForVisuals(bool wait) { _waitForVisuals = wait; }
     bool trackingIsComplete() const;
 
-    void finishSequence(OCTREE_PACKET_SEQUENCE first, OCTREE_PACKET_SEQUENCE last);  // 'last' exclusive.
+    void finishSequence(OCTREE_PACKET_SEQUENCE last);  // the number after the scene's last packet; the start is the first seen since tracking began
     void addToSequence(OCTREE_PACKET_SEQUENCE sequenceNumber);
+    float getNearbyRadius() const { return _nearbyRadius; }
     float loadingProgressPercentage();
 
 private slots:
@@ -52,6 +53,8 @@ private slots:
     void deleteTrackedEntity(const EntityItemID& entityID);
 
 private:
+    void trackEntity(const EntityItemID& entityID, const EntityTreePointer& entityTree);
+    bool isNearby(const EntityItemPointer& entity, const glm::vec3& avatarPosition) const;
     bool isEntityPhysicsReady(const EntityItemPointer& entity);
     void debugDumpSequenceIDs() const;
 
@@ -65,6 +68,9 @@ private:
 
     OCTREE_PACKET_SEQUENCE _sequenceStart { INVALID_SEQUENCE };
     OCTREE_PACKET_SEQUENCE _sequenceEnd { INVALID_SEQUENCE };
+    OCTREE_PACKET_SEQUENCE _firstSequence { INVALID_SEQUENCE };   // the first packet seen since tracking began
+    float _nearbyRadius { 10.0f };
+    int _seededCount { 0 };
     int32_t _maxTrackedEntityCount { 0 };
     int32_t _trackedEntityStabilityCount { 0 };
     quint64 _lastProgressLog { 0 };

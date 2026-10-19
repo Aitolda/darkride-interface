@@ -164,12 +164,16 @@ bool EntityTreeSendThread::traverseTreeAndSendContents(SharedNodePointer node, O
     if (sendComplete && nodeData->wantReportInitialCompletion() && _traversal.finished()) {
         // Dealt with all nearby entities.
         nodeData->setReportInitialCompletion(false);
-        // a line per completion reported (WORLD-LOADING.md, the arrival gate): the sequence number the client will wait
-        // up to, and what this traversal sent
-        qCDebug(entities) << "initial scene complete for" << uuidStringWithoutCurlyBraces(_nodeUuid) << ": sequence"
-            << nodeData->getSequenceNumber() << "," << _packetsSentSinceMark << "packets (" << _entitiesSinceMark
-            << "entities) in" << (usecTimestampNow() - _traversalStartTime) / 1000 << "ms since the traversal began, known"
-            << _knownState.size() << "entities";
+        // a line per completion reported that sent something, else one in ten seconds (a headless viewer asks for the
+        // completion with every query): the sequence number the client will wait up to, and what this traversal sent
+        quint64 now = usecTimestampNow();
+        if (_packetsSentSinceMark > 0 || now - _lastCompletionLog > 10 * USECS_PER_SECOND) {
+            _lastCompletionLog = now;
+            qCDebug(entities) << "initial scene complete for" << uuidStringWithoutCurlyBraces(_nodeUuid) << ": sequence"
+                << nodeData->getSequenceNumber() << "," << _packetsSentSinceMark << "packets (" << _entitiesSinceMark
+                << "entities) in" << (now - _traversalStartTime) / 1000 << "ms since the traversal began, known"
+                << _knownState.size() << "entities";
+        }
         // initial stats and entity packets are reliable until the initial query is complete
         // to guarantee all entity data is available for safe landing/physics start.  Afterwards
         // the packets are unreliable for performance.

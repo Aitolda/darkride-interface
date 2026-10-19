@@ -1279,7 +1279,11 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
     withWriteLock([&] {
         bool visuallyReady = true;
         if (_hasModel) {
-            if (model && _didLastVisualGeometryRequestSucceed) {
+            if (!model) {
+                // the model is made below, on this first update: nothing is drawn yet (until 2026-10-19 this read as
+                // drawn, and the arrival's landing let a cold model through before its download had begun)
+                visuallyReady = false;
+            } else if (_didLastVisualGeometryRequestSucceed) {
                 visuallyReady = (_prevModelLoaded && _texturesLoaded);
             }
         }
