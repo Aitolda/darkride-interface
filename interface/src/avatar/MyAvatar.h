@@ -1432,6 +1432,14 @@ public:
     Q_INVOKABLE QUrl getFullAvatarURLFromPreferences() const { return _fullAvatarURLFromPreferences; }
 
     /**jsdoc
+     * Checks whether the avatar's own model has loaded, with its textures: until then others see, and the user sees in
+     * third person, the stand-in. The loading screen waits for it.
+     * @function MyAvatar.isSkeletonModelLoaded
+     * @returns {boolean} <code>true</code> if the avatar's model and its textures have loaded, <code>false</code> if not.
+     */
+    Q_INVOKABLE bool isSkeletonModelLoaded() const;
+
+    /**jsdoc
      * Gets the full avatar model name for the current avatar.
      * @function MyAvatar.getFullAvatarModelName
      * @returns {string} The full avatar model name.

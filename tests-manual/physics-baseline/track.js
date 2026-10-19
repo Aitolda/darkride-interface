@@ -26,7 +26,9 @@
     var CABIN_Y = CABIN_TOP - 0.25;
     var ABOARD_X = 1.0;           // where to stop inside the cabin, in its coordinates: through the side door
     var LIFETIME = 600;           // s; on a domain the test's entities expire on their own
-    var TIMEOUT = 170;            // s, the whole run
+    var TIMEOUT = 170;            // s, from the cabin's creation (the world can take 90 s to load on a cold cache)
+    var MAX_WAIT = 300;           // s, for the world to arrive at all
+    var cabinT0 = -1;
 
     // the loop: straights of 60 m along z at x = 0 (the station side) and x = -30, half circles of 15 m at the ends;
     // the cabin runs toward -z on the station side; stations at points 2 (the platform) and 10 (the far side). A
@@ -215,7 +217,7 @@
         var tt = now() - modeT0;
         var c, local;
         if (mode === "boot") {
-            if (tt > 8) { spawn(); setMode("boarding"); }
+            if (tt > 8) { spawn(); cabinT0 = now(); setMode("boarding"); }
         } else if (mode === "boarding") {
             if (tt > 1 && Vec3.length(MyAvatar.motorVelocity) === 0) {
                 MyAvatar.motorReferenceFrame = "world";
@@ -416,7 +418,7 @@
     var lastState = "";
 
     function onUpdate(dt) {
-        if (now() > TIMEOUT) { finish("timeout"); return; }
+        if (now() > (cabinT0 >= 0 ? cabinT0 + TIMEOUT : MAX_WAIT)) { finish("timeout"); return; }
         if (cabin && !sample(dt)) { finish("cabin gone"); return; }
         watchOwner();
         drive();

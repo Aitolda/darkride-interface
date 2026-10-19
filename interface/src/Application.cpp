@@ -2711,7 +2711,7 @@ QString Application::getUserAgent() {
     }
 
     QString userAgent = (
-        "TivoliCloudVR/" + 
+        "Darkride/" + 
         (BuildInfo::BUILD_TYPE == BuildInfo::BuildType::Stable ? BuildInfo::VERSION : "dev")
     );
 
@@ -5129,7 +5129,7 @@ bool Application::acceptSnapshot(const QString& urlString) {
         }
     } else {
         OffscreenUi::asyncWarning("", "No location details were found in the file\n" +
-                             snapshotPath + "\nTry dragging in an authentic Hifi snapshot.");
+                             snapshotPath + "\nTry dragging in a Darkride Snap saved on this computer.");
     }
     return true;
 }
@@ -5822,6 +5822,8 @@ void Application::pauseUntilLoginDetermined() {
         return;
     }
 
+    _signInPending = true;
+
     auto myAvatar = getMyAvatar();
     _previousAvatarTargetScale = myAvatar->getTargetScale();
     _previousAvatarSkeletonModel = myAvatar->getSkeletonModelURL().toString();
@@ -5952,6 +5954,7 @@ void Application::resumeAfterLoginDialogActionTaken() {
     cameraModeChanged();
     _startUpFinished = true;
     getRefreshRateManager().setRefreshRateRegime(RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE);
+    _signInPending = false;
 }
 
 void Application::loadAvatarScripts(const QVector<QString>& urls) {
@@ -6423,8 +6426,14 @@ void Application::updateSecondaryCameraViewFrustum() {
 
 static bool domainLoadingInProgress = false;
 
+void Application::setArrivalWaitsForNearby(bool wait) {
+    _arrivalWaitsForNearby = wait;
+    _octreeProcessor.setSafeLandingWaitsForVisuals(wait);
+}
+
 void Application::tryToEnablePhysics() {
-    bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled();
+    bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
+        _arrivalWaitsForNearby;
     if (gpuTextureMemSizeStable() || !enableInterstitial) {
         _fullSceneCounterAtLastPhysicsCheck = _fullSceneReceivedCounter;
         _lastQueriedViews.clear();  // Force new view.
@@ -6475,8 +6484,9 @@ void Application::update(float deltaTime) {
         } else {
             _octreeProcessor.updateSafeLanding();
             
-            if (DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed() 
-             || _octreeProcessor.safeLandingIsComplete()) { 
+            // ghosting lets the avatar move before the world near it is in, unless a loading screen waits for that
+            bool ghosting = DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed() && !_arrivalWaitsForNearby;
+            if (ghosting || _octreeProcessor.safeLandingIsComplete()) {
                 tryToEnablePhysics();
             }
         }
@@ -7409,74 +7419,36 @@ void Application::updateWindowTitle() const {
     const auto nodeList = DependencyManager::get<NodeList>();
     const auto accountManager = DependencyManager::get<AccountManager>();
     const auto addressManager = DependencyManager::get<AddressManager>();
-    const auto isInErrorState = nodeList->getDomainHandler().isInErrorState();
 
-    // with several branches built on one machine, the title says which one this client is (interagent.md)
-    const QString branchLabel = BuildInfo::BUILD_BRANCH.isEmpty() ? QString()
-        : (" " + BuildInfo::BUILD_BRANCH + (BuildInfo::BUILD_COMMIT.isEmpty() ? QString() : " " + BuildInfo::BUILD_COMMIT));
-    const QString buildVersion = (
-        QString() +
-        (BuildInfo::BUILD_TYPE == BuildInfo::BuildType::Stable ? "" : "Build ") +
-        applicationVersion() +
-        branchLabel
-    );
+    setCrashAnnotation("sentry[user][username]", accountManager->getAccountInfo().getUsername().toStdString());
 
-    const QString loginStatus = accountManager->isLoggedIn() ? "" : "Not logged in";
-
-    const QString connectionStatus = 
-        isInErrorState ? 
-            "Error connecting" :
-            nodeList->getDomainHandler().isConnected() ? "" : "Not connected";
-
-    const QString username = accountManager->getAccountInfo().getUsername();
-
-    setCrashAnnotation("sentry[user][username]", username.toStdString());
-
-    QString currentWorldName;
-    if (isServerlessMode()) {
-        if (isInErrorState) {
-            currentWorldName = nodeList->getDomainHandler().getErrorDomainURL().toString();
-        } else {
-            currentWorldName = addressManager->getDomainURL().toString();
-        }
-    } else {
-        // currentPlaceName = addressManager->getDomainURL().host();
-        const QString worldName = addressManager->getDomainLabel();
-
-        if (worldName.isEmpty()) {
-            currentWorldName = nodeList->getDomainHandler().getHostname();
-        } else {
-            const QString worldAuthor = addressManager->getDomainAuthor();
-            const QString worldRestriction = addressManager->getDomainRestriction();
-
-            currentWorldName = (
-                (worldRestriction == "acl" ? "🔒 " : "") +
-                worldName + 
-                (!worldAuthor.isEmpty() ? " (" + worldAuthor + ")": "")
-            );
+    // Like a Mac document window, the title names what you're looking at: the world you're in, by its name, or
+    // Darkride when you're in none or it has no name to show (an address is not a name). The account is in its
+    // menu, the build in About and in the log line below, and a connection problem is shown in the window itself.
+    QString title = "Darkride";
+    auto& domainHandler = nodeList->getDomainHandler();
+    if (!isServerlessMode() && domainHandler.isConnected() && !domainHandler.isInErrorState()) {
+        const QString worldName = addressManager->getDomainLabel().trimmed();
+        if (!worldName.isEmpty()) {
+            title = worldName;
         }
     }
-    
-    // Not connected, Not logged in - Maki @ Cutelab (Maki) - Darkride Build 0.7.2 native-editor 7c5c5bda86
-
-    QStringList statusList = { connectionStatus, loginStatus };
-    statusList.removeAll(QString(""));
-    const QString status = statusList.join(", ").trimmed();
-
     // a build's client label first, when the build has one (cmake -DCLIENT_LABEL=...): with several sessions' clients
     // on one machine, it tells them apart at a glance (Caity, 2026-10-19)
-    const QString title = (
-        (BuildInfo::CLIENT_LABEL.isEmpty() ? "" : BuildInfo::CLIENT_LABEL + " | ") +
-        (status.isEmpty() ? "" : status + " - ") +
-        username +
-        (username.isEmpty() || currentWorldName.isEmpty() ? "" : " @ ")  +
-        currentWorldName + " - " +
-        "Darkride " + buildVersion
-    );
+    if (!BuildInfo::CLIENT_LABEL.isEmpty()) {
+        title = BuildInfo::CLIENT_LABEL + " | " + title;
+    }
+    // With several branches built on this machine, one per session, the title says which build this client is
+    // ("Darkride - physics-net"), so the right window gets closed. Dev builds only; a release shows no branch.
+    if (BuildInfo::BUILD_TYPE == BuildInfo::Dev && !BuildInfo::BUILD_BRANCH.isEmpty() && BuildInfo::BUILD_BRANCH != "HEAD") {
+        title += " - " + BuildInfo::BUILD_BRANCH;
+    }
 
 #ifndef WIN32
     // crashes with vs2013/win32
-    qCDebug(interfaceapp, "Application title set to: %s", title.toStdString().c_str());
+    qCDebug(interfaceapp, "Application title set to: %s (build %s %s %s)", title.toStdString().c_str(),
+            applicationVersion().toStdString().c_str(), BuildInfo::BUILD_BRANCH.toStdString().c_str(),
+            BuildInfo::BUILD_COMMIT.toStdString().c_str());
 #endif
     _window->setWindowTitle(title);
 

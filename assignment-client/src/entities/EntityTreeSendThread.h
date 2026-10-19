@@ -48,6 +48,7 @@ private:
     void preDistributionProcessing() override;
     bool hasSomethingToSend(OctreeQueryNode* nodeData) override { return !_sendQueue.empty(); }
     bool shouldStartNewTraversal(OctreeQueryNode* nodeData, bool viewFrustumChanged) override { return viewFrustumChanged || _traversal.finished(); }
+    size_t queuedEntityCount() const override { return _sendQueue.size(); }
 
     DiffTraversal _traversal;
     EntityPriorityQueue _sendQueue;

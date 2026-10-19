@@ -45,6 +45,8 @@ private:
 
 class EntityPriorityQueue {
 public:
+    inline size_t size() const { return _queue.size(); }
+
     inline bool empty() const {
         assert(_queue.empty() == _entities.empty());
         return _queue.empty();
@@ -53,10 +55,6 @@ public:
     inline const PrioritizedEntity& top() const {
         assert(!_queue.empty());
         return _queue.top();
-    }
-
-    inline size_t size() const {
-        return _queue.size();
     }
 
     inline bool contains(const EntityItem* entity) const {

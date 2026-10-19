@@ -28,6 +28,15 @@
 //  forces of AirshipModel (buoyancy, thrust, fins, drag, ballast) added to the hull's body every substep from the same
 //  applied input, replayed the same way. Its hull is usually a frame as well, so the deck is a room the crew walks in.
 //
+//  Round 9 adds the physics server's state stream (PHYSICS.md 4.5's second step): the server sends each vehicle's state
+//  straight to the clients that asked for it (VehicleState packets, every STREAM_STEPS substeps, unreliable; a client
+//  asks with a VehicleStateRequest naming the vehicles it simulates), and its edits through the entity server drop to
+//  RELAY_UPDATE_STEPS, for persistence, late joiners and scripts. On the stream the driver reconciles against every
+//  state with the correction's blend scaled to the measured round trip; everyone else shows the vehicle a little behind
+//  the newest state and interpolates between the two states that bracket that time (snapshot interpolation,
+//  SnapshotBuffer), extrapolating with the model when none does. Without a stream (no physics server, or a server
+//  before this round) the relay's states drive the round 6 paths as before.
+//
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
 //
@@ -40,7 +49,9 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
+
 #include <vector>
 
 #include <QtCore/QUuid>
@@ -55,7 +66,9 @@
 #include <AirshipModel.h>
 #include <AircraftModel.h>
 #include <EntityItem.h>
+#include <SnapshotBuffer.h>
 #include <VehicleInput.h>
+#include <VehicleState.h>
 #include <WheeledVehicleSpec.h>
 
 #include "PhysicsEngine.h"
@@ -82,8 +95,18 @@ public:
     static constexpr int SNAPSHOT_RING = 180;                          // two seconds of substeps
     static constexpr int MAX_QUEUED_INPUTS = 6;                        // the server keeps at most this many of a driver's inputs waiting
     static constexpr int SENT_RING = 60;                               // the authority remembers this many published poses (6 s at 10 Hz)
-    static constexpr int UPDATE_STEPS = 9;                             // the authority publishes every 9 substeps (10 Hz) while awake
+    static constexpr int UPDATE_STEPS = 9;                             // a client authority publishes every 9 substeps (10 Hz) while awake
     static constexpr quint64 DRIVER_SILENCE = 2 * USECS_PER_SECOND;    // no input for this long: the authority eases off and brakes
+    // the state stream (round 9)
+    static constexpr int STREAM_STEPS = 3;                             // the physics server streams every 3 substeps (30 Hz)
+    static constexpr int RELAY_UPDATE_STEPS = 45;                      // and relays through the entity server every 45 (2 Hz)
+    static constexpr int STREAM_PARKED_STEPS = 90;                     // a vehicle whose body sleeps is streamed this much longer
+    static constexpr quint64 STREAM_FRESH = USECS_PER_SECOND;          // a stream is live while a state arrived within this
+    static constexpr quint64 SUBSCRIPTION_INTERVAL = USECS_PER_SECOND; // a client asks for its vehicles' states this often
+    static constexpr quint64 SUBSCRIPTION_TIMEOUT = 5 * USECS_PER_SECOND; // the server streams this long after the last ask
+    static constexpr float DRIVER_BLEND_MIN = 0.03f;                   // s: the driver's blend is the round trip, within these
+    static constexpr float DRIVER_BLEND_MAX = 0.5f;
+    static constexpr float RTT_SMOOTHING = 0.2f;
 
     VehicleSimulation();
     ~VehicleSimulation();
@@ -109,6 +132,20 @@ public:
     // the server's side: a driver's inputs arrived (any thread)
     void receiveInputs(const QUuid& vehicleID, const QUuid& sender, const std::vector<VehicleInput>& inputs);
 
+    // the state stream (round 9)
+    // a client's side: states arrived from the physics server, stamped on its clock (any thread); the skew is the
+    // server's clock less this one's, as the node list measures it
+    void receiveStates(const std::vector<VehicleState>& states, qint64 clockSkew, quint64 arrivalTime);
+    // the server's side: a client asks for these vehicles' states (any thread)
+    void receiveStateRequest(const QUuid& node, const std::vector<QUuid>& vehicleIDs);
+    // once per frame on the simulation's thread: the server sends the states it captured to its subscribers; a client
+    // asks the physics server for the vehicles it simulates, once a second and when the set changes
+    void sendStream();
+    void sendStateRequests();
+    // how often the authority's edits go through the entity server: a client authority every UPDATE_STEPS, the physics
+    // server (which streams) every RELAY_UPDATE_STEPS
+    static int relayUpdateSteps();
+
     // the authority's state for an update: the applied input, its sequence, the engine, the gear, the domain time
     void fillState(EntityMotionState* state, EntityItemProperties& properties);
     // this process is driving the vehicle from local controls (the driver's seat here, or it owns the vehicle)
@@ -124,6 +161,15 @@ public:
         int inputsReceived { 0 };
         int inputsDropped { 0 };        // the server's queue overflowed
         int inputsStarved { 0 };        // the server had no input for a substep and held the last
+        // the state stream (round 9)
+        int streamStatesSent { 0 };     // the server's, to all subscribers
+        int streamStatesReceived { 0 };
+        int streamExtrapolations { 0 }; // substeps a follower had no two states to interpolate between (a late packet)
+        int streamSubscribers { 0 };    // the server's, now
+        float rttMs { 0.0f };           // the driver's smoothed round trip to the server, from its inputs' acknowledgement
+        float delayMs { 0.0f };         // a follower's delay behind the newest state
+        float streamIntervalMs { 0.0f };// the arrivals' smoothed interval and jitter
+        float streamJitterMs { 0.0f };
     };
     const Stats& getStats() const { return _stats; }
 
@@ -221,6 +267,14 @@ private:
         // the authority's state as received
         uint32_t networkPoseVersion { 0 };
         quint64 lastStateTime { 0 };
+        // the stream (round 9): the states as they arrive, and what the roles keep between substeps
+        SnapshotBuffer snapshots;
+        quint64 lastStreamArrival { 0 };   // local time of the newest arrival; the stream is live for STREAM_FRESH after
+        quint64 lastStreamTime { 0 };      // the newest state's time, local, that the driver reconciled against
+        bool extrapolating { true };       // a follower: no two states bracketed the shown time last substep
+        uint32_t lastActiveStep { 0 };     // the authority's: the last substep the body was awake, for the stream
+        float rtt { 0.0f };                // s, the driver's smoothed round trip
+        std::deque<std::pair<uint32_t, quint64>> inputSendTimes;   // when each sequence first went out, for the round trip
         // the authority's own: the poses it published lately, with their velocities, to tell its own updates echoed by
         // the entity server (which moves them on by their velocities meanwhile) from someone's explicit edit of the
         // pose (a teleport, round 7)
@@ -247,6 +301,22 @@ private:
         std::string bodies;    // the world's non-static bodies after the step (Jolt's state recorder)
     };
 
+    // the stream (round 9)
+    struct Subscriber {
+        std::set<QUuid> vehicles;
+        quint64 time { 0 };   // the last request
+    };
+    bool streamLive(const Vehicle& vehicle, quint64 now) const { return vehicle.lastStreamArrival != 0 && now < vehicle.lastStreamArrival + STREAM_FRESH; }
+    VehicleState stateFromRelay(const Vehicle& vehicle) const;         // the entity's relayed state, its time made local
+    VehicleState stateFromBody(const Vehicle& vehicle, uint32_t step) const;   // the authority's own, for the stream
+    void drainReceivedStates();                                        // a client's: the arrivals into the vehicles' buffers
+    void captureStream(uint32_t step);                                 // the server's: every STREAM_STEPS, the states to send
+
+    void followStream(Vehicle& vehicle, uint32_t step);                // a follower's snapshot interpolation
+    void reconcileStream(Vehicle& vehicle, uint32_t step);             // the driver's reconciliation against the stream
+    void noteRoundTrip(Vehicle& vehicle, uint32_t ack, quint64 now);
+    float driverBlendTime(const Vehicle& vehicle) const;
+
     PhysicsWorld* rootWorld() const;
     bool rebuild(Vehicle& vehicle);
     bool rebuildWheeled(Vehicle& vehicle, JPH::Body* body, PhysicsWorld* world);
@@ -265,13 +335,15 @@ private:
     void applyModelInput(Vehicle& vehicle, const VehicleInput& input, float dt);
     void checkCorrection(Vehicle& vehicle, uint32_t step);
     bool recentlySent(const Vehicle& vehicle, const glm::vec3& position, const glm::quat& rotation) const;
-    void correctDriver(Vehicle& vehicle, const EntityItem::NetworkPose& pose, uint32_t step);
-    void correctFollower(Vehicle& vehicle, const EntityItem::NetworkPose& pose, uint32_t step);
+    // the driver's reconciliation against a state (the relay's or the stream's) with the blend time for the residual
+    void correctDriver(Vehicle& vehicle, const VehicleState& state, uint32_t step, float blendTime);
+    // a follower's correction from a relayed state: rewind to its time and run the model on (round 6)
+    void correctFollower(Vehicle& vehicle, const VehicleState& state, uint32_t step);
     void setBodyState(Vehicle& vehicle, const glm::vec3& position, const glm::quat& rotation, const glm::vec3& velocity,
                       const glm::vec3& angularVelocity);
-    void setInternalState(Vehicle& vehicle);
+    void setInternalState(Vehicle& vehicle, const VehicleState& state);
     // rewind the other bodies to the snapshot after `step` and replay `steps` substeps with the given inputs
-    void replay(Vehicle& vehicle, const EntityItem::NetworkPose& pose, uint32_t fromStep, uint32_t toStep,
+    void replay(Vehicle& vehicle, const VehicleState& state, uint32_t fromStep, uint32_t toStep,
                 const std::function<VehicleInput(uint32_t)>& inputAt);
     void smooth(Vehicle& vehicle, const glm::vec3& shownPosition, const glm::quat& shownRotation, float blendTime);
     void takeSnapshot(uint32_t step);
@@ -287,6 +359,14 @@ private:
     std::deque<Snapshot> _snapshots;
     std::mutex _inputMutex;
     Stats _stats;
+    // the stream (round 9)
+    std::mutex _streamMutex;
+    std::vector<std::pair<VehicleState, quint64>> _receivedStates;   // a client's: as received, with the arrival time
+    std::map<QUuid, Subscriber> _subscribers;                         // the server's
+    std::vector<VehicleState> _pendingStream;                         // the server's: captured, not yet sent
+    quint64 _lastRequestTime { 0 };
+    size_t _lastRequestCount { 0 };
+
     mutable std::mutex _telemetryMutex;
     Telemetry _telemetry;
     void recordTelemetry();

@@ -73,6 +73,12 @@ public:
 signals:
     void entityCollisionWithEntity(const EntityItemID& idA, const EntityItemID& idB, const Collision& collision);
 
+private slots:
+    // the physics server's state stream (PHYSICS.md round 9): a client receives the states, the server the requests
+    void handleVehicleStatePacket(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode);
+    void handleVehicleStateRequest(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode);
+
+
 protected: // only called by EntitySimulation
     // overrides for EntitySimulation
     void addEntityToInternalLists(EntityItemPointer entity) override;
@@ -149,6 +155,8 @@ private:
     std::unique_ptr<VehicleSimulation> _vehicleSimulation; // the driven vehicles (PHYSICS.md round 6)
     uint64_t _nextBidExpiry;
     uint32_t _lastStepSendPackets { 0 };
+    bool _streamListenersRegistered { false };
+
     uint32_t _lastWorkDeliveryCount { 0 };
 };
 

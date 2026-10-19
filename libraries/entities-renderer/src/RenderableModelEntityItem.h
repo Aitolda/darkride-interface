@@ -146,6 +146,10 @@ class ModelEntityRenderer : public TypedEntityRenderer<RenderableModelEntityItem
 
 public:
     ModelEntityRenderer(const EntityItemPointer& entity);
+    // Whether a model whose file hasn't loaded yet (or failed to) shows as a magenta wire box, as High Fidelity always
+    // drew it; off by default, so a world arriving shows nothing in a model's place until the model is ready
+    // (Developer > Render > Show Models Still Loading)
+    static void setShowModelsStillLoading(bool show) { _showModelsStillLoading = show; }
     // the model, for the impostor bake (ImpostorBaker): null until it is set
     ModelPointer getModelForBake() const { return _model; }
     // the mesh waits behind the impostor card (ENTITY-STREAMING.md 3.1): not fetched yet
@@ -233,6 +237,7 @@ private:
     static void metaBlendshapeOperator(render::ItemID renderItemID, int blendshapeNumber, const QVector<BlendshapeOffset>& blendshapeOffsets,
                                        const QVector<int>& blendedMeshSizes, const render::ItemIDs& subItemIDs);
 
+    static std::atomic<bool> _showModelsStillLoading;
 };
 
 } } // namespace 

@@ -41,6 +41,7 @@
 #include <display-plugins/CompositorHelper.h>
 #include <FrameDiag.h>
 #include <QMetaObject>
+#include <ColorUtils.h>
 #include "ui/Stats.h"
 #include "Application.h"
 
@@ -313,8 +314,48 @@ void GraphicsEngine::render_performFrame() {
         finalFramebuffer = framebufferCache->getFramebuffer();
     }
 
+    // Until the viewer goes in (Application::isSignInPending), the window shows only Darkride's navy and the user
+    // interface over it, where the sign-in screen is: no avatar in an empty world before that screen is up, at the start
+    // or after signing out. A headset still gets the 3D view, where its sign-in screen is (Application::createLoginDialog).
+    const bool signInCover = qApp->isSignInPending() && !displayPlugin->isHmd();
+    auto drawSignInNavy = [&](gpu::Batch& batch) {
+        if (!_signInNavy) {
+            // the sign-in screen's #1c2136 (LoginDialog.qml), stored as the user interface's texture stores it, so the
+            // two come out the same colour
+            static const uint8_t NAVY[4] = { 0x1c, 0x21, 0x36, 0xff };
+            _signInNavy = gpu::Texture::createStrict(gpu::Element::COLOR_RGBA_32, 1, 1);
+            _signInNavy->setSource("GraphicsEngine::_signInNavy");
+            _signInNavy->setStoredMipFormat(_signInNavy->getTexelFormat());
+            _signInNavy->assignStoredMip(0, sizeof(NAVY), NAVY);
+        }
+        batch.setFramebuffer(finalFramebuffer);
+        // in case the display's drawing isn't ready yet
+        batch.clearColorFramebuffer(gpu::Framebuffer::BUFFER_COLOR0,
+            ColorUtils::sRGBToLinearVec4(glm::vec4(0x1c / 255.0f, 0x21 / 255.0f, 0x36 / 255.0f, 1.0f)));
+        batch.setProjectionTransform(glm::mat4());
+        batch.resetViewTransform();
+        batch.setModelTransform(Transform());
+        displayPlugin->getHUDOperator()(batch, _signInNavy);
+    };
+
     std::queue<Application::SnapshotOperator> snapshotOperators;
-    if (!_programsCompiled.load()) {
+    if (signInCover && !_programsCompiled.load()) {
+        gpu::doInBatch("signInFrame", _gpuContext, drawSignInNavy);
+    } else if (signInCover) {
+        // the scene's changes are still applied, as the render engine would, so they don't pile up while someone signs in
+        _renderScene->processTransactionQueue();
+        {
+            PROFILE_RANGE(render, "/renderOverlay");
+            PerformanceTimer perfTimer("renderOverlay");
+            renderArgs._viewport = glm::ivec4(0, 0, qApp->getDeviceSize());
+            qApp->getApplicationOverlay().renderOverlay(&renderArgs);
+        }
+        auto hudTexture = qApp->getApplicationOverlay().getOverlayTexture();
+        gpu::doInBatch("signInFrame", _gpuContext, [&](gpu::Batch& batch) {
+            drawSignInNavy(batch);
+            displayPlugin->getHUDOperator()(batch, hudTexture);
+        });
+    } else if (!_programsCompiled.load()) {
         gpu::doInBatch("splashFrame", _gpuContext, [&](gpu::Batch& batch) {
             batch.setFramebuffer(finalFramebuffer);
             batch.enableSkybox(true);

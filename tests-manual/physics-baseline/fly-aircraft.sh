@@ -3,12 +3,12 @@
 # the orders) with the terrain and the craft made for you. Climb aboard and click it to take the stick: W/S set the
 # throttle (X cuts it), A/D roll and yaw, up/down the elevator, Space tilts the nacelles up toward hover while held, C
 # tilts them down toward forward flight, F leaves the stick. R for a fresh craft on the pad, T back to the pad.
-#   tests-manual/physics-baseline/fly-aircraft.sh [path/to/interface.app] [udp port|serverless]
+#   tests-manual/physics-baseline/fly-aircraft.sh [path/to/Darkride.app] [udp port|serverless]
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
-APP=${1:-"$D/../../build/interface/interface.app"}
+APP=${1:-"$D/../../build/interface/Darkride.app"}
 PORT=${2:-42102}
-BIN="$APP/Contents/MacOS/interface"
+BIN="$APP/Contents/MacOS/Darkride"
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 R=${TMPDIR:-/tmp}/aircraft-playground
 mkdir -p "$R"

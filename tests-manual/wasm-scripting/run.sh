@@ -1,18 +1,18 @@
 #!/bin/sh
 # Run the scripting baseline (WASM-SCRIPTING.md round 0) against a built client, serverless.
-#   tests-manual/wasm-scripting/run.sh [path/to/interface.app] [results dir] [time limit in seconds, default 300]
+#   tests-manual/wasm-scripting/run.sh [path/to/Darkride.app] [results dir] [time limit in seconds, default 300]
 # Prints the summary lines; the numbers land in <results dir>/wasm-baseline.json, the client's log in
 # <results dir>/client.log, and the client's resident memory, sampled once a second, in <results dir>/rss.txt.
 # The client gets its own settings and data directories under the results dir, so Caity's settings and the
 # caches of any client already running are not touched (TIVOLI_APP_DATA_DIR needs 15a3068783 or later).
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
-APP=${1:-"$D/../../build/interface/interface.app"}
+APP=${1:-"$D/../../build/interface/Darkride.app"}
 R=${2:-"${TMPDIR:-/tmp}/wasm-baseline"}
 SECONDS_MAX=${3:-300}
 mkdir -p "$R/config" "$R/data"
-BIN="$APP/Contents/MacOS/interface"
-BIN=$(cd "$(dirname "$BIN")" && pwd)/interface
+BIN="$APP/Contents/MacOS/Darkride"
+BIN=$(cd "$(dirname "$BIN")" && pwd)/Darkride
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 echo "client: $BIN"
 echo "results: $R"

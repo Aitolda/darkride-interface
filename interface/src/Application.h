@@ -292,6 +292,10 @@ public:
 
     bool isAboutToQuit() const { return _aboutToQuit; }
     bool isPhysicsEnabled() const { return _physicsEnabled; }
+
+    // While a loading screen is up, the arrival in a world waits for what is near the avatar to be ready for physics
+    // and drawn (as interstitial mode does), even where the zone allows moving at once (ghosting).
+    void setArrivalWaitsForNearby(bool wait);
     PhysicsEnginePointer getPhysicsEngine() { return _physicsEngine; }
     bool isEditMode() const;
 
@@ -362,6 +366,9 @@ public:
     void setOtherAvatarsReplicaCount(int count) { DependencyManager::get<AvatarHashMap>()->setReplicaCount(count); }
 
     bool getLoginDialogPoppedUp() const { return _loginDialogPoppedUp; }
+    // From the start, and again after signing out, until the viewer goes in (resumeAfterLoginDialogActionTaken): the
+    // 3D view isn't drawn then, only Darkride's navy under the user interface (GraphicsEngine::render_performFrame)
+    bool isSignInPending() const { return _signInPending; }
     void createLoginDialog();
     void updateLoginDialogPosition();
 
@@ -766,6 +773,7 @@ private:
     bool _interstitialModeEnabled{ false };
 
     bool _loginDialogPoppedUp{ false };
+    std::atomic<bool> _signInPending{ true };
     bool _desktopRootItemCreated{ false };
 
     bool _developerMenuVisible{ false };
@@ -794,6 +802,7 @@ private:
     bool _isForeground = true;  // starts out assumed to be in foreground
     bool _isGLInitialized{ false };
     bool _physicsEnabled{ false };
+    std::atomic<bool> _arrivalWaitsForNearby { false };
     bool _failedToConnectToEntityServer{ false };
 
     bool _reticleClickPressed{ false };

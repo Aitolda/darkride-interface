@@ -106,7 +106,8 @@ void SafeLanding::updateTracking() {
 
     {
         Locker lock(_lock);
-        bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled();
+        bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
+            _waitForVisuals;
         auto entityMapIter = _trackedEntities.begin();
         while (entityMapIter != _trackedEntities.end()) {
             auto entity = entityMapIter->second;

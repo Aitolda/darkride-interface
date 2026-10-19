@@ -24,7 +24,7 @@ Run it from a shell, serverless:
 ```sh
 D=$(cd "$(dirname "$0")" && pwd)   # this directory
 R=/tmp/physics-baseline && mkdir -p "$R"
-.../interface.app/Contents/MacOS/interface --url "file://$D/world.json" --testScript "$D/baseline.js" --testResultsLocation "$R" 2>&1 | tee "$R/client.log"
+.../Darkride.app/Contents/MacOS/Darkride --url "file://$D/world.json" --testScript "$D/baseline.js" --testResultsLocation "$R" 2>&1 | tee "$R/client.log"
 grep PHYSICS-BASELINE "$R/client.log"
 ```
 

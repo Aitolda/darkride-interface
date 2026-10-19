@@ -826,12 +826,13 @@ bool EntityMotionState::vehicleOutOfSync(uint32_t simulationStep, bool& handled)
         return false;
     }
     handled = true;
-    if (simulationStep >= _lastVehicleUpdateStep + VehicleSimulation::UPDATE_STEPS) {
+    if (simulationStep >= _lastVehicleUpdateStep + (uint32_t)VehicleSimulation::relayUpdateSteps()) {
         _lastVehicleUpdateStep = simulationStep;
         return true;
     }
     return false;
 }
+
 
 float EntityMotionState::getMass() const {
     if (_entity && _entity->isVehicle()) {

@@ -14,6 +14,8 @@
 #ifndef hifi_SafeLanding_h
 #define hifi_SafeLanding_h
 
+#include <atomic>
+
 #include <QtCore/QObject>
 #include <QtCore/QSharedPointer>
 
@@ -37,6 +39,8 @@ public:
     void stopTracking();
     void reset();
     bool isTracking() const { return _trackingEntities; }
+    // wait until the entities are also drawn (models and textures loaded), as interstitial mode does
+    void setWaitForVisuals(bool wait) { _waitForVisuals = wait; }
     bool trackingIsComplete() const;
 
     void finishSequence(OCTREE_PACKET_SEQUENCE first, OCTREE_PACKET_SEQUENCE last);  // 'last' exclusive.
@@ -54,6 +58,7 @@ private:
     std::mutex _lock;
     using Locker = std::lock_guard<std::mutex>;
     bool _trackingEntities { false };
+    std::atomic<bool> _waitForVisuals { false };
     QSharedPointer<EntityTreeRenderer> _entityTreeRenderer;
     using EntityMap = std::map<EntityItemID, EntityItemPointer>;
     EntityMap _trackedEntities;

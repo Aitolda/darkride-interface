@@ -8,7 +8,7 @@
 //  (lines starting with FLOW-METRICS) and save the samples with Test.saveObject when
 //  the client was started with --testResultsLocation.
 //
-//  Run (serverless):   tests-manual/flow-bones/run.sh [interface.app] [results dir]
+//  Run (serverless):   tests-manual/flow-bones/run.sh [Darkride.app] [results dir]
 //  On a domain, with flow-observer.js on a second client watching this avatar: run-pair.sh. The chains and
 //  each phase are published on the "flow-metrics" message channel (the phase also in the display name).
 //
