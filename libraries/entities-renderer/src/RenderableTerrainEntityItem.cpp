@@ -89,6 +89,14 @@ const glm::vec3 LAYER_PALETTE[TerrainLayerSet::LAYER_COUNT] = {
 // How far out every terrain draws full detail (RenderableTerrainEntityItem::setLevelOfDetail): main thread only.
 float levelOfDetail = terrain::LodSettings().detail;
 
+// TIVOLI_TERRAIN_DEBUG in the environment: the log gets what is drawn each time it changes, and each chunk item's
+// first draw, for a bug hunt (the holes of 2026-10-18).
+const bool terrainDebug = qEnvironmentVariableIsSet("TIVOLI_TERRAIN_DEBUG");
+
+QString describeKey(const terrain::ChunkKey& key) {
+    return QString("level %1 at %2 %3 %4").arg(key.level).arg(key.coords.x).arg(key.coords.y).arg(key.coords.z);
+}
+
 uint8_t CUSTOM_PIPELINE_NUMBER = 0;
 std::map<std::pair<bool, bool>, ShapePipelinePointer> _pipelines;   // (forward, wireframe)
 gpu::Stream::FormatPointer _vertexFormat;
@@ -105,9 +113,10 @@ gpu::PipelinePointer mapPipeline() {
     return _mapPipeline;
 }
 
-// A top surface tile (TopSurface::fillTile): heights in grid voxels, one float a texel, read linearly between them.
+// A top surface tile (TopSurface::fillTile): heights in grid voxels, two floats a texel (the top, the sheltered
+// floor), gathered four columns at a time.
 gpu::TexturePointer makeTopTileTexture(int size, const std::vector<float>& heights, const char* name) {
-    const gpu::Element format(gpu::SCALAR, gpu::FLOAT, gpu::RED);
+    const gpu::Element format(gpu::VEC2, gpu::FLOAT, gpu::XY);
     auto texture = gpu::Texture::createStrict(format, (uint16_t)size, (uint16_t)size, gpu::Texture::SINGLE_MIP,
                                               gpu::Sampler(gpu::Sampler::FILTER_MIN_MAG_LINEAR, gpu::Sampler::WRAP_CLAMP));
     texture->setSource(name);
@@ -167,7 +176,7 @@ void initTerrainPipelines() {
         _vertexFormat->setAttribute(gpu::Stream::NORMAL, 0, gpu::Element(gpu::VEC3, gpu::FLOAT, gpu::XYZ), offsetof(TerrainVertex, normal));
         _vertexFormat->setAttribute(gpu::Stream::COLOR, 0, gpu::Element(gpu::VEC4, gpu::NUINT8, gpu::RGBA), offsetof(TerrainVertex, materials));
         _unpaintedTile = makeTileTexture(1, std::vector<uint8_t>(4, 0), "terrain unpainted");
-        _noTopTile = makeTopTileTexture(1, std::vector<float>(1, terrain::NO_GROUND_HEIGHT), "terrain no top surface");
+        _noTopTile = makeTopTileTexture(1, std::vector<float>(2, terrain::NO_GROUND_HEIGHT), "terrain no top surface");
     });
 }
 
@@ -267,6 +276,16 @@ void RenderableTerrainEntityItem::clearGrid() {
 
 void RenderableTerrainEntityItem::setGridAndPaint(terrain::VoxelGrid grid, terrain::PaintMap paint) {
     replaceGrid(std::move(grid), std::move(paint));
+    somethingChangedNotification();
+}
+
+void RenderableTerrainEntityItem::setCaps(uint8_t caps) {
+    if (caps == _grid.getCaps()) {
+        return;
+    }
+    _grid.setCaps(caps);   // every chunk dirty, and both change logs say everything changed
+    _levelOfDetail.gridReplaced();
+    _shapeStale = true;
     somethingChangedNotification();
 }
 
@@ -407,6 +426,35 @@ bool RenderableTerrainEntityItem::updateLevelOfDetail(const glm::vec3& cameraWor
             << qPrintable(state);
     }
     return changed;
+}
+
+QString RenderableTerrainEntityItem::describeDrawn() const {
+    std::map<int, int> byLevel;
+    int meshes = 0;
+    QStringList without;
+    for (const terrain::LevelOfDetail::Drawn& node : _levelOfDetail.getDrawn()) {
+        ++byLevel[node.key.level];
+        if (node.isGridChunk) {
+            if (_chunkMeshes.count(node.key)) {
+                ++meshes;
+            } else {
+                without << QString("grid chunk %1 (dirty %2, in flight %3, has chunk %4)").arg(describeKey(node.key))
+                    .arg(_grid.getDirtyChunks().count(node.key) > 0).arg(_mesher.isInFlight(node.key)).arg(_grid.hasChunk(node.key));
+            }
+        } else if (node.mesh) {
+            ++meshes;
+        } else {
+            without << QString("node %1").arg(describeKey(node.key));
+        }
+    }
+    QString levels;
+    for (const auto& pair : byLevel) {
+        levels += QString(" level %1: %2").arg(pair.first).arg(pair.second);
+    }
+    return QString("%1 nodes (%2), %3 with meshes; %4 chunk meshes kept, %5 dirty, %6 LOD meshes, %7 LOD jobs out, settled %8; without a mesh: %9")
+        .arg(_levelOfDetail.getDrawn().size()).arg(levels.trimmed()).arg(meshes).arg(_chunkMeshes.size()).arg(_grid.getDirtyChunks().size())
+        .arg(_levelOfDetail.getMeshCount()).arg(_levelOfDetail.getInFlightCount()).arg(_levelOfDetail.isSettled())
+        .arg(without.isEmpty() ? QString("none") : without.join(", "));
 }
 
 void RenderableTerrainEntityItem::getDrawnChunks(std::vector<DrawnChunk>& drawn) const {
@@ -864,6 +912,7 @@ gpu::BufferPointer TerrainChunkPayload::makeVertexBuffer(const terrain::ChunkMes
 void TerrainChunkPayload::setBuffers(const gpu::BufferPointer& vertices, uint32_t vertexCount) {
     _vertexBuffer = vertices;
     _vertexCount = vertexCount;
+    _debugDrawn = false;
 }
 
 void TerrainChunkPayload::setWorldToTerrain(const glm::mat4& worldToTerrain) {
@@ -878,9 +927,11 @@ void TerrainChunkPayload::setPlacement(const Transform& chunkToWorld) {
     AABox bound(glm::vec3(-2.0f), glm::vec3((float)terrain::CHUNK_SIZE + 2.0f));
     bound.transform(chunkToWorld);
     _bound = bound;
+    _debugDrawn = false;
 }
 
 void TerrainChunkPayload::setChunk(const terrain::ChunkKey& chunk) {
+    _debugKey = chunk;
     // A tile is CHUNK_SIZE voxels of its level with the apron around them (PaintMap::fillTile), tile coordinates 0
     // to 1 across. A node at level 0 or coarser has a tile of its own column; a finer chunk's voxels are a fraction
     // of its level-0 column's and start part way in.
@@ -917,7 +968,21 @@ ShapeKey TerrainChunkPayload::getShapeKey() const {
 
 void TerrainChunkPayload::render(RenderArgs* args) {
     if (!_vertexBuffer || _vertexCount == 0 || !_layers || !_chunkParams) {
+        if (terrainDebug && !_debugDrawn) {
+            _debugDrawn = true;
+            qCDebug(entitiesrenderer) << "Terrain chunk item" << describeKey(_debugKey) << "cannot draw: buffer" << (_vertexBuffer != nullptr)
+                                      << "vertices" << _vertexCount << "layers" << (_layers != nullptr) << "params" << (_chunkParams != nullptr);
+        }
         return;
+    }
+    if (terrainDebug && !_debugDrawn && args->_renderMode == RenderArgs::DEFAULT_RENDER_MODE) {
+        _debugDrawn = true;
+        const glm::vec3 low = _bound.getMinimumPoint();
+        const glm::vec3 high = _bound.getMaximumPoint();
+        qCDebug(entitiesrenderer) << "Terrain chunk item" << describeKey(_debugKey) << "draws" << _vertexCount / 3 << "triangles; bound"
+                                  << low.x << low.y << low.z << "to" << high.x << high.y << high.z << "; at"
+                                  << _transform.getTranslation().x << _transform.getTranslation().y << _transform.getTranslation().z
+                                  << "scale" << _transform.getScale().x << _transform.getScale().y << _transform.getScale().z;
     }
     _layers->drawMapsDue(args);   // in a batch of its own, before this one
     gpu::Batch& batch = *args->_batch;
@@ -1174,12 +1239,20 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
     for (const RenderableTerrainEntityItem::DrawnChunk& chunk : drawn) {
         drawnKeys.insert(chunk.key);
     }
+    int itemsRemoved = 0;
+    int itemsMade = 0;
+    int itemsUpdated = 0;
+    QStringList removedKeys;
     for (auto it = _chunkItems.begin(); it != _chunkItems.end();) {
         if (drawnKeys.count(it->first)) {
             ++it;
         } else {
             transaction.removeItem(it->second.id);
+            if (terrainDebug) {
+                removedKeys << describeKey(it->first);
+            }
             it = _chunkItems.erase(it);
+            ++itemsRemoved;
         }
     }
     for (const RenderableTerrainEntityItem::DrawnChunk& chunk : drawn) {
@@ -1204,6 +1277,11 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
             item.meshVersion = chunk.version;
             transaction.resetItem(item.id, std::make_shared<Payload<TerrainChunkPayload>>(payload));
             _chunkItems[chunk.key] = item;
+            ++itemsMade;
+            if (terrainDebug) {
+                qCDebug(entitiesrenderer) << "Terrain" << entity->getID() << "item" << item.id << "made for" << describeKey(chunk.key)
+                                          << "with" << TerrainChunkPayload::getVertexCount(*chunk.mesh) / 3 << "triangles, mesh version" << chunk.version;
+            }
             continue;
         }
         const bool meshChanged = found->second.meshVersion != chunk.version;
@@ -1214,9 +1292,14 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
             continue;
         }
         found->second.meshVersion = chunk.version;
+        ++itemsUpdated;
         // The buffers are built here, on the main thread, and handed over: the update runs later on the render thread.
         gpu::BufferPointer vertices = meshChanged ? TerrainChunkPayload::makeVertexBuffer(*chunk.mesh) : nullptr;
         const uint32_t vertexCount = TerrainChunkPayload::getVertexCount(*chunk.mesh);
+        if (terrainDebug && meshChanged) {
+            qCDebug(entitiesrenderer) << "Terrain" << entity->getID() << "item" << found->second.id << "of" << describeKey(chunk.key)
+                                      << "gets a new mesh of" << vertexCount / 3 << "triangles, mesh version" << chunk.version;
+        }
         transaction.updateItem<TerrainChunkPayload>(found->second.id,
                 [vertices, vertexCount, placement, key, wireframe, layerSet, worldToTerrain, paintTile, topTile](TerrainChunkPayload& payload) {
             if (vertices) {
@@ -1232,6 +1315,13 @@ void TerrainEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& s
         });
     }
     handOverSubItems();
+    if (terrainDebug && (itemsMade || itemsRemoved || itemsUpdated)) {
+        qCDebug(entitiesrenderer) << "Terrain" << entity->getID() << "drawn version" << drawnVersion << ":" << drawn.size() << "meshes to draw,"
+                                  << _chunkItems.size() << "items;" << itemsMade << "made," << itemsRemoved << "removed (" << qPrintable(removedKeys.join(", "))
+                                  << ")," << itemsUpdated << "updated; placement changed" << placementChanged << "key" << keyChanged << "layers" << layersChanged
+                                  << "tiles lost" << lostTiles.size() << "all" << allTilesLost << "top lost" << lostTopTiles.size() << "all" << allTopTilesLost
+                                  << ";" << qPrintable(entity->describeDrawn());
+    }
 }
 
 glm::ivec3 TerrainEntityRenderer::paintTileKey(const terrain::ChunkKey& chunk) {

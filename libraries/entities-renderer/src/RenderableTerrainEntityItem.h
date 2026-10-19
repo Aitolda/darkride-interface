@@ -112,6 +112,10 @@ public:
     // Replaces the grid and the paint map with others made outside the renderer's update (the editor's Resample,
     // and its undo): the meshes follow, the collision shape too, and the renderer is told to come back.
     void setGridAndPaint(terrain::VoxelGrid grid, terrain::PaintMap paint);
+    // Which faces of the box are closed (terrain::CAP_ bits, VoxelGrid::setCaps): the ground is capped at a closed
+    // face, open at an open one. Kept in the terrain file with the grid; a change re-meshes every chunk.
+    uint8_t getCaps() const { return _grid.getCaps(); }
+    void setCaps(uint8_t caps);
 
     // Installs the meshes that have come back from the mesher's threads and sends out the chunks the grid marks
     // dirty; returns whether any mesh changed. Called from the renderer's update, every frame while any is out.
@@ -133,6 +137,8 @@ public:
     void getDrawnChunks(std::vector<DrawnChunk>& drawn) const;
     // Changes whenever getDrawnChunks() may give something else.
     uint64_t getDrawnVersion() const { return _levelOfDetail.getDrawnVersion() + _meshVersion; }
+    // What is drawn, for the log: nodes by level, how many have meshes, and those without one with their state.
+    QString describeDrawn() const;
     // How far out every terrain on this client draws full detail: a part of the ground is drawn finer while the
     // camera is within this many times its size of it (terrain::LodSettings::detail; 0 draws full detail
     // everywhere). The editor's Terrain row sets it.
@@ -342,6 +348,8 @@ private:
     TerrainPaintTile::Pointer _paintTile;
     gpu::TexturePointer _topTile;
     gpu::BufferPointer _chunkParams;
+    terrain::ChunkKey _debugKey;   // for the log, with TIVOLI_TERRAIN_DEBUG set
+    bool _debugDrawn { false };    // its first draw since its buffers or placement changed is in the log
 };
 
 class TerrainEntityRenderer : public TypedEntityRenderer<RenderableTerrainEntityItem> {

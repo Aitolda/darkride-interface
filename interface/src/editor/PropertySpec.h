@@ -53,6 +53,7 @@ enum class PropertyKind {
     Enum,
     CollisionMask,
     TerrainLayers,  // a Terrain's material layers: the list, with the selected layer's settings (TerrainLayersEditor)
+    TerrainCaps,    // a Terrain's closed box: a checkbox read and set through the Terrain tool, not a property (TerrainCapsEditor)
     Impostor        // an entity's impostor card (IMPOSTORS.md): the entry's summary and atlases, Bake and Remove (ImpostorEditor)
 };
 

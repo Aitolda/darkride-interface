@@ -52,6 +52,19 @@ const int MIN_LOD_LEVEL = -8;
 const int CHUNK_SHIFT = 5;   // CHUNK_SIZE as a power of two
 static_assert(CHUNK_SIZE == 1 << CHUNK_SHIFT, "chunks are a power of two voxels a side");
 
+// The faces of the grid's box a terrain can close (VoxelGrid::setCaps): the ground stops at a closed face, capped
+// just past its first or last voxels, instead of running out of the box open there, so a raise that reaches the top
+// of the box has a top and the box's edges show walls rather than the inside of the ground. Bit 2 * axis is the low
+// face on that axis, bit 2 * axis + 1 the high one.
+const uint8_t CAP_LOW_X = 1;
+const uint8_t CAP_HIGH_X = 2;
+const uint8_t CAP_LOW_Y = 4;
+const uint8_t CAP_HIGH_Y = 8;
+const uint8_t CAP_LOW_Z = 16;
+const uint8_t CAP_HIGH_Z = 32;
+const uint8_t CAP_NONE = 0;
+const uint8_t CAP_ALL = 63;
+
 struct IVec3Less {
     bool operator()(const glm::ivec3& a, const glm::ivec3& b) const {
         if (a.x != b.x) {
@@ -203,6 +216,12 @@ public:
     const glm::ivec3& getFinerLimit() const { return _finerLimit; }
     void setLimits(const glm::ivec3& own, const glm::ivec3& finer) { _limit = own; _finerLimit = finer; }
 
+    // Whether the chunk lies against a closed low face of the grid's box on an axis (VoxelGrid::applyCaps sets it):
+    // the mesher then draws the crossings into the chunk across that face, whose low voxel lies outside the grid
+    // and so is no chunk's own. clearBlocks() clears these too.
+    bool capsLow(int axis) const { return _capLow[axis]; }
+    void setCapLow(int axis, bool caps) { _capLow[axis] = caps; }
+
 private:
     ChunkKey _key;
     std::vector<Voxel> _voxels;
@@ -210,6 +229,7 @@ private:
     std::vector<SampleBlock> _blocks;
     glm::ivec3 _limit { CHUNK_SIZE };
     glm::ivec3 _finerLimit { 2 * CHUNK_SIZE };
+    bool _capLow[3] { false, false, false };
 };
 
 class VoxelGrid {
@@ -328,8 +348,23 @@ public:
 
     // The chunk's voxels and one layer of its neighbours' around them, at the chunk's level; and, for the
     // mesher, the neighbours' levels across the low faces and edges with their voxels at those levels where they
-    // differ (ChunkSamples' blocks), which a resampling of the chunk alone has no use for.
+    // differ (ChunkSamples' blocks), which a resampling of the chunk alone has no use for, and the box's closed
+    // faces applied (applyCaps).
     void sampleChunk(const ChunkKey& key, ChunkSamples& samples, bool forMeshing = true) const;
+
+    // Which faces of the box are closed (the CAP_ bits): the ground is capped at a closed face as if the space
+    // beyond it were air, and runs out of the box open at an open one. A change marks every chunk dirty. Kept by
+    // reset(); the terrain file carries them (version 6).
+    uint8_t getCaps() const { return _caps; }
+    void setCaps(uint8_t caps);
+    // Whether the grid voxels from low to high (inclusive) touch a closed face: a node there may need a cap even
+    // where the voxels are all ground.
+    bool capsReach(const glm::ivec3& low, const glm::ivec3& high) const;
+    // Closes meshing samples at the box's closed faces: a sample's distance becomes at least its distance outside
+    // the face's plane, half a voxel of the finest level past the grid's first and last voxels (within every
+    // level's layer of samples), so every level meets the plane at the same place and beyond it the samples are
+    // air; and marks the samples' closed low faces for the mesher (capsLow). Nothing to do without closed faces.
+    void applyCaps(ChunkSamples& samples) const;
 
     // Ground below a height field: height(x, z) in grid voxels is where the surface lies in that column. Every
     // chunk is at level 0 again afterwards.
@@ -405,6 +440,7 @@ private:
     std::vector<ChunkNode> _slots;
     ChunkKeySet _dirtyChunks;
     uint64_t _structureVersion { 0 };
+    uint8_t _caps { CAP_NONE };
     struct Changes {
         std::vector<std::pair<glm::ivec3, glm::ivec3>> boxes;
         bool everything { true };

@@ -206,13 +206,36 @@ void TerrainTests::brushesDigFillAndRaise() {
     QVERIFY(!grid.get(glm::ivec3(50, 41, 50)).isGround());
     QVERIFY(sculpt(grid, brush, SculptMode::Raise) > 0);
     QVERIFY(grid.get(glm::ivec3(50, 41, 50)).isGround());
-    QCOMPARE((int)grid.get(glm::ivec3(50, 41, 50)).material, 2);
+    // raised ground grows in the ground's own material, not the brush's: the chosen layer left voxel-sized patches
+    // of it along the rim of a raise, where the soft edge brought single voxels over (2026-10-18)
+    QCOMPARE((int)grid.get(glm::ivec3(50, 41, 50)).material, 1);
     QVERIFY(!grid.get(glm::ivec3(50, 43, 50)).isGround());
 
     brush.material = 5;
     QVERIFY(sculpt(grid, brush, SculptMode::PaintVoxels) > 0);
     QCOMPARE((int)grid.get(glm::ivec3(50, 40, 50)).material, 5);
     QCOMPARE((int)grid.get(glm::ivec3(50, 43, 50)).material, 1);   // air keeps its material
+
+    // a hill raised in several steps with another material chosen: every new voxel is in the ground's own
+    brush.material = 2;
+    for (int i = 0; i < 6; ++i) {
+        sculpt(grid, brush, SculptMode::Raise);
+    }
+    int raisedVoxels = 0;
+    int inTheBrushMaterial = 0;
+    for (int y = 42; y < 50; ++y) {
+        for (int x = 44; x <= 56; ++x) {
+            for (int z = 44; z <= 56; ++z) {
+                const Voxel voxel = grid.get(glm::ivec3(x, y, z));
+                if (voxel.isGround()) {
+                    ++raisedVoxels;
+                    inTheBrushMaterial += voxel.material == 2 ? 1 : 0;
+                }
+            }
+        }
+    }
+    QVERIFY(raisedVoxels > 20);
+    QCOMPARE(inTheBrushMaterial, 0);
 }
 
 void TerrainTests::fileRoundTripKeepsEveryVoxel() {
@@ -664,7 +687,8 @@ using KeyedMeshes = std::vector<std::pair<ChunkKey, ChunkMesh>>;
 // a crack between chunks, or a hole. Each mesh is in its chunk's (or node's) own voxels. Edges along the grid's
 // sides are left out, within `side` grid voxels of them: the surface runs out of the grid open there (a coarse
 // node's ends up to a voxel of its own short of the grid's last voxel).
-int countOpenEdges(const VoxelGrid& grid, const KeyedMeshes& meshes, int* triangles = nullptr, float side = 0.0f) {
+int countOpenEdges(const VoxelGrid& grid, const KeyedMeshes& meshes, int* triangles = nullptr, float side = 0.0f,
+                   std::vector<std::pair<glm::vec3, glm::vec3>>* openEdges = nullptr) {
     VertexMerger merger;
     std::map<std::pair<int, int>, int> edgeCounts;
     int triangleCount = 0;
@@ -705,6 +729,9 @@ int countOpenEdges(const VoxelGrid& grid, const KeyedMeshes& meshes, int* triang
         }
         if (!onSide) {
             ++open;
+            if (openEdges) {
+                openEdges->emplace_back(a, b);
+            }
         }
     }
     return open;
@@ -1860,6 +1887,864 @@ void TerrainTests::levelOfDetailSettlesAfterAnUndoBurst() {
     QCOMPARE(meshesOfGoneChunks, 0);
 }
 
+void TerrainTests::levelOfDetailDrawsTheGroundWholeAfterSmallRaises() {
+    // Caity's holes of 2026-10-18: the sandbox's default terrain (32 x 16 x 32 m at 0.5 m, flat ground halfway up,
+    // which lies on the boundary of the level-1 and level-2 chunks a small brush splits the places under it into),
+    // raised by a 1 m brush in steps as the editor applies them (a shift of 0.2 grid voxels a step, a step every
+    // other frame), the camera a few metres off, through the renderer's loop (RenderableTerrainEntityItem::
+    // updateMeshes and updateLevelOfDetail). The ground drawn must be whole once the meshes have settled: every node
+    // of the cut shown that the surface crosses has a mesh, and the meshes make a closed surface.
+    QThreadPool pool;
+    pool.setMaxThreadCount(4);
+    VoxelGrid grid(glm::ivec3(64, 32, 64));
+    grid.fillBelow(16.0f, 1);
+
+    AsyncMesher mesher(&pool);
+    std::map<ChunkKey, ChunkMesh> chunkMeshes;
+    uint64_t structureVersion = grid.getStructureVersion();
+    bool staleMeshes = false;
+    auto updateMeshes = [&] {
+        for (AsyncMesher::Result& result : mesher.collect()) {
+            if (result.mesh.isEmpty()) {
+                chunkMeshes.erase(result.key);
+                continue;
+            }
+            chunkMeshes[result.key] = std::move(result.mesh);
+        }
+        if (grid.getStructureVersion() != structureVersion) {
+            structureVersion = grid.getStructureVersion();
+            staleMeshes = true;
+        }
+        if (staleMeshes) {
+            staleMeshes = false;
+            for (auto it = chunkMeshes.begin(); it != chunkMeshes.end();) {
+                if (grid.hasChunk(it->first)) {
+                    ++it;
+                    continue;
+                }
+                bool pending = false;
+                const glm::ivec3 origin = it->first.getOrigin();
+                for (const ChunkKey& key : grid.chunksCovering(origin, origin + it->first.getSpan() - 1)) {
+                    if (grid.getDirtyChunks().count(key) || mesher.isInFlight(key)) {
+                        pending = true;
+                        break;
+                    }
+                }
+                if (pending) {
+                    staleMeshes = true;
+                    ++it;
+                } else {
+                    it = chunkMeshes.erase(it);
+                }
+            }
+        }
+        mesher.submit(grid);
+    };
+
+    LevelOfDetail lod(&pool);
+    LodSettings settings;
+    settings.detail = 4.0f;
+    lod.setSettings(settings);
+    const glm::vec3 metres(0.5f);
+    const glm::vec3 camera(26.0f, 20.0f, 44.0f);   // 2 m over the ground, 6 m or so from the brush
+    auto gridChunkReady = [&](const ChunkKey& key) {
+        return chunkMeshes.count(key) > 0 || (!grid.getDirtyChunks().count(key) && !mesher.isInFlight(key));
+    };
+    auto frame = [&] {
+        updateMeshes();
+        lod.update(grid, camera, metres, gridChunkReady);
+    };
+    auto settled = [&] { return lod.isSettled() && grid.getDirtyChunks().empty() && mesher.isIdle(); };
+    auto settle = [&] {
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < 20000) {
+            frame();
+            if (settled()) {
+                return true;
+            }
+            QThread::msleep(1);
+        }
+        return false;
+    };
+    auto frames = [&](int count) {
+        for (int i = 0; i < count; ++i) {
+            frame();
+            QThread::msleep(1);
+        }
+    };
+    QVERIFY(settle());
+
+    // What is drawn, checked for holes: a node of the cut shown without a mesh where the surface crosses it, and
+    // open edges between the meshes drawn.
+    auto checkWhole = [&](const char* when) {
+        KeyedMeshes drawn;
+        int missing = 0;
+        const std::vector<LodCut::Node>& nodes = lod.getCut().getNodes();
+        const std::vector<LevelOfDetail::Drawn>& shown = lod.getDrawn();
+        for (size_t i = 0; i < shown.size(); ++i) {
+            const LevelOfDetail::Drawn& node = shown[i];
+            if (node.isGridChunk) {
+                auto found = chunkMeshes.find(node.key);
+                if (found != chunkMeshes.end()) {
+                    drawn.emplace_back(node.key, found->second);
+                    continue;
+                }
+                const ChunkMesh own = meshChunk(grid, node.key);
+                if (!own.isEmpty()) {
+                    ++missing;
+                    qDebug() << when << ": the grid chunk at level" << node.key.level << "at" << node.key.coords.x << node.key.coords.y
+                             << node.key.coords.z << "is drawn with no mesh, though its own has" << own.getTriangleCount() << "triangles; dirty"
+                             << (grid.getDirtyChunks().count(node.key) > 0) << "in flight" << mesher.isInFlight(node.key);
+                }
+                continue;
+            }
+            if (node.mesh) {
+                drawn.emplace_back(node.key, *node.mesh);
+                continue;
+            }
+            if (i < nodes.size() && nodes[i].key == node.key) {
+                ChunkSamples samples;
+                sampleNode(grid, node.key, nodes[i].context, samples);
+                const ChunkMesh own = meshChunk(samples);
+                if (!own.isEmpty()) {
+                    ++missing;
+                    qDebug() << when << ": the node at level" << node.key.level << "at" << node.key.coords.x << node.key.coords.y
+                             << node.key.coords.z << "is drawn with no mesh, though its samples give" << own.getTriangleCount() << "triangles";
+                }
+            }
+        }
+        int triangles = 0;
+        const int open = countOpenEdges(grid, drawn, &triangles);
+        qDebug() << when << ":" << shown.size() << "nodes drawn," << drawn.size() << "with meshes," << triangles << "triangles," << open
+                 << "open edges," << missing << "missing meshes";
+        return missing == 0 && open == 0;
+    };
+    QVERIFY(checkWhole("flat"));
+
+    // a drag of a 1 m brush (2 voxels at 0.5 m) along the ground, a step every other frame as the editor paces Raise
+    // (RAISE_RATE 6 voxels a second, STEP_MIN 0.2), the centre picked on the ground as it rises
+    Brush brush;
+    brush.radius = 2.0f;
+    brush.hardness = 0.5f;
+    brush.strength = 0.2f;
+    brush.material = 7;
+    QCOMPARE(brushLevel(grid, brush), 1);
+    int steps = 0;
+    for (int pass = 0; pass < 4; ++pass) {
+        for (int i = 0; i < 12; ++i) {
+            const float x = 30.0f + (float)i * 0.5f;
+            const float z = 33.0f + (float)(pass % 2) * 1.5f;
+            brush.center = glm::vec3(x, surfaceHeight(grid, x, z, 8.0f, 31.0f), z);
+            if (sculpt(grid, brush, SculptMode::Raise) > 0) {
+                ++steps;
+            }
+            frames(2);
+        }
+    }
+    QVERIFY(steps > 40);
+    QVERIFY(grid.getFinestLevel() >= 1);
+    QVERIFY(settle());
+    QVERIFY(checkWhole("after the 1 m raises"));
+
+    // and a 0.5 m brush (level 2) over the hill's side
+    brush.radius = 1.0f;
+    QCOMPARE(brushLevel(grid, brush), 2);
+    for (int i = 0; i < 20; ++i) {
+        const float x = 34.0f + (float)(i % 5) * 0.4f;
+        const float z = 31.0f;
+        brush.center = glm::vec3(x, surfaceHeight(grid, x, z, 8.0f, 31.0f), z);
+        sculpt(grid, brush, SculptMode::Raise);
+        frames(2);
+    }
+    QCOMPARE(grid.getFinestLevel(), 2);
+    QVERIFY(settle());
+    QVERIFY(checkWhole("after the 0.5 m raises"));
+}
+
+void TerrainTests::levelOfDetailDrawsATerrainFileWhole() {
+    // A terrain file named by the environment (TERRAIN_FILE), loaded as the renderer loads one and drawn through its
+    // loop from a few camera positions (TERRAIN_CAMERAS: "x,y,z;x,y,z" in grid voxels; the file's middle, high up,
+    // when unset): the ground drawn must be whole at each. For files from the world that drew with holes.
+    const QByteArray path = qgetenv("TERRAIN_FILE");
+    if (path.isEmpty()) {
+        QSKIP("set TERRAIN_FILE to a .drkt file to draw");
+    }
+    QFile file(QString::fromUtf8(path));
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray data = file.readAll();
+    VoxelGrid grid;
+    PaintMap paint;
+    LayerStack layers;
+    std::string error;
+    QVERIFY2(loadTerrain((const uint8_t*)data.constData(), (size_t)data.size(), grid, &paint, &layers, &error), error.c_str());
+    std::map<int, int> chunksByLevel;
+    int dense = 0;
+    grid.forEachChunk([&](const ChunkKey& key, const Chunk& chunk) { ++chunksByLevel[key.level]; dense += chunk.isUniform() ? 0 : 1; });
+    QString levelsText;
+    for (const auto& pair : chunksByLevel) {
+        levelsText += QString(" level %1: %2").arg(pair.first).arg(pair.second);
+    }
+    qDebug() << "grid" << grid.getVoxelCount().x << grid.getVoxelCount().y << grid.getVoxelCount().z << "voxels;" << qPrintable(levelsText)
+             << "chunks," << dense << "dense; structure version" << grid.getStructureVersion() << "dirty" << grid.getDirtyChunks().size();
+    QVERIFY(twoToOneRuleHolds(grid));
+    // pictures of the paint map (a layer each) and of the top surface's materials and heights, beside the file
+    {
+        const QString dir = QFileInfo(file).absolutePath();
+        auto writePGM = [&](const QString& name, int width, int height, const std::vector<uint8_t>& grey) {
+            QFile out(dir + "/" + name);
+            if (out.open(QIODevice::WriteOnly)) {
+                out.write(QString("P5\n%1 %2\n255\n").arg(width).arg(height).toLatin1());
+                out.write((const char*)grey.data(), (qint64)grey.size());
+            }
+        };
+        if (!paint.isEmpty()) {
+            const glm::ivec2 size = paint.getSize();
+            for (int layer = 0; layer < PAINT_LAYERS; ++layer) {
+                std::vector<uint8_t> grey((size_t)size.x * size.y);
+                bool any = false;
+                for (int y = 0; y < size.y; ++y) {
+                    for (int x = 0; x < size.x; ++x) {
+                        grey[(size_t)y * size.x + x] = paint.at(glm::ivec2(x, y))[layer];
+                        any = any || grey[(size_t)y * size.x + x] != 0;
+                    }
+                }
+                if (any) {
+                    writePGM(QString("paint-%1.pgm").arg(layer), size.x, size.y, grey);
+                }
+            }
+            qDebug() << "paint map" << size.x << "x" << size.y << "texels," << paint.getTexelsPerVoxel() << "a voxel";
+        }
+        const glm::ivec3 count = grid.getVoxelCount();
+        std::vector<uint8_t> materials((size_t)count.x * count.z, 0), heights((size_t)count.x * count.z, 0);
+        for (int z = 0; z < count.z; ++z) {
+            for (int x = 0; x < count.x; ++x) {
+                for (int y = count.y - 1; y >= 0; --y) {
+                    const Voxel voxel = grid.get(glm::ivec3(x, y, z));
+                    if (voxel.isGround()) {
+                        materials[(size_t)z * count.x + x] = (uint8_t)(voxel.material * 32);
+                        heights[(size_t)z * count.x + x] = (uint8_t)(y * 255 / count.y);
+                        break;
+                    }
+                }
+            }
+        }
+        writePGM("materials.pgm", count.x, count.z, materials);
+        writePGM("heights.pgm", count.x, count.z, heights);
+        std::map<int, int> materialCounts;
+        grid.forEachChunk([&](const ChunkKey&, const Chunk& chunk) {
+            if (chunk.isUniform()) {
+                return;
+            }
+            for (const Voxel& voxel : chunk.getVoxels()) {
+                if (voxel.isGround()) {
+                    ++materialCounts[voxel.material];
+                }
+            }
+        });
+        QString materialsText;
+        for (const auto& pair : materialCounts) {
+            materialsText += QString(" %1: %2").arg(pair.first).arg(pair.second);
+        }
+        qDebug() << "ground voxels by material in dense chunks:" << qPrintable(materialsText);
+    }
+    int fullTriangles = 0;
+    const int fullOpen = countOpenEdges(grid, &fullTriangles);
+    qDebug() << "the grid's own chunks meshed:" << fullTriangles << "triangles," << fullOpen << "open edges";
+    // TERRAIN_PROBE="x,y,z,radius" (grid voxels): the mesh around a spot, vertex by vertex, with the top surface
+    // and the voxel materials there, for a patch that draws wrong
+    const QList<QByteArray> probeParts = qgetenv("TERRAIN_PROBE").split(',');
+    if (probeParts.size() == 4) {
+        const glm::vec3 probe(probeParts[0].toFloat(), probeParts[1].toFloat(), probeParts[2].toFloat());
+        const float radius = probeParts[3].toFloat();
+        TopSurface top;
+        top.rebuild(grid);
+        for (int z = (int)std::floor(probe.z - radius); z <= (int)std::ceil(probe.z + radius); ++z) {
+            QString row;
+            for (int x = (int)std::floor(probe.x - radius); x <= (int)std::ceil(probe.x + radius); ++x) {
+                int material = -1;
+                for (int y = grid.getVoxelCount().y - 1; y >= 0; --y) {
+                    const Voxel v = grid.get(glm::ivec3(x, y, z));
+                    if (v.isGround()) {
+                        material = v.material;
+                        break;
+                    }
+                }
+                // the paint map's coverage over the column: the strongest layer and its mean coverage over the texels
+                QString painted = "-";
+                if (!paint.isEmpty()) {
+                    const int per = paint.getTexelsPerVoxel();
+                    int sums[PAINT_LAYERS] = { 0 };
+                    for (int j = 0; j < per; ++j) {
+                        for (int i = 0; i < per; ++i) {
+                            const glm::ivec2 texel(x * per + i, z * per + j);
+                            if (paint.contains(texel)) {
+                                for (int layer = 0; layer < PAINT_LAYERS; ++layer) {
+                                    sums[layer] += paint.at(texel)[layer];
+                                }
+                            }
+                        }
+                    }
+                    int best = 0;
+                    for (int layer = 1; layer < PAINT_LAYERS; ++layer) {
+                        if (sums[layer] > sums[best]) {
+                            best = layer;
+                        }
+                    }
+                    painted = QString("L%1:%2").arg(best).arg(sums[best] / (per * per));
+                }
+                row += QString(" %1/%2/%3").arg(top.heightAt(glm::ivec2(x, z)), 0, 'f', 1).arg(material).arg(painted);
+            }
+            qDebug() << "z" << z << "top/material/paint by x:" << qPrintable(row);
+            // the surfaces under the top: a second ground met from the top down (the floor under a pillar's lip, a cave's)
+            QString under;
+            for (int x = (int)std::floor(probe.x - radius); x <= (int)std::ceil(probe.x + radius); ++x) {
+                int state = 0;   // 0 air from the top, 1 in the first ground, 2 air below it
+                float second = -1.0f;
+                for (int y = grid.getVoxelCount().y - 1; y >= 0; --y) {
+                    const bool ground = grid.get(glm::ivec3(x, y, z)).isGround();
+                    if (state == 0 && ground) {
+                        state = 1;
+                    } else if (state == 1 && !ground) {
+                        state = 2;
+                    } else if (state == 2 && ground) {
+                        second = (float)y + 0.5f;
+                        break;
+                    }
+                }
+                under += second < 0.0f ? " ." : QString(" %1").arg(second, 0, 'f', 1);
+            }
+            qDebug() << "z" << z << "second surface by x:" << qPrintable(under);
+        }
+        int flatBadNormals = 0;
+        int flatTriangles = 0;
+        grid.forEachChunk([&](const ChunkKey& key, const Chunk&) {
+            const ChunkMesh mesh = meshChunk(grid, key);
+            for (size_t t = 0; t < mesh.getTriangleCount(); ++t) {
+                glm::vec3 p[3], n[3];
+                for (int k = 0; k < 3; ++k) {
+                    const uint32_t index = mesh.indices[3 * t + k];
+                    p[k] = glm::vec3(key.getOrigin()) + mesh.positions[index] * key.getVoxelSize();
+                    n[k] = mesh.normals[index];
+                }
+                const glm::vec3 centre = (p[0] + p[1] + p[2]) / 3.0f;
+                if (glm::distance(centre, probe) > radius) {
+                    continue;
+                }
+                const glm::vec3 face = glm::cross(p[1] - p[0], p[2] - p[0]);
+                const glm::vec3 faceNormal = glm::length(face) > 1.0e-9f ? glm::normalize(face) : glm::vec3(0.0f);
+                if (faceNormal.y > 0.9f) {
+                    ++flatTriangles;
+                    const float lowest = std::min(n[0].y, std::min(n[1].y, n[2].y));
+                    if (lowest < 0.6f) {
+                        ++flatBadNormals;
+                        if (flatBadNormals <= 10) {
+                            qDebug() << "flat triangle with a sideways vertex normal in chunk level" << key.level << "at" << key.coords.x << key.coords.y
+                                     << key.coords.z << ": centre" << centre.x << centre.y << centre.z << "normals y" << n[0].y << n[1].y << n[2].y
+                                     << "materials" << (int)mesh.materials[mesh.indices[3 * t]] << (int)mesh.materials[mesh.indices[3 * t + 1]]
+                                     << (int)mesh.materials[mesh.indices[3 * t + 2]];
+                        }
+                    }
+                }
+            }
+        });
+        qDebug() << "around the probe:" << flatTriangles << "up-facing triangles," << flatBadNormals << "with a vertex normal under 0.6";
+    }
+    // every chunk's mesh: how its triangles face (the winding against the vertex normals, and how many face down:
+    // a ceiling, an overhang, or an inside-out patch of ground)
+    grid.forEachChunk([&](const ChunkKey& key, const Chunk& chunk) {
+        const ChunkMesh mesh = meshChunk(grid, key);
+        int against = 0;
+        int down = 0;
+        float lowY = 1.0e9f, highY = -1.0e9f;
+        for (size_t t = 0; t < mesh.getTriangleCount(); ++t) {
+            const glm::vec3& a = mesh.positions[mesh.indices[3 * t]];
+            const glm::vec3& b = mesh.positions[mesh.indices[3 * t + 1]];
+            const glm::vec3& c = mesh.positions[mesh.indices[3 * t + 2]];
+            const glm::vec3 face = glm::cross(b - a, c - a);
+            const glm::vec3 vertex = mesh.normals[mesh.indices[3 * t]] + mesh.normals[mesh.indices[3 * t + 1]] + mesh.normals[mesh.indices[3 * t + 2]];
+            if (glm::dot(face, vertex) < 0.0f) {
+                ++against;
+            }
+            if (glm::length(face) > 1.0e-9f && glm::normalize(face).y < -0.5f) {
+                ++down;
+            }
+            lowY = std::min(lowY, std::min(a.y, std::min(b.y, c.y)));
+            highY = std::max(highY, std::max(a.y, std::max(b.y, c.y)));
+        }
+        if (mesh.getTriangleCount() > 0) {
+            qDebug() << "chunk level" << key.level << "at" << key.coords.x << key.coords.y << key.coords.z << (chunk.isUniform() ? "uniform" : "dense")
+                     << ":" << mesh.getTriangleCount() << "triangles," << against << "wound against their normals," << down << "facing down; y from"
+                     << key.getOrigin().y + lowY * key.getVoxelSize() << "to" << key.getOrigin().y + highY * key.getVoxelSize() << "grid voxels";
+        }
+    });
+
+    std::vector<glm::vec3> cameras;
+    const QByteArray camerasText = qgetenv("TERRAIN_CAMERAS");
+    for (const QByteArray& one : camerasText.split(';')) {
+        const QList<QByteArray> parts = one.trimmed().split(',');
+        if (parts.size() == 3) {
+            cameras.push_back(glm::vec3(parts[0].toFloat(), parts[1].toFloat(), parts[2].toFloat()));
+        }
+    }
+    if (cameras.empty()) {
+        cameras.push_back(glm::vec3(grid.getVoxelCount()) * glm::vec3(0.5f, 2.0f, 0.5f));
+    }
+
+    QThreadPool pool;
+    pool.setMaxThreadCount(4);
+    AsyncMesher mesher(&pool);
+    std::map<ChunkKey, ChunkMesh> chunkMeshes;
+    uint64_t structureVersion = grid.getStructureVersion();
+    bool staleMeshes = false;
+    auto updateMeshes = [&] {
+        for (AsyncMesher::Result& result : mesher.collect()) {
+            if (result.mesh.isEmpty()) {
+                chunkMeshes.erase(result.key);
+                continue;
+            }
+            chunkMeshes[result.key] = std::move(result.mesh);
+        }
+        if (grid.getStructureVersion() != structureVersion) {
+            structureVersion = grid.getStructureVersion();
+            staleMeshes = true;
+        }
+        if (staleMeshes) {
+            staleMeshes = false;
+            for (auto it = chunkMeshes.begin(); it != chunkMeshes.end();) {
+                if (grid.hasChunk(it->first)) {
+                    ++it;
+                    continue;
+                }
+                bool pending = false;
+                const glm::ivec3 origin = it->first.getOrigin();
+                for (const ChunkKey& key : grid.chunksCovering(origin, origin + it->first.getSpan() - 1)) {
+                    if (grid.getDirtyChunks().count(key) || mesher.isInFlight(key)) {
+                        pending = true;
+                        break;
+                    }
+                }
+                if (pending) {
+                    staleMeshes = true;
+                    ++it;
+                } else {
+                    it = chunkMeshes.erase(it);
+                }
+            }
+        }
+        mesher.submit(grid);
+    };
+    LevelOfDetail lod(&pool);
+    LodSettings settings;
+    settings.detail = 4.0f;
+    lod.setSettings(settings);
+    const glm::vec3 metres(0.5f);
+    glm::vec3 camera = cameras.front();
+    auto gridChunkReady = [&](const ChunkKey& key) {
+        return chunkMeshes.count(key) > 0 || (!grid.getDirtyChunks().count(key) && !mesher.isInFlight(key));
+    };
+    auto frame = [&] {
+        updateMeshes();
+        lod.update(grid, camera, metres, gridChunkReady);
+    };
+    auto settled = [&] { return lod.isSettled() && grid.getDirtyChunks().empty() && mesher.isIdle(); };
+    auto settle = [&] {
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < 20000) {
+            frame();
+            if (settled()) {
+                return true;
+            }
+            QThread::msleep(1);
+        }
+        return false;
+    };
+    auto checkWhole = [&](const QString& when) {
+        KeyedMeshes drawn;
+        int missing = 0;
+        std::map<int, int> drawnByLevel;
+        const std::vector<LodCut::Node>& nodes = lod.getCut().getNodes();
+        const std::vector<LevelOfDetail::Drawn>& shown = lod.getDrawn();
+        for (size_t i = 0; i < shown.size(); ++i) {
+            const LevelOfDetail::Drawn& node = shown[i];
+            ++drawnByLevel[node.key.level];
+            if (node.isGridChunk) {
+                auto found = chunkMeshes.find(node.key);
+                if (found != chunkMeshes.end()) {
+                    drawn.emplace_back(node.key, found->second);
+                    continue;
+                }
+                const ChunkMesh own = meshChunk(grid, node.key);
+                if (!own.isEmpty()) {
+                    ++missing;
+                    qDebug() << qPrintable(when) << ": the grid chunk at level" << node.key.level << "at" << node.key.coords.x << node.key.coords.y
+                             << node.key.coords.z << "is drawn with no mesh, though its own has" << own.getTriangleCount() << "triangles; dirty"
+                             << (grid.getDirtyChunks().count(node.key) > 0) << "in flight" << mesher.isInFlight(node.key);
+                }
+                continue;
+            }
+            if (node.mesh) {
+                drawn.emplace_back(node.key, *node.mesh);
+                continue;
+            }
+            if (i < nodes.size() && nodes[i].key == node.key) {
+                ChunkSamples samples;
+                sampleNode(grid, node.key, nodes[i].context, samples);
+                const ChunkMesh own = meshChunk(samples);
+                if (!own.isEmpty()) {
+                    ++missing;
+                    qDebug() << qPrintable(when) << ": the node at level" << node.key.level << "at" << node.key.coords.x << node.key.coords.y
+                             << node.key.coords.z << "is drawn with no mesh, though its samples give" << own.getTriangleCount() << "triangles";
+                }
+            }
+        }
+        QString levelsText;
+        for (const auto& pair : drawnByLevel) {
+            levelsText += QString(" level %1: %2").arg(pair.first).arg(pair.second);
+        }
+        int triangles = 0;
+        const int open = countOpenEdges(grid, drawn, &triangles, 1.0f);
+        qDebug() << qPrintable(when) << ":" << shown.size() << "nodes drawn (" << qPrintable(levelsText) << ")," << drawn.size() << "with meshes,"
+                 << triangles << "triangles," << open << "open edges," << missing << "missing meshes";
+        return missing == 0 && open == 0;
+    };
+    bool whole = true;
+    for (size_t i = 0; i < cameras.size(); ++i) {
+        camera = cameras[i];
+        QVERIFY(settle());
+        whole = checkWhole(QString("camera %1 (%2, %3, %4)").arg(i).arg(camera.x).arg(camera.y).arg(camera.z)) && whole;
+    }
+    QVERIFY(whole);
+}
+
+void TerrainTests::closedFacesCapTheGround() {
+    // With every face of the box closed the ground is watertight: a floor at the bottom, walls at the sides, a cap
+    // at the top where a raise reaches it, every edge on two triangles, whatever the chunks' levels and the cut.
+    VoxelGrid grid(glm::ivec3(64, 32, 64));
+    grid.fillBelow(16.5f, 1);
+    int triangles = 0;
+    QVERIFY(countOpenEdges(grid, &triangles) == 0);
+    const int openBefore = countOpenEdges(grid, [&] { KeyedMeshes m; grid.forEachChunk([&](const ChunkKey& key, const Chunk&) { m.emplace_back(key, meshChunk(grid, key)); }); return m; }(), nullptr, -1.0f);
+    QVERIFY(openBefore > 0);   // open along the sides without caps
+    grid.setCaps(CAP_ALL);
+    QCOMPARE((int)grid.getCaps(), (int)CAP_ALL);
+    auto allMeshes = [&] {
+        KeyedMeshes meshes;
+        grid.forEachChunk([&](const ChunkKey& key, const Chunk&) { meshes.emplace_back(key, meshChunk(grid, key)); });
+        return meshes;
+    };
+    auto extent = [&](const KeyedMeshes& meshes, glm::vec3& low, glm::vec3& high) {
+        low = glm::vec3(1.0e9f);
+        high = glm::vec3(-1.0e9f);
+        for (const auto& pair : meshes) {
+            for (const glm::vec3& p : pair.second.positions) {
+                const glm::vec3 position = glm::vec3(pair.first.getOrigin()) + p * pair.first.getVoxelSize();
+                low = glm::min(low, position);
+                high = glm::max(high, position);
+            }
+        }
+    };
+    KeyedMeshes meshes = allMeshes();
+    std::vector<std::pair<glm::vec3, glm::vec3>> openEdges;
+    const int open = countOpenEdges(grid, meshes, &triangles, -1.0f, &openEdges);
+    QCOMPARE(open, 0);
+    glm::vec3 low, high;
+    extent(meshes, low, high);
+    const float past = 0.5f / (float)FINEST_PER_GRID_VOXEL;   // the planes, just past the first and last voxels
+    QVERIFY(std::abs(low.y + past) < 0.01f);    // the floor
+    QVERIFY(std::abs(low.x + past) < 0.01f);    // the walls
+    QVERIFY(std::abs(high.x - 63.0f - past) < 0.01f);
+    QVERIFY(std::abs(high.z - 63.0f - past) < 0.01f);
+    QVERIFY(high.y < 17.0f);                     // no cap at the top: the ground does not reach it
+
+    // chunks split at the faces by a small dig in a corner and a raise at an edge: still closed
+    Brush small;
+    small.radius = 1.5f;
+    small.center = glm::vec3(1.0f, 16.5f, 1.0f);
+    QVERIFY(sculpt(grid, small, SculptMode::Dig) > 0);
+    small.center = glm::vec3(62.0f, 16.5f, 30.0f);
+    small.strength = 1.0f;
+    for (int i = 0; i < 4; ++i) {
+        sculpt(grid, small, SculptMode::Raise);
+    }
+    QCOMPARE(grid.getFinestLevel(), 2);
+    meshes = allMeshes();
+    openEdges.clear();
+    const int openSplit = countOpenEdges(grid, meshes, &triangles, -1.0f, &openEdges);
+    QCOMPARE(openSplit, 0);
+
+    // ground up to the top of the box: capped there
+    VoxelGrid full(glm::ivec3(64, 32, 64));
+    full.fillBelow(40.0f, 1);
+    full.setCaps(CAP_ALL);
+    KeyedMeshes fullMeshes;
+    full.forEachChunk([&](const ChunkKey& key, const Chunk&) { fullMeshes.emplace_back(key, meshChunk(full, key)); });
+    QCOMPARE(countOpenEdges(full, fullMeshes, &triangles, -1.0f), 0);
+    extent(fullMeshes, low, high);
+    QVERIFY(std::abs(high.y - 31.0f - past) < 0.01f);
+    QVERIFY(triangles > 0);
+    // and only the top closed: the sides stay open
+    full.setCaps(CAP_HIGH_Y);
+    fullMeshes.clear();
+    full.forEachChunk([&](const ChunkKey& key, const Chunk&) { fullMeshes.emplace_back(key, meshChunk(full, key)); });
+    extent(fullMeshes, low, high);
+    QVERIFY(std::abs(high.y - 31.0f - past) < 0.01f);
+    QVERIFY(low.y > 0.0f);
+
+    // the level of detail's nodes close the same way: a cut from a corner on hills, nodes of several levels
+    VoxelGrid big(glm::ivec3(256, 64, 256));
+    big.fillHeightField(hills, 2);
+    big.setCaps(CAP_ALL);
+    LodSettings settings;
+    settings.detail = 1.0f;
+    LodCut cut;
+    cut.update(big, glm::vec3(10.0f, 20.0f, 10.0f), glm::vec3(0.5f), settings);
+    openEdges.clear();
+    const int openCut = countOpenEdges(big, meshCut(big, cut), &triangles, -1.0f, &openEdges);
+    // Known limit (2026-10-18): where a closed high face meets a join of coarse nodes one polygon can be missing (six
+    // edges on these hills, at x 252-255, z 127-130); the grid's own chunks are watertight. Every open edge must lie
+    // within four voxels of a closed high face, and there must be only a few.
+    int nearAHighFace = 0;
+    for (const auto& edge : openEdges) {
+        const glm::vec3 high = glm::vec3(big.getVoxelCount() - 1);
+        bool near = false;
+        for (int axis = 0; axis < 3; ++axis) {
+            near = near || (edge.first[axis] >= high[axis] - 4.0f && edge.second[axis] >= high[axis] - 4.0f);
+        }
+        nearAHighFace += near ? 1 : 0;
+    }
+    qDebug() << "the cut on the closed box:" << triangles << "triangles," << openCut << "open edges, all near a closed high face:" << (nearAHighFace == openCut);
+    QCOMPARE(nearAHighFace, openCut);
+    QVERIFY(openCut <= 12);
+    QVERIFY(triangles > 0);
+}
+
+void TerrainTests::topSurfaceFollowsRaisedPillars() {
+    // Pillars raised with a 0.5 m brush, as Caity's test terrain of 2026-10-18, the top surface updated every few
+    // steps as the renderer does: its heights must equal a fresh rebuild's, and every up-facing point of the ground
+    // the sky sees must count as on top by the four columns around it (the notches cut out of her snow).
+    VoxelGrid grid(glm::ivec3(64, 32, 64));
+    grid.fillBelow(16.5f, 1);
+    TopSurface top;
+    top.update(grid);
+    Brush brush;
+    brush.radius = 1.0f;
+    brush.hardness = 0.5f;
+    brush.strength = 0.2f;
+    int steps = 0;
+    for (int pillar = 0; pillar < 6; ++pillar) {
+        const float x = 20.0f + (float)(pillar % 3) * 5.0f + (float)pillar * 0.3f;
+        const float z = 24.0f + (float)(pillar / 3) * 6.0f;
+        for (int i = 0; i < 40; ++i) {
+            brush.center = glm::vec3(x, surfaceHeight(grid, x, z, 8.0f, 31.0f), z);
+            if (sculpt(grid, brush, SculptMode::Raise) > 0) {
+                ++steps;
+            }
+            if (i % 2 == 1) {
+                top.update(grid);
+            }
+        }
+    }
+    top.update(grid);
+    QVERIFY(steps > 100);
+    QCOMPARE(grid.getFinestLevel(), 2);
+
+    TopSurface fresh;
+    fresh.rebuild(grid);
+    int staleColumns = 0;
+    for (int z = 0; z < 64; ++z) {
+        for (int x = 0; x < 64; ++x) {
+            if (std::abs(top.heightAt(glm::ivec2(x, z)) - fresh.heightAt(glm::ivec2(x, z))) > 1.0e-4f) {
+                if (staleColumns < 8) {
+                    qDebug() << "column" << x << z << "top" << top.heightAt(glm::ivec2(x, z)) << "fresh" << fresh.heightAt(glm::ivec2(x, z));
+                }
+                ++staleColumns;
+            }
+        }
+    }
+    QCOMPARE(staleColumns, 0);
+
+    // the ground the sky sees: up-facing mesh points at the top of their column are on top; those under a pillar's
+    // lip or on a wall are not asked
+    int upPoints = 0;
+    int notOnTop = 0;
+    grid.forEachChunk([&](const ChunkKey& key, const Chunk&) {
+        const ChunkMesh mesh = meshChunk(grid, key);
+        for (size_t i = 0; i < mesh.positions.size(); ++i) {
+            if (mesh.normals[i].y < 0.8f) {
+                continue;
+            }
+            const glm::vec3 p = glm::vec3(key.getOrigin()) + mesh.positions[i] * key.getVoxelSize();
+            // the highest ground of its own column is the top there; a point within a voxel of it is the sky's
+            const float ownTop = fresh.heightAt(glm::ivec2((int)std::floor(p.x + 0.5f), (int)std::floor(p.z + 0.5f)));
+            if (p.y < ownTop - 1.0f) {
+                continue;
+            }
+            ++upPoints;
+            if (!top.isOnTop(p)) {
+                if (notOnTop < 8) {
+                    qDebug() << "up-facing point not on top at" << p.x << p.y << p.z << "own column's top" << ownTop;
+                }
+                ++notOnTop;
+            }
+        }
+    });
+    QVERIFY(upPoints > 1000);
+    QCOMPARE(notOnTop, 0);
+}
+
+void TerrainTests::shelteredFloorsUnderALipAreTheSkysGround() {
+    // A pillar whose top widens into a lip (as Raise builds them) shelters the ground at its foot: that ground is the
+    // same ground as the open ground beside it and counts as the sky's (it takes the paint); a cave's floor further
+    // in than SHELTER_REACH_COLUMNS from its mouth does not.
+    VoxelGrid grid(glm::ivec3(64, 32, 64));
+    grid.fillBelow(16.5f, 1);
+    auto fill = [&](const glm::ivec3& low, const glm::ivec3& high, bool ground) {
+        for (int z = low.z; z <= high.z; ++z) {
+            for (int y = low.y; y <= high.y; ++y) {
+                for (int x = low.x; x <= high.x; ++x) {
+                    grid.set(glm::ivec3(x, y, z), ground ? Voxel::ground(2) : Voxel::air());
+                }
+            }
+        }
+    };
+    // the pillar: a stem 2 voxels wide, a cap 8 wide, 2 voxels of air between the cap and the ground around the stem
+    fill(glm::ivec3(30, 17, 30), glm::ivec3(31, 26, 31), true);
+    fill(glm::ivec3(27, 24, 27), glm::ivec3(34, 26, 34), true);
+    // the cave: a roof 3 voxels thick over a floor at the ground's height, open at its mouth on the low x side
+    fill(glm::ivec3(40, 20, 40), glm::ivec3(60, 22, 60), true);
+    TopSurface top;
+    top.rebuild(grid);
+
+    // under the lip beside the stem: a second ground that reaches open ground within three columns
+    QVERIFY(top.heightAt(glm::ivec2(28, 31)) > 26.0f);
+    QVERIFY(std::abs(top.floorAt(glm::ivec2(28, 31)) - 16.5f) < 0.6f);
+    QVERIFY(top.isOnTop(glm::vec3(28.5f, 16.5f, 31.5f)));
+    // the lip's underside, between the floor and the top, is neither
+    QVERIFY(!top.isOnTop(glm::vec3(28.5f, 22.0f, 31.5f)));
+    // open ground beside the pillar, and the pillar's top
+    QVERIFY(top.isOnTop(glm::vec3(25.5f, 16.5f, 31.5f)));
+    QVERIFY(top.isOnTop(glm::vec3(30.5f, 27.0f, 30.5f)));
+    QCOMPARE(top.floorAt(glm::ivec2(25, 31)), NO_GROUND_HEIGHT);
+
+    // the cave: its floor near the mouth is the sky's ground, deep inside it is not
+    QVERIFY(top.heightAt(glm::ivec2(50, 50)) > 22.0f);
+    QVERIFY(std::abs(top.floorAt(glm::ivec2(41, 50)) - 16.5f) < 0.6f);
+    QVERIFY(top.isOnTop(glm::vec3(41.5f, 16.5f, 50.5f)));
+    QCOMPARE(top.floorAt(glm::ivec2(50, 50)), NO_GROUND_HEIGHT);
+    QVERIFY(!top.isOnTop(glm::vec3(50.5f, 16.5f, 50.5f)));
+
+    // the tile carries both: two floats a texel
+    std::vector<float> tile;
+    top.fillTile(glm::ivec2(0, 0), tile);
+    QCOMPARE((int)tile.size(), TopSurface::getTileSize() * TopSurface::getTileSize() * 2);
+    const int i = (31 + PAINT_TILE_APRON) * TopSurface::getTileSize() + (28 + PAINT_TILE_APRON);
+    QVERIFY(tile[i * 2] > 26.0f);
+    QVERIFY(std::abs(tile[i * 2 + 1] - 16.5f) < 0.6f);
+
+    // an edit follows through the incremental update: the cap dug away, the floor is open ground again
+    fill(glm::ivec3(27, 24, 27), glm::ivec3(34, 26, 34), false);
+    top.update(grid);
+    QVERIFY(std::abs(top.heightAt(glm::ivec2(28, 31)) - 16.5f) < 0.6f);
+    QCOMPARE(top.floorAt(glm::ivec2(28, 31)), NO_GROUND_HEIGHT);
+    QVERIFY(top.isOnTop(glm::vec3(28.5f, 16.5f, 31.5f)));
+}
+
+void TerrainTests::writeCleanTestTerrain() {
+    // Writes a terrain file for hand tests (TERRAIN_CLEAN_FILE=<path>): 32 x 16 x 32 m at 0.5 m, flat ground halfway
+    // up, painted snow everywhere over rock voxels, with one of each thing the paint rules are about, at set places
+    // from the box's centre (x to the right, z toward the viewer who looks along -z):
+    //   a pillar with a lip (a mushroom) at (-8 m, -8 m); a terrace 3 m high with vertical walls at x 0..8 m, z -11..-6 m;
+    //   a cave, roof 1.5 m thick over a floor at ground level, open on its west side, at x 0..10 m, z 2..12 m;
+    //   a smooth hill 2 m high at (-8 m, +8 m). Where the paint applies the ground is snow; where it does not, rock.
+    const QByteArray path = qgetenv("TERRAIN_CLEAN_FILE");
+    if (path.isEmpty()) {
+        QSKIP("set TERRAIN_CLEAN_FILE to a path to write the clean test terrain");
+    }
+    VoxelGrid grid(glm::ivec3(64, 32, 64));
+    const float ground = 16.5f;
+    grid.fillHeightField([&](int x, int z) {
+        // the hill: a smooth bump 4 voxels (2 m) high around voxel (16, 48)
+        const float dx = (float)x - 16.0f;
+        const float dz = (float)z - 48.0f;
+        const float r = std::sqrt(dx * dx + dz * dz);
+        const float hill = r < 8.0f ? 4.0f * 0.5f * (1.0f + std::cos(r / 8.0f * 3.14159265f)) : 0.0f;
+        return ground + hill;
+    }, 2);
+    auto fill = [&](const glm::ivec3& low, const glm::ivec3& high, bool isGround) {
+        for (int z = low.z; z <= high.z; ++z) {
+            for (int y = low.y; y <= high.y; ++y) {
+                for (int x = low.x; x <= high.x; ++x) {
+                    grid.set(glm::ivec3(x, y, z), isGround ? Voxel::ground(2) : Voxel::air());
+                }
+            }
+        }
+    };
+    // the pillar with a lip: stem 2 voxels wide at (16, 16), 10 voxels tall; cap 8 wide, 3 thick, 2 voxels of air under its lip
+    fill(glm::ivec3(15, 17, 15), glm::ivec3(16, 26, 16), true);
+    fill(glm::ivec3(12, 24, 12), glm::ivec3(19, 26, 19), true);
+    // the terrace: x 32..47, z 10..19, 6 voxels (3 m) up, vertical walls
+    fill(glm::ivec3(32, 17, 10), glm::ivec3(47, 22, 19), true);
+    // the cave: a roof 3 voxels thick at y 20..22 over x 32..51, z 36..55; its floor is the ground; open on the low x side
+    fill(glm::ivec3(32, 20, 36), glm::ivec3(51, 22, 55), true);
+    // snow painted over everything
+    PaintMap paint(glm::ivec2(64, 64), 4);
+    for (int j = 0; j < paint.getSize().y; ++j) {
+        for (int i = 0; i < paint.getSize().x; ++i) {
+            paint.at(glm::ivec2(i, j))[7] = 255;
+        }
+    }
+    paint.markAllColumnsDirty();
+    if (qEnvironmentVariableIsSet("TERRAIN_CLEAN_CLOSED")) {
+        grid.setCaps(CAP_ALL);   // the same terrain with its box closed
+    }
+    const Bytes bytes = saveTerrain(grid, &paint, nullptr);
+    QFile out(QString::fromUtf8(path));
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    QCOMPARE((int)out.write((const char*)bytes.data(), (qint64)bytes.size()), (int)bytes.size());
+    qDebug() << "wrote" << bytes.size() << "bytes to" << path;
+}
+
+void TerrainTests::fileRoundTripKeepsTheClosedFaces() {
+    VoxelGrid grid(glm::ivec3(64, 32, 64));
+    grid.fillBelow(16.5f, 1);
+    // no closed face: the file stays at the older layout
+    Bytes plain = saveTerrain(grid, nullptr, nullptr);
+    QVERIFY(plain.size() > 8);
+    QVERIFY(plain[4] < 6);
+    grid.setCaps(CAP_HIGH_Y | CAP_LOW_X);
+    Bytes bytes = saveTerrain(grid, nullptr, nullptr);
+    QCOMPARE((int)bytes[4], 6);
+    VoxelGrid back;
+    PaintMap paint;
+    LayerStack layers;
+    std::string error;
+    QVERIFY2(loadTerrain(bytes.data(), bytes.size(), back, &paint, &layers, &error), error.c_str());
+    QCOMPARE((int)back.getCaps(), (int)(CAP_HIGH_Y | CAP_LOW_X));
+    QVERIFY(layers.isEmpty());
+    QCOMPARE(back.getVoxelCount(), grid.getVoxelCount());
+    QVERIFY(back.get(glm::ivec3(10, 10, 10)).isGround());
+    QVERIFY(!back.get(glm::ivec3(10, 20, 10)).isGround());
+    // with layers and the paint map as well
+    PaintMap map(glm::ivec2(64, 64), 2);
+    PaintBrush brush;
+    brush.center = glm::vec2(20.0f, 20.0f);
+    brush.radius = 5.0f;
+    brush.layer = 7;
+    QVERIFY(terrain::paint(map, brush, false) > 0);
+    LayerStack stack = LayerStack::defaults();
+    bytes = saveTerrain(grid, &map, &stack);
+    QCOMPARE((int)bytes[4], 6);
+    VoxelGrid back2;
+    PaintMap paint2;
+    LayerStack layers2;
+    QVERIFY2(loadTerrain(bytes.data(), bytes.size(), back2, &paint2, &layers2, &error), error.c_str());
+    QCOMPARE((int)back2.getCaps(), (int)(CAP_HIGH_Y | CAP_LOW_X));
+    QVERIFY(layers2 == stack);
+    QVERIFY(paint2.isPainted());
+}
+
 void TerrainTests::levelOfDetailAsksAgainForAStalledNodeAndThenShowsWithoutIt() {
     // A node of the cut wanted whose mesh never comes (lost, say) holds the cut shown back: after the nudge time
     // its mesh is asked for again (a grid chunk is marked dirty for the terrain's own mesher), and after the force
@@ -2492,8 +3377,8 @@ void TerrainTests::topSurfaceIsTheGroundTheSkySees() {
     const int size = TopSurface::getTileSize();
     std::vector<float> tile;
     top.fillTile(glm::ivec2(1, 1), tile);
-    QCOMPARE((int)tile.size(), size * size);
-    QCOMPARE(tile[(size_t)PAINT_TILE_APRON * size + PAINT_TILE_APRON], top.heightAt(glm::ivec2(32, 32)));
+    QCOMPARE((int)tile.size(), size * size * 2);   // the top and the sheltered floor, a texel
+    QCOMPARE(tile[((size_t)PAINT_TILE_APRON * size + PAINT_TILE_APRON) * 2], top.heightAt(glm::ivec2(32, 32)));
     QCOMPARE(tile[0], top.heightAt(glm::ivec2(32 - PAINT_TILE_APRON, 32 - PAINT_TILE_APRON)));
     top.fillTile(glm::ivec2(0, 0), tile);
     QCOMPARE(tile[0], top.heightAt(glm::ivec2(0, 0)));   // beyond the grid: the edge column's

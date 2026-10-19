@@ -151,6 +151,28 @@ namespace {
         bool _skipFirstRedo { true };
     };
 
+    // Which faces of a terrain's box are closed: applied by the push itself (its first redo), unlike the steps above,
+    // which record a change already made.
+    class TerrainCapsCommand : public QUndoCommand {
+    public:
+        TerrainCapsCommand(EditorUndo* undo, const QString& text, const QUuid& id, uint8_t before, uint8_t after) :
+            QUndoCommand(text), _undo(undo), _id(id), _before(before), _after(after) {
+        }
+        void redo() override {
+            qCDebug(entities) << "editor redo" << text() << "closed faces" << _after;
+            _undo->applyTerrainCaps(_id, _after);
+        }
+        void undo() override {
+            qCDebug(entities) << "editor undo" << text() << "closed faces" << _before;
+            _undo->applyTerrainCaps(_id, _before);
+        }
+    private:
+        EditorUndo* _undo;
+        QUuid _id;
+        uint8_t _before;
+        uint8_t _after;
+    };
+
     // A terrain resampled to another voxel count, with the whole grid and paint map as they were.
     class TerrainResampleCommand : public QUndoCommand {
     public:
@@ -526,6 +548,27 @@ bool EditorUndo::applyTerrainLayers(const QUuid& id, const terrain::LayerStack& 
         return false;
     }
     terrain->setLayers(layers);
+    emit terrainEdited(id);
+    return true;
+}
+
+void EditorUndo::pushTerrainCaps(const QString& text, const QUuid& id, uint8_t before, uint8_t after) {
+    if (before == after) {
+        return;
+    }
+    _stack.push(new TerrainCapsCommand(this, text, id, before, after));
+}
+
+bool EditorUndo::applyTerrainCaps(const QUuid& id, uint8_t caps) {
+    auto tree = entityTree();
+    if (!tree) {
+        return false;
+    }
+    auto terrain = std::dynamic_pointer_cast<RenderableTerrainEntityItem>(tree->findEntityByID(resolve(id)));
+    if (!terrain) {
+        return false;
+    }
+    terrain->setCaps(caps);
     emit terrainEdited(id);
     return true;
 }

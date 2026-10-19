@@ -1199,6 +1199,7 @@ namespace {
         range(add(spec("voxelSize", "Voxel Size", K::Float, "terrain")), 0.05, 16, 0.05, 2, "m");
         add(spec("terrainURL", "Terrain File", K::Url, "terrain"));
         add(spec("terrainVersion", "Version", K::Int, "terrain")).readOnly = true;
+        add(spec("terrainClosedBox", "Closed Box", K::TerrainCaps, "terrain"));
         add(spec("terrainLayers", "Layers", K::TerrainLayers, "terrain"));
 
         // particles

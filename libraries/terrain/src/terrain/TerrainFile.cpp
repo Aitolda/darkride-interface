@@ -23,6 +23,7 @@ const uint32_t VERSION_PAINT = 2;         // the chunks, then the paint map
 const uint32_t VERSION_LEVELS = 3;        // chunks with levels, then the paint map
 const uint32_t VERSION_LAYERS = 4;        // as 3, the map's bytes now coverages, then the layer stack
 const uint32_t VERSION_MAPS = 5;          // as 4, each layer with its normal, roughness, occlusion and height maps
+const uint32_t VERSION_CAPS = 6;          // as 5, then which faces of the box are closed (VoxelGrid::getCaps), written only when any is
 const uint8_t LAYER_FLAG_USE_NORMAL = 1;  // the layer's flags byte, version 5 on
 const uint8_t KIND_UNIFORM = 0;
 const uint8_t KIND_DENSE = 1;
@@ -167,8 +168,12 @@ Bytes terrain::saveTerrain(const VoxelGrid& grid, const PaintMap* paint, const L
     const bool withLayers = layers && !layers->isEmpty() && layers->isValid();
     const bool withMaps = withLayers && std::any_of(layers->layers.begin(), layers->layers.end(),
                                                     [](const Layer& layer) { return layer.hasMaps(); });
-    const bool withLevels = withLayers || grid.getFinestLevel() > 0;
-    const uint32_t version = withMaps ? VERSION_MAPS : (withLayers ? VERSION_LAYERS : (withLevels ? VERSION_LEVELS : (withPaint ? VERSION_PAINT : VERSION_CHUNKS)));
+    const bool withCaps = grid.getCaps() != CAP_NONE;
+    const uint32_t version = withCaps ? VERSION_CAPS : (withMaps ? VERSION_MAPS : (withLayers ? VERSION_LAYERS
+                           : (withLayers || grid.getFinestLevel() > 0 ? VERSION_LEVELS : (withPaint ? VERSION_PAINT : VERSION_CHUNKS))));
+    // what the version's layout carries, whether or not there is anything to put in it
+    const bool withLevels = version >= VERSION_LEVELS;
+    const bool mapsInFile = version >= VERSION_MAPS;
     Writer out;
     out.raw((const uint8_t*)MAGIC, 4);
     out.u32(version);
@@ -232,13 +237,15 @@ Bytes terrain::saveTerrain(const VoxelGrid& grid, const PaintMap* paint, const L
         out.u32(0);
     }
 
-    if (withLayers) {
-        out.u8((uint8_t)layers->layers.size());
-        for (const Layer& layer : layers->layers) {
+    if (version >= VERSION_LAYERS) {
+        const std::vector<Layer> none;
+        const std::vector<Layer>& list = withLayers ? layers->layers : none;   // the layout has the block; it may be empty
+        out.u8((uint8_t)list.size());
+        for (const Layer& layer : list) {
             out.u8(layer.slot);
             out.u8((uint8_t)layer.blend);
             out.u8(layer.visible ? 1 : 0);
-            out.u8(withMaps && layer.useNormal ? LAYER_FLAG_USE_NORMAL : 0);
+            out.u8(mapsInFile && layer.useNormal ? LAYER_FLAG_USE_NORMAL : 0);
             out.f32(layer.tiling);
             out.f32(layer.offset.x);
             out.f32(layer.offset.y);
@@ -252,13 +259,16 @@ Bytes terrain::saveTerrain(const VoxelGrid& grid, const PaintMap* paint, const L
             out.f32(layer.tint.b);
             out.text(layer.name);
             out.text(layer.materialURL);
-            if (withMaps) {
+            if (mapsInFile) {
                 out.text(layer.normalURL);
                 out.text(layer.roughnessURL);
                 out.text(layer.occlusionURL);
                 out.text(layer.heightURL);
             }
         }
+    }
+    if (version >= VERSION_CAPS) {
+        out.u8(grid.getCaps());
     }
     return out.take();
 }
@@ -276,7 +286,7 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, Pai
         return fail(error, "not a terrain file", grid, paint);
     }
     const uint32_t version = in.u32();
-    if (version < VERSION_CHUNKS || version > VERSION_MAPS) {
+    if (version < VERSION_CHUNKS || version > VERSION_CAPS) {
         return fail(error, "terrain file version " + std::to_string(version) + " is not supported", grid, paint);
     }
     glm::ivec3 voxelCount;
@@ -435,6 +445,13 @@ bool terrain::loadTerrain(const uint8_t* data, size_t size, VoxelGrid& grid, Pai
         if (layers) {
             *layers = std::move(stack);
         }
+    }
+    if (version >= VERSION_CAPS) {
+        const uint8_t caps = in.u8();
+        if (!in.ok()) {
+            return fail(error, "terrain file is cut short at the closed faces", grid, paint);
+        }
+        grid.setCaps(caps);
     }
     return true;
 }
