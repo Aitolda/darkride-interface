@@ -30,6 +30,31 @@ function settingsGroupAnchor(base, html_id) {
 $(document).ready(function(){
   var url = location.protocol + '//' + location.host+location.pathname;
 
+  // the light or dark look, from the top bar: Auto (the computer's own setting), Light or Dark
+  function showThemeChoice() {
+    var mode = DarkrideTheme.mode();
+    $('.dr-theme-toggle-text').text(" " + DarkrideTheme.NAMES[mode]);
+    $('#dr-theme-toggle').attr('title', "Look: " + DarkrideTheme.NAMES[mode] +
+      (mode === "auto" ? " (as this computer is set)" : "") + ". Click to change.");
+  }
+  showThemeChoice();
+  $('body').on('click', '#dr-theme-toggle', function() {
+    DarkrideTheme.cycle();
+    showThemeChoice();
+    $(this).blur();
+  });
+  if (window.matchMedia) {
+    var systemLook = window.matchMedia("(prefers-color-scheme: light)");
+    var followSystem = function() {
+      DarkrideTheme.apply();
+    };
+    if (systemLook.addEventListener) {
+      systemLook.addEventListener("change", followSystem);
+    } else if (systemLook.addListener) {
+      systemLook.addListener(followSystem);
+    }
+  }
+
   // on a narrow screen the sidebar slides in from the menu button, and goes again on a tap outside it or on a link
   $('body').on('click', '#dr-menu-toggle', function() {
     $('body').toggleClass('dr-menu-open');

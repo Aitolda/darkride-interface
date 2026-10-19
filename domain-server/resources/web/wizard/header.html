@@ -4,6 +4,19 @@
     <meta charset="utf-8">
     <title>Set up your Darkride world</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+      // the light or dark look, before anything is drawn: the choice from the top bar, or (Auto) the computer's own
+      (function() {
+        var mode = null;
+        try {
+          mode = localStorage.getItem("darkride.theme");
+        } catch (e) {
+        }
+        var light = mode === "light" ||
+          (mode !== "dark" && !!window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches);
+        document.documentElement.setAttribute("data-theme", light ? "light" : "dark");
+      })();
+    </script>
 
     <link href="/css/bootstrap.min.css" rel="stylesheet" media="screen">
     <link href="/css/style.css" rel="stylesheet" media="screen">
@@ -22,6 +35,9 @@
         <span class="dr-brand-text">Darkride <span class="dr-brand-sub step-info">Set up your world</span></span>
       </span>
       <div class="dr-topbar-actions">
+        <button type="button" class="btn btn-default dr-theme-toggle" id="dr-theme-toggle" title="Light or dark look">
+          <span class="glyphicon glyphicon-adjust"></span><span class="hidden-xs dr-theme-toggle-text"> Auto</span>
+        </button>
         <button id="skip-wizard-button" type="button" class="btn btn-default" style="display:none;">Skip setup</button>
       </div>
     </header>

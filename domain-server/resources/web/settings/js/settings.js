@@ -1238,6 +1238,10 @@ $(document).ready(function(){
     $('#change-admin-sign-in').on('click', function() {
       showAdminSignInDialog(username, signInOn && passwordSet);
     });
+    // the overview's reminder links here to set one up
+    if (qs["action"] === "sign-in") {
+      showAdminSignInDialog(username, signInOn && passwordSet);
+    }
     $('#remove-admin-password').on('click', function() {
       swalAreYouSure(
         "Without a sign-in, anyone who can open these pages can change your world's settings and content.",

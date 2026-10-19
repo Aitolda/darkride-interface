@@ -1,20 +1,40 @@
 <!--#include virtual="header.html"-->
-<div id="stats-lead">
-  <h1 class="dr-page-title">Details</h1>
-  <p class="dr-page-intro" id="stats-intro">
-    Live numbers from this server, refreshed every second. Click a number to see it on a graph as it changes.
-    <a href="/">Back to the overview</a>
-  </p>
+<a class="dr-back-link" href="/"><span class="glyphicon glyphicon-chevron-left"></span> Overview</a>
+
+<div class="dr-detail-head" id="stats-lead">
+  <span class="dr-dot dr-dot-waiting" id="stats-dot"></span>
+  <div class="dr-detail-head-text">
+    <h1 class="dr-page-title" id="stats-title">Details</h1>
+    <p class="dr-page-intro" id="stats-about">Loading&hellip;</p>
+  </div>
+  <div class="dr-detail-head-actions">
+    <button type="button" class="btn btn-default" id="stats-restart" style="display: none;">
+      <span class="glyphicon glyphicon-refresh"></span> Restart
+    </button>
+  </div>
 </div>
-<div class="panel panel-default">
-  <div class="panel-body" id="stats-container"></div>
+
+<dl class="dr-facts dr-detail-facts" id="stats-facts"></dl>
+
+<div class="alert alert-warning" id="stats-stale" style="display: none;">
+  This service isn't answering. It may be restarting: these numbers are from the last time it did.
 </div>
+
+<h2 class="dr-section-title">At a glance</h2>
+<div class="dr-status-cards" id="stats-highlights"></div>
+
+<div id="stats-connections"></div>
+
+<h2 class="dr-section-title">All the numbers</h2>
+<p class="help-block dr-section-help">
+  Everything this service reports, refreshed every second. Click a number to watch it on a graph.
+</p>
+<div id="stats-container"></div>
+
 <!--#include virtual="footer.html"-->
 <script src='/js/query-string.js'></script>
-<script src='js/stats.js'></script>
-<script src='js/json.human.js'></script>
-<script src='js/highcharts-custom.js'></script>
 <script src='/js/underscore-min.js'></script>
-<script src='/js/underscore-keypath.min.js'></script>
 <script src='/js/bootbox.min.js'></script>
+<script src='js/highcharts-custom.js'></script>
+<script src='js/stats.js'></script>
 <!--#include virtual="page-end.html"-->

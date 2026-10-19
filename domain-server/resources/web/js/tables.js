@@ -5,44 +5,15 @@ $(document).ready(function(){
   var servicesTemplate = _.template($('#services-template').html());
   var peopleTemplate = _.template($('#people-template').html());
 
-  // the servers a world runs, in the order they're shown, with what each looks after
-  var SERVICES = [
-    { type: "entity-server", name: "World objects", about: "Keeps everything in your world and saves it." },
-    { type: "avatar-mixer", name: "Avatars", about: "Shares how everyone looks and moves." },
-    { type: "audio-mixer", name: "Voice and sound", about: "Mixes voices and sounds so everyone hears what's near them." },
-    { type: "asset-server", name: "File storage", about: "Holds the models, images and sounds uploaded to your world." },
-    { type: "messages-mixer", name: "Messages", about: "Passes messages between visitors and scripts." },
-    { type: "entity-script-server", name: "Server scripts", about: "Runs the scripts attached to objects in your world." },
-    { type: "physics-server", name: "Physics", about: "Moves vehicles and other shared physics." }
-  ];
-
-  // a length of time in words: 45 seconds, 12 minutes, 3 hours, 2 days
-  function durationText(seconds) {
-    function plural(n, unit) {
-      return n + " " + unit + (n === 1 ? "" : "s");
-    }
-    seconds = Math.floor(seconds);
-    if (seconds < 60) {
-      return plural(seconds, "second");
-    }
-    var minutes = Math.floor(seconds / 60);
-    if (minutes < 60) {
-      return plural(minutes, "minute");
-    }
-    var hours = Math.floor(minutes / 60);
-    if (hours < 24) {
-      return plural(hours, "hour") + (minutes % 60 ? ", " + plural(minutes % 60, "minute") : "");
-    }
-    var days = Math.floor(hours / 24);
-    return plural(days, "day") + (hours % 24 ? ", " + plural(hours % 24, "hour") : "");
-  }
+  var SERVICES = Services.list;
+  var durationText = Services.durationText;
 
   function showOverview(nodes, queued) {
     var queuedTypes = _.map(_.values(queued), function(assignment) { return assignment.type; });
     var services = [];
     _.each(SERVICES, function(service) {
       var node = _.find(nodes, function(node) { return node.type === service.type; });
-      // a world that doesn't run a server (none connected or waiting) leaves it out
+      // a world that doesn't run a service (none connected or waiting) leaves it out
       if (!node && queuedTypes.indexOf(service.type) === -1) {
         return;
       }
@@ -61,7 +32,7 @@ $(document).ready(function(){
     $('#dr-people-list').html(peopleTemplate({ people: people }));
 
     $('#dr-services-running').text(running + " of " + services.length);
-    $('#dr-services-hint').text(services.length === 0 ? "Waiting for the servers to start" :
+    $('#dr-services-hint').text(services.length === 0 ? "Waiting for the services to start" :
       running === services.length ? "Everything is running" : "Some are still starting");
     $('#dr-people-count').text(people.length);
 
@@ -135,6 +106,43 @@ $(document).ready(function(){
     });
   }
 
+  // a reminder, not a requirement: when nothing locks these pages (no password, and no sign-in with a Darkride
+  // account), a banner says so. "Remind me later" hides it in this browser for a week.
+  var SIGN_IN_REMINDER_KEY = "darkride.signInReminderHiddenUntil";
+  var SIGN_IN_REMINDER_DAYS = 7;
+
+  function signInReminderHidden() {
+    try {
+      return Number(localStorage.getItem(SIGN_IN_REMINDER_KEY) || 0) > Date.now();
+    } catch (e) {
+      return false;
+    }
+  }
+
+  $.getJSON("/settings.json", function(data) {
+    var values = data.values || {};
+    var security = values.security || {};
+    var lockedByAccount = !!(values.oauth && values.oauth.enable);
+    if (data.http_password_set === true || lockedByAccount || signInReminderHidden()) {
+      return;
+    }
+    if (security.http_username) {
+      $('#dr-sign-in-banner-title').text("These admin pages have a username but no password");
+      $('#dr-sign-in-banner-body').text("Anyone who knows the username can change your world's settings, replace its " +
+        "content or restart it. Add a password to lock them properly.");
+      $('#dr-sign-in-banner .btn-primary').text("Add a password");
+    }
+    $('#dr-sign-in-banner').show();
+  });
+
+  $('#dr-sign-in-banner-later').on('click', function() {
+    try {
+      localStorage.setItem(SIGN_IN_REMINDER_KEY, String(Date.now() + SIGN_IN_REMINDER_DAYS * 24 * 60 * 60 * 1000));
+    } catch (e) {
+    }
+    $('#dr-sign-in-banner').slideUp(200);
+  });
+
   // do the first GET on page load
   getNodesAndAssignments();
   // grab the new assignments JSON every two seconds
@@ -151,7 +159,7 @@ $(document).ready(function(){
     });
   }
 
-  // a server that's disconnected starts again by itself
+  // a service that's disconnected starts again by itself
   $(document.body).on('click', '.dr-restart-node', function(){
     var uuid = $(this).data('uuid');
     var name = $(this).data('name');
@@ -180,8 +188,8 @@ $(document).ready(function(){
 
   $(document.body).on('click', '#kill-all-btn', function() {
     swal({
-      title: "Restart all servers?",
-      text: "Everyone in your world is disconnected for a moment while the servers start again.",
+      title: "Restart all services?",
+      text: "Everyone in your world is disconnected for a moment while the services start again.",
       type: "warning",
       showCancelButton: true,
       confirmButtonText: "Restart all",

@@ -38,6 +38,43 @@
   --dr-topbar-height: 60px;
   --dr-sidebar-width: 250px;
   --dr-font: "Roboto", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --dr-border-strong: #485181;              /* a button's border on hover */
+  --dr-border-soft: rgba(52, 60, 96, 0.6);  /* between rows of numbers */
+  --dr-tint-sunken: rgba(23, 27, 45, 0.55); /* the folded-away settings, a table's input row */
+  --dr-tint-stripe: rgba(51, 58, 90, 0.35); /* every other table row */
+  --dr-shadow: rgba(0, 0, 0, 0.35);
+  color-scheme: dark;
+}
+
+/* The light look, for those who'd rather: the same layout and accents on pale surfaces, with the accents darkened
+   enough to read on white. The page's <head> sets data-theme from the choice in the top bar (Auto follows the
+   computer's own light or dark setting). */
+:root[data-theme="light"] {
+  --dr-bg-darker: #ffffff;
+  --dr-bg: #f3f5fa;
+  --dr-surface: #ffffff;
+  --dr-surface-raised: #eef1f7;
+  --dr-selection: #e3e8f4;
+  --dr-border: #d9deea;
+  --dr-input: #ffffff;
+  --dr-text: #1c2136;
+  --dr-text-muted: #5b6382;
+  --dr-text-faint: #8a91ab;
+  --dr-cyan: #0098e0;
+  --dr-cyan-light: #0080c0;
+  --dr-cyan-dark: #006fa8;
+  --dr-violet: #8f3aea;
+  --dr-violet-light: #7b2fd1;
+  --dr-red: #d93636;
+  --dr-red-dark: #b92b2b;
+  --dr-green: #16a34a;
+  --dr-amber: #b45309;
+  --dr-border-strong: #b9c1d6;
+  --dr-border-soft: #e6e9f2;
+  --dr-tint-sunken: #f6f8fc;
+  --dr-tint-stripe: #f6f8fc;
+  --dr-shadow: rgba(28, 33, 54, 0.12);
+  color-scheme: light;
 }
 
 /* ---------- the page ---------- */
@@ -109,7 +146,7 @@ body.dr-app {
   padding: 0 18px;
   background: var(--dr-bg-darker);
   border-bottom: 1px solid var(--dr-border);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 2px 12px var(--dr-shadow);
 }
 
 .dr-brand {
@@ -370,7 +407,7 @@ body.dr-app {
   background: var(--dr-surface);
   border: 1px solid var(--dr-border);
   border-radius: var(--dr-radius);
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 4px 18px var(--dr-shadow);
   margin-bottom: 22px;
   overflow: visible;
 }
@@ -558,7 +595,7 @@ body.dr-app {
 .dr-app .advanced-settings-section {
   margin-top: 18px;
   padding: 18px 18px 2px 18px;
-  background: rgba(23, 27, 45, 0.55);
+  background: var(--dr-tint-sunken);
   border: 1px dashed var(--dr-border);
   border-radius: var(--dr-radius-small);
 }
@@ -593,7 +630,7 @@ body.dr-app {
 .dr-app .open > .dropdown-toggle.btn-default {
   background: var(--dr-selection);
   color: var(--dr-text);
-  border-color: #485181;
+  border-color: var(--dr-border-strong);
 }
 
 .dr-app .btn-primary,
@@ -707,7 +744,7 @@ body.dr-app {
 
 .dr-app .table-striped > tbody > tr:nth-of-type(odd),
 .dr-app .table-hover > tbody > tr:hover {
-  background: rgba(51, 58, 90, 0.35);
+  background: var(--dr-tint-stripe);
 }
 
 .dr-app .table .value-category:not(.inputs) {
@@ -719,7 +756,7 @@ body.dr-app {
 }
 
 .dr-app .table tr.inputs td {
-  background: rgba(23, 27, 45, 0.6);
+  background: var(--dr-tint-sunken);
 }
 
 .dr-app .table caption {
@@ -1079,25 +1116,6 @@ body.dr-app {
   background: var(--dr-amber);
 }
 
-/* the stats page's JSON viewer */
-.dr-app .jh-root, .dr-app .jh-type-object, .dr-app .jh-type-array {
-  background: transparent !important;
-  color: var(--dr-text);
-}
-
-.dr-app .jh-key, .dr-app .jh-root th {
-  color: var(--dr-text-muted) !important;
-  background: transparent !important;
-}
-
-.dr-app .jh-root td, .dr-app .jh-root th {
-  border-color: var(--dr-border) !important;
-}
-
-.dr-app .graphable-stat {
-  color: var(--dr-cyan-light);
-}
-
 /* the spinner sweetalert shows while it works */
 .dr-app .spinner > div,
 .sweet-alert .spinner > div {
@@ -1265,46 +1283,6 @@ body.dr-app {
   display: block;
 }
 
-/* the stats page's JSON tables, dark all through */
-.dr-app .jh-type-object tr:nth-child(odd),
-.dr-app .jh-type-array tr:nth-child(odd) {
-  background-color: rgba(255, 255, 255, 0.03) !important;
-}
-
-.dr-app .jh-type-object tr:nth-child(even),
-.dr-app .jh-type-array tr:nth-child(even) {
-  background-color: transparent !important;
-}
-
-.dr-app .jh-root,
-.dr-app .jh-type-object tr,
-.dr-app .jh-type-array tr {
-  border-color: var(--dr-border) !important;
-}
-
-.dr-app .jh-type-object tr:hover,
-.dr-app .jh-type-array tr:hover {
-  border-color: var(--dr-cyan) !important;
-}
-
-.dr-app th.jh-key.stale {
-  color: var(--dr-red) !important;
-}
-
-.dr-app .jh-value {
-  border-left: 1px solid var(--dr-border);
-}
-
-.dr-app .jh-type-string,
-.dr-app .jh-object-key,
-.dr-app .jh-array-key {
-  color: var(--dr-text-muted);
-}
-
-.dr-app #stats-container {
-  overflow-x: auto;
-}
-
 /* sweetalert's buttons side by side, Cancel first */
 .sweet-alert .sa-button-container {
   display: flex;
@@ -1318,4 +1296,297 @@ body.dr-app {
 .sweet-alert .sa-button-container button,
 .sweet-alert .sa-confirm-button-container {
   margin: 0 !important;
+}
+
+/* a reminder across the top of the overview (no sign-in on these pages) */
+.dr-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 22px;
+  padding: 16px 20px;
+  border-radius: var(--dr-radius);
+  border: 1px solid rgba(255, 184, 108, 0.45);
+  background: linear-gradient(90deg, rgba(255, 184, 108, 0.14), rgba(165, 72, 255, 0.08));
+}
+
+.dr-banner-icon {
+  flex: none;
+  font-size: 22px;
+  color: var(--dr-amber);
+}
+
+.dr-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dr-banner-text strong {
+  font-size: 15.5px;
+}
+
+.dr-banner-text p {
+  margin: 3px 0 0 0;
+  color: var(--dr-text-muted);
+}
+
+.dr-banner-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 700px) {
+  .dr-banner {
+    flex-wrap: wrap;
+  }
+
+  .dr-banner-actions {
+    width: 100%;
+  }
+}
+
+/* ---------- a service's details (the stats page) ---------- */
+
+.dr-back-link {
+  display: inline-block;
+  margin-bottom: 12px;
+  color: var(--dr-text-muted);
+  font-size: 13.5px;
+}
+
+.dr-back-link:hover {
+  color: var(--dr-cyan);
+  text-decoration: none;
+}
+
+.dr-detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.dr-detail-head > .dr-dot {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 12px 0 0 0;
+}
+
+.dr-detail-head-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dr-detail-head-text .dr-page-intro {
+  margin-bottom: 14px;
+}
+
+.dr-detail-head-actions {
+  flex: none;
+  padding-top: 4px;
+}
+
+.dr-detail-facts {
+  margin: 0 0 22px 0;
+  padding: 16px 20px;
+  background: var(--dr-surface);
+  border: 1px solid var(--dr-border);
+  border-radius: var(--dr-radius);
+}
+
+.dr-section-title {
+  margin: 8px 0 12px 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.dr-section-help {
+  margin: -6px 0 12px 0;
+}
+
+.dr-status-card .dr-status-value .dr-stat-value {
+  color: inherit;
+}
+
+/* a number that opens a graph */
+.dr-app .graphable-stat {
+  color: var(--dr-cyan-light);
+  cursor: pointer;
+  border-bottom: 1px dotted rgba(0, 175, 255, 0.45);
+}
+
+.dr-app .graphable-stat:hover {
+  color: var(--dr-cyan);
+  border-bottom-style: solid;
+}
+
+.dr-status-card .graphable-stat {
+  border-bottom: none;
+}
+
+/* the sections of numbers */
+.dr-stat-section {
+  margin-bottom: 12px;
+  background: var(--dr-surface);
+  border: 1px solid var(--dr-border);
+  border-radius: var(--dr-radius);
+}
+
+.dr-stat-section > summary,
+.dr-stat-group > summary,
+.dr-connection > details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.dr-stat-section > summary::-webkit-details-marker,
+.dr-stat-group > summary::-webkit-details-marker,
+.dr-connection > details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.dr-stat-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+}
+
+.dr-stat-section > summary::before,
+.dr-stat-group > summary::before,
+.dr-connection > details > summary::before {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 5px 0 5px 7px;
+  border-color: transparent transparent transparent var(--dr-text-muted);
+  transition: transform 0.15s;
+}
+
+.dr-stat-section[open] > summary::before,
+.dr-stat-group[open] > summary::before,
+.dr-connection > details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.dr-stat-section-title {
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.dr-stat-count {
+  color: var(--dr-text-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.dr-stat-section-body {
+  padding: 0 20px 16px 20px;
+  border-top: 1px solid var(--dr-border);
+}
+
+.dr-stat-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0 28px;
+  margin: 0;
+}
+
+.dr-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--dr-border-soft);
+}
+
+.dr-stat-row dt {
+  font-weight: 400;
+  color: var(--dr-text-muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dr-stat-row dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.dr-stat-subgroup h4 {
+  margin: 18px 0 2px 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--dr-cyan);
+}
+
+.dr-stat-subgroup .dr-stat-subgroup {
+  padding-left: 14px;
+  border-left: 2px solid var(--dr-border);
+}
+
+.dr-stat-group {
+  margin-top: 12px;
+}
+
+.dr-stat-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  color: var(--dr-text);
+}
+
+/* the connections, each opening to its numbers */
+.dr-connection {
+  border-bottom: 1px solid var(--dr-border);
+}
+
+.dr-connection:last-child {
+  border-bottom: none;
+}
+
+.dr-connection > details > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 4px;
+}
+
+.dr-connection .dr-dot {
+  margin: 0;
+}
+
+.dr-connection-name {
+  flex: 1 1 auto;
+  font-weight: 500;
+  min-width: 0;
+}
+
+.dr-connection-numbers {
+  display: flex;
+  gap: 18px;
+  color: var(--dr-text-muted);
+  font-size: 13px;
+}
+
+.dr-connection-body {
+  padding: 0 4px 14px 25px;
+}
+
+/* the graph of a number */
+.highchart-modal .modal-dialog {
+  width: min(860px, calc(100vw - 32px));
+}
+
+#highchart-container {
+  height: 340px;
 }

@@ -1,13 +1,28 @@
 <!--#include file="header.html"-->
 <h1 class="dr-page-title">Overview</h1>
 <p class="dr-page-intro">
-  How your world server is doing right now. Your world is run by a few small servers, each looking after one thing.
+  How your world server is doing right now. It runs a few services, each looking after one part of your world.
   They start by themselves, and this page refreshes every couple of seconds.
 </p>
 
+<div class="dr-banner" id="dr-sign-in-banner" role="alert" style="display: none;">
+  <span class="glyphicon glyphicon-lock dr-banner-icon"></span>
+  <div class="dr-banner-text">
+    <strong id="dr-sign-in-banner-title">These admin pages aren't locked</strong>
+    <p id="dr-sign-in-banner-body">
+      Anyone who can reach this page can change your world's settings, replace its content or restart it. Setting up a
+      sign-in takes a minute, and then your browser asks for it before showing these pages.
+    </p>
+  </div>
+  <div class="dr-banner-actions">
+    <a class="btn btn-primary" href="/settings/?action=sign-in#security">Set up a sign-in</a>
+    <button type="button" class="btn btn-link" id="dr-sign-in-banner-later">Remind me later</button>
+  </div>
+</div>
+
 <div class="dr-status-cards">
   <div class="dr-status-card">
-    <div class="dr-status-label">Servers running</div>
+    <div class="dr-status-label">Services running</div>
     <div class="dr-status-value" id="dr-services-running">&ndash;</div>
     <div class="dr-status-hint" id="dr-services-hint">Checking&hellip;</div>
   </div>
@@ -19,16 +34,16 @@
   <div class="dr-status-card">
     <div class="dr-status-label">Running for</div>
     <div class="dr-status-value" id="dr-uptime">&ndash;</div>
-    <div class="dr-status-hint">Since the longest-running server started</div>
+    <div class="dr-status-hint">Since the longest-running service started</div>
   </div>
 </div>
 
 <div class="panel panel-default">
   <div class="panel-heading">
-    <h3 class="panel-title">Servers</h3>
+    <h3 class="panel-title">Services</h3>
     <p class="panel-description">
-      A server that's waiting hasn't started yet, so give it a moment. If one stops working, restart it here and it
-      starts again by itself.
+      The parts of your world server, each looking after one thing. A service that's waiting hasn't started yet, so
+      give it a moment. If one stops working, restart it here and it starts again by itself.
     </p>
   </div>
   <div class="panel-body">
@@ -159,11 +174,11 @@
 
       <h4 class="dr-setting-section">Start everything again</h4>
       <p class="help-block">
-        This disconnects every server and visitor. The servers start again by themselves and visitors reconnect, but
-        anyone in your world is interrupted.
+        This disconnects every service and visitor. The services start again by themselves and visitors reconnect,
+        but anyone in your world is interrupted.
       </p>
       <button type="button" class="btn btn-danger" id="kill-all-btn">
-        <span class="glyphicon glyphicon-refresh"></span> Restart all servers
+        <span class="glyphicon glyphicon-refresh"></span> Restart all services
       </button>
     </div>
   </div>

@@ -2,17 +2,23 @@ $(document).ready(function(){
 
   // setup the editor
   var editor = ace.edit("editor");
-  editor.setTheme("ace/theme/twilight")
+  function editorTheme() {
+    return DarkrideTheme.current() === "light" ? "ace/theme/darkride-light" : "ace/theme/twilight";
+  }
+  editor.setTheme(editorTheme());
+  $(document).on("dr-themechange", function() {
+    editor.setTheme(editorTheme());
+  });
   editor.getSession().setMode("ace/mode/javascript");
   editor.getSession().setTabSize(2);
 
   var messageTimer = null;
   function showMessage(html, isError) {
     clearTimeout(messageTimer);
-    $('#run-message').html(html).toggleClass('run-ok', !isError).toggleClass('run-error', !!isError).fadeIn(150);
+    $('#run-message').html(html).toggleClass('run-ok', !isError).toggleClass('run-error', !!isError).show();
     messageTimer = setTimeout(function() {
       $('#run-message').fadeOut(300);
-    }, isError ? 8000 : 6000);
+    }, isError ? 10000 : 8000);
   }
 
   $('#deploy-button').click(function(){
@@ -51,12 +57,13 @@ $(document).ready(function(){
         headers: headers,
         success: function (data, status) {
           var copies = parseInt(headers['ASSIGNMENT-INSTANCES'] || "1", 10);
-          showMessage("<strong>Started.</strong> " + (copies > 1 ? copies + " copies start" : "It starts") +
-            " as soon as a script runner is free. You'll see " + (copies > 1 ? "them" : "it") +
-            " under People here now on the <a href='/'>Overview</a>.");
+          showMessage("<span class='glyphicon glyphicon-ok'></span> Started: " +
+            (copies > 1 ? copies + " copies start" : "it starts") + " as soon as a script runner is free. " +
+            "See " + (copies > 1 ? "them" : "it") + " under People here now on the <a href='/'>Overview</a>.");
         },
         error: function () {
-          showMessage("<strong>The script couldn't be sent.</strong> Check that the world server is running, and try again.", true);
+          showMessage("<span class='glyphicon glyphicon-warning-sign'></span> The script couldn't be sent. " +
+            "Check the world server is running, and try again.", true);
         },
         complete: function () {
           $button.prop('disabled', false);

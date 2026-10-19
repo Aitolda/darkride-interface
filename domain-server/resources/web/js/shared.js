@@ -56,6 +56,105 @@ var URLs = {
   PLACE_URL: 'hifi:/',
 };
 
+// The light or dark look. The choice (light, dark, or none for Auto: the computer's own setting) is kept in this
+// browser; the page's <head> applies it before drawing, and this switches it. Pages that draw in colours of their own
+// (the script editor, graphs) hear of a change from a "dr-themechange" event on the document.
+var DarkrideTheme = {
+  KEY: "darkride.theme",
+  MODES: ["auto", "light", "dark"],
+  NAMES: { auto: "Auto", light: "Light", dark: "Dark" },
+
+  mode: function() {
+    try {
+      var mode = localStorage.getItem(DarkrideTheme.KEY);
+      return mode === "light" || mode === "dark" ? mode : "auto";
+    } catch (e) {
+      return "auto";
+    }
+  },
+
+  // the look in use: light or dark
+  current: function() {
+    return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+  },
+
+  apply: function() {
+    var mode = DarkrideTheme.mode();
+    var light = mode === "light" ||
+      (mode === "auto" && !!window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches);
+    var theme = light ? "light" : "dark";
+    if (theme !== DarkrideTheme.current() || !document.documentElement.hasAttribute("data-theme")) {
+      document.documentElement.setAttribute("data-theme", theme);
+      $(document).trigger("dr-themechange", [theme]);
+    }
+  },
+
+  // the next choice: Auto, then Light, then Dark
+  cycle: function() {
+    var next = DarkrideTheme.MODES[(DarkrideTheme.MODES.indexOf(DarkrideTheme.mode()) + 1) % DarkrideTheme.MODES.length];
+    try {
+      if (next === "auto") {
+        localStorage.removeItem(DarkrideTheme.KEY);
+      } else {
+        localStorage.setItem(DarkrideTheme.KEY, next);
+      }
+    } catch (e) {
+    }
+    DarkrideTheme.apply();
+    return next;
+  },
+
+  // a colour of the look in use, from the stylesheet's variables (--dr-text, say)
+  colour: function(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+};
+
+// the services a world server runs, in the order the overview shows them, with what each looks after
+var Services = {
+  list: [
+    { type: "entity-server", name: "World objects", about: "Keeps everything in your world and saves it." },
+    { type: "avatar-mixer", name: "Avatars", about: "Shares how everyone looks and moves." },
+    { type: "audio-mixer", name: "Voice and sound", about: "Mixes voices and sounds so everyone hears what's near them." },
+    { type: "asset-server", name: "File storage", about: "Holds the models, images and sounds uploaded to your world." },
+    { type: "messages-mixer", name: "Messages", about: "Passes messages between visitors and scripts." },
+    { type: "entity-script-server", name: "Server scripts", about: "Runs the scripts attached to objects in your world." },
+    { type: "physics-server", name: "Physics", about: "Moves vehicles and other shared physics." }
+  ],
+
+  // a service by its type (entity-server), or by the name the stats give it (Entity Server)
+  find: function(type) {
+    var key = String(type || "").toLowerCase().replace(/ /g, "-");
+    for (var i = 0; i < Services.list.length; i++) {
+      if (Services.list[i].type === key) {
+        return Services.list[i];
+      }
+    }
+    return null;
+  },
+
+  // a length of time in words: 45 seconds, 12 minutes, 3 hours, 2 days
+  durationText: function(seconds) {
+    function plural(n, unit) {
+      return n + " " + unit + (n === 1 ? "" : "s");
+    }
+    seconds = Math.floor(seconds);
+    if (seconds < 60) {
+      return plural(seconds, "second");
+    }
+    var minutes = Math.floor(seconds / 60);
+    if (minutes < 60) {
+      return plural(minutes, "minute");
+    }
+    var hours = Math.floor(minutes / 60);
+    if (hours < 24) {
+      return plural(hours, "hour") + (minutes % 60 ? ", " + plural(minutes % 60, "minute") : "");
+    }
+    var days = Math.floor(hours / 24);
+    return plural(days, "day") + (hours % 24 ? ", " + plural(hours % 24, "hour") : "");
+  }
+};
+
 var Strings = {
   LOADING_SETTINGS_ERROR: "Your settings couldn't be loaded.\nReload the page to try again.",
 
