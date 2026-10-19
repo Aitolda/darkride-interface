@@ -772,16 +772,23 @@ void OpenGLDisplayPlugin::present(const std::shared_ptr<RefreshRateController>& 
         getGLBackend()->setCameraCorrection(correction, _prevRenderView);
         _prevRenderView = correction * _currentFrame->view;
         {
+            bool isNewFrame = false;
             withPresentThreadLock([&] {
                 _renderRate.increment();
-                if (_currentFrame.get() != _lastFrame) {
+                isNewFrame = _currentFrame.get() != _lastFrame;
+                if (isNewFrame) {
                     _newFrameRate.increment();
                 }
                 _lastFrame = _currentFrame.get();
             });
-            // Execute the frame rendering commands
-            PROFILE_RANGE_EX(render, "execute", 0xff00ff00, frameId)
-            _gpuContext->executeFrame(_currentFrame);
+            // Execute the frame rendering commands. A frame presented again, because no new one came in time, is only
+            // run again for a headset, which draws it from the newest pose; on a desktop the camera correction is the
+            // identity and the frame's framebuffer still holds what it drew, so running it again (the whole scene, its
+            // shadows included) drew the same picture a second time.
+            if (isNewFrame || isHmd()) {
+                PROFILE_RANGE_EX(render, "execute", 0xff00ff00, frameId)
+                _gpuContext->executeFrame(_currentFrame);
+            }
         }
 
         // Write all layers to a local framebuffer
