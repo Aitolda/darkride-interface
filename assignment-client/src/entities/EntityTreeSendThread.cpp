@@ -110,7 +110,13 @@ bool EntityTreeSendThread::traverseTreeAndSendContents(SharedNodePointer node, O
 
         int32_t lodLevelOffset = nodeData->getBoundaryLevelAdjust() + (viewFrustumChanged ? LOW_RES_MOVING_ADJUST : NO_BOUNDARY_ADJUST);
         newView.lodScaleFactor = powf(2.0f, lodLevelOffset);
-        
+
+        // a client that draws impostor cards says so among its query's JSON flags (ENTITY-STREAMING.md 3.3): carded
+        // entities are then sized by their cards. Read once per traversal, like the LOD above; an older client sends
+        // no such flag and gets the stream as before
+        auto queryFlags = nodeData->getJSONParameters()[EntityJSONQueryProperties::FLAGS_PROPERTY].toObject();
+        newView.impostorCards = queryFlags[EntityJSONQueryProperties::IMPOSTOR_CARDS_PROPERTY].toBool();
+
         startNewTraversal(newView, root, isFullScene);
 
         // When the viewFrustum changed the sort order may be incorrect, so we re-sort

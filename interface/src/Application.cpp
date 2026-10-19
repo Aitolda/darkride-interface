@@ -81,6 +81,7 @@
 #include <VirtualPadManager.h>
 #include <DebugDraw.h>
 #include <DeferredLightingEffect.h>
+#include <EntityNodeData.h>
 #include <EntityScriptClient.h>
 #include <EntityScriptServerLogClient.h>
 #include <EntityScriptingInterface.h>
@@ -7233,6 +7234,21 @@ void Application::queryOctree(
         auto lodManager = DependencyManager::get<LODManager>();
         _octreeQuery.setOctreeSizeScale(lodManager->getOctreeSizeScale());
         _octreeQuery.setBoundaryLevelAdjust(lodManager->getBoundaryLevelAdjust());
+    }
+    // ENTITY-STREAMING.md 3.3: this client draws impostor cards, so the entity server sizes a carded entity, and the
+    // models under it, by its card and sends them out to where the card is drawn. One flag among the query's JSON
+    // flags, kept whatever the paths above set (only the whole-tree option writes the JSON); a server that does not
+    // know it sends as before. TIVOLI_NO_IMPOSTOR_CARDS in the environment leaves the flag out, to measure an older
+    // client's stream against the same server (launch-editor.sh EDITOR_NO_IMPOSTOR_CARDS=1).
+    static const bool SEND_IMPOSTOR_CARDS = !QProcessEnvironment::systemEnvironment().contains("TIVOLI_NO_IMPOSTOR_CARDS");
+    if (SEND_IMPOSTOR_CARDS) {
+        QJsonObject parameters = _octreeQuery.getJSONParameters();
+        QJsonObject flags = parameters[EntityJSONQueryProperties::FLAGS_PROPERTY].toObject();
+        if (!flags[EntityJSONQueryProperties::IMPOSTOR_CARDS_PROPERTY].toBool()) {
+            flags[EntityJSONQueryProperties::IMPOSTOR_CARDS_PROPERTY] = true;
+            parameters[EntityJSONQueryProperties::FLAGS_PROPERTY] = flags;
+            _octreeQuery.setJSONParameters(parameters);
+        }
     }
     _octreeQuery.setReportInitialCompletion(isModifiedQuery);
 

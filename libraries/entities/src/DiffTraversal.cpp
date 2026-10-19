@@ -109,6 +109,7 @@ bool DiffTraversal::View::isVerySimilar(const View& view) const {
     auto size = view.viewFrustums.size();
 
     if (view.lodScaleFactor != lodScaleFactor ||
+        view.impostorCards != impostorCards ||
         viewFrustums.size() != size) {
         return false;
     }
@@ -161,6 +162,27 @@ float DiffTraversal::View::computePriority(const EntityItemPointer& entity) cons
         }
     }
 
+    // ENTITY-STREAMING.md 3.3: to a client that draws impostor cards, an entity with a card (its own, or the card of a
+    // group it is under, whose models wait behind it) is as big as the card's sphere, out to where the client draws
+    // the card (MIN_IMPOSTOR_CARD_ANGULAR_SIZE, 800 radii at the default LOD) rather than the 0.43 degrees above.
+    // This only adds reach: the priority stays the angular size, the larger of the two, so near things come first and
+    // far cards last. A far carded entity stays in view this way, so its edits keep flowing out to card distance.
+    if (impostorCards) {
+        glm::vec3 cardCenter;
+        float cardRadius = 0.0f;
+        if (entity->findImpostorCardSphere(cardCenter, cardRadius)) {
+            for (const auto& frustum : viewFrustums) {
+                auto position = cardCenter - frustum.getPosition();
+                float distance = glm::length(position);
+                float angularSize = frustum.getAngularSize(distance, cardRadius);
+                if (angularSize > lodScaleFactor * MIN_IMPOSTOR_CARD_ANGULAR_SIZE &&
+                    frustum.intersects(position, distance, cardRadius)) {
+                    priority = std::max(priority, angularSize);
+                }
+            }
+        }
+    }
+
     return priority;
 }
 
@@ -174,6 +196,10 @@ bool DiffTraversal::View::shouldTraverseElement(const EntityTreeElement& element
     auto center = cube.calcCenter(); // center of bounding sphere
     auto radius = 0.5f * SQRT_THREE * cube.getScale(); // radius of bounding sphere
 
+    // For a client that draws impostor cards an element is looked into as far as a card in it would be sent
+    // (computePriority): an entity sits in the element that holds its query cube, which encloses its card's sphere,
+    // so the element's sphere is at least the card's and this keeps every card's element on the path.
+    float minAngularSize = lodScaleFactor * (impostorCards ? MIN_IMPOSTOR_CARD_ANGULAR_SIZE : MIN_ELEMENT_ANGULAR_DIAMETER);
 
     return any_of(begin(viewFrustums), end(viewFrustums), [&](const ConicalViewFrustum& frustum) {
         auto position = center - frustum.getPosition(); // position of bounding sphere in view-frame
@@ -185,7 +211,7 @@ bool DiffTraversal::View::shouldTraverseElement(const EntityTreeElement& element
         // before we consider including it.
         float angularSize = frustum.getAngularSize(distance, radius);
 
-        return angularSize > lodScaleFactor * MIN_ELEMENT_ANGULAR_DIAMETER &&
+        return angularSize > minAngularSize &&
                frustum.intersects(position, distance, radius);
     });
 }
@@ -219,6 +245,7 @@ DiffTraversal::Type DiffTraversal::prepareNewTraversal(const DiffTraversal::View
         type = Type::First;
         _currentView.viewFrustums = view.viewFrustums;
         _currentView.lodScaleFactor = view.lodScaleFactor;
+        _currentView.impostorCards = view.impostorCards;
         _getNextVisibleElementCallback = [this](DiffTraversal::VisibleElement& next) {
             _path.back().getNextVisibleElementFirstTime(next, _currentView);
         };
@@ -231,6 +258,7 @@ DiffTraversal::Type DiffTraversal::prepareNewTraversal(const DiffTraversal::View
         type = Type::Differential;
         _currentView.viewFrustums = view.viewFrustums;
         _currentView.lodScaleFactor = view.lodScaleFactor;
+        _currentView.impostorCards = view.impostorCards;
         _getNextVisibleElementCallback = [this](DiffTraversal::VisibleElement& next) {
             _path.back().getNextVisibleElementDifferential(next, _currentView, _completedView);
         };
