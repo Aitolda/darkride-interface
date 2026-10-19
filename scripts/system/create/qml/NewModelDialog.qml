@@ -28,16 +28,16 @@ Rectangle {
     property bool punctuationMode: false
     property bool keyboardRasied: false
 
-    function errorMessageBox(message) {
+    function errorMessageBox(title, message) {
         try {
             return desktop.messageBox({
                 icon: hifi.icons.warning,
                 defaultButton: OriginalDialogs.StandardButton.Ok,
-                title: "Error",
+                title: title,
                 text: message
             });
         } catch(e) {
-            Window.alert(message);
+            Window.alert(title + "\n\n" + message);
         }
     }
 
@@ -186,8 +186,8 @@ Rectangle {
                             if (dynamic.checked) {
                                 currentIndex = priorIndex;
 
-                                errorMessageBox("Models with Automatic Collisions set to \"" 
-                                                    + staticMeshCollisionText + "\" cannot be dynamic.");
+                                errorMessageBox("Exact collisions can't be dynamic",
+                                                "Choose another collision shape, or untick Dynamic.");
                                 //--EARLY EXIT--( Can't have a static mesh model that's dynamic )
                                 return;
                             }

@@ -18,6 +18,9 @@
 
 	var CONTROLLER_MAPPING_NAME = "com.highfidelity.editMode";
 
+	// Create's button and the Edit menu ask for the same thing in the same words
+	var IMPORT_FROM_URL_PROMPT = { placeholderText: "https://\u2026/objects.json", buttonText: "Import" };
+
 	Script.include([
 		"../libraries/stringHelpers.js?" + Date.now(),
 		"../libraries/dataViewHelpers.js?" + Date.now(),
@@ -1042,7 +1045,7 @@
 
 			addButton("importEntitiesFromURLButton", function () {
 				Window.promptTextChanged.connect(onPromptTextChanged);
-				Window.promptAsync("URL of entities json to import", "");
+				Window.promptAsync("Import Objects from the Web", "", IMPORT_FROM_URL_PROMPT);
 			});
 
 			addButton("openAssetBrowserButton", function () {
@@ -2313,7 +2316,7 @@
 				Window.browseAsync("Select Model to Import", "", "*.json");
 			} else {
 				Window.promptTextChanged.connect(onPromptTextChanged);
-				Window.promptAsync("URL of SVO to import", "");
+				Window.promptAsync("Import Objects from the Web", "", IMPORT_FROM_URL_PROMPT);
 			}
 		} else if (menuItem === "Select All Entities In Box") {
 			selectAllEntitiesInCurrentSelectionBox(false);
