@@ -31,6 +31,9 @@
 #include <array>
 #include <map>
 #include <mutex>
+#include <set>
+
+#include <render/Engine.h>
 
 #include <TextureCache.h>
 #include <terrain/AsyncMesher.h>
@@ -213,9 +216,12 @@ namespace render { namespace entities {
 // texture fetches, handed to the items through the scene's transaction, and used on the render thread from then on.
 // The textures come in through the texture cache; as each arrives its slice is drawn from it on the GPU
 // (terrain_layer_maps.slf, a quad over the slice, which also scales the map to the slice), since the macOS GL
-// backend takes no array slice from memory, in a batch of its own that the frame runs before the pass being
-// recorded; and drawn again as more of the texture reaches the GPU (the backend uploads a texture's mips a few at a
-// time, smallest first, and gpu::Texture's residency stamp says when), so the slice ends up as sharp as the texture.
+// backend takes no array slice from memory, by the DrawTerrainLayerMaps job at the start of the frame (until
+// 2026-10-19 a chunk's render drew them in a batch slipped in before the pass being recorded, which left the slice's
+// framebuffer and viewport bound for that pass: the whole opaque pass of the frame then went into the slice and the
+// screen showed a black frame, KNOWN-ISSUES.md); and drawn again as more of the texture reaches the GPU (the backend
+// uploads a texture's mips a few at a time, smallest first, and gpu::Texture's residency stamp says when), so the
+// slice ends up as sharp as the texture.
 // The colour array's slices are as large as the largest colour texture, within bounds, grown as the textures arrive.
 // A set made for a changed stack takes over the arrays and the drawn slices of the set it replaces, so a slider's
 // scrub draws no slice again.
@@ -229,13 +235,17 @@ public:
 
     // previous: the set this one replaces, whose arrays it takes over
     explicit TerrainLayerSet(const terrain::LayerStack& stack, const Pointer& previous = nullptr);
+    ~TerrainLayerSet();
 
     // World space to the terrain's own: its box's axes, in metres, from the box's centre. The textures are tiled
     // in that space, so they stay put on the ground when the entity moves or turns.
     void setWorldToTerrain(const glm::mat4& worldToTerrain);
-    // Draws the slices whose maps have arrived, or changed, since they were drawn, if any: in a batch of its own that
-    // the frame runs before the one being recorded. Called from a chunk's render; nothing to do most frames.
+    // Draws the slices whose maps have arrived, or changed, since they were drawn, if any, in a batch of its own.
+    // Called by drawAllMapsDue at the start of the frame, before any pass has bound its framebuffer, since the batch
+    // leaves the slice's bound; nothing to do most frames.
     void drawMapsDue(RenderArgs* args);
+    // The same for every live set (the DrawTerrainLayerMaps job).
+    static void drawAllMapsDue(RenderArgs* args);
     // Binds the arrays and the parameters.
     void bind(gpu::Batch& batch);
 
@@ -288,6 +298,19 @@ private:
     Slices _normalSlices;
     Slices _maskSlices;
     std::mutex _mapsMutex;   // the arrays and slices: drawn on the render thread, taken over by the next set on the main thread
+
+    // the live sets, for drawAllMapsDue: made and destroyed on the main thread, walked on the render thread
+    static std::mutex& registryMutex();
+    static std::set<TerrainLayerSet*>& registry();
+};
+
+// The render engine's job that draws the terrain layer sets' slices due this frame, first thing in the frame
+// (GraphicsEngine::initializeRender), so that the framebuffers and viewports the draws leave bound are gone before
+// any view's pass relies on its own.
+class DrawTerrainLayerMaps {
+public:
+    using JobModel = render::Job::Model<DrawTerrainLayerMaps>;
+    void run(const render::RenderContextPointer& renderContext) { TerrainLayerSet::drawAllMapsDue(renderContext->args); }
 };
 
 // One column's tile of the paint map (PaintMap::fillTile: a level-0 chunk column's, or a coarser node's wider one) as

@@ -26,6 +26,7 @@
 #include <RenderLocalShadowTask.h>
 #include <RenderMirrorsTask.h>
 #include <ImpostorBake.h>
+#include <RenderableTerrainEntityItem.h>
 #include <RenderShadowTask.h>
 #include <ToneMapAndResampleTask.h>
 #include <SecondaryCamera.h>
@@ -85,6 +86,9 @@ void GraphicsEngine::initializeRender() {
     // Set up the render engine
     render::CullFunctor cullFunctor = LODManager::shouldRender;
     _renderEngine->addJob<UpdateSceneTask>("UpdateScene");
+    // the terrain layer sets' slices due this frame, drawn before any view: their batch leaves its framebuffer and
+    // viewport bound, which a pass later in the frame must not inherit (the black frames of KNOWN-ISSUES.md)
+    _renderEngine->addJob<render::entities::DrawTerrainLayerMaps>("TerrainLayerMaps");
 #ifndef Q_OS_ANDROID
     _renderEngine->addJob<SecondaryCameraRenderTask>("SecondaryCameraJob", cullFunctor);
 #endif

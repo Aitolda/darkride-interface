@@ -586,7 +586,34 @@ void RenderableTerrainEntityItem::computeShapeInfo(ShapeInfo& info) {
 
 // The layer set
 
+std::mutex& TerrainLayerSet::registryMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::set<TerrainLayerSet*>& TerrainLayerSet::registry() {
+    static std::set<TerrainLayerSet*> sets;
+    return sets;
+}
+
+TerrainLayerSet::~TerrainLayerSet() {
+    std::lock_guard<std::mutex> lock(registryMutex());
+    registry().erase(this);
+}
+
+void TerrainLayerSet::drawAllMapsDue(RenderArgs* args) {
+    // the lock is held through the draws: a set destroyed on the main thread meanwhile waits for them
+    std::lock_guard<std::mutex> lock(registryMutex());
+    for (TerrainLayerSet* set : registry()) {
+        set->drawMapsDue(args);
+    }
+}
+
 TerrainLayerSet::TerrainLayerSet(const terrain::LayerStack& stack, const Pointer& previous) {
+    {
+        std::lock_guard<std::mutex> lock(registryMutex());
+        registry().insert(this);
+    }
     auto textureCache = DependencyManager::get<TextureCache>();
     auto fetch = [&](const std::string& address, image::TextureUsage::Type type) -> NetworkTexturePointer {
         if (address.empty()) {
@@ -753,7 +780,8 @@ void TerrainLayerSet::drawMapsDue(RenderArgs* args) {
     _paramsDirty = true;   // the flags say which slices are drawn
 
     auto white = DependencyManager::get<TextureCache>()->getWhiteTexture();
-    // a batch of its own, appended to the frame now, so it runs before the pass whose batch is being recorded
+    // a batch of its own, appended to the frame now: at the start of the frame (DrawTerrainLayerMaps), before any
+    // pass has bound its framebuffer, since the slice's stays bound when this batch ends
     gpu::doInBatch("TerrainLayerSet::drawMapsDue", args->_context, [&](gpu::Batch& batch) {
         batch.enableStereo(false);
         batch.setPipeline(mapPipeline());
@@ -919,7 +947,8 @@ void TerrainChunkPayload::render(RenderArgs* args) {
     if (!_vertexBuffer || _vertexCount == 0 || !_layers || !_chunkParams) {
         return;
     }
-    _layers->drawMapsDue(args);   // in a batch of its own, before this one
+    // the layer maps due this frame were drawn at its start (DrawTerrainLayerMaps), never from here: a batch slipped
+    // in before this pass left the slice's framebuffer bound for it, and the frame came out black (2026-10-19)
     gpu::Batch& batch = *args->_batch;
     batch.setModelTransform(_transform);
     batch.setInputFormat(_vertexFormat);
