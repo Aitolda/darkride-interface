@@ -6441,6 +6441,7 @@ void Application::tryToEnablePhysics() {
         // scene is ready to compute its collision shape.
         auto myAvatar = getMyAvatar();
         if (myAvatar->isReadyForPhysics()) {
+            bool safeLandingComplete = _octreeProcessor.safeLandingIsComplete();   // read before the reset below clears it
             myAvatar->getCharacterController()->setPhysicsEngine(_physicsEngine);
             _octreeProcessor.resetSafeLanding();
             _physicsEnabled = true;
@@ -6449,7 +6450,7 @@ void Application::tryToEnablePhysics() {
             qDebug() << "Physics enabled" << "(ghosting" << DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed()
                 << "arrival waits for nearby" << _arrivalWaitsForNearby << "interstitial"
                 << DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled()
-                << "safe landing complete" << _octreeProcessor.safeLandingIsComplete() << "full scenes" << _fullSceneReceivedCounter << ")";
+                << "safe landing complete" << safeLandingComplete << "full scenes" << _fullSceneReceivedCounter << ")";
             DependencyManager::get<EntityTreeRenderer>()->setSceneIsReady(true);
             requeryOctree(); // hit it with a quick refresh to make sure everything is drawn
         }

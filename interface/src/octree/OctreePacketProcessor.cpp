@@ -98,6 +98,26 @@ void OctreePacketProcessor::processPacket(QSharedPointer<ReceivedMessage> messag
     // seek back to beginning of packet after tracking
     message->seek(0);
 
+    // TIVOLI_ARRIVAL_TRACE=1: a line per octree packet while the safe landing is tracking (WORLD-LOADING.md, the
+    // arrival gate): its type, the server's sequence number, its size and how long it waited in this processor's queue
+    static const bool arrivalTrace = !qgetenv("TIVOLI_ARRIVAL_TRACE").isEmpty();
+    if (arrivalTrace && _safeLanding && _safeLanding->isTracking()) {
+        OCTREE_PACKET_SEQUENCE sequence = 0;
+        if (packetType != PacketType::EntityQueryInitialResultsComplete && message->getSize() >= (int)(sizeof(OCTREE_PACKET_FLAGS) + sizeof(OCTREE_PACKET_SEQUENCE))) {
+            message->seek(sizeof(OCTREE_PACKET_FLAGS));
+            message->readPrimitive(&sequence);
+            message->seek(0);
+        } else if (packetType == PacketType::EntityQueryInitialResultsComplete) {
+            message->readPrimitive(&sequence);
+            message->seek(0);
+        }
+        qint64 received = message->getFirstPacketReceiveTime();
+        qint64 queuedUs = received > 0 ? (qint64)usecTimestampNow() - received : -1;
+        qDebug() << "arrival trace:" << packetType << "sequence" << sequence << "bytes" << message->getSize()
+            << "queued" << (queuedUs >= 0 ? QString::number(queuedUs / 1000.0, 'f', 1) : QString("?")) << "ms"
+            << (wasStatsPacket ? "piggybacked on stats" : "") << "backlog" << packetsToProcessCount();
+    }
+
     switch(packetType) {
         case PacketType::EntityErase: {
             if (DependencyManager::get<SceneScriptingInterface>()->shouldRenderEntities()) {

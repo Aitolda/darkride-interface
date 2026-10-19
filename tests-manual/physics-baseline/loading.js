@@ -2,11 +2,20 @@
 // screen, "Physics enabled" in the log) from the script's start, prints the moment it turns on, and quits 5 s later.
 // Quits after LOADING_LIMIT s regardless. Run by run-loading.sh.
 //   Darkride --url hifi://localhost:42102 --testScript loading.js
+// Round 11 (WORLD-LOADING.md, the arrival gate): the script holds the arrival to the safe landing itself from its start
+// (Window.setArrivalWaitsForNearby, what the loading screen does while it is up), so that both the cold and the warm
+// run measure the gate as a hop does. Round 10's warm run did not: its physics came on by ghosting in the second the
+// client connected, before worldLoading.js had raised the flag. ARRIVAL_WAITS = false leaves the flag to the screen.
 (function () {
     var LIMIT = (typeof LOADING_LIMIT === "number") ? LOADING_LIMIT : 240;
+    var WAITS = (typeof ARRIVAL_WAITS === "boolean") ? ARRIVAL_WAITS : true;
     var start = Date.now();
     var enabledAt = -1;
-    print("PHYSICS-LOADING started, limit " + LIMIT + " s");
+    if (WAITS && Window.setArrivalWaitsForNearby) {
+        Window.setArrivalWaitsForNearby(true);
+    }
+    print("PHYSICS-LOADING started, limit " + LIMIT + " s, arrival waits for nearby " + (WAITS && !!Window.setArrivalWaitsForNearby)
+        + ", physics " + Window.isPhysicsEnabled() + ", connected " + location.isConnected);
     var timer = Script.setInterval(function () {
         var elapsed = (Date.now() - start) / 1000;
         if (enabledAt < 0 && Window.isPhysicsEnabled()) {

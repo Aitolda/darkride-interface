@@ -16,6 +16,7 @@
 #include "RenderableModelEntityItem.h"
 #include "InterfaceLogging.h"
 #include "Application.h"
+#include "avatar/AvatarManager.h"
 
 
 CalculateEntityLoadingPriority SafeLanding::entityLoadingOperatorElevateCollidables = [](const EntityItem& entityItem) {
@@ -50,6 +51,11 @@ void SafeLanding::startTracking(QSharedPointer<EntityTreeRenderer> entityTreeRen
             _sequenceNumbers.clear();
             _trackingEntities = true;
             _startTime = usecTimestampNow();
+            _addedCount = 0;
+            _notTrackedCreatedLater = 0;
+            _notTrackedNotFound = 0;
+            _notTrackedLocal = 0;
+            _completionCount = 0;
 
             connect(std::const_pointer_cast<EntityTree>(entityTree).get(),
                 &EntityTree::addingEntity, this, &SafeLanding::addTrackedEntity, Qt::DirectConnection);
@@ -68,7 +74,15 @@ void SafeLanding::addTrackedEntity(const EntityItemID& entityID) {
         auto entityTree = _entityTreeRenderer->getTree();
         if (entityTree) {
             EntityItemPointer entity = entityTree->findEntityByID(entityID);
+            if (!entity) {
+                _notTrackedNotFound++;
+            } else if (entity->isLocalEntity()) {
+                _notTrackedLocal++;
+            } else if (entity->getCreated() >= _startTime) {
+                _notTrackedCreatedLater++;
+            }
             if (entity && !entity->isLocalEntity() && entity->getCreated() < _startTime) {
+                _addedCount++;
                 _trackedEntities.emplace(entityID, entity);
 
                 int32_t trackedEntityCount = (int32_t)_trackedEntities.size();
@@ -91,6 +105,10 @@ void SafeLanding::finishSequence(OCTREE_PACKET_SEQUENCE first, OCTREE_PACKET_SEQ
     if (_trackingEntities) {
         _sequenceStart = first;
         _sequenceEnd = last;
+        _completionCount++;
+        qDebug() << "safe landing: the entity server reports the initial scene complete (" << _completionCount << "), sequence"
+            << first << "to" << last << "," << _sequenceNumbers.size() << "packets seen,"
+            << (usecTimestampNow() - _startTime) / 1000 << "ms after tracking began";
     }
 }
 
@@ -136,9 +154,38 @@ void SafeLanding::updateTracking() {
         if (now - _lastProgressLog > USECS_PER_SECOND) {
             _lastProgressLog = now;
             Locker lock(_lock);
-            qDebug() << "safe landing: tracking" << _trackedEntities.size() << "of" << _maxTrackedEntityCount << "entities, sequence"
-                << _sequenceStart << "to" << _sequenceEnd << "," << _sequenceNumbers.size() << "packets seen, missing"
-                << qApp->isMissingSequenceNumbers();
+            bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
+                _waitForVisuals;
+            int physicsWaiting = 0, visualsWaiting = 0;
+            QStringList examples;
+            glm::vec3 avatarPosition = DependencyManager::get<AvatarManager>()->getMyAvatar()->getWorldPosition();
+            for (const auto& entry : _trackedEntities) {
+                const auto& entity = entry.second;
+                bool physicsReady = isEntityPhysicsReady(entity);
+                bool visuallyReady = !enableInterstitial || entity->isVisuallyReady();
+                if (!physicsReady) { physicsWaiting++; }
+                if (!visuallyReady) { visualsWaiting++; }
+                if (examples.size() < 4 && (!physicsReady || !visuallyReady)) {
+                    examples << QString("%1 '%2' %3 m %4%5").arg(EntityTypes::getEntityTypeName(entity->getType()), entity->getName(),
+                        QString::number(glm::distance(avatarPosition, entity->getWorldPosition()), 'f', 1),
+                        physicsReady ? "" : "physics ", visuallyReady ? "" : "drawing");
+                }
+            }
+            QStringList gaps;
+            if (_sequenceStart != SafeLanding::INVALID_SEQUENCE) {
+                for (OCTREE_PACKET_SEQUENCE n = _sequenceStart; n != _sequenceEnd && gaps.size() < 8; ++n) {
+                    if (_sequenceNumbers.find(n) == _sequenceNumbers.end()) {
+                        gaps << QString::number(n);
+                    }
+                }
+            }
+            qDebug() << "safe landing: tracking" << _trackedEntities.size() << "of" << _maxTrackedEntityCount << "entities ("
+                << physicsWaiting << "not ready for physics," << visualsWaiting << "not drawn; added" << _addedCount
+                << ", not tracked: created after the start" << _notTrackedCreatedLater << ", not found" << _notTrackedNotFound
+                << ", local" << _notTrackedLocal << "), sequence"
+                << _sequenceStart << "to" << _sequenceEnd << "," << _sequenceNumbers.size() << "packets seen, gaps ["
+                << qPrintable(gaps.join(" ")) << "], missing" << qApp->isMissingSequenceNumbers()
+                << (examples.isEmpty() ? "" : qPrintable("; waiting for " + examples.join("; ")));
         }
     }
     if (_trackedEntities.empty()) {
@@ -158,6 +205,8 @@ void SafeLanding::updateTracking() {
                      ((distance(startIter, endIter) == sequenceSize - 1) || !missingSequenceNumbers)));
             }
             if (shouldStop) {
+                qDebug() << "safe landing: complete," << (usecTimestampNow() - _startTime) / 1000 << "ms after tracking began ("
+                    << _maxTrackedEntityCount << "entities tracked, sequence" << _sequenceStart << "to" << _sequenceEnd << ")";
                 stopTracking();
             }
         }

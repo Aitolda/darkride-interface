@@ -58,6 +58,7 @@ protected:
 
     OctreePacketData _packetData;
     QWeakPointer<Node> _node;
+    int _packetsSentSinceMark { 0 };   // diagnostics: packets sent since the subclass last reset it
     OctreeServer* _myServer { nullptr };
     QUuid _nodeUuid;
     

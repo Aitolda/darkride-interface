@@ -335,6 +335,7 @@ int OctreeSendThread::handlePacketSend(SharedNodePointer node, OctreeQueryNode* 
     }
 
     _truePacketsSent += numPackets;
+    _packetsSentSinceMark += numPackets;
     return numPackets;
 }
 
@@ -432,6 +433,7 @@ int OctreeSendThread::packetDistributor(SharedNodePointer node, OctreeQueryNode*
             DependencyManager::get<NodeList>()->sendUnreliablePacket(*packet, *node);
             int numBytes = packet->getDataSize();
             _truePacketsSent++;
+            _packetsSentSinceMark++;
             _trueBytesSent += numBytes;
             _packetsSentThisInterval++;
 

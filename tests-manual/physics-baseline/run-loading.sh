@@ -8,7 +8,11 @@
 # given. A world dir in the layout of ~/tivoli-test-worlds/<name> (models.json.gz, config.json, assets/) is put into
 # the sandbox for the run and the sandbox's own world, assets and config are restored afterwards. Prints, per client,
 # the time from its first log line to "Physics enabled", the script's own measure, the physics server's time to its
-# first full scene, and the entity server's udt lines for the physics server and the client.
+# first full scene, and the entity server's udt lines for the physics server and the client. TRACE=1 puts
+# TIVOLI_ARRIVAL_TRACE=1 in the clients' environment (a line per octree packet while the safe landing tracks). Round 11:
+# loading.js holds the arrival to the safe landing itself from its start, as the loading screen does while it is up, so
+# both runs measure the gate; the gate line, the completions the entity server reported and the last tracking line are
+# printed per run, and the entity server's first traversals and completions for the clients.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
 APP=${1:-"$D/../../build/interface/Darkride.app"}
@@ -63,13 +67,13 @@ sandbox_start "$BUILD" "$PORT"
 
 URL="hifi://localhost:$PORT"
 echo "client: $BIN"
-echo "domain: $URL; the client under packet loss $LOSS and a delay of $DELAY ms; results: $R"
+echo "domain: $URL; the client under packet loss $LOSS and a delay of $DELAY ms; results: $R; arrival trace ${TRACE:-off}"
 rm -rf "$R/arrival-home" "$R/arrival-cold.log" "$R/arrival-warm.log"
 cp "$D/loading.js" "$R/loading.js"
 for PASS in cold warm; do
     KEEP=1; [ "$PASS" = "warm" ] && KEEP=""
     sleep 2
-    KEEP_KTX=$KEEP TIVOLI_PACKET_LOSS="$LOSS" TIVOLI_PACKET_DELAY_MS="$DELAY" \
+    KEEP_KTX=$KEEP TIVOLI_PACKET_LOSS="$LOSS" TIVOLI_PACKET_DELAY_MS="$DELAY" TIVOLI_ARRIVAL_TRACE="${TRACE:-}" \
         client arrival --url "$URL" --testScript "$R/loading.js" || true
     cp "$R/arrival.log" "$R/arrival-$PASS.log"
 done
@@ -89,7 +93,12 @@ for PASS in cold warm; do
         echo "== $PASS: no Physics enabled line in $LOG"
     fi
     grep "PHYSICS-LOADING" "$LOG" | sed 's/^/   /' || true
+    grep "Physics enabled" "$LOG" | sed 's/.*Physics enabled/   gate: Physics enabled/' | head -1 || true
+    grep "safe landing: the entity server reports\|safe landing: complete" "$LOG" | sed 's/.*safe landing:/   safe landing:/' | head -8 || true
+    grep "safe landing: tracking" "$LOG" | tail -1 | sed 's/.*safe landing:/   last: safe landing:/' || true
 done
+echo "== entity server's traversals for the clients (first traversals and completions reported)"
+grep "first traversal for\|initial scene complete for" "$R/sandbox-assignment-client.log" | grep -v "Physics Server" | sed 's/.*\[entity-server\]/   /' | head -16 || true
 echo "== physics server"
 grep "reported its first full scene" "$R/sandbox-assignment-client.log" | grep "physics-server" | sed 's/.*reported/   reported/' || echo "   no first-scene line"
 echo "== entity server's send threads (ten-second lines)"

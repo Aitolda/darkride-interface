@@ -68,6 +68,11 @@ private:
     int32_t _maxTrackedEntityCount { 0 };
     int32_t _trackedEntityStabilityCount { 0 };
     quint64 _lastProgressLog { 0 };
+    int _addedCount { 0 };               // diagnostics: entities tracked since the start, and those not tracked, by reason
+    int _notTrackedCreatedLater { 0 };
+    int _notTrackedNotFound { 0 };
+    int _notTrackedLocal { 0 };
+    int _completionCount { 0 };
 
     quint64 _startTime { 0 };
 
