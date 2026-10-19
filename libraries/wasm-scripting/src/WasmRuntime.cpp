@@ -15,6 +15,7 @@
 
 #include <wasm.h>
 #include <wasmtime.h>
+#include <wasmtime/profiling.h>
 
 #include <QtCore/QLoggingCategory>
 
@@ -132,7 +133,7 @@ WasmRuntime::WasmRuntime() : WasmRuntime(Settings()) {
 
 WasmRuntime::WasmRuntime(const Settings& settings) : _settings(settings), _impl(new Impl) {
     wasm_config_t* config = wasm_config_new();
-    wasmtime_config_epoch_interruption_set(config, true);
+    wasmtime_config_epoch_interruption_set(config, settings.epochInterruption);
     wasmtime_config_cranelift_opt_level_set(config, WASMTIME_OPT_LEVEL_SPEED);
     _impl->engine = wasm_engine_new_with_config(config); // takes the config
     // The epoch is the clock every instance's time limit is measured in; one thread advances it for all.
@@ -243,12 +244,15 @@ struct WasmInstance::Impl {
     std::chrono::steady_clock::time_point callStarted;
     std::chrono::milliseconds callTimeout { 0 };
     int callDepth { 0 };
+    wasmtime_guestprofiler_t* profiler { nullptr };
+    std::chrono::steady_clock::time_point lastSample;
 
     // The outermost call sets the deadline one tick out and starts the clock; at each tick the runtime asks
     // whether to go on. A call made from inside a host function (reentrant) runs under the outer call's limit.
     void beginCall() {
         if (callDepth == 0) {
             callStarted = std::chrono::steady_clock::now();
+            lastSample = callStarted;
             wasmtime_context_set_epoch_deadline(context, 1);
         }
     }
@@ -266,6 +270,12 @@ struct WasmInstance::Impl {
                                         wasmtime_update_deadline_kind_t* kind) {
         Q_UNUSED(context);
         auto self = static_cast<Impl*>(data);
+        if (self->profiler) {
+            auto now = std::chrono::steady_clock::now();
+            auto spent = std::chrono::duration_cast<std::chrono::nanoseconds>(now - self->lastSample).count();
+            self->lastSample = now;
+            wasmtime_guestprofiler_sample(self->profiler, self->store, uint64_t(spent));
+        }
         if (self->stopRequested.load()) {
             return wasmtime_error_new("the script was stopped");
         }
@@ -331,6 +341,9 @@ WasmInstance::WasmInstance(std::shared_ptr<WasmModule> module, const Limits& lim
 }
 
 WasmInstance::~WasmInstance() {
+    if (_impl->profiler) {
+        wasmtime_guestprofiler_delete(_impl->profiler);
+    }
     wasmtime_linker_delete(_impl->linker);
     wasmtime_store_delete(_impl->store);
 }
@@ -476,4 +489,40 @@ bool WasmInstance::writeMemory(uint64_t offset, const QByteArray& bytes) {
 
 void WasmInstance::requestStop() {
     _impl->stopRequested = true;
+}
+
+bool WasmInstance::startProfiling(const QString& name, QString& error) {
+    if (_impl->profiler) {
+        error = "already profiling";
+        return false;
+    }
+    QByteArray utf8 = name.toUtf8();
+    wasm_name_t moduleName;
+    wasm_name_new(&moduleName, static_cast<size_t>(utf8.size()), utf8.constData());
+    wasmtime_guestprofiler_modules_t modules { &moduleName, _module->impl().module };
+    auto interval = std::chrono::duration_cast<std::chrono::nanoseconds>(_module->runtime()->settings().epochTick).count();
+    _impl->profiler = wasmtime_guestprofiler_new(_module->runtime()->impl().engine, &moduleName, uint64_t(interval), &modules, 1);
+    wasm_name_delete(&moduleName); // the profiler keeps its own copies
+    if (!_impl->profiler) {
+        error = "the guest profiler could not be made";
+        return false;
+    }
+    return true;
+}
+
+QByteArray WasmInstance::finishProfiling(QString& error) {
+    if (!_impl->profiler) {
+        error = "not profiling";
+        return QByteArray();
+    }
+    wasm_byte_vec_t profile;
+    auto result = wasmtime_guestprofiler_finish(_impl->profiler, &profile); // takes the profiler
+    _impl->profiler = nullptr;
+    if (result) {
+        error = takeErrorText(result);
+        return QByteArray();
+    }
+    QByteArray bytes(profile.data, static_cast<int>(profile.size));
+    wasm_byte_vec_delete(&profile);
+    return bytes;
 }

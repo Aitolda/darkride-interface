@@ -52,6 +52,9 @@ public:
     struct Settings {
         /// How often the epoch advances; the resolution of every instance's time limit and of requestStop().
         std::chrono::milliseconds epochTick { 10 };
+        /// Off only to measure what the epoch checks cost: without them no time limit holds and requestStop()
+        /// does not interrupt a running call.
+        bool epochInterruption { true };
     };
 
     /// Always owned by a shared_ptr (std::make_shared): the modules it compiles keep it alive.
@@ -134,6 +137,11 @@ public:
 
     /// From any thread: the running call (and every later one) traps at the next epoch tick.
     void requestStop();
+
+    /// Samples the module's stack at every epoch tick while a call runs (wasmtime's guest profiler) until
+    /// finishProfiling(), which returns the profile in the Firefox Profiler's format. For measurements.
+    bool startProfiling(const QString& name, QString& error);
+    QByteArray finishProfiling(QString& error);
 
     const Limits& limits() const { return _limits; }
     std::shared_ptr<WasmModule> module() const { return _module; }
