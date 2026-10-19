@@ -12,7 +12,10 @@
 //  flicker, and crosses between the two by a short dissolve (the fade effect's noise, FADE_LOD_SWITCH, the model's
 //  parts clipped where the noise is below the card's share and the card where it is above, so that where the two
 //  surfaces coincide the clips are complementary); the shadow pass follows the main view; the other views (mirrors,
-//  the secondary camera) take the plain threshold. Read and written on the render thread only.
+//  the secondary camera) take the plain threshold. The card also stands in for models that are not here yet
+//  (ENTITY-STREAMING.md 3.2): while one of them has not loaded (its mesh waits behind the card or is on its way) or a
+//  group's have not arrived, the card draws at any angle from outside the sphere and the models do not. Read and
+//  written on the render thread only, but for the atomics.
 //
 //  Created by the editor session on 2026-10-18.
 //
@@ -34,6 +37,9 @@ class ImpostorSwitch {
 public:
     // the dissolve's length, seconds
     static const float CROSSFADE_SECONDS;
+    // how long a model may take to load before its card stands in for it, seconds: a mesh from the cache or the disk
+    // comes in a few frames, and the card would only flash
+    static const float STAND_IN_GRACE_SECONDS;
 
     // the entity's bounding sphere in world space (the entry's centre taken through the entity's transform)
     void setSphere(const glm::vec3& centerWS, float radius) { _center = centerWS; _radius = radius; }
@@ -43,6 +49,9 @@ public:
     // both atlases loaded: until then the model draws whatever the angle
     void setCardReady(bool ready) { _cardReady.store(ready, std::memory_order_relaxed); }
     bool isCardReady() const { return _cardReady.load(std::memory_order_relaxed); }
+    // the card stands in for its models: one of them has not loaded, or a group's have not arrived
+    void setStandIn(bool standIn) { _standIn.store(standIn, std::memory_order_relaxed); }
+    bool isStandIn() const { return _standIn.load(std::memory_order_relaxed); }
 
     // What this view draws of the entity: its card, its model, or during the main view's dissolve both, each clipped
     // to its share (share: the card's, 0 none of it, 1 all of it).
@@ -64,10 +73,14 @@ public:
 
 private:
     bool wantsCardAt(float distanceSq, float thresholdSq) const;
+    // the stand-in once its grace is over
+    bool standsIn(quint64 now);
 
     glm::vec3 _center { 0.0f };
     float _radius { 0.0f };
     std::atomic<bool> _cardReady { false };   // the render thread writes it, the Inspector reads it
+    std::atomic<bool> _standIn { false };     // likewise
+    quint64 _standInSince { 0 };              // when the render thread first saw it, 0 while it is off
     bool _mainViewShowsCard { false };   // the hysteresis state: what the main view's dissolve goes to
     float _share { 0.0f };               // the card's share of the main view's dissolve
     float _fadeFrom { 0.0f };

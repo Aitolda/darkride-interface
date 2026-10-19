@@ -14,6 +14,7 @@
 #include <QtCore/QJsonObject>
 #include <QtCore/QJsonArray>
 #include <QtCore/QThread>
+#include <QtCore/QTimer>
 #include <QtGui/QPainter>
 
 #include <functional>
@@ -37,6 +38,8 @@ namespace {
     const int POLL_MS = 30;
     const int TIMEOUT_MS = 15000;
     const int SETTLE_FRAMES = 3;      // the new item keys take a frame or two to reach the scene
+    const int MESH_WAIT_MSECS = 500;  // a bake waits for its models' meshes this long at a time,
+    const int MAX_MESH_WAITS = 20;    // so many times, then bakes what has loaded
     const float CAMERA_DISTANCE = 2.0f; // in radii, from the centre: any distance beyond the sphere does for an orthographic view
 
     // the six views, in the entity's own frame: where the camera stands (its backward axis) and its up
@@ -74,7 +77,7 @@ void ImpostorBaker::bake(const QUuid& entityID, int size) {
     start(entityID, size);
 }
 
-void ImpostorBaker::start(const QUuid& entityID, int size) {
+void ImpostorBaker::start(const QUuid& entityID, int size, int meshWaits) {
     _job = std::make_unique<Job>();
     _job->id = entityID;
     _job->size = size;
@@ -85,6 +88,22 @@ void ImpostorBaker::start(const QUuid& entityID, int size) {
     EntityItemPointer entity = tree ? tree->findEntityByID(entityID) : nullptr;
     if (!entity) {
         finish(false, "no such entity");
+        return;
+    }
+
+    // the models that do not draw yet are asked for their meshes and the bake waits for them (the job stays, so that
+    // other bakes queue behind it)
+    int notLoaded = askForMeshes(entity);
+    if (notLoaded > 0 && meshWaits < MAX_MESH_WAITS) {
+        if (meshWaits == 0) {
+            qCDebug(interfaceapp) << "impostor bake waits for" << notLoaded << "models' meshes under" << entity->getName();
+        }
+        QTimer::singleShot(MESH_WAIT_MSECS, this, [this, entityID, size, meshWaits] {
+            if (_job && _job->id == entityID) {
+                _job.reset();
+                start(entityID, size, meshWaits + 1);
+            }
+        });
         return;
     }
 
@@ -188,6 +207,25 @@ void ImpostorBaker::collectModels(const EntityItemPointer& entity, std::vector<M
     };
     addModel(entity);
     entity->forEachDescendant(addModel);
+}
+
+int ImpostorBaker::askForMeshes(const EntityItemPointer& entity) const {
+    auto entityTreeRenderer = DependencyManager::get<EntityTreeRenderer>();
+    int notLoaded = 0;
+    auto ask = [&](const SpatiallyNestablePointer& nestable) {
+        auto item = std::dynamic_pointer_cast<RenderableModelEntityItem>(nestable);
+        if (!item || item->getType() != EntityTypes::Model || !item->getVisible()) {
+            return;
+        }
+        auto renderer = entityTreeRenderer->renderableForEntityId(item->getID());
+        if (renderer && renderer->needsImpostorStandIn()) {
+            item->askForMesh();
+            notLoaded++;
+        }
+    };
+    ask(entity);
+    entity->forEachDescendant(ask);
+    return notLoaded;
 }
 
 bool ImpostorBaker::hasEntry(const EntityItemPointer& entity) {

@@ -139,10 +139,35 @@ void ImpostorCard::setKeyBits(render::hifi::Tag tagMask, render::hifi::Layer lay
     _pending.castShadow = castShadow;
 }
 
+void ImpostorCard::setStandIn(bool standIn) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _pending.standIn = standIn;
+}
+
 bool ImpostorCard::waitingForTextures() const {
     std::lock_guard<std::mutex> lock(_mutex);
     auto waiting = [](const NetworkTexturePointer& texture) { return texture && !texture->isLoaded() && !texture->isFailed(); };
     return waiting(_albedo) || waiting(_normal) || waiting(_material);
+}
+
+bool ImpostorCard::atlasesLoaded() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _albedo && _albedo->isLoaded() && _normal && _normal->isLoaded();
+}
+
+bool ImpostorCard::atlasesFailed() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return (_albedo && _albedo->isFailed()) || (_normal && _normal->isFailed());
+}
+
+bool ImpostorCard::getSphere(glm::vec3& centerWS, float& radius) const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!_pending.entry.valid) {
+        return false;
+    }
+    centerWS = _pending.position + _pending.rotation * _pending.entry.center;
+    radius = _pending.entry.radius;
+    return true;
 }
 
 void ImpostorCard::update() {
@@ -167,6 +192,7 @@ void ImpostorCard::update() {
     _bound = AABox(_centerWS - glm::vec3(radius), glm::vec3(2.0f * radius));
     _switch->setSphere(_centerWS, radius);
     _switch->setCardReady(_ready && _live.visible);
+    _switch->setStandIn(_live.standIn);
 
     if (_ready) {
         Params params;

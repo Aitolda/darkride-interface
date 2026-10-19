@@ -81,6 +81,7 @@
 #include <VirtualPadManager.h>
 #include <DebugDraw.h>
 #include <DeferredLightingEffect.h>
+#include <EntityNodeData.h>
 #include <EntityScriptClient.h>
 #include <EntityScriptServerLogClient.h>
 #include <EntityScriptingInterface.h>
@@ -6854,6 +6855,9 @@ void Application::update(float deltaTime) {
     {
         QMutexLocker viewLocker(&_viewMutex);
         _myCamera.loadViewFrustum(_viewFrustum);
+        // where a model shown as its impostor card fetches its mesh (ENTITY-STREAMING.md 3.1)
+        getEntities()->setImpostorLoadView(_viewFrustum.getPosition(),
+                                           DependencyManager::get<LODManager>()->getImpostorLoadHalfTanSq());
 
         _conicalViews.clear();
         _conicalViews.push_back(_viewFrustum);
@@ -7253,6 +7257,21 @@ void Application::queryOctree(
         _octreeQuery.setOctreeSizeScale(lodManager->getOctreeSizeScale());
         _octreeQuery.setBoundaryLevelAdjust(lodManager->getBoundaryLevelAdjust());
     }
+    // ENTITY-STREAMING.md 3.3: this client draws impostor cards, so the entity server sizes a carded entity, and the
+    // models under it, by its card and sends them out to where the card is drawn. One flag among the query's JSON
+    // flags, kept whatever the paths above set (only the whole-tree option writes the JSON); a server that does not
+    // know it sends as before. TIVOLI_NO_IMPOSTOR_CARDS in the environment leaves the flag out, to measure an older
+    // client's stream against the same server (launch-editor.sh EDITOR_NO_IMPOSTOR_CARDS=1).
+    static const bool SEND_IMPOSTOR_CARDS = !QProcessEnvironment::systemEnvironment().contains("TIVOLI_NO_IMPOSTOR_CARDS");
+    if (SEND_IMPOSTOR_CARDS) {
+        QJsonObject parameters = _octreeQuery.getJSONParameters();
+        QJsonObject flags = parameters[EntityJSONQueryProperties::FLAGS_PROPERTY].toObject();
+        if (!flags[EntityJSONQueryProperties::IMPOSTOR_CARDS_PROPERTY].toBool()) {
+            flags[EntityJSONQueryProperties::IMPOSTOR_CARDS_PROPERTY] = true;
+            parameters[EntityJSONQueryProperties::FLAGS_PROPERTY] = flags;
+            _octreeQuery.setJSONParameters(parameters);
+        }
+    }
     _octreeQuery.setReportInitialCompletion(isModifiedQuery);
 
 
@@ -7271,6 +7290,25 @@ void Application::queryOctree(
         auto packetData = reinterpret_cast<unsigned char*>(queryPacket->getPayload());
         int packetSize = _octreeQuery.getBroadcastData(packetData);
         queryPacket->setPayloadSize(packetSize);
+
+        // TIVOLI_QUERY_DIAG in the environment: a log line per entity query sent, with the views it carries (the hunt
+        // for entities that never reach a client, KNOWN-ISSUES.md). Off by default: nothing is formatted.
+        static const bool QUERY_DIAG = QProcessEnvironment::systemEnvironment().contains("TIVOLI_QUERY_DIAG");
+        if (QUERY_DIAG && serverType == NodeType::EntityServer) {
+            QString views;
+            for (const auto& view : _conicalViews) {
+                const auto& p = view.getPosition();
+                const auto& d = view.getDirection();
+                views += QString(" [pos %1 %2 %3 dir %4 %5 %6 angle %7 far %8 radius %9]")
+                    .arg(p.x, 0, 'f', 2).arg(p.y, 0, 'f', 2).arg(p.z, 0, 'f', 2)
+                    .arg(d.x, 0, 'f', 3).arg(d.y, 0, 'f', 3).arg(d.z, 0, 'f', 3)
+                    .arg(glm::degrees(view.getAngle()), 0, 'f', 1).arg(view.getFarClip(), 0, 'f', 0).arg(view.getRadius(), 0, 'f', 2);
+            }
+            qCDebug(interfaceapp).noquote() << "entity query:" << (isModifiedQuery ? "initial-sphere" : "views")
+                << "views" << _conicalViews.size() << views
+                << "lodAdjust" << _octreeQuery.getBoundaryLevelAdjust() << "sizeScale" << _octreeQuery.getOctreeSizeScale()
+                << "pps" << _octreeQuery.getMaxQueryPacketsPerSecond() << "bytes" << packetSize;
+        }
 
         // make sure we still have an active socket
         nodeList->sendUnreliablePacket(*queryPacket, *node);
@@ -7394,6 +7432,11 @@ void Application::updateWindowTitle() const {
         if (!worldName.isEmpty()) {
             title = worldName;
         }
+    }
+    // a build's client label first, when the build has one (cmake -DCLIENT_LABEL=...): with several sessions' clients
+    // on one machine, it tells them apart at a glance (Caity, 2026-10-19)
+    if (!BuildInfo::CLIENT_LABEL.isEmpty()) {
+        title = BuildInfo::CLIENT_LABEL + " | " + title;
     }
     // With several branches built on this machine, one per session, the title says which build this client is
     // ("Darkride - physics-net"), so the right window gets closed. Dev builds only; a release shows no branch.

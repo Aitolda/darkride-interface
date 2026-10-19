@@ -93,6 +93,29 @@ public:
                 meshFinerFace(axis);
             }
         }
+        // and, where the chunk lies against a closed low face of the grid's box, the crossings into it across that
+        // face, whose low voxel lies outside the grid and so is no chunk's own (VoxelGrid::applyCaps closed the
+        // samples there): the cap along the box's face
+        for (int axis = 0; axis < 3; ++axis) {
+            if (!_samples.capsLow(axis)) {
+                continue;
+            }
+            const int b = (axis + 1) % 3;
+            const int c = (axis + 2) % 3;
+            for (int j = 0; j < limit[c]; ++j) {
+                for (int i = 0; i < limit[b]; ++i) {
+                    glm::ivec3 voxel(0);
+                    voxel[axis] = -1;
+                    voxel[b] = i;
+                    voxel[c] = j;
+                    const bool lowInside = _samples.at(voxel.x, voxel.y, voxel.z).isGround();
+                    const glm::ivec3 high = voxel + AXES[axis];
+                    if (_samples.at(high.x, high.y, high.z).isGround() != lowInside) {
+                        meshOwnEdge(voxel, axis, lowInside);
+                    }
+                }
+            }
+        }
         return std::move(_mesh);
     }
 
@@ -163,8 +186,12 @@ private:
             const glm::ivec3& c = AXES[(along + 2) % 3];
             const int alongEnd = std::min(FINE_SIZE, limit[along]);
             const int acrossEnd = std::min(FINE_SIZE, limit[across]);
-            for (int i = 0; i < alongEnd; ++i) {
-                for (int j = 1; j < acrossEnd; j += 2) {
+            // at a closed low face of the box along either in-plane axis, the finer edges start a point further out
+            // too: the cap's crossings into the chunk across that face
+            const int alongStart = _samples.capsLow(along) ? -1 : 0;
+            const int acrossStart = _samples.capsLow(across) ? -1 : 1;
+            for (int i = alongStart; i < alongEnd; ++i) {
+                for (int j = acrossStart; j < acrossEnd; j += 2) {
                     glm::ivec3 low(0);
                     low[along] = i;
                     low[across] = j;
