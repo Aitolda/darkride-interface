@@ -60,19 +60,24 @@ sandbox_stop() {
 }
 
 sandbox_clean_world() {
-    python3 - "$SANDBOX/entities/models.json.gz" "$@" <<'PY'
-import gzip, json, sys
-path, names = sys.argv[1], sys.argv[2:]
-try:
-    world = json.load(gzip.open(path))
-except Exception as e:
-    print("no world file to clean:", e); sys.exit(0)
-before = len(world.get("Entities", []))
-world["Entities"] = [e for e in world.get("Entities", [])
-                     if not any(str(e.get("name", "")).startswith(n) for n in names)]
-with gzip.open(path, "wt") as f:
-    json.dump(world, f)
-print("world cleaned of earlier runs' test entities:", before - len(world["Entities"]), "removed,", len(world["Entities"]), "kept")
+    # both the entity server's file and the domain-server's copy (appdata/entities), which replaces the entity
+    # server's at start when its data version is newer (see run-loading.sh)
+    python3 - "$SANDBOX/entities/models.json.gz" "$SANDBOX/appdata/entities/models.json.gz" "$@" <<'PY'
+import gzip, json, os, sys
+paths, names = sys.argv[1:3], sys.argv[3:]
+for path in paths:
+    if not os.path.exists(path):
+        continue
+    try:
+        world = json.load(gzip.open(path))
+    except Exception as e:
+        print("no world file to clean at", path, ":", e); continue
+    before = len(world.get("Entities", []))
+    world["Entities"] = [e for e in world.get("Entities", [])
+                         if not any(str(e.get("name", "")).startswith(n) for n in names)]
+    with gzip.open(path, "wt") as f:
+        json.dump(world, f)
+    print("world cleaned of earlier runs' test entities:", before - len(world["Entities"]), "removed,", len(world["Entities"]), "kept, in", path)
 PY
 }
 

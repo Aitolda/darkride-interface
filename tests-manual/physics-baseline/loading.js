@@ -11,6 +11,23 @@
     var WAITS = (typeof ARRIVAL_WAITS === "boolean") ? ARRIVAL_WAITS : true;
     var start = Date.now();
     var enabledAt = -1;
+    var printedLater = false;
+    // what the client holds within NEARBY m of the avatar: the count by type and the model names (the arrival gate
+    // waits for what is near; this shows whether the near models were in before the gate lifted or only after)
+    var NEARBY = 10;
+    function printNearby(when) {
+        var ids = Entities.findEntities(MyAvatar.position, NEARBY);
+        var byType = {}, models = [];
+        ids.forEach(function (id) {
+            var p = Entities.getEntityProperties(id, ["type", "name", "position"]);
+            byType[p.type] = (byType[p.type] || 0) + 1;
+            if (p.type === "Model") {
+                models.push((p.name || "?") + " " + Vec3.distance(p.position, MyAvatar.position).toFixed(1) + " m");
+            }
+        });
+        print("PHYSICS-LOADING held within " + NEARBY + " m " + when + ": " + ids.length + " " + JSON.stringify(byType)
+            + (models.length ? "; models: " + models.join(", ") : ""));
+    }
     if (WAITS && Window.setArrivalWaitsForNearby) {
         Window.setArrivalWaitsForNearby(true);
     }
@@ -22,6 +39,11 @@
             enabledAt = elapsed;
             print("PHYSICS-LOADING physics enabled " + enabledAt.toFixed(1) + " s after the script started, avatar at "
                 + JSON.stringify(MyAvatar.position));
+            printNearby("at physics enabled");
+        }
+        if (enabledAt >= 0 && !printedLater && elapsed > enabledAt + 4) {
+            printedLater = true;
+            printNearby("4 s later");
         }
         if ((enabledAt >= 0 && elapsed > enabledAt + 5) || elapsed > LIMIT) {
             Script.clearInterval(timer);

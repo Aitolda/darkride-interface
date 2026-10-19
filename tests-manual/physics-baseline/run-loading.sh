@@ -27,10 +27,23 @@ mkdir -p "$R"
 . "$D/harness.sh"
 BUILD=$(cd "$APP/../.." && pwd)
 
+# The domain-server keeps its own copy of the world (appdata/entities/models.json.gz) and hands it to the entity
+# server at start whenever the entity server's file has another id or an older data version (DomainServer::
+# processOctreeDataRequestMessage), so a world put only into entities/ is replaced by the sandbox's own world before
+# the first client arrives: round 10's and round 11's first "Tivoli Town" runs served the sandbox's world at Tivoli
+# Town's spawn (found 2026-10-19 by the entity count the headless viewers held, 1,828 against 2,045). Both copies are
+# swapped and restored.
+DS_WORLD="$SANDBOX/appdata/entities/models.json.gz"
+
 restore_world() {
     if [ -d "$R/sandbox-backup" ]; then
         rm -rf "$SANDBOX/entities/models.json.gz" "$SANDBOX/assets"
         cp "$R/sandbox-backup/models.json.gz" "$SANDBOX/entities/models.json.gz"
+        if [ -f "$R/sandbox-backup/ds-models.json.gz" ]; then
+            cp "$R/sandbox-backup/ds-models.json.gz" "$DS_WORLD"
+        else
+            rm -f "$DS_WORLD"
+        fi
         [ -d "$R/sandbox-backup/assets" ] && cp -R "$R/sandbox-backup/assets" "$SANDBOX/assets" || mkdir -p "$SANDBOX/assets"
         cp "$R/sandbox-backup/domain-config.json" "$SANDBOX/domain-config.json"
         rm -rf "$R/sandbox-backup"
@@ -43,10 +56,13 @@ if [ -n "$WORLD" ]; then
     [ -f "$WORLD/models.json.gz" ] || { echo "no world at $WORLD" >&2; exit 1; }
     rm -rf "$R/sandbox-backup"; mkdir -p "$R/sandbox-backup"
     cp "$SANDBOX/entities/models.json.gz" "$R/sandbox-backup/models.json.gz"
+    [ -f "$DS_WORLD" ] && cp "$DS_WORLD" "$R/sandbox-backup/ds-models.json.gz"
     [ -d "$SANDBOX/assets" ] && cp -R "$SANDBOX/assets" "$R/sandbox-backup/assets"
     cp "$SANDBOX/domain-config.json" "$R/sandbox-backup/domain-config.json"
     trap 'sandbox_stop; restore_world' EXIT
     cp "$WORLD/models.json.gz" "$SANDBOX/entities/models.json.gz"
+    mkdir -p "$(dirname "$DS_WORLD")"
+    cp "$WORLD/models.json.gz" "$DS_WORLD"
     rm -rf "$SANDBOX/assets"; mkdir -p "$SANDBOX/assets"
     [ -d "$WORLD/assets" ] && cp -R "$WORLD/assets/." "$SANDBOX/assets/"
     python3 - "$SANDBOX/domain-config.json" "$WORLD/config.json" <<'PY'
@@ -58,7 +74,7 @@ if world.get("paths"):
     config["paths"] = world["paths"]
 json.dump(config, open(path, "w"), indent=2)
 PY
-    echo "world: $WORLD ($(python3 -c 'import gzip,json,sys; print(len(json.load(gzip.open(sys.argv[1])).get("Entities",[])))' "$WORLD/models.json.gz") entities) put into the sandbox for this run"
+    echo "world: $WORLD ($(python3 -c 'import gzip,json,sys; print(len(json.load(gzip.open(sys.argv[1])).get("Entities",[])))' "$WORLD/models.json.gz") entities) put into the sandbox (the entity server's file and the domain-server's copy) for this run"
 else
     sandbox_clean_world rover- airship- aircraft-
     trap 'sandbox_stop' EXIT
@@ -97,6 +113,7 @@ for PASS in cold warm; do
     grep "safe landing: the entity server reports\|safe landing: complete" "$LOG" | sed 's/.*safe landing:/   safe landing:/' | head -8 || true
     grep "safe landing: tracking" "$LOG" | tail -1 | sed 's/.*safe landing:/   last: safe landing:/' || true
 done
+echo "== the world the entity server served: $(grep -o 'known [0-9]* entities' "$R/sandbox-assignment-client.log" | sort | uniq -c | sort -rn | head -2 | tr '\n' ';')"
 echo "== entity server's traversals for the clients (first traversals and completions reported)"
 grep "first traversal for\|initial scene complete for" "$R/sandbox-assignment-client.log" | grep -v "Physics Server" | sed 's/.*\[entity-server\]/   /' | head -16 || true
 echo "== physics server"
