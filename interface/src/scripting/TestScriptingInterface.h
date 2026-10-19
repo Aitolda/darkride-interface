@@ -297,6 +297,22 @@ public slots:
      */
     Q_INVOKABLE bool saveWindowPicture(const QString& path);
 
+    /**jsdoc
+     * Starts tracing an entity as it is drawn: one sample per rendered frame, taken on the render thread once the frame's
+     * scene is in place, of the frame's camera position and the centre of the entity's drawn bound. A null id stops it.
+     * @function Test.traceRenderedEntity
+     * @param {Uuid} entityID - The entity.
+     * @returns {boolean} Whether the entity has a render item to trace.
+     */
+    Q_INVOKABLE bool traceRenderedEntity(const QUuid& entityID);
+
+    /**jsdoc
+     * Takes the samples traced so far: each is [time in ms, camera x, y, z, item x, y, z].
+     * @function Test.takeRenderTrace
+     * @returns {Array<Array<number>>} The samples, oldest first.
+     */
+    Q_INVOKABLE QVariantList takeRenderTrace();
+
 private:
     bool waitForCondition(qint64 maxWaitMs, std::function<bool()> condition);
     QString _testResultsLocation;

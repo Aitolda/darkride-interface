@@ -25,6 +25,9 @@
 #include <QtGui/QPixmap>
 
 #include "editor/Editor.h"
+#include "graphics/GraphicsEngine.h"
+#include <EntityTreeRenderer.h>
+#include <RenderableEntityItem.h>
 
 Q_LOGGING_CATEGORY(trace_test, "trace.test")
 
@@ -297,4 +300,31 @@ bool TestScriptingInterface::saveWindowPicture(const QString& path) {
     }
     QPixmap picture = window->grab();
     return !picture.isNull() && picture.save(path);
+}
+
+bool TestScriptingInterface::traceRenderedEntity(const QUuid& entityID) {
+    if (QThread::currentThread() != thread()) {
+        bool result = false;
+        BLOCKING_INVOKE_METHOD(this, "traceRenderedEntity", Q_RETURN_ARG(bool, result), Q_ARG(QUuid, entityID));
+        return result;
+    }
+    render::ItemID item = render::Item::INVALID_ITEM_ID;
+    if (!entityID.isNull()) {
+        auto renderable = qApp->getEntities()->renderableForEntityId(entityID);
+        if (!renderable) {
+            return false;
+        }
+        item = renderable->getRenderItemID();
+    }
+    qApp->getGraphicsEngine().setRenderTraceItem(item);
+    return render::Item::isValidID(item);
+}
+
+QVariantList TestScriptingInterface::takeRenderTrace() {
+    QVariantList list;
+    for (const auto& sample : qApp->getGraphicsEngine().takeRenderTrace()) {
+        list << QVariant(QVariantList { (double)sample.time * 1.0e-3, (double)sample.camera.x, (double)sample.camera.y, (double)sample.camera.z,
+                                        (double)sample.item.x, (double)sample.item.y, (double)sample.item.z });
+    }
+    return list;
 }
