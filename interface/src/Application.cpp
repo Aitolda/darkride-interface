@@ -6448,7 +6448,11 @@ void Application::tryToEnablePhysics() {
             myAvatar->updateMotionBehaviorFromMenu();
             qDebug() << "Physics enabled";
             DependencyManager::get<EntityTreeRenderer>()->setSceneIsReady(true);
-            requeryOctree(); // hit it with a quick refresh to make sure everything is drawn
+            // the renderer rechecks zone culling now that the scene is ready. Until 2026-10-19 this was
+            // requeryOctree, whose new connection id made the entity server resend the whole view it had just sent
+            // (Tivoli's 14f41d044a: "hit it with a quick refresh to make sure everything is drawn"); the query with
+            // the real views goes out from the update loop as before
+            DependencyManager::get<EntityTreeRenderer>()->forceRecheckEntities();
         }
     }
 }
