@@ -6884,10 +6884,18 @@ void Application::update(float deltaTime) {
         static const std::chrono::seconds MIN_PERIOD_BETWEEN_QUERIES { 2 };
         auto now = SteadyClock::now();
 
+        // The periodic query keeps its connection. Until 2026-10-19 it went through requeryOctree, whose new connection
+        // id makes the entity server forget what this client holds and resend its whole view: every 3 s, for as long
+        // as the client ran (Tivoli's 14f41d044a of 2020, "Fix entities intermittently not rendering"; measured 26
+        // full sends, 2.6 MB, in 97 s over a still field of 200 entities). The renderer's recheck of zone culling
+        // from that fix stays periodic. requeryOctree, with its new connection id, remains for the explicit
+        // refreshes: Redraw (Ctrl+Shift+T), a reload of the caches, physics coming up.
         bool enoughTimePassed = now > _queryExpiry;
-        if (enoughTimePassed) requeryOctree();
+        if (enoughTimePassed) {
+            DependencyManager::get<EntityTreeRenderer>()->forceRecheckEntities();
+        }
 
-        if (viewIsDifferentEnough) {            
+        if (enoughTimePassed || viewIsDifferentEnough) {            
             if (DependencyManager::get<SceneScriptingInterface>()
             ->shouldRenderEntities()
             ) {
