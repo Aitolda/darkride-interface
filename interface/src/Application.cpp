@@ -197,6 +197,7 @@
 #include "scripting/RatesScriptingInterface.h"
 #include "scripting/SelectionScriptingInterface.h"
 #include "editor/Editor.h"
+#include "editor/ImpostorBaker.h"
 #include "editor/ui/ViewportContainer.h"
 #include "scripting/WalletScriptingInterface.h"
 #include "scripting/TTSScriptingInterface.h"
@@ -942,6 +943,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     DependencyManager::set<ResourceManager>();
     DependencyManager::set<SelectionScriptingInterface>();
     DependencyManager::set<Editor>();
+    DependencyManager::set<ImpostorBaker>();
     DependencyManager::set<Ledger>();
     DependencyManager::set<Wallet>();
     DependencyManager::set<WalletScriptingInterface>();
@@ -1038,6 +1040,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     _previousScriptLocation("LastScriptLocation", DESKTOP_LOCATION),
     _fieldOfView("fieldOfView", DEFAULT_FIELD_OF_VIEW_DEGREES),
     _farClip("farClip", DEFAULT_FAR_CLIP),
+    _nearClip("nearClip", DEFAULT_NEAR_CLIP),
     _hmdTabletScale("hmdTabletScale", DEFAULT_HMD_TABLET_SCALE_PERCENT),
     _desktopTabletScale("desktopTabletScale", DEFAULT_DESKTOP_TABLET_SCALE_PERCENT),
     _firstRun(Settings::firstRun, true),
@@ -1494,7 +1497,8 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     // tell the NodeList instance who to tell the domain server we care about
     nodeList->addSetOfNodeTypesToNodeInterestSet(NodeSet() << NodeType::AudioMixer << NodeType::AvatarMixer
-        << NodeType::EntityServer << NodeType::AssetServer << NodeType::MessagesMixer << NodeType::EntityScriptServer);
+        << NodeType::EntityServer << NodeType::AssetServer << NodeType::MessagesMixer << NodeType::EntityScriptServer
+        << NodeType::PhysicsServer);
 
     // connect to the packet sent signal of the _entityEditSender
     connect(&_entityEditSender, &EntityEditPacketSender::packetSent, this, &Application::packetSent);
@@ -2711,7 +2715,7 @@ QString Application::getUserAgent() {
     }
 
     QString userAgent = (
-        "TivoliCloudVR/" + 
+        "Darkride/" + 
         (BuildInfo::BUILD_TYPE == BuildInfo::BuildType::Stable ? BuildInfo::VERSION : "dev")
     );
 
@@ -3881,6 +3885,13 @@ void Application::setFarClip(float farClip) {
     }
 }
 
+void Application::setNearClip(float nearClip) {
+    if (nearClip != _nearClip.get()) {
+        _nearClip.set(nearClip);
+        resizeGL();   // the projection is rebuilt there
+    }
+}
+
 void Application::setHMDTabletScale(float hmdTabletScale) {
     _hmdTabletScale.set(hmdTabletScale);
 }
@@ -4020,7 +4031,7 @@ void Application::resizeGL() {
     float fovY = verticalFieldOfView(_fieldOfView.get(), aspectRatio);
     _myCamera.setProjection(
         glm::perspective(
-            glm::radians(fovY), aspectRatio, DEFAULT_NEAR_CLIP, getFarClip()
+            glm::radians(fovY), aspectRatio, getNearClip(), getFarClip()
         )
     );
     // Possible change in aspect ratio
@@ -5125,7 +5136,7 @@ bool Application::acceptSnapshot(const QString& urlString) {
         }
     } else {
         OffscreenUi::asyncWarning("", "No location details were found in the file\n" +
-                             snapshotPath + "\nTry dragging in an authentic Hifi snapshot.");
+                             snapshotPath + "\nTry dragging in a Darkride Snap saved on this computer.");
     }
     return true;
 }
@@ -5818,6 +5829,8 @@ void Application::pauseUntilLoginDetermined() {
         return;
     }
 
+    _signInPending = true;
+
     auto myAvatar = getMyAvatar();
     _previousAvatarTargetScale = myAvatar->getTargetScale();
     _previousAvatarSkeletonModel = myAvatar->getSkeletonModelURL().toString();
@@ -5948,6 +5961,7 @@ void Application::resumeAfterLoginDialogActionTaken() {
     cameraModeChanged();
     _startUpFinished = true;
     getRefreshRateManager().setRefreshRateRegime(RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE);
+    _signInPending = false;
 }
 
 void Application::loadAvatarScripts(const QVector<QString>& urls) {
@@ -6419,8 +6433,14 @@ void Application::updateSecondaryCameraViewFrustum() {
 
 static bool domainLoadingInProgress = false;
 
+void Application::setArrivalWaitsForNearby(bool wait) {
+    _arrivalWaitsForNearby = wait;
+    _octreeProcessor.setSafeLandingWaitsForVisuals(wait);
+}
+
 void Application::tryToEnablePhysics() {
-    bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled();
+    bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
+        _arrivalWaitsForNearby;
     if (gpuTextureMemSizeStable() || !enableInterstitial) {
         _fullSceneCounterAtLastPhysicsCheck = _fullSceneReceivedCounter;
         _lastQueriedViews.clear();  // Force new view.
@@ -6436,7 +6456,11 @@ void Application::tryToEnablePhysics() {
             myAvatar->updateMotionBehaviorFromMenu();
             qDebug() << "Physics enabled";
             DependencyManager::get<EntityTreeRenderer>()->setSceneIsReady(true);
-            requeryOctree(); // hit it with a quick refresh to make sure everything is drawn
+            // the renderer rechecks zone culling now that the scene is ready. Until 2026-10-19 this was
+            // requeryOctree, whose new connection id made the entity server resend the whole view it had just sent
+            // (Tivoli's 14f41d044a: "hit it with a quick refresh to make sure everything is drawn"); the query with
+            // the real views goes out from the update loop as before
+            DependencyManager::get<EntityTreeRenderer>()->forceRecheckEntities();
         }
     }
 }
@@ -6467,8 +6491,9 @@ void Application::update(float deltaTime) {
         } else {
             _octreeProcessor.updateSafeLanding();
             
-            if (DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed() 
-             || _octreeProcessor.safeLandingIsComplete()) { 
+            // ghosting lets the avatar move before the world near it is in, unless a loading screen waits for that
+            bool ghosting = DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed() && !_arrivalWaitsForNearby;
+            if (ghosting || _octreeProcessor.safeLandingIsComplete()) {
                 tryToEnablePhysics();
             }
         }
@@ -6871,10 +6896,18 @@ void Application::update(float deltaTime) {
         static const std::chrono::seconds MIN_PERIOD_BETWEEN_QUERIES { 2 };
         auto now = SteadyClock::now();
 
+        // The periodic query keeps its connection. Until 2026-10-19 it went through requeryOctree, whose new connection
+        // id makes the entity server forget what this client holds and resend its whole view: every 3 s, for as long
+        // as the client ran (Tivoli's 14f41d044a of 2020, "Fix entities intermittently not rendering"; measured 26
+        // full sends, 2.6 MB, in 97 s over a still field of 200 entities). The renderer's recheck of zone culling
+        // from that fix stays periodic. requeryOctree, with its new connection id, remains for the explicit
+        // refreshes: Redraw (Ctrl+Shift+T), a reload of the caches, physics coming up.
         bool enoughTimePassed = now > _queryExpiry;
-        if (enoughTimePassed) requeryOctree();
+        if (enoughTimePassed) {
+            DependencyManager::get<EntityTreeRenderer>()->forceRecheckEntities();
+        }
 
-        if (viewIsDifferentEnough) {            
+        if (enoughTimePassed || viewIsDifferentEnough) {            
             if (DependencyManager::get<SceneScriptingInterface>()
             ->shouldRenderEntities()
             ) {
@@ -6980,11 +7013,13 @@ void Application::updateRenderArgs(float deltaTime) {
             PROFILE_RANGE(render, "/buildFrustrumAndArgs");
             {
                 QMutexLocker viewLocker(&_viewMutex);
-                // adjust near clip plane to account for sensor scaling.
+                // adjust near clip plane to account for sensor scaling. This is rebuilt every frame, so the near
+                // clip setting (Render.nearClip, desktop only: an HMD keeps the short one for the hands) is read here
                 float aspectRatio = getActiveDisplayPlugin()->getRecommendedAspectRatio();
                 float fovY = verticalFieldOfView(_fieldOfView.get(), aspectRatio);
+                float nearClip = isHMDMode() ? DEFAULT_NEAR_CLIP : getNearClip();
                 auto adjustedProjection = glm::perspective(
-                    glm::radians(fovY), aspectRatio, DEFAULT_NEAR_CLIP * sensorToWorldScale, getFarClip()
+                    glm::radians(fovY), aspectRatio, nearClip * sensorToWorldScale, getFarClip()
                 );
                 _viewFrustum.setProjection(adjustedProjection);
                 _viewFrustum.calculate();
@@ -6993,6 +7028,11 @@ void Application::updateRenderArgs(float deltaTime) {
                 lodManager->getBoundaryLevelAdjust(), lodManager->getLODHalfAngleTan(), RenderArgs::DEFAULT_RENDER_MODE,
                 RenderArgs::MONO, RenderArgs::DEFERRED, RenderArgs::RENDER_DEBUG_NONE);
             appRenderArgs._renderArgs._scene = getMain3DScene();
+            appRenderArgs._renderArgs._impostorAngleHalfTanSq = lodManager->getImpostorAngleHalfTanSq();
+            appRenderArgs._renderArgs._impostorDebug = lodManager->getImpostorDebug();
+            appRenderArgs._renderArgs._impostorCrossfade = lodManager->getImpostorCrossfade();
+            appRenderArgs._renderArgs._meshLodErrorPixels = lodManager->getMeshLodErrorPixelsInEffect();
+            appRenderArgs._renderArgs._meshLodForceLevel = lodManager->getMeshLodForceLevel();
 
             {
                 QMutexLocker viewLocker(&_viewMutex);
@@ -7349,71 +7389,31 @@ void Application::updateWindowTitle() const {
     const auto nodeList = DependencyManager::get<NodeList>();
     const auto accountManager = DependencyManager::get<AccountManager>();
     const auto addressManager = DependencyManager::get<AddressManager>();
-    const auto isInErrorState = nodeList->getDomainHandler().isInErrorState();
 
-    // with several branches built on one machine, the title says which one this client is (interagent.md)
-    const QString branchLabel = BuildInfo::BUILD_BRANCH.isEmpty() ? QString()
-        : (" " + BuildInfo::BUILD_BRANCH + (BuildInfo::BUILD_COMMIT.isEmpty() ? QString() : " " + BuildInfo::BUILD_COMMIT));
-    const QString buildVersion = (
-        QString() +
-        (BuildInfo::BUILD_TYPE == BuildInfo::BuildType::Stable ? "" : "Build ") +
-        applicationVersion() +
-        branchLabel
-    );
+    setCrashAnnotation("sentry[user][username]", accountManager->getAccountInfo().getUsername().toStdString());
 
-    const QString loginStatus = accountManager->isLoggedIn() ? "" : "Not logged in";
-
-    const QString connectionStatus = 
-        isInErrorState ? 
-            "Error connecting" :
-            nodeList->getDomainHandler().isConnected() ? "" : "Not connected";
-
-    const QString username = accountManager->getAccountInfo().getUsername();
-
-    setCrashAnnotation("sentry[user][username]", username.toStdString());
-
-    QString currentWorldName;
-    if (isServerlessMode()) {
-        if (isInErrorState) {
-            currentWorldName = nodeList->getDomainHandler().getErrorDomainURL().toString();
-        } else {
-            currentWorldName = addressManager->getDomainURL().toString();
-        }
-    } else {
-        // currentPlaceName = addressManager->getDomainURL().host();
-        const QString worldName = addressManager->getDomainLabel();
-
-        if (worldName.isEmpty()) {
-            currentWorldName = nodeList->getDomainHandler().getHostname();
-        } else {
-            const QString worldAuthor = addressManager->getDomainAuthor();
-            const QString worldRestriction = addressManager->getDomainRestriction();
-
-            currentWorldName = (
-                (worldRestriction == "acl" ? "🔒 " : "") +
-                worldName + 
-                (!worldAuthor.isEmpty() ? " (" + worldAuthor + ")": "")
-            );
+    // Like a Mac document window, the title names what you're looking at: the world you're in, by its name, or
+    // Darkride when you're in none or it has no name to show (an address is not a name). The account is in its
+    // menu, the build in About and in the log line below, and a connection problem is shown in the window itself.
+    QString title = "Darkride";
+    auto& domainHandler = nodeList->getDomainHandler();
+    if (!isServerlessMode() && domainHandler.isConnected() && !domainHandler.isInErrorState()) {
+        const QString worldName = addressManager->getDomainLabel().trimmed();
+        if (!worldName.isEmpty()) {
+            title = worldName;
         }
     }
-    
-    // Not connected, Not logged in - Maki @ Cutelab (Maki) - Darkride Build 0.7.2 native-editor 7c5c5bda86
-
-    QStringList statusList = { connectionStatus, loginStatus };
-    statusList.removeAll(QString(""));
-    const QString status = statusList.join(", ").trimmed();
-
-    const QString title = (
-        (status.isEmpty() ? "" : status + " - ") +
-        username +
-        (username.isEmpty() || currentWorldName.isEmpty() ? "" : " @ ")  +
-        currentWorldName + " - " +
-        "Darkride " + buildVersion
-    );
+    // With several branches built on this machine, one per session, the title says which build this client is
+    // ("Darkride - physics-net"), so the right window gets closed. Dev builds only; a release shows no branch.
+    if (BuildInfo::BUILD_TYPE == BuildInfo::Dev && !BuildInfo::BUILD_BRANCH.isEmpty() && BuildInfo::BUILD_BRANCH != "HEAD") {
+        title += " - " + BuildInfo::BUILD_BRANCH;
+    }
 
 #ifndef WIN32
     // crashes with vs2013/win32
-    qCDebug(interfaceapp, "Application title set to: %s", title.toStdString().c_str());
+    qCDebug(interfaceapp, "Application title set to: %s (build %s %s %s)", title.toStdString().c_str(),
+            applicationVersion().toStdString().c_str(), BuildInfo::BUILD_BRANCH.toStdString().c_str(),
+            BuildInfo::BUILD_COMMIT.toStdString().c_str());
 #endif
     _window->setWindowTitle(title);
 
@@ -7785,6 +7785,7 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
 
     scriptEngine->registerGlobalObject("Scene", DependencyManager::get<SceneScriptingInterface>().data());
     scriptEngine->registerGlobalObject("Render", RenderScriptingInterface::getInstance());
+    scriptEngine->registerGlobalObject("Impostors", DependencyManager::get<ImpostorBaker>().data());
     scriptEngine->registerGlobalObject("Workload", _gameWorkload._engine->getConfiguration().get());
 
     GraphicsScriptingInterface::registerMetaTypes(scriptEngine.data());

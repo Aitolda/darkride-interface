@@ -19,6 +19,18 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QTimer>
 #include <QtCore/QThread>
+#include <QtCore/QFile>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
+#include <QtCore/QMetaEnum>
+
+#include <MetaObjectDescription.h>
+
+#include "WasmScriptEngine.h"
+#include <QtCore/QMetaMethod>
+#include <QtCore/QMetaProperty>
+#include <QtScript/QScriptValueIterator>
 #include <QtCore/QRegularExpression>
 
 #include <QtCore/QFuture>
@@ -179,8 +191,23 @@ QString ScriptEngine::logException(const QScriptValue& exception) {
 
 ScriptEnginePointer scriptEngineFactory(ScriptEngine::Context context,
                                                  const QString& scriptContents,
-                                                 const QString& fileNameString) {
-    ScriptEngine* engine = new ScriptEngine(context, scriptContents, fileNameString);
+                                                 const QString& fileNameString,
+                                                 const QUrl& scriptURL) {
+    // a WebAssembly module runs on the engine beside this one; it is told from the file name's suffix, which
+    // ScriptEngines::loadScript puts in the name before the content is fetched. A JavaScript client script
+    // and the entities engines (the client's, the entity script server's) go there too when the setting says
+    // so, and a client script for which an engine was chosen goes to that one; agents stay on this engine
+    // until their owners say otherwise. JavaScript goes there only when the build has the guest module that runs it.
+    const bool isEntitiesEngine = context == ScriptEngine::ENTITY_CLIENT_SCRIPT || context == ScriptEngine::ENTITY_SERVER_SCRIPT;
+    const bool isClientJavaScript = context == ScriptEngine::CLIENT_SCRIPT && WasmScriptEngine::isJavaScriptFile(fileNameString);
+    bool javaScriptOnWebAssembly = WasmScriptEngine::runJavaScriptOnWebAssembly();
+    if (isClientJavaScript && !scriptURL.isEmpty()) {
+        WasmScriptEngine::engineChosenForScript(scriptURL, javaScriptOnWebAssembly);
+    }
+    const bool onWebAssembly = WasmScriptEngine::isWasmScript(fileNameString) ||
+        (javaScriptOnWebAssembly && (isClientJavaScript || isEntitiesEngine) && WasmScriptEngine::hasJavaScriptGuest());
+    ScriptEngine* engine = onWebAssembly ? new WasmScriptEngine(context, scriptContents, fileNameString)
+                                         : new ScriptEngine(context, scriptContents, fileNameString);
     ScriptEnginePointer engineSP = ScriptEnginePointer(engine, &QObject::deleteLater);
     auto scriptEngines = DependencyManager::get<ScriptEngines>();
     scriptEngines->addScriptEngine(qSharedPointerCast<ScriptEngine>(engineSP));
@@ -921,6 +948,17 @@ void ScriptEngine::registerValue(const QString& valueName, QScriptValue value) {
     }
 }
 
+void ScriptEngine::registerGlobalValue(const QString& name, const QVariant& value) {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, [this, name, value] { registerGlobalValue(name, value); });
+        return;
+    }
+    if (!globalObject().property(name).isValid()) {
+        // a map becomes a plain object, a list an array, a number or text the primitive
+        globalObject().setProperty(name, toScriptValue(value));
+    }
+}
+
 void ScriptEngine::registerGlobalObject(const QString& name, QObject* object) {
     if (QThread::currentThread() != thread()) {
 #ifdef THREAD_DEBUGGING
@@ -1642,6 +1680,57 @@ QUrl ScriptEngine::resourcesPath() const {
     return QUrl(PathUtils::resourcesUrl());
 }
 
+bool ScriptEngine::dumpApi(const QString& path) {
+    QJsonObject root;
+    root["context"] = getContext();
+    root["type"] = getTypeAsString();
+    root["fileName"] = _fileNameString;
+    QJsonObject globals;
+    QScriptValueIterator it(globalObject());
+    while (it.hasNext()) {
+        it.next();
+        QScriptValue value = it.value();
+        QJsonObject entry;
+        if (value.isQObject()) {
+            QObject* object = value.toQObject();
+            if (object) {
+                entry["kind"] = "qobject";
+                // the same record the WebAssembly engine's describe host function returns
+                entry["meta"] = QJsonObject::fromVariantMap(MetaObjectDescription::describe(object->metaObject()));
+            } else {
+                entry["kind"] = "qobject (null)";
+            }
+        } else if (value.isFunction()) {
+            entry["kind"] = "function";
+        } else if (value.isArray()) {
+            entry["kind"] = "array";
+        } else if (value.isObject()) {
+            entry["kind"] = "object";
+            QJsonObject members;
+            QScriptValueIterator members_it(value);
+            while (members_it.hasNext()) {
+                members_it.next();
+                QScriptValue member = members_it.value();
+                members[members_it.name()] = member.isFunction() ? QString("function") :
+                                             member.isQObject() ? QString("qobject ") + member.toQObject()->metaObject()->className() :
+                                             member.isObject() ? QString("object") : QString::fromUtf8(member.toVariant().typeName());
+            }
+            entry["members"] = members;
+        } else {
+            entry["kind"] = value.isUndefined() ? QString("undefined") : QString::fromUtf8(value.toVariant().typeName());
+        }
+        globals[it.name()] = entry;
+    }
+    root["globals"] = globals;
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        scriptWarningMessage("Script.dumpApi: cannot write " + path);
+        return false;
+    }
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    return true;
+}
+
 void ScriptEngine::print(const QString& message) {
     emit printedMessage(message, getFilename());
 }
@@ -2299,6 +2388,14 @@ void ScriptEngine::loadEntityScript(const EntityItemID& entityID, const QString&
 
     EntityScriptDetails newDetails;
     newDetails.scriptText = entityScript;
+    if (WasmScriptEngine::isWasmScript(entityScript)) {
+        // a module runs on the WebAssembly engine; this engine cannot host it
+        newDetails.status = EntityScriptStatus::ERROR_LOADING_SCRIPT;
+        newDetails.errorInfo = "a WebAssembly entity script needs the entities engine on WebAssembly (Developer > Scripting > Run JavaScript on WebAssembly)";
+        setEntityScriptDetails(entityID, newDetails);
+        scriptWarningMessage(QString("entity script %1 (%2): %3").arg(entityScript, entityID.toString(), newDetails.errorInfo));
+        return;
+    }
     newDetails.status = EntityScriptStatus::LOADING;
     newDetails.definingSandboxURL = currentSandboxURL;
     setEntityScriptDetails(entityID, newDetails);
