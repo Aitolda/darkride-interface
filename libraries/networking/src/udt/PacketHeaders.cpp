@@ -37,8 +37,9 @@ PacketVersion versionForPacketType(PacketType packetType) {
         case PacketType::EntityQuery:
             return static_cast<PacketVersion>(EntityQueryPacketVersion::ConicalFrustums);
         case PacketType::VehicleInput:
-            return 2;   // the airship's pitch, lift and trim (PHYSICS.md round 7)
+            return 3;   // the sequence is the driver's tick, applied at the substep it names (PHYSICS.md round 10)
         case PacketType::VehicleState:
+            return 2;   // the tick applied and the input buffer's margin (PHYSICS.md round 10)
         case PacketType::VehicleStateRequest:
             return 1;   // the physics server's state stream and its subscription (PHYSICS.md round 9)
 

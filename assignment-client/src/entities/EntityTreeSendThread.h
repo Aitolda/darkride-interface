@@ -51,6 +51,9 @@ private:
     size_t queuedEntityCount() const override { return _sendQueue.size(); }
 
     DiffTraversal _traversal;
+    quint64 _traversalStartTime { 0 };   // diagnostics: when the current traversal began and the entities sent since
+    int _entitiesSinceMark { 0 };
+    quint64 _lastCompletionLog { 0 };
     EntityPriorityQueue _sendQueue;
     std::unordered_map<EntityItem*, uint64_t> _knownState;
     quint64 _diagLastLog { 0 };       // TIVOLI_STREAM_DIAG: the last periodic line's time

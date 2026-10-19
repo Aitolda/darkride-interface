@@ -1307,7 +1307,11 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
             if (deferMesh) {
                 // what it draws now is its card: ready once the card's atlases are
                 visuallyReady = standIn.atlasesLoaded;
-            } else if (model && _didLastVisualGeometryRequestSucceed) {
+            } else if (!model) {
+                // the model is made below, on this first update: nothing is drawn yet (until 2026-10-19 this read as
+                // drawn, and the arrival's landing let a cold model through before its download had begun)
+                visuallyReady = false;
+            } else if (_didLastVisualGeometryRequestSucceed) {
                 visuallyReady = (_prevModelLoaded && _texturesLoaded);
             }
         }

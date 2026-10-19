@@ -84,6 +84,14 @@ public:
     QString describeActiveBodies(int maxNames) const;   // for a log: how many are awake, how many dynamic, a few names
     uint64_t getNumIdleSteps() const { return _numIdleSteps; }
 
+    // Time dilation (PHYSICS.md round 10): a driver's client shifts its simulation clock by this much, a few percent
+    // fast (positive: more substeps than the wall clock calls for, to get its inputs further ahead of the physics
+    // server) or slow, until the shift is in; the step count is what moves, the substeps' stamped times stay on the
+    // wall clock. The physics server never shifts.
+    static constexpr float TIME_DILATION = 0.05f;
+    void requestTimeShift(float seconds) { _timeShiftPending += seconds; }
+    float getTimeShiftPending() const { return _timeShiftPending; }
+
     uint32_t getNumSubsteps() const { return _numSubsteps; }
     int32_t getNumCollisionObjects() const;
 
@@ -205,6 +213,7 @@ private:
     CharacterController* _myAvatarController { nullptr };
     uint64_t _lastStepTime { 0 };
     float _accumulatedTime { 0.0f };
+    float _timeShiftPending { 0.0f };   // s of simulation still to add (or, negative, to leave out) by time dilation
     float _smoothedFrameDuration { 0.0f }; // the paced clock's frame (see stepSimulation)
     float _pacedClockLead { 0.0f }; // how far the paced clock is ahead of the wall clock
     float _lastStepDuration { 0.0f };

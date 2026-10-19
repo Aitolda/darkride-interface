@@ -1454,6 +1454,10 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         if (!_physicsEnabled) {
             // when we arrive somewhere without physics enabled --> startSafeLanding
             _octreeProcessor.startSafeLanding();
+            // and query the entity server at once: the restarted landing completes on the server's next report of the
+            // initial scene, which it makes on the next query that asks for it; left to the periodic query that was
+            // up to 3 s of waiting for nothing (WORLD-LOADING.md, the arrival gate)
+            _queryExpiry = SteadyClock::now();
         }
     }, Qt::QueuedConnection);
 
@@ -6442,12 +6446,16 @@ void Application::tryToEnablePhysics() {
         // scene is ready to compute its collision shape.
         auto myAvatar = getMyAvatar();
         if (myAvatar->isReadyForPhysics()) {
+            bool safeLandingComplete = _octreeProcessor.safeLandingIsComplete();   // read before the reset below clears it
             myAvatar->getCharacterController()->setPhysicsEngine(_physicsEngine);
             _octreeProcessor.resetSafeLanding();
             _physicsEnabled = true;
             setIsInterstitialMode(false);
             myAvatar->updateMotionBehaviorFromMenu();
-            qDebug() << "Physics enabled";
+            qDebug() << "Physics enabled" << "(ghosting" << DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed()
+                << "arrival waits for nearby" << _arrivalWaitsForNearby << "interstitial"
+                << DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled()
+                << "safe landing complete" << safeLandingComplete << "full scenes" << _fullSceneReceivedCounter << ")";
             DependencyManager::get<EntityTreeRenderer>()->setSceneIsReady(true);
             // the renderer rechecks zone culling now that the scene is ready. Until 2026-10-19 this was
             // requeryOctree, whose new connection id made the entity server resend the whole view it had just sent
@@ -7221,9 +7229,12 @@ void Application::queryOctree(
         // bool interstitialModeEnabled = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled();
 
         ConicalViewFrustum sphericalView;
-        AABox box = getMyAvatar()->getGlobalBoundingBox();
+        // the sphere is centred on where the avatar is now, not on the global bounding box: that box follows
+        // _globalPosition, refreshed in simulateAttachments, so the query sent in the frame of a teleport (the
+        // arrival's own path lookup) still asked around the old place, and the restarted landing had nothing of the
+        // new place to wait for (WORLD-LOADING.md, the arrival gate)
         float radius = INITIAL_QUERY_RADIUS; //glm::max(INITIAL_QUERY_RADIUS, 350);//0.5 * glm::length(box.getDimensions())); 
-        sphericalView.setPositionAndSimpleRadius(box.calcCenter(), radius);
+        sphericalView.setPositionAndSimpleRadius(getMyAvatar()->getWorldPosition(), radius);
 
         //if (interstitialModeEnabled) {
         auto menu = Menu::getInstance(); 

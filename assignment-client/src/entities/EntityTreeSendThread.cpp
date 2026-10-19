@@ -16,6 +16,7 @@
 #include <EntityNodeData.h>
 #include <EntityTypes.h>
 #include <OctreeUtils.h>
+#include <UUID.h>
 
 #include "EntityServer.h"
 
@@ -149,6 +150,10 @@ bool EntityTreeSendThread::traverseTreeAndSendContents(SharedNodePointer node, O
                 _diagSentSinceLog = 0;
             }
         }
+        // round 10/11 diagnostics: when this traversal began and what it has sent since (the completion line below)
+        _traversalStartTime = usecTimestampNow();
+        _packetsSentSinceMark = 0;
+        _entitiesSinceMark = 0;
 
         // When the viewFrustum changed the sort order may be incorrect, so we re-sort
         // and also use the opportunity to cull anything no longer in view
@@ -197,6 +202,16 @@ bool EntityTreeSendThread::traverseTreeAndSendContents(SharedNodePointer node, O
     if (sendComplete && nodeData->wantReportInitialCompletion() && _traversal.finished()) {
         // Dealt with all nearby entities.
         nodeData->setReportInitialCompletion(false);
+        // a line per completion reported that sent something, else one in ten seconds (a headless viewer asks for the
+        // completion with every query): the sequence number the client will wait up to, and what this traversal sent
+        quint64 now = usecTimestampNow();
+        if (_packetsSentSinceMark > 0 || now - _lastCompletionLog > 10 * USECS_PER_SECOND) {
+            _lastCompletionLog = now;
+            qCDebug(entities) << "initial scene complete for" << uuidStringWithoutCurlyBraces(_nodeUuid) << ": sequence"
+                << nodeData->getSequenceNumber() << "," << _packetsSentSinceMark << "packets (" << _entitiesSinceMark
+                << "entities) in" << (now - _traversalStartTime) / 1000 << "ms since the traversal began, known"
+                << _knownState.size() << "entities";
+        }
         // initial stats and entity packets are reliable until the initial query is complete
         // to guarantee all entity data is available for safe landing/physics start.  Afterwards
         // the packets are unreliable for performance.
@@ -277,6 +292,8 @@ DiffTraversal::Type EntityTreeSendThread::startNewTraversal(const DiffTraversal:
     switch (type) {
         case DiffTraversal::First:
             // When we get to a First traversal, clear the _knownState
+            qCDebug(entities) << "first traversal for" << uuidStringWithoutCurlyBraces(_nodeUuid) << ": forgetting" << _knownState.size()
+                << "known entities (forced" << forceFirstPass << "), views" << view.viewFrustums.size() << ", lod scale" << view.lodScaleFactor;
             _knownState.clear();
             _traversal.setScanCallback([this](DiffTraversal::VisibleElement& next) {
                 next.element->forEachEntity([&](EntityItemPointer entity) {
@@ -429,6 +446,7 @@ bool EntityTreeSendThread::traverseTreeAndBuildNextPacketPayload(EncodeBitstream
                     entityNodeData->removeSentFilteredEntity(entityID);
                 }
                 ++_numEntities;
+                ++_entitiesSinceMark;
             }
             if (queuedItem.shouldForceRemove()) {
                 _knownState.erase(entity.get());

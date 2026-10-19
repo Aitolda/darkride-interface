@@ -39,7 +39,12 @@ struct VehicleState {
     glm::quat rotation;
     glm::vec3 velocity { 0.0f };
     glm::vec3 angularVelocity { 0.0f };
-    VehicleInput input;         // the input applied at that substep, with its sequence: the driver's acknowledgement
+    VehicleInput input;         // the input applied at that substep, with its sequence (the driver's tick it was for)
+    // the input buffer's view at that substep (PHYSICS.md round 10): the driver's tick the substep applied (0 when no
+    // driver is aligned; the driver's record of that tick is what the state is reconciled against) and the margin,
+    // how many ticks of input past it had arrived (negative: none for it; the driver's lead controller reads it)
+    uint32_t tick { 0 };
+    int8_t margin { 0 };
     // what the model carries from one substep to the next
     float engineRPM { 0.0f };
     int8_t gear { 0 };
@@ -54,7 +59,7 @@ struct VehicleState {
 
 namespace VehicleStatePacket {
     const int MAX_STATES = 8;   // per packet; a thousand bytes
-    const int STATE_BYTES = 16 + 8 + 4 + 12 + 16 + 12 + 12 + VehicleInputPacket::INPUT_BYTES + 4 + 1 + 12;
+    const int STATE_BYTES = 16 + 8 + 4 + 12 + 16 + 12 + 12 + VehicleInputPacket::INPUT_BYTES + 4 + 1 + 12 + 4 + 1;
 
     // the payload: a count, then the states; at most MAX_STATES of them (the rest are left out)
     QByteArray pack(const std::vector<VehicleState>& states);

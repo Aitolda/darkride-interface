@@ -84,6 +84,8 @@ QByteArray VehicleStatePacket::pack(const std::vector<VehicleState>& states) {
         put(bytes, s.ballast);
         put(bytes, s.fill);
         put(bytes, s.tilt);
+        put(bytes, s.tick);
+        put(bytes, s.margin);
     }
     return bytes;
 }
@@ -107,7 +109,8 @@ bool VehicleStatePacket::unpack(const QByteArray& payload, std::vector<VehicleSt
                 || !getQuat(payload, offset, s.rotation) || !getVec3(payload, offset, s.velocity)
                 || !getVec3(payload, offset, s.angularVelocity) || !getInput(payload, offset, s.input)
                 || !get(payload, offset, s.engineRPM) || !get(payload, offset, s.gear) || !get(payload, offset, s.ballast)
-                || !get(payload, offset, s.fill) || !get(payload, offset, s.tilt)) {
+                || !get(payload, offset, s.fill) || !get(payload, offset, s.tilt) || !get(payload, offset, s.tick)
+                || !get(payload, offset, s.margin)) {
             states.clear();
             return false;
         }
