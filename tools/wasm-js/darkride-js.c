@@ -59,9 +59,15 @@ static void log_string(int level, const char* text) {
     log_text(level, text, strlen(text));
 }
 
-/* The pending exception, logged as "<message>\n<stack>" at the error level, and cleared. */
+/* The pending exception, logged as "<message>\n<stack>" at the error level, and cleared. An interruption (the host
+   said to stop: QuickJS's only uncatchable error) is a debug line: the host reports why. */
 static void report_exception(const char* where) {
     JSValue exception = JS_GetException(ctx);
+    if (JS_IsUncatchableError(exception)) {
+        JS_FreeValue(ctx, exception);
+        log_string(DR_LOG_DEBUG, "interrupted by the host");
+        return;
+    }
     const char* message = NULL;
     const char* stack = NULL;
     size_t messageLength = 0;
@@ -101,6 +107,12 @@ static void report_exception(const char* where) {
     if (stack) JS_FreeCString(ctx, stack);
     JS_FreeValue(ctx, stackValue);
     JS_FreeValue(ctx, exception);
+}
+
+static int interrupt_handler(JSRuntime* runtime, void* opaque) {
+    (void)runtime;
+    (void)opaque;
+    return dr_interrupted() != 0;
 }
 
 /* Promise reactions and other jobs queued while the guest ran, run to completion. */
@@ -881,6 +893,9 @@ void script_start(void) {
     }
     JS_SetMaxStackSize(rt, JS_STACK_SIZE);
     JS_SetHostPromiseRejectionTracker(rt, on_promise_rejection, NULL);
+    /* the host runs this module with cooperative interruption: no deadline checks in its loops, so QuickJS asks
+       the host whether to stop (every 10,000 steps of the interpreter, and in long regular expressions) */
+    JS_SetInterruptHandler(rt, interrupt_handler, NULL);
     JS_NewClassID(rt, &hostObjectClassId);
     JS_NewClass(rt, hostObjectClassId, &hostObjectClass);
     ctx = JS_NewContext(rt);

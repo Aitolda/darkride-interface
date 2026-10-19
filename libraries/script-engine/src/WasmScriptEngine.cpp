@@ -272,7 +272,15 @@ std::shared_ptr<WasmModule> WasmScriptEngine::javascriptGuestModule(QString& err
         return nullptr;
     }
     auto started = usecTimestampNow();
-    std::shared_ptr<WasmModule> module = runtime()->compile(file.readAll(), error);
+    // The guest stops by itself when the host says so (QuickJS's interrupt handler asks through the "interrupted"
+    // import), so it runs without the runtime's deadline checks in its loops; a guest built before it asked keeps
+    // the checks, or nothing could stop it.
+    const QByteArray bytes = file.readAll();
+    std::shared_ptr<WasmModule> module = runtime()->compile(bytes, error, WasmRuntime::Interruption::Cooperative);
+    if (module && !module->imports().contains("darkride.interrupted")) {
+        qCWarning(scriptengine) << "The JavaScript guest" << path << "does not ask whether to stop; it runs with the runtime's checks";
+        module = runtime()->compile(bytes, error);
+    }
     if (module) {
         qCDebug(scriptengine) << "JavaScript guest" << path << "compiled in" << (usecTimestampNow() - started) / 1000 << "ms";
         cached = module;

@@ -23,6 +23,8 @@ private slots:
     void testHostFunctionError();
     void testInfiniteLoopIsInterrupted();
     void testRequestStop();
+    void testCooperativeStop();
+    void testCooperativeTimeLimit();
     void testMemoryLimit();
     void testMemoryReadWrite();
     void testWasiImports();

@@ -261,6 +261,13 @@ void HostInterface::install() {
         return QString();
     });
 
+    // A module that stops by itself (the JavaScript guest, from QuickJS's interrupt handler) asks this often: 1 when
+    // the running call should stop now.
+    _instance.defineHostFunction(MODULE_NAME, "interrupted", { {}, { I32 } }, [](WasmInstance& instance, Args, Results results) {
+        results.push_back(int32_t(instance.interruptRequested() ? 1 : 0));
+        return QString();
+    });
+
     _instance.defineHostFunction(MODULE_NAME, "log", { { I32, I32, I32 }, {} }, [this](WasmInstance&, Args args, Results) {
         QString error;
         QByteArray text = readBytes(std::get<int32_t>(args[1]), std::get<int32_t>(args[2]), error);
@@ -274,13 +281,28 @@ void HostInterface::install() {
 
 // --- calls into the module ----------------------------------------------------------------------------------
 
+// An entry point of the module. A module that stops by itself (cooperative interruption) unwinds and returns
+// normally when told to stop; the call fails then all the same, with the reason, as a trap would have.
+bool HostInterface::enterGuest(const QString& name, const std::vector<WasmValue>& args, std::vector<WasmValue>& results,
+                               QString& error) {
+    if (!_instance.call(name, args, results, error)) {
+        return false;
+    }
+    QString interruption = _instance.takeInterruptionReason();
+    if (!interruption.isEmpty()) {
+        error = interruption;
+        return false;
+    }
+    return true;
+}
+
 bool HostInterface::hasGuestExport(const QString& name) const {
     return _instance.hasExport(name);
 }
 
 bool HostInterface::callScriptStart(QString& error) {
     std::vector<WasmValue> results;
-    if (!_instance.call("script_start", {}, results, error)) {
+    if (!enterGuest("script_start", {}, results, error)) {
         fail("script_start", error);
         return false;
     }
@@ -292,7 +314,7 @@ bool HostInterface::callScriptStop(QString& error) {
         return true;
     }
     std::vector<WasmValue> results;
-    if (!_instance.call("script_stop", {}, results, error)) {
+    if (!enterGuest("script_stop", {}, results, error)) {
         fail("script_stop", error);
         return false;
     }
@@ -308,7 +330,7 @@ bool HostInterface::callGuest(const QString& name, int32_t id, const QVariant& p
     std::vector<WasmValue> results;
     int32_t pointer = int32_t(uint32_t(uint64_t(packed) >> 32));
     int32_t length = int32_t(uint32_t(uint64_t(packed) & 0xffffffffu));
-    if (!_instance.call(name, { id, pointer, length }, results, error)) {
+    if (!enterGuest(name, { id, pointer, length }, results, error)) {
         fail(name, error);
         return false;
     }
@@ -325,7 +347,7 @@ bool HostInterface::callWithPayload(const QString& name, const QVariant& payload
     std::vector<WasmValue> results;
     int32_t pointer = int32_t(uint32_t(uint64_t(packed) >> 32));
     int32_t length = int32_t(uint32_t(uint64_t(packed) & 0xffffffffu));
-    if (!_instance.call(name, { pointer, length }, results, error)) {
+    if (!enterGuest(name, { pointer, length }, results, error)) {
         fail(name, error);
         return false;
     }
@@ -375,7 +397,7 @@ bool HostInterface::callCallback(int32_t callback, const QVariantList& arguments
     std::vector<WasmValue> results;
     int32_t pointer = int32_t(uint32_t(uint64_t(packed) >> 32));
     int32_t length = int32_t(uint32_t(uint64_t(packed) & 0xffffffffu));
-    if (!_instance.call(CALL_CALLBACK_EXPORT, { callback, pointer, length }, results, error)) {
+    if (!enterGuest(CALL_CALLBACK_EXPORT, { callback, pointer, length }, results, error)) {
         fail(CALL_CALLBACK_EXPORT, error);
         return false;
     }

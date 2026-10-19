@@ -190,6 +190,93 @@ void WasmRuntimeTests::testRequestStop() {
     QVERIFY2(elapsed < 500, qPrintable(QString("took %1 ms").arg(elapsed)));
 }
 
+namespace {
+
+// A module compiled for cooperative interruption: no deadline checks in its loop, it asks the host whether to stop
+// (as the JavaScript guest does from QuickJS's interrupt handler) and returns how many times it asked.
+const QString COOPERATIVE_MODULE = R"((module
+  (import "darkride" "interrupted" (func $interrupted (result i32)))
+  (func (export "until_told") (result i32)
+    (local $asked i32)
+    (block $done
+      (loop $again
+        (local.set $asked (i32.add (local.get $asked) (i32.const 1)))
+        (br_if $done (call $interrupted))
+        (br $again)))
+    (local.get $asked))))";
+
+std::unique_ptr<WasmInstance> makeCooperativeInstance(std::shared_ptr<WasmRuntime> runtime, const WasmInstance::Limits& limits) {
+    QString error;
+    auto module = runtime->compileText(COOPERATIVE_MODULE, error, WasmRuntime::Interruption::Cooperative);
+    if (!module) {
+        qWarning() << "compile failed:" << error;
+        return nullptr;
+    }
+    auto instance = std::make_unique<WasmInstance>(module, limits);
+    instance->defineHostFunction("darkride", "interrupted", { {}, { WasmType::I32 } },
+                                 [](WasmInstance& self, const std::vector<WasmValue>&, std::vector<WasmValue>& results) {
+                                     results.push_back(int32_t(self.interruptRequested() ? 1 : 0));
+                                     return QString();
+                                 });
+    if (!instance->instantiate(error)) {
+        qWarning() << "instantiate failed:" << error;
+        return nullptr;
+    }
+    return instance;
+}
+
+} // namespace
+
+// A stop requested from another thread: the module, which has no deadline checks, unwinds when it next asks, the
+// call returns normally with the reason to take, and every later call is refused.
+void WasmRuntimeTests::testCooperativeStop() {
+    auto runtime = makeRuntime();
+    WasmInstance::Limits limits;
+    limits.callTimeout = std::chrono::milliseconds(0);
+    auto instance = makeCooperativeInstance(runtime, limits);
+    QVERIFY(instance);
+    QCOMPARE(instance->module()->interruption(), WasmRuntime::Interruption::Cooperative);
+    WasmInstance* raw = instance.get();
+    std::thread stopper([raw] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        raw->requestStop();
+    });
+    std::vector<WasmValue> results;
+    QString error;
+    QElapsedTimer timer;
+    timer.start();
+    QVERIFY2(instance->call("until_told", {}, results, error), qPrintable(error));
+    qint64 elapsed = timer.elapsed();
+    stopper.join();
+    QVERIFY2(elapsed >= 25 && elapsed < 500, qPrintable(QString("took %1 ms").arg(elapsed)));
+    QVERIFY(std::get<int32_t>(results[0]) > 1);
+    QString reason = instance->takeInterruptionReason();
+    QVERIFY2(reason.contains("stopped"), qPrintable(reason));
+    QVERIFY(instance->takeInterruptionReason().isEmpty());
+    QVERIFY(!instance->call("until_told", {}, results, error));
+    QVERIFY2(error.contains("stopped"), qPrintable(error));
+}
+
+// A call that runs past its time limit is told to stop when it next asks; the instance stays usable.
+void WasmRuntimeTests::testCooperativeTimeLimit() {
+    auto runtime = makeRuntime();
+    WasmInstance::Limits limits;
+    limits.callTimeout = std::chrono::milliseconds(40);
+    auto instance = makeCooperativeInstance(runtime, limits);
+    QVERIFY(instance);
+    for (int round = 0; round < 2; ++round) {
+        std::vector<WasmValue> results;
+        QString error;
+        QElapsedTimer timer;
+        timer.start();
+        QVERIFY2(instance->call("until_told", {}, results, error), qPrintable(error));
+        qint64 elapsed = timer.elapsed();
+        QVERIFY2(elapsed >= 35 && elapsed < 500, qPrintable(QString("took %1 ms").arg(elapsed)));
+        QString reason = instance->takeInterruptionReason();
+        QVERIFY2(reason.contains("limit of 40 ms"), qPrintable(reason));
+    }
+}
+
 void WasmRuntimeTests::testMemoryLimit() {
     auto runtime = makeRuntime();
     WasmInstance::Limits limits;

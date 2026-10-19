@@ -125,7 +125,8 @@ QString nameToString(const wasm_name_t* name) {
 // WasmRuntime
 
 struct WasmRuntime::Impl {
-    wasm_engine_t* engine { nullptr };
+    wasm_engine_t* engine { nullptr };              // epoch interruption: a module from anywhere
+    wasm_engine_t* cooperativeEngine { nullptr };   // no epoch checks: a module that asks whether to stop
     std::thread ticker;
     std::atomic<bool> stopTicker { false };
 };
@@ -138,6 +139,12 @@ WasmRuntime::WasmRuntime(const Settings& settings) : _settings(settings), _impl(
     wasmtime_config_epoch_interruption_set(config, settings.epochInterruption);
     wasmtime_config_cranelift_opt_level_set(config, WASMTIME_OPT_LEVEL_SPEED);
     _impl->engine = wasm_engine_new_with_config(config); // takes the config
+    // A module compiled by one engine runs only on that engine's stores, so the modules that stop themselves get an
+    // engine of their own, without the checks.
+    wasm_config_t* cooperativeConfig = wasm_config_new();
+    wasmtime_config_epoch_interruption_set(cooperativeConfig, false);
+    wasmtime_config_cranelift_opt_level_set(cooperativeConfig, WASMTIME_OPT_LEVEL_SPEED);
+    _impl->cooperativeEngine = wasm_engine_new_with_config(cooperativeConfig);
     // The epoch is the clock every instance's time limit is measured in; one thread advances it for all.
     wasm_engine_t* engine = _impl->engine;
     auto tick = settings.epochTick;
@@ -154,15 +161,19 @@ WasmRuntime::~WasmRuntime() {
     _impl->stopTicker = true;
     _impl->ticker.join();
     wasm_engine_delete(_impl->engine);
+    wasm_engine_delete(_impl->cooperativeEngine);
 }
 
 struct WasmModule::Impl {
     wasmtime_module_t* module { nullptr };
+    wasm_engine_t* engine { nullptr };
+    WasmRuntime::Interruption interruption { WasmRuntime::Interruption::Epoch };
 };
 
-std::shared_ptr<WasmModule> WasmRuntime::compile(const QByteArray& wasm, QString& error) {
+std::shared_ptr<WasmModule> WasmRuntime::compile(const QByteArray& wasm, QString& error, Interruption interruption) {
+    wasm_engine_t* engine = interruption == Interruption::Cooperative ? _impl->cooperativeEngine : _impl->engine;
     wasmtime_module_t* module = nullptr;
-    auto result = wasmtime_module_new(_impl->engine, reinterpret_cast<const uint8_t*>(wasm.constData()),
+    auto result = wasmtime_module_new(engine, reinterpret_cast<const uint8_t*>(wasm.constData()),
                                       static_cast<size_t>(wasm.size()), &module);
     if (result) {
         error = takeErrorText(result);
@@ -170,10 +181,12 @@ std::shared_ptr<WasmModule> WasmRuntime::compile(const QByteArray& wasm, QString
     }
     auto impl = std::make_unique<WasmModule::Impl>();
     impl->module = module;
+    impl->engine = engine;
+    impl->interruption = interruption;
     return std::shared_ptr<WasmModule>(new WasmModule(shared_from_this(), std::move(impl)));
 }
 
-std::shared_ptr<WasmModule> WasmRuntime::compileText(const QString& text, QString& error) {
+std::shared_ptr<WasmModule> WasmRuntime::compileText(const QString& text, QString& error, Interruption interruption) {
     QByteArray utf8 = text.toUtf8();
     wasm_byte_vec_t binary;
     auto result = wasmtime_wat2wasm(utf8.constData(), static_cast<size_t>(utf8.size()), &binary);
@@ -183,7 +196,7 @@ std::shared_ptr<WasmModule> WasmRuntime::compileText(const QString& text, QStrin
     }
     QByteArray bytes(binary.data, static_cast<int>(binary.size));
     wasm_byte_vec_delete(&binary);
-    return compile(bytes, error);
+    return compile(bytes, error, interruption);
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -195,6 +208,10 @@ WasmModule::WasmModule(std::shared_ptr<WasmRuntime> runtime, std::unique_ptr<Imp
 
 WasmModule::~WasmModule() {
     wasmtime_module_delete(_impl->module);
+}
+
+WasmRuntime::Interruption WasmModule::interruption() const {
+    return _impl->interruption;
 }
 
 QStringList WasmModule::imports() const {
@@ -248,6 +265,7 @@ struct WasmInstance::Impl {
     int callDepth { 0 };
     wasmtime_guestprofiler_t* profiler { nullptr };
     std::chrono::steady_clock::time_point lastSample;
+    QString interruptionReason; // why a cooperative module was last told to stop, until taken
 
     // An exported function, found by name once: the host calls a few of them (alloc, the entry points) many times
     // a frame, and looking one up builds its type each time.
@@ -277,22 +295,40 @@ struct WasmInstance::Impl {
         return result;
     }
 
+    // A profile sample when one is due: at every epoch tick, or as often as a cooperative module asks to stop.
+    void sample(std::chrono::nanoseconds interval) {
+        auto now = std::chrono::steady_clock::now();
+        auto spent = std::chrono::duration_cast<std::chrono::nanoseconds>(now - lastSample);
+        if (spent >= interval) {
+            lastSample = now;
+            wasmtime_guestprofiler_sample(profiler, store, uint64_t(spent.count()));
+        }
+    }
+
+    // Why the running call must stop now, or nothing.
+    QString interruption() const {
+        if (stopRequested.load()) {
+            return "the script was stopped";
+        }
+        if (callTimeout.count() > 0) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - callStarted);
+            if (elapsed > callTimeout) {
+                return QString("a call into the script ran longer than its limit of %1 ms").arg(callTimeout.count());
+            }
+        }
+        return QString();
+    }
+
     static wasmtime_error_t* onDeadline(wasmtime_context_t* context, void* data, uint64_t* delta,
                                         wasmtime_update_deadline_kind_t* kind) {
         Q_UNUSED(context);
         auto self = static_cast<Impl*>(data);
         if (self->profiler) {
-            auto now = std::chrono::steady_clock::now();
-            auto spent = std::chrono::duration_cast<std::chrono::nanoseconds>(now - self->lastSample).count();
-            self->lastSample = now;
-            wasmtime_guestprofiler_sample(self->profiler, self->store, uint64_t(spent));
+            self->sample(std::chrono::nanoseconds(0));
         }
-        if (self->stopRequested.load()) {
-            return wasmtime_error_new("the script was stopped");
-        }
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - self->callStarted);
-        if (self->callTimeout.count() > 0 && elapsed > self->callTimeout) {
-            QByteArray text = QString("a call into the script ran longer than its limit of %1 ms").arg(self->callTimeout.count()).toUtf8();
+        QString reason = self->interruption();
+        if (!reason.isEmpty()) {
+            QByteArray text = reason.toUtf8();
             return wasmtime_error_new(text.constData());
         }
         *delta = 1;
@@ -385,7 +421,7 @@ WasmInstance::WasmInstance(std::shared_ptr<WasmModule> module) : WasmInstance(st
 
 WasmInstance::WasmInstance(std::shared_ptr<WasmModule> module, const Limits& limits) :
     _module(std::move(module)), _limits(limits), _impl(new Impl) {
-    wasm_engine_t* engine = _module->runtime()->impl().engine;
+    wasm_engine_t* engine = _module->impl().engine;
     _impl->store = wasmtime_store_new(engine, nullptr, nullptr);
     _impl->context = wasmtime_store_context(_impl->store);
     _impl->callTimeout = limits.callTimeout;
@@ -477,6 +513,10 @@ bool WasmInstance::hasExport(const QString& name) const {
 bool WasmInstance::call(const QString& name, const std::vector<WasmValue>& args, std::vector<WasmValue>& results,
                         QString& error) {
     results.clear();
+    if (_impl->stopRequested.load()) {
+        error = "the script was stopped";
+        return false;
+    }
     const Impl::ExportedFunction* exported = _impl->instantiated ? _impl->findFunction(name) : nullptr;
     if (!exported) {
         error = QString("no exported function \"%1\"").arg(name);
@@ -553,6 +593,26 @@ void WasmInstance::requestStop() {
     _impl->stopRequested = true;
 }
 
+bool WasmInstance::interruptRequested() {
+    if (_impl->profiler) {
+        _impl->sample(_module->runtime()->settings().epochTick);
+    }
+    QString reason = _impl->interruption();
+    if (reason.isEmpty()) {
+        return false;
+    }
+    if (_impl->interruptionReason.isEmpty()) {
+        _impl->interruptionReason = reason;
+    }
+    return true;
+}
+
+QString WasmInstance::takeInterruptionReason() {
+    QString reason = _impl->interruptionReason;
+    _impl->interruptionReason.clear();
+    return reason;
+}
+
 bool WasmInstance::startProfiling(const QString& name, QString& error) {
     if (_impl->profiler) {
         error = "already profiling";
@@ -563,7 +623,7 @@ bool WasmInstance::startProfiling(const QString& name, QString& error) {
     wasm_name_new(&moduleName, static_cast<size_t>(utf8.size()), utf8.constData());
     wasmtime_guestprofiler_modules_t modules { &moduleName, _module->impl().module };
     auto interval = std::chrono::duration_cast<std::chrono::nanoseconds>(_module->runtime()->settings().epochTick).count();
-    _impl->profiler = wasmtime_guestprofiler_new(_module->runtime()->impl().engine, &moduleName, uint64_t(interval), &modules, 1);
+    _impl->profiler = wasmtime_guestprofiler_new(_module->impl().engine, &moduleName, uint64_t(interval), &modules, 1);
     wasm_name_delete(&moduleName); // the profiler keeps its own copies
     if (!_impl->profiler) {
         error = "the guest profiler could not be made";

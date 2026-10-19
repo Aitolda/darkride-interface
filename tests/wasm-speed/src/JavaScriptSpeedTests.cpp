@@ -3,9 +3,9 @@
 //  tests/wasm-speed/src
 //
 //  The speed of JavaScript on the script engines, side by side in one program: the same tests run in turn on QtScript,
-//  on the JavaScript guest on WebAssembly as the client runs it, on the same guest with the runtime's epoch checks
-//  off (what the time limits cost), and on QuickJS-NG built natively when its source is at hand (the interpreter
-//  without the sandbox). Each round runs every test once on every engine, in an order that rotates from round to
+//  on the JavaScript guest on WebAssembly as the client runs it (cooperative interruption: no deadline checks in its
+//  loops), on the same guest with the runtime's epoch checks in every loop (as it ran before), and on QuickJS-NG
+//  built natively when its source is at hand (the interpreter without the sandbox). Each round runs every test once on every engine, in an order that rotates from round to
 //  round; the table gives each engine's fastest round, the one the rest of the machine disturbed least, in
 //  microseconds per iteration and as a multiple of QtScript's.
 //
@@ -256,8 +256,8 @@ private:
 
 class WasmSpeedEngine : public SpeedEngine {
 public:
-    WasmSpeedEngine(const QString& name, const WasmRuntime::Settings& settings) :
-        _name(name), _runtime(std::make_shared<WasmRuntime>(settings)) {}
+    WasmSpeedEngine(const QString& name, WasmRuntime::Interruption interruption, const WasmRuntime::Settings& settings = WasmRuntime::Settings()) :
+        _name(name), _interruption(interruption), _runtime(std::make_shared<WasmRuntime>(settings)) {}
 
     ~WasmSpeedEngine() override {
         QString error;
@@ -274,7 +274,7 @@ public:
             error = "no guest module at " + guestModulePath();
             return false;
         }
-        _module = _runtime->compile(file.readAll(), error);
+        _module = _runtime->compile(file.readAll(), error, _interruption);
         if (!_module) {
             return false;
         }
@@ -332,6 +332,7 @@ public:
 
 private:
     QString _name;
+    WasmRuntime::Interruption _interruption;
     std::shared_ptr<WasmRuntime> _runtime;
     std::shared_ptr<WasmModule> _module;
     std::unique_ptr<WasmInstance> _instance;
@@ -454,10 +455,8 @@ void JavaScriptSpeedTests::testSpeed() {
 
     std::vector<std::unique_ptr<SpeedEngine>> engines;
     engines.push_back(std::make_unique<QtScriptSpeedEngine>());
-    engines.push_back(std::make_unique<WasmSpeedEngine>("WebAssembly", WasmRuntime::Settings()));
-    WasmRuntime::Settings withoutEpochChecks;
-    withoutEpochChecks.epochInterruption = false;
-    engines.push_back(std::make_unique<WasmSpeedEngine>("WebAssembly, no epoch checks", withoutEpochChecks));
+    engines.push_back(std::make_unique<WasmSpeedEngine>("WebAssembly", WasmRuntime::Interruption::Cooperative));
+    engines.push_back(std::make_unique<WasmSpeedEngine>("WebAssembly, epoch checks", WasmRuntime::Interruption::Epoch));
 #ifdef HAVE_NATIVE_QUICKJS
     engines.push_back(std::make_unique<NativeQuickJSSpeedEngine>());
 #endif
@@ -557,7 +556,9 @@ void JavaScriptSpeedTests::testSpeed() {
         QVERIFY2(QDir().mkpath(profileFolder), qPrintable("cannot make " + profileFolder));
         WasmRuntime::Settings everyMillisecond;
         everyMillisecond.epochTick = std::chrono::milliseconds(1);
-        WasmSpeedEngine profiled("WebAssembly, profiled", everyMillisecond);
+        // with epoch checks: a sample at every tick wherever the guest is, where a cooperative guest is seen only
+        // where it asks whether to stop
+        WasmSpeedEngine profiled("WebAssembly, profiled", WasmRuntime::Interruption::Epoch, everyMillisecond);
         QString error;
         QVERIFY2(profiled.start(error), qPrintable(error));
         for (const auto& test : tests) {

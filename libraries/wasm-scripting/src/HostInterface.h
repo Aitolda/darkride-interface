@@ -9,7 +9,8 @@
 //
 //  The ABI (version 1). Every pointer is an offset in the module's exported memory; a byte range is a CBOR
 //  item. A host function that returns bytes has the guest allocate them (the guest's exported
-//  `alloc(size) -> ptr`) and returns `(ptr << 32) | len` as an i64; the guest frees them when done.
+//  `alloc(size) -> ptr`) and returns `(ptr << 32) | len` as an i64; the guest frees them when done. A result of
+//  0 is nothing (a method that returns nothing, a property write that worked): no bytes cross.
 //
 //    imports, module "darkride":
 //      version() -> i32                                  this ABI's version
@@ -19,11 +20,15 @@
 //                                                        invoke a method: the result, or {"@error": {type, message}}
 //      get(object, name_ptr, name_len) -> i64            read a property: the value, or an error record
 //      set(object, name_ptr, name_len, value_ptr, value_len) -> i64
-//                                                        write a property: null, or an error record
+//                                                        write a property: nothing, or an error record
 //      connect(object, signal_ptr, signal_len) -> i32    subscribe: the connection id, 0 on failure (logged)
 //      disconnect(connection)
 //      release(object)                                   forget a handle
 //      log(level, text_ptr, text_len)                    0 print, 1 info, 2 warning, 3 error, 4 debug
+//      interrupted() -> i32                              1 when the running call should stop now (a stop, a time
+//                                                        limit): asked often by a module compiled for cooperative
+//                                                        interruption (WasmRuntime::Interruption), which then
+//                                                        unwinds by itself
 //
 //    exports the host calls:
 //      alloc(size) -> ptr, free(ptr, size)
@@ -149,6 +154,7 @@ private:
         QVector<int> indices;
     };
 
+    bool enterGuest(const QString& name, const std::vector<WasmValue>& args, std::vector<WasmValue>& results, QString& error);
     QByteArray readBytes(int32_t pointer, int32_t length, QString& error);
     /// Encodes and places the bytes in the guest's memory through its alloc; 0 with the error when it cannot.
     int64_t writeToGuest(const QVariant& value, QString& error);

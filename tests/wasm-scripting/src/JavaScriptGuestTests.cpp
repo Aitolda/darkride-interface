@@ -8,7 +8,10 @@
 
 #include "JavaScriptGuestTests.h"
 
+#include <thread>
+
 #include <QtCore/QDir>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 
@@ -48,6 +51,7 @@ struct Guest {
     QStringList errors;        // level 3 only
     QStringList failures;
     QVariantList carried;      // what the script handed to Probe.carry
+    std::chrono::milliseconds callTimeout { 10000 };
 
     bool start(const QString& source, QString& error) {
         QFile file(guestModulePath());
@@ -55,12 +59,13 @@ struct Guest {
             error = "no guest module at " + guestModulePath();
             return false;
         }
-        module = runtime->compile(file.readAll(), error);
+        // as the engine runs it: the guest asks whether to stop, the runtime checks no deadlines in its loops
+        module = runtime->compile(file.readAll(), error, WasmRuntime::Interruption::Cooperative);
         if (!module) {
             return false;
         }
         WasmInstance::Limits limits;
-        limits.callTimeout = std::chrono::milliseconds(10000);
+        limits.callTimeout = callTimeout;
         instance = std::make_unique<WasmInstance>(module, limits);
         host = std::make_unique<HostInterface>(*instance, objects, codec, relay);
         host->setLogger([this](int level, const QString& text) {
@@ -462,3 +467,45 @@ void JavaScriptGuestTests::testScopedCallbacks() {
     guest.stop();
 }
 
+// A handler that never returns. The guest runs without deadline checks in its loops, so QuickJS's interrupt
+// handler asks the host whether to stop: the call ends soon after its time limit or a stop, the reason is the
+// host's to report (the guest logs the interruption at the debug level only), and after a time limit the script
+// runs on.
+void JavaScriptGuestTests::testRunawayLoopIsInterrupted() {
+    {
+        Guest guest;
+        guest.callTimeout = std::chrono::milliseconds(100);
+        START_OR_SKIP(guest, R"(
+            Probe.bare.connect(function () { var n = 0; while (true) { n++; } });
+            Probe.named.connect(function (name) { Probe.carry(name); });
+        )");
+        QElapsedTimer timer;
+        timer.start();
+        guest.probe.ping();
+        qint64 elapsed = timer.elapsed();
+        QVERIFY2(elapsed >= 90 && elapsed < 2000, qPrintable(QString("took %1 ms").arg(elapsed)));
+        QVERIFY2(guest.failures.join(" ").contains("limit of 100 ms"), qPrintable(guest.failures.join(" | ")));
+        QVERIFY2(guest.errors.isEmpty(), qPrintable(guest.errors.join(" | ")));
+        guest.probe.send("after", true);
+        QCOMPARE(guest.carried.size(), 1);
+        QCOMPARE(guest.carried[0].toString(), QString("after"));
+        guest.stop();
+    }
+    {
+        Guest guest;
+        guest.callTimeout = std::chrono::milliseconds(0); // no limit, as JavaScript runs in the client
+        START_OR_SKIP(guest, R"( Probe.bare.connect(function () { while (true) {} }); )");
+        WasmInstance* instance = guest.instance.get();
+        std::thread stopper([instance] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            instance->requestStop();
+        });
+        QElapsedTimer timer;
+        timer.start();
+        guest.probe.ping();
+        qint64 elapsed = timer.elapsed();
+        stopper.join();
+        QVERIFY2(elapsed >= 40 && elapsed < 2000, qPrintable(QString("took %1 ms").arg(elapsed)));
+        QVERIFY2(guest.failures.join(" ").contains("stopped"), qPrintable(guest.failures.join(" | ")));
+    }
+}
