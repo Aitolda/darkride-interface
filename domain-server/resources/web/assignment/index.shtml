@@ -1,35 +1,41 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>Create JS Assignment</title>
+    <meta charset="utf-8">
+    <title>Run a script - Darkride world server</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="/favicon.png">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
     <link href='css/style.css' rel='stylesheet'>
   </head>
   <body>
-    <pre id='editor' style='font-size: 14px;'><!--#include file="placeholder.js"--></object></pre>
+    <header class="run-bar">
+      <a class="run-brand" href="/" title="Back to the overview">
+        <img src="/favicon.png" alt="">
+        <span class="run-brand-name">Darkride</span>
+        <span class="run-brand-page">Run a script</span>
+      </a>
+      <p class="run-about">
+        Write or paste a script, then press Run: the server runs it on its own, like a visitor nobody controls.
+        It stops when the server restarts. To keep one running, add it under Always-running scripts on the
+        World content page.
+      </p>
+      <div id="extra-fields">
+        <label class='big-field' id='instance-field'>
+          <span>Copies</span>
+          <input type='number' min='1' name='instances' placeholder='1'>
+        </label>
+        <label class='big-field' id='pool-field' title="Leave empty unless you run script runners in named groups">
+          <span>Runner group</span>
+          <input type='text' name='pool' placeholder='Any'>
+        </label>
+      </div>
+      <button type="button" class='big-button' id='deploy-button'>&#9654; Run</button>
+    </header>
+    <pre id='editor' style='font-size: 14px;'><!--#include file="placeholder.js"--></pre>
+    <div id="run-message" role="status"></div>
     <script src='../js/jquery-2.1.4.min.js'></script>
     <script src='js/ace/ace.js' type='text/javascript'></script>
     <script src='js/assignment.js' type='text/javascript'></script>
-    <div class='big-button' id='deploy-button'>
-      <a href='#'>
-        Run
-      </a>
-    </div>
-    <div id="extra-fields">
-      <div class='big-field' id='instance-field'>
-        <input type='text' name='instances' placeholder='# of instances'>
-      </div>
-      <div class='big-field' id='pool-field'>
-        <input type='text' name='pool' placeholder='pool'>
-      </div>
-    </div>
-    <!-- %div#stop-button.big-button -->
   </body>
 </html>
-<!-- %a{:href => "#"} -->
-<!-- Stop -->
-<!-- %div#other-commands -->
-<!-- %ul -->
-<!-- %li -->
-<!-- %a{:href => "#"} New Script -->
-<!-- %li -->
-<!-- %a{:href => "#"} Make a copy -->

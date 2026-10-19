@@ -1,124 +1,176 @@
+/* the Darkride world server's colours (see /css/darkride.css) */
+:root {
+  --run-bg: #171b2d;
+  --run-bar: #1c2136;
+  --run-surface: #242a44;
+  --run-border: #343c60;
+  --run-text: #f4f6f8;
+  --run-muted: #9aa1bd;
+  --run-cyan: #00afff;
+  --run-violet: #a548ff;
+  --run-green: #50fa7b;
+  --run-red: #ff5555;
+  --run-bar-height: 76px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 body {
-    overflow: hidden;
-    background-color: #222;
-}
-#editor { 
-    margin: 10px;
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    right: 0;
-}
-.big-button {
-    font-size: 20px;
+  margin: 0;
+  overflow: hidden;
+  background-color: var(--run-bg);
+  color: var(--run-text);
+  font-family: 'Roboto', 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 14px;
 }
 
-#deploy-button, #stop-button, #other-commands {
-  font-weight: bold;
-  font-family: 'Open Sans', Helvetica, Arial, sans-serif;
-  
-  z-index: 99;
-  top:30px;
-  display: inline-block;
+.run-bar {
   position: absolute;
-
-  padding: 12px;
-  padding-left: 16px;
-  padding-right: 16px;
-  margin-right: 30px;
-  border-radius:6px;
-
-  animation: fadein 2s;
-  -moz-animation: fadein 2s; /* Firefox */
-  -webkit-animation: fadein 2s; /* Safari and Chrome */
-  -o-animation: fadein 2s; /* Opera */
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--run-bar-height);
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 20px;
+  background: var(--run-bar);
+  border-bottom: 1px solid var(--run-border);
 }
-#deploy-button {
-  background-color: #0DFFBB;
-  right: 85px;
+
+.run-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  color: var(--run-text);
+  text-decoration: none;
 }
-#deploy-button:hover {
-  background-color: #28FF57;
+
+.run-brand img {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.run-brand-name {
+  font-size: 19px;
+  font-weight: 500;
+  background: linear-gradient(90deg, var(--run-cyan), var(--run-violet));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.run-brand-page {
+  color: var(--run-muted);
+  font-size: 14px;
+}
+
+.run-about {
+  flex: 1 1 auto;
+  margin: 0;
+  color: var(--run-muted);
+  font-size: 13px;
+  line-height: 1.45;
+  max-width: 640px;
 }
 
 #extra-fields {
-  position: absolute;
-  right: 20px;
-  top: 30px;
+  display: flex;
+  gap: 12px;
+  flex: none;
 }
 
-#extra-fields input {
-  width: 80px;
+.big-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11.5px;
+  color: var(--run-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-#stop-button {
-  background-color: #CC1F00;
-  right: 0px;
-}
-#stop-button:hover {
-  background-color: #FF4114;
-}
-#other-commands {
-  right:176px;
-  text-align: right;
-}
-#other-commands ul {
-  margin: 0px;
-  margin-top: -10px;
-}
-#other-commands li {
-  list-style-type: none;
-  list-style: none;
-  margin-bottom: 2px;
-}
-#other-commands a, 
-#other-commands a:visited {
-  color:#eee;
-  text-decoration: none;
-}
-#other-commands a:hover {
-  color: #0DFFBB;
+.big-field input {
+  width: 110px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--run-border);
+  background: var(--run-bg);
+  color: var(--run-text);
+  font: inherit;
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
-#deploy-button,#stop-button:hover,#other-commands:hover {
+.big-field input:focus {
+  outline: none;
+  border-color: var(--run-cyan);
+}
+
+#deploy-button {
+  flex: none;
+  padding: 10px 26px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--run-cyan), var(--run-violet));
+  color: #fff;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 500;
   cursor: pointer;
 }
 
-#deploy-button a, #stop-button a {
-  text-decoration: none;
-  color:#222;
+#deploy-button:hover {
+  filter: brightness(1.12);
 }
 
-@keyframes fadein {
-    from {
-        opacity:0;
-    }
-    to {
-        opacity:1;
-    }
+#deploy-button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
-@-moz-keyframes fadein { /* Firefox */
-    from {
-        opacity:0;
-    }
-    to {
-        opacity:1;
-    }
+
+#editor {
+  margin: 0;
+  position: absolute;
+  top: var(--run-bar-height);
+  bottom: 0;
+  left: 0;
+  right: 0;
 }
-@-webkit-keyframes fadein { /* Safari and Chrome */
-    from {
-        opacity:0;
-    }
-    to {
-        opacity:1;
-    }
+
+#run-message {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  z-index: 99;
+  max-width: 420px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--run-surface);
+  border: 1px solid var(--run-border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  display: none;
 }
-@-o-keyframes fadein { /* Opera */
-    from {
-        opacity:0;
-    }
-    to {
-        opacity: 1;
-    }
+
+#run-message.run-ok {
+  border-left: 4px solid var(--run-green);
+}
+
+#run-message.run-error {
+  border-left: 4px solid var(--run-red);
+}
+
+#run-message a {
+  color: var(--run-cyan);
+}
+
+@media (max-width: 900px) {
+  .run-about {
+    display: none;
+  }
 }

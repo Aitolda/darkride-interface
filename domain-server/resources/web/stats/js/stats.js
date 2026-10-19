@@ -9,8 +9,14 @@ $(document).ready(function(){
 
     $.getJSON("/nodes/" + uuid + ".json", function(json){
 
-      // update the table header with the right node type
-      $('#stats-lead h3').html(json.node_type + " stats (" + uuid + ")");
+      // update the title with the server's name, as the overview shows it
+      var NAMES = {
+        "entity-server": "World objects", "avatar-mixer": "Avatars", "audio-mixer": "Voice and sound",
+        "asset-server": "File storage", "messages-mixer": "Messages", "entity-script-server": "Server scripts",
+        "physics-server": "Physics", "agent": "Visitor or script"
+      };
+      $('#stats-lead h1').text((NAMES[json.node_type] || json.node_type) + " details");
+      $('#stats-lead h1').attr('title', json.node_type + " " + uuid);
 
       delete json.node_type;
 

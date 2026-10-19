@@ -1,9 +1,14 @@
 <!--#include virtual="header.html"-->
-<div class="col-xs-12 table-lead" id="stats-lead"><h3>Stats</h3><div class="lead-line"></div></div>
-<div class="col-xs-12">
-  <p class="help"><em>Click on any of the numerical values in the tables below to view a line graph of the incoming values.</em></p>
+<div id="stats-lead">
+  <h1 class="dr-page-title">Details</h1>
+  <p class="dr-page-intro" id="stats-intro">
+    Live numbers from this server, refreshed every second. Click a number to see it on a graph as it changes.
+    <a href="/">Back to the overview</a>
+  </p>
 </div>
-<div class="col-xs-12" id="stats-container"></div>
+<div class="panel panel-default">
+  <div class="panel-body" id="stats-container"></div>
+</div>
 <!--#include virtual="footer.html"-->
 <script src='/js/query-string.js'></script>
 <script src='js/stats.js'></script>

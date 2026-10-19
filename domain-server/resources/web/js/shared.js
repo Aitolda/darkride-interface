@@ -52,46 +52,47 @@ var URLs = {
   // STABLE METAVERSE_URL: https://vr.darkride.ai
   // STAGING METAVERSE_URL: https://staging.highfidelity.com
   METAVERSE_URL: 'https://vr.darkride.ai',
-  PLACE_URL: 'https://hifi.place',
+  // a world's address, opened by Darkride
+  PLACE_URL: 'hifi:/',
 };
 
 var Strings = {
-  LOADING_SETTINGS_ERROR: "There was a problem loading the domain settings.\nPlease refresh the page to try again.",
+  LOADING_SETTINGS_ERROR: "Your settings couldn't be loaded.\nReload the page to try again.",
 
   CHOOSE_DOMAIN_BUTTON: "Choose from my worlds",
-  CREATE_DOMAIN_BUTTON: "Create new domain ID",
-  CREATE_DOMAIN_SUCCESS_JUST_CONNECTED: "We connected your Darkride account and created a new world ID for this machine.",
-  CREATE_DOMAIN_SUCCESS: "We created a new domain ID for this machine.",
+  CREATE_DOMAIN_BUTTON: "Make a new world ID",
+  CREATE_DOMAIN_SUCCESS_JUST_CONNECTED: "Your server is connected to Darkride, with a new world ID for this computer.",
+  CREATE_DOMAIN_SUCCESS: "This computer has a new world ID.",
 
   // When a place modification fails, they will be brought back to the previous
   // dialog with new path still set, allowing them to retry immediately, and without
   // having to type the new path in again.
-  EDIT_PLACE_TITLE: "Modify Viewpoint or Path",
-  EDIT_PLACE_ERROR: "Failed to update Viewpoint or Path for this Place Name. Please try again.",
+  EDIT_PLACE_TITLE: "Change where visitors arrive",
+  EDIT_PLACE_ERROR: "Where visitors arrive couldn't be changed. Try again.",
   EDIT_PLACE_CONFIRM_BUTTON: "Save",
-  EDIT_PLACE_CONFIRM_BUTTON_PENDING: "Saving...",
+  EDIT_PLACE_CONFIRM_BUTTON_PENDING: "Saving…",
   EDIT_PLACE_CANCEL_BUTTON: "Cancel",
 
-  REMOVE_PLACE_TITLE: "Are you sure you want to remove <strong>{{place}}</strong> and its path information?",
-  REMOVE_PLACE_ERROR: "Failed to remove Place Name and its Path information.",
-  REMOVE_PLACE_DELETE_BUTTON: "This action removes your Place Name",
-  REMOVE_PLACE_DELETE_BUTTON_PENDING: "Deleting...",
+  REMOVE_PLACE_TITLE: "Take <strong>{{place}}</strong> off your world? You keep the name, and can point it here again later.",
+  REMOVE_PLACE_ERROR: "The place name couldn't be taken off your world.",
+  REMOVE_PLACE_DELETE_BUTTON: "Take it off",
+  REMOVE_PLACE_DELETE_BUTTON_PENDING: "Taking it off…",
   REMOVE_PLACE_CANCEL_BUTTON: "Cancel",
 
-  ADD_PLACE_TITLE: "Choose a place",
-  ADD_PLACE_MESSAGE: "Choose a Place Name that you own or register a new Place Name.",
+  ADD_PLACE_TITLE: "Add a place name",
+  ADD_PLACE_MESSAGE: "Choose a place name you own, or register a new one.",
   ADD_PLACE_CONFIRM_BUTTON: "Save",
-  ADD_PLACE_CONFIRM_BUTTON_PENDING: "Saving...",
+  ADD_PLACE_CONFIRM_BUTTON_PENDING: "Saving…",
   ADD_PLACE_CANCEL_BUTTON: "Cancel",
-  ADD_PLACE_UNKNOWN_ERROR: "There was an error adding this Place Name. Try saving again",
+  ADD_PLACE_UNKNOWN_ERROR: "The place name couldn't be added. Try saving again.",
 
-  ADD_PLACE_NO_PLACES_MESSAGE: "You don't have any Place Names registered. Once you have a Place Name, reopen this window to select it.",
-  ADD_PLACE_NO_PLACES_BUTTON: "Create new place",
-  ADD_PLACE_UNABLE_TO_LOAD_ERROR: "We were unable to load your place names. Please try again later.",
-  ADD_PLACE_LOADING_DIALOG: "Loading your places...",
+  ADD_PLACE_NO_PLACES_MESSAGE: "You don't have any place names yet. Register one on your Darkride account, then come back and add it here.",
+  ADD_PLACE_NO_PLACES_BUTTON: "Register a place name",
+  ADD_PLACE_UNABLE_TO_LOAD_ERROR: "Your place names couldn't be loaded. Try again in a moment.",
+  ADD_PLACE_LOADING_DIALOG: "Fetching your place names…",
 
-  ADD_PLACE_NOT_CONNECTED_TITLE: "Access token required",
-  ADD_PLACE_NOT_CONNECTED_MESSAGE: "You must have an access token to query your Darkride places.<br><br>Please follow the instructions on the settings page to add an access token.",
+  ADD_PLACE_NOT_CONNECTED_TITLE: "Connect to Darkride first",
+  ADD_PLACE_NOT_CONNECTED_MESSAGE: "Connect this server to Darkride first: press Connect to Darkride in the Connection section of the settings.",
 };
 
 var DOMAIN_ID_TYPE_NONE = 0;
@@ -104,6 +105,7 @@ function swalAreYouSure(text, confirmButtonText, callback) {
     title: "Are you sure?",
     text: text,
     type: "warning",
+    cancelButtonText: "Cancel",
     showCancelButton: true,
     confirmButtonText: confirmButtonText,
     closeOnConfirm: false
@@ -253,29 +255,29 @@ function chooseFromHighFidelityPlaces(accessToken, forcePathTo, onSuccessfullyAd
 
               modal_body = $('<div>');
 
-              modal_body.append($("<p>Choose a place name that you own or <a href='" + URLs.METAVERSE_URL + "/user/places' target='_blank'>register a new place name</a></p>"));
+              modal_body.append($("<p>Choose a place name you own, or <a href='" + URLs.METAVERSE_URL + "/user/places' target='_blank'>register a new one</a>.</p>"));
 
               var currentDomainIDType = getCurrentDomainIDType();
               if (currentDomainIDType === DOMAIN_ID_TYPE_TEMP) {
                 var warning = "<div class='domain-loading-error alert alert-warning'>";
-                warning += "If you choose a place name it will replace your current temporary place name.";
+                warning += "The name you choose replaces your world's temporary place name.";
                 warning += "</div>";
                 modal_body.append(warning);
               }
 
               // setup a select box for the returned places
-              modal_body.append($("<label for='place-name-select'>Places</label>"));
+              modal_body.append($("<label for='place-name-select'>Place name</label>"));
               place_select = $("<select id='place-name-select' class='form-control'></select>");
               _.each(data.data.places, function(place) {
                 places_by_id[place.id] = place;
                 place_select.append("<option value='" + place.id + "'>" + place.name + "</option>");
               })
               modal_body.append(place_select);
-              modal_body.append($("<p id='place-name-warning' class='warning-text' style='display: none'>This place name already points to a place or path. Saving this would overwrite the previous settings associated with it.</p>"));
+              modal_body.append($("<p id='place-name-warning' class='warning-text' style='display: none'>This name already takes people somewhere. Saving it here points it at your world instead.</p>"));
 
               if (forcePathTo === undefined || forcePathTo === null) {
                 var path = "<div class='form-group'>";
-                path += "<label for='place-path-input' class='control-label'>Path or Viewpoint</label>";
+                path += "<label for='place-path-input' class='control-label'>Where they arrive (a path, or / for the usual spot)</label>";
                 path += "<input type='text' id='place-path-input' class='form-control' value='/'>";
                 path += "</div>";
                 modal_body.append($(path));
@@ -317,7 +319,7 @@ function chooseFromHighFidelityPlaces(accessToken, forcePathTo, onSuccessfullyAd
                         id: domainID
                       }
                     }
-                    var dialog = showLoadingDialog("Waiting for Domain Server to restart...");
+                    var dialog = showLoadingDialog("Waiting for your server to restart…");
                     $.ajax('/settings.json', {
                       data: JSON.stringify(jsonSettings),
                       contentType: 'application/json',
@@ -331,10 +333,10 @@ function chooseFromHighFidelityPlaces(accessToken, forcePathTo, onSuccessfullyAd
                           }
                         });
                       } else {
-                        bootbox.alert("Failed to add place");
+                        bootbox.alert("The place name couldn't be added.");
                       }
                     }).fail(function() {
-                      bootbox.alert("Failed to add place");
+                      bootbox.alert("The place name couldn't be added.");
                     });
                   }
 
@@ -427,7 +429,7 @@ function chooseFromHighFidelityPlaces(accessToken, forcePathTo, onSuccessfullyAd
           loadPlaces();
         } else {
           loadingDialog.modal('hide');
-          bootbox.confirm("We were not able to load your domain information from the Metaverse. Would you like to retry?", function(response) {
+          bootbox.confirm("Your world's details couldn't be fetched from Darkride. Try again?", function(response) {
             if (response) {
               chooseFromHighFidelityPlaces(accessToken, forcePathTo, onSuccessfullyAdded);
             }
@@ -475,10 +477,11 @@ function waitForDomainServerRestart(callback) {
 
 function prepareAccessTokenPrompt(callback) {
   swal({
-    title: "Connect world",
+    title: "Connect to Darkride",
     type: "input",
-    text: "Paste your created access token here." +
-      "</br></br>If you did not successfully create an access token click cancel below and attempt to connect your world again.</br></br>",
+    inputPlaceholder: "Paste the access token here",
+    text: "Your Darkride worlds opened in a new tab. Make a world there (or pick one), copy its access token, and paste it here." +
+      "</br></br>No token yet? Press Cancel, then Connect to Darkride again.</br></br>",
     showCancelButton: true,
     closeOnConfirm: false,
     html: true
@@ -488,7 +491,7 @@ function prepareAccessTokenPrompt(callback) {
     }
 
     if (inputValue === "") {
-      swal.showInputError("Please paste your access token in the input field.")
+      swal.showInputError("Paste the access token first.")
       return false
     }
 
