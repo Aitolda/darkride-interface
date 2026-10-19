@@ -67,6 +67,7 @@ private:
     OCTREE_PACKET_SEQUENCE _sequenceEnd { INVALID_SEQUENCE };
     int32_t _maxTrackedEntityCount { 0 };
     int32_t _trackedEntityStabilityCount { 0 };
+    quint64 _lastProgressLog { 0 };
 
     quint64 _startTime { 0 };
 

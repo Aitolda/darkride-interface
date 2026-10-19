@@ -6446,7 +6446,10 @@ void Application::tryToEnablePhysics() {
             _physicsEnabled = true;
             setIsInterstitialMode(false);
             myAvatar->updateMotionBehaviorFromMenu();
-            qDebug() << "Physics enabled";
+            qDebug() << "Physics enabled" << "(ghosting" << DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed()
+                << "arrival waits for nearby" << _arrivalWaitsForNearby << "interstitial"
+                << DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled()
+                << "safe landing complete" << _octreeProcessor.safeLandingIsComplete() << "full scenes" << _fullSceneReceivedCounter << ")";
             DependencyManager::get<EntityTreeRenderer>()->setSceneIsReady(true);
             requeryOctree(); // hit it with a quick refresh to make sure everything is drawn
         }

@@ -130,6 +130,17 @@ void SafeLanding::updateTracking() {
         }
     }
 
+    {
+        // a line a second while tracking (PHYSICS.md round 10: what the loading screen waits for)
+        quint64 now = usecTimestampNow();
+        if (now - _lastProgressLog > USECS_PER_SECOND) {
+            _lastProgressLog = now;
+            Locker lock(_lock);
+            qDebug() << "safe landing: tracking" << _trackedEntities.size() << "of" << _maxTrackedEntityCount << "entities, sequence"
+                << _sequenceStart << "to" << _sequenceEnd << "," << _sequenceNumbers.size() << "packets seen, missing"
+                << qApp->isMissingSequenceNumbers();
+        }
+    }
     if (_trackedEntities.empty()) {
         // no more tracked entities --> check sequenceNumbers
         if (_sequenceStart != SafeLanding::INVALID_SEQUENCE) {
