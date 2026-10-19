@@ -967,9 +967,14 @@ void OpenGLDisplayPlugin::present(const std::shared_ptr<RefreshRateController>& 
                 }
                 _lastFrame = _currentFrame.get();
             });
-            // Execute the frame rendering commands
-            PROFILE_RANGE_EX(render, "execute", 0xff00ff00, frameId)
-            _gpuContext->executeFrame(_currentFrame);
+            // Execute the frame rendering commands. A frame presented again, because no new one came in time, is only
+            // run again for a headset, which draws it from the newest pose; on a desktop the camera correction is the
+            // identity and the frame's framebuffer still holds what it drew, so running it again (the whole scene, its
+            // shadows included) drew the same picture a second time.
+            if (_presentedNewFrame || isHmd()) {
+                PROFILE_RANGE_EX(render, "execute", 0xff00ff00, frameId)
+                _gpuContext->executeFrame(_currentFrame);
+            }
         }
 
         // Write all layers to a local framebuffer
