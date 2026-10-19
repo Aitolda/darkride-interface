@@ -206,6 +206,28 @@ uint32_t PhysicsWorld::getNumActiveBodies() const {
     return _system ? _system->GetNumActiveBodies(JPH::EBodyType::RigidBody) : 0;
 }
 
+uint32_t PhysicsWorld::getNumActiveDynamicBodies(QStringList* names, int maxNames) const {
+    if (!_system || _system->GetNumActiveBodies(JPH::EBodyType::RigidBody) == 0) {
+        return 0;
+    }
+    JPH::BodyIDVector ids;
+    _system->GetActiveBodies(JPH::EBodyType::RigidBody, ids);
+    const JPH::BodyLockInterfaceNoLock& lockInterface = _system->GetBodyLockInterfaceNoLock();
+    uint32_t count = 0;
+    for (const JPH::BodyID& id : ids) {
+        JPH::BodyLockRead lock(lockInterface, id);
+        if (!lock.Succeeded() || !lock.GetBody().IsDynamic()) {
+            continue;
+        }
+        ++count;
+        if (names && (int)names->size() < maxNames) {
+            ObjectMotionState* state = motionStateOf(lock.GetBody());
+            names->append(state ? state->getName() : QString("(no motion state)"));
+        }
+    }
+    return count;
+}
+
 // private
 void PhysicsWorld::createBody(ObjectMotionState* motionState) {
     assert(motionState);

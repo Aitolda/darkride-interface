@@ -197,7 +197,8 @@ void PhysicsServer::step() {
             << _streamQueuedMax / 1000 << "ms, parse max" << _parseMaxUsec / 1000 << "ms, total" << _parseTotalUsec / 1000
             << "ms (lock wait" << _entityViewer.getAverageWaitLockPerPacket() / 1000.0f << "ms, uncompress"
             << _entityViewer.getAverageUncompressPerPacket() / 1000.0f << "ms, read" << _entityViewer.getAverageReadBitstreamPerPacket() / 1000.0f
-            << "ms per packet;" << describeEntityServerConnection() << ");" << _physicsEngine->getNumIdleSteps() << "idle substeps skipped,"
+            << "ms per packet;" << describeEntityServerConnection() << ");" << _physicsEngine->getNumIdleSteps() << "idle substeps skipped ("
+            << _physicsEngine->describeActiveBodies(3) << "),"
             << _entitySimulation->getVehicleSimulation()->getStats().streamStatesSent << "states streamed to"
             << _entitySimulation->getVehicleSimulation()->getStats().streamSubscribers << "subscribers";
         _lastLogTime = now;

@@ -81,6 +81,7 @@ public:
     // is stepped every frame.
     void setIdleWhenStill(bool allowed) { _idleWhenStill = allowed; }
     bool isStill() const;
+    QString describeActiveBodies(int maxNames) const;   // for a log: how many are awake, how many dynamic, a few names
     uint64_t getNumIdleSteps() const { return _numIdleSteps; }
 
     uint32_t getNumSubsteps() const { return _numSubsteps; }

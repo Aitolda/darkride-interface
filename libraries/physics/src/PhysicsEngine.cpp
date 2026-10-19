@@ -562,15 +562,19 @@ void PhysicsEngine::stepSimulation() {
 
 // No body awake in any world and no frame: a step would move nothing.
 bool PhysicsEngine::isStill() const {
-    if (!_frameWorlds.empty() || !_rootWorld || _rootWorld->getNumActiveBodies() > 0) {
-        return false;
+    // a frame's world is stepped whatever is in it; a moving kinematic body (a keyframed entity the network moves)
+    // does not need a step here: nothing simulated meets it while no dynamic body is awake
+    return _frameWorlds.empty() && _rootWorld && _rootWorld->getNumActiveDynamicBodies() == 0;
+}
+
+QString PhysicsEngine::describeActiveBodies(int maxNames) const {
+    if (!_rootWorld) {
+        return "no world";
     }
-    for (const auto& entry : _frameWorlds) {
-        if (entry.second->getNumActiveBodies() > 0) {
-            return false;
-        }
-    }
-    return true;
+    QStringList names;
+    uint32_t dynamic = _rootWorld->getNumActiveDynamicBodies(&names, maxNames);
+    return QString("%1 active bodies, %2 dynamic%3").arg(_rootWorld->getNumActiveBodies()).arg(dynamic)
+        .arg(names.isEmpty() ? QString() : " (" + names.join(", ") + ")");
 }
 
 void PhysicsEngine::harvestPerformanceStats() {
