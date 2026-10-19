@@ -7281,6 +7281,25 @@ void Application::queryOctree(
         int packetSize = _octreeQuery.getBroadcastData(packetData);
         queryPacket->setPayloadSize(packetSize);
 
+        // TIVOLI_QUERY_DIAG in the environment: a log line per entity query sent, with the views it carries (the hunt
+        // for entities that never reach a client, KNOWN-ISSUES.md). Off by default: nothing is formatted.
+        static const bool QUERY_DIAG = QProcessEnvironment::systemEnvironment().contains("TIVOLI_QUERY_DIAG");
+        if (QUERY_DIAG && serverType == NodeType::EntityServer) {
+            QString views;
+            for (const auto& view : _conicalViews) {
+                const auto& p = view.getPosition();
+                const auto& d = view.getDirection();
+                views += QString(" [pos %1 %2 %3 dir %4 %5 %6 angle %7 far %8 radius %9]")
+                    .arg(p.x, 0, 'f', 2).arg(p.y, 0, 'f', 2).arg(p.z, 0, 'f', 2)
+                    .arg(d.x, 0, 'f', 3).arg(d.y, 0, 'f', 3).arg(d.z, 0, 'f', 3)
+                    .arg(glm::degrees(view.getAngle()), 0, 'f', 1).arg(view.getFarClip(), 0, 'f', 0).arg(view.getRadius(), 0, 'f', 2);
+            }
+            qCDebug(interfaceapp).noquote() << "entity query:" << (isModifiedQuery ? "initial-sphere" : "views")
+                << "views" << _conicalViews.size() << views
+                << "lodAdjust" << _octreeQuery.getBoundaryLevelAdjust() << "sizeScale" << _octreeQuery.getOctreeSizeScale()
+                << "pps" << _octreeQuery.getMaxQueryPacketsPerSecond() << "bytes" << packetSize;
+        }
+
         // make sure we still have an active socket
         nodeList->sendUnreliablePacket(*queryPacket, *node);
     }

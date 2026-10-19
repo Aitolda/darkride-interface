@@ -55,6 +55,10 @@ public:
         return _queue.top();
     }
 
+    inline size_t size() const {
+        return _queue.size();
+    }
+
     inline bool contains(const EntityItem* entity) const {
         return _entities.find(entity) != std::end(_entities);
     }
