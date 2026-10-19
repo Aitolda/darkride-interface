@@ -96,48 +96,25 @@ float evalShadowCascadeAttenuation(int cascadeIndex, ShadowSampleOffsets offsets
 }
 
 float evalShadowAttenuation(vec3 worldLightDir, vec4 worldPosition, float viewDepth, vec3 worldNormal) {
-    ShadowSampleOffsets offsets = evalShadowFilterOffsets(worldPosition);
+    // Only the cascades the fragment lies in are sampled: the first, and across the band where it blends into the next,
+    // that one too. All four were sampled before, 16 lookups a fragment for every fragment shaded, of which at most 8
+    // counted. (The maps have one mip, so a lookup inside this branch needs no derivatives.)
+    vec4 cascadeShadowCoords[2];
+    ivec2 cascadeIndices;
+    float cascadeMix = determineShadowCascadesOnPixel(worldPosition, viewDepth, cascadeShadowCoords, cascadeIndices);
+    if (cascadeIndices.x >= getShadowCascadeCount()) {
+        return 1.0;
+    }
 
-    vec4 cascadeShadowCoords[4];
-    vec4 cascadeWeights;
-    vec4 cascadeAttenuations = vec4(1.0);
-    vec3 cascadeMix;
-    bvec4 isPixelOnCascade;
-    int cascadeIndex;
+    ShadowSampleOffsets offsets = evalShadowFilterOffsets(worldPosition);
     float NdotL = clamp(dot(worldLightDir, worldNormal), 0.0, 1.0);
     float slopeNdotL = min(2.0, sqrt(1.0-NdotL*NdotL) / NdotL);
 
-    for (cascadeIndex=0 ; cascadeIndex<getShadowCascadeCount() ; cascadeIndex++) {
-        cascadeShadowCoords[cascadeIndex] = evalShadowTexcoord(cascadeIndex, worldPosition);
+    float attenuation = evalShadowCascadeAttenuation(cascadeIndices.x, offsets, cascadeShadowCoords[0], slopeNdotL);
+    if (cascadeMix > 0.0 && cascadeIndices.y < getShadowCascadeCount()) {
+        float nextAttenuation = evalShadowCascadeAttenuation(cascadeIndices.y, offsets, cascadeShadowCoords[1], slopeNdotL);
+        attenuation = mix(attenuation, nextAttenuation, cascadeMix);
     }
-
-    isPixelOnCascade.x = isShadowCascadeProjectedOnPixel(cascadeShadowCoords[0]);
-    isPixelOnCascade.y = isShadowCascadeProjectedOnPixel(cascadeShadowCoords[1]);
-    isPixelOnCascade.z = isShadowCascadeProjectedOnPixel(cascadeShadowCoords[2]);
-    isPixelOnCascade.w = isShadowCascadeProjectedOnPixel(cascadeShadowCoords[3]);
-
-    cascadeAttenuations.x = mix(1.0, evalShadowCascadeAttenuation(0, offsets, cascadeShadowCoords[0], slopeNdotL), float(isPixelOnCascade.x));
-    cascadeAttenuations.y = mix(1.0, evalShadowCascadeAttenuation(1, offsets, cascadeShadowCoords[1], slopeNdotL), float(isPixelOnCascade.y));
-    cascadeAttenuations.z = mix(1.0, evalShadowCascadeAttenuation(2, offsets, cascadeShadowCoords[2], slopeNdotL), float(isPixelOnCascade.z));
-    cascadeAttenuations.w = mix(1.0, evalShadowCascadeAttenuation(3, offsets, cascadeShadowCoords[3], slopeNdotL), float(isPixelOnCascade.w));
-
-    cascadeWeights.x = evalShadowCascadeWeight(cascadeShadowCoords[0]);
-    cascadeWeights.y = evalShadowCascadeWeight(cascadeShadowCoords[1]);
-    cascadeWeights.z = evalShadowCascadeWeight(cascadeShadowCoords[2]);
-    cascadeWeights.w = evalShadowCascadeWeight(cascadeShadowCoords[3]);
-    cascadeWeights = mix(vec4(0.0), cascadeWeights, isPixelOnCascade);
-
-    cascadeMix.x = evalCascadeMix(cascadeWeights.x, cascadeWeights.y);
-    cascadeMix.y = evalCascadeMix(cascadeWeights.y, cascadeWeights.z);
-    cascadeMix.z = evalCascadeMix(cascadeWeights.z, cascadeWeights.w);
-
-    vec3 attenuations = mix(cascadeAttenuations.xyz, cascadeAttenuations.yzw, cascadeMix.xyz);
-
-    attenuations.x = mix(1.0, attenuations.x, isPixelOnCascade.x);
-    attenuations.y = mix(1.0, attenuations.y, !isPixelOnCascade.x && isPixelOnCascade.y);
-    attenuations.z = mix(1.0, attenuations.z, !any(isPixelOnCascade.xy) && any(isPixelOnCascade.zw));
-
-    float attenuation = min(attenuations.x, min(attenuations.y, attenuations.z));
 
     // Falloff to max distance
     return mix(1.0, attenuation, evalShadowFalloff(viewDepth));
