@@ -27,6 +27,7 @@
 #include <EntityItemProperties.h>
 #include <NLPacket.h>
 #include <NodeList.h>
+#include <NumericalConstants.h>
 #include <PhysicsHelpers.h>
 #include <SharedUtil.h>
 
@@ -323,7 +324,7 @@ bool VehicleSimulation::rebuildWheeled(Vehicle& vehicle, JPH::Body* body, Physic
             float frequency = spec.suspensionFrequency;
             if (frequency <= 0.0f) {
                 float restCompression = glm::max(0.01f, wheel.suspensionDistance * wheel.targetPosition);
-                frequency = sqrtf(gravity / restCompression) / (2.0f * (float)M_PI);
+                frequency = sqrtf(gravity / restCompression) / TWO_PI;
             }
             ws->mSuspensionSpring = JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping, frequency, spec.suspensionDamping);
         }
@@ -576,7 +577,7 @@ void VehicleSimulation::recordTelemetry() {
         vehicle.state->getBodyTransform(position, rotation);
         t.speed = glm::dot(vehicle.state->getBodyLinearVelocity(), rotation * FORWARD);
         for (const JPH::Wheel* wheel : vehicle.constraint->GetWheels()) {
-            t.wheelRPM.push_back(wheel->GetAngularVelocity() * 60.0f / (2.0f * (float)M_PI));
+            t.wheelRPM.push_back(wheel->GetAngularVelocity() * 60.0f / TWO_PI);
             t.wheelSlip.push_back(static_cast<const JPH::WheelWV*>(wheel)->mLongitudinalSlip);
             t.suspension.push_back(wheel->GetSuspensionLength());
             t.contact.push_back(wheel->HasContact());
