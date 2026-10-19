@@ -10,7 +10,8 @@
 #   client <name> <args...>          the client walled off in $R/<name>-home, --allowMultipleInstances (a second
 #                                    client would otherwise hand its --url to one already running and exit) and
 #                                    --tokens "{}" (no sign-in), stdout and stderr to $R/<name>.log; the ktx cache
-#                                    is deleted when it exits. Environment set by the caller (TIVOLI_PACKET_LOSS,
+#                                    is deleted when it exits (kept with KEEP_KTX=1, for a warm run of the same
+#                                    client next). Environment set by the caller (TIVOLI_PACKET_LOSS,
 #                                    TIVOLI_PACKET_DELAY_MS) passes through.
 #   sandbox_stop                     stops this sandbox's servers by the pids in $SANDBOX/*.pid, each checked to be a
 #                                    domain-server or assignment-client of ours, and deletes the pid files
@@ -43,7 +44,7 @@ client() {
     XDG_CONFIG_HOME="$R/$_name-home/config" TIVOLI_APP_DATA_DIR="$R/$_name-home/data" \
         "$BIN" --allowMultipleInstances --tokens "{}" "$@" > "$R/$_name.log" 2>&1
     _status=$?
-    rm -rf "$R/$_name-home/data/ktx_cache"
+    [ -n "$KEEP_KTX" ] || rm -rf "$R/$_name-home/data/ktx_cache"
     return $_status
 }
 
