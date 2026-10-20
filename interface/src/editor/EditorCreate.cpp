@@ -274,6 +274,8 @@ EntityItemProperties EditorCreate::properties(const QString& key, const glm::vec
         p.setTrackSpeed(5.0f);
         p.setTrackAcceleration(1.0f);
         p.setColor(TRACK_COLOR);
+        p.setRestitution(0.0f);   // nothing bounces off a beam (the entity default of 0.5 threw a dropped ball off it)
+        p.setFriction(0.8f);
         p.setDimensions(glm::vec3(2.0f * TRACK_LOOP_HALF_LENGTH + 2.0f, TRACK_LOOP_BOX_HEIGHT, 2.0f * TRACK_LOOP_HALF_WIDTH + 2.0f));
         p.setRegistrationPoint(glm::vec3(0.5f, TRACK_LOOP_REGISTRATION_Y, 0.5f));
     } else if (key == "trackcar") {
