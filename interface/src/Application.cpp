@@ -4277,6 +4277,10 @@ bool Application::importImage(const QString& urlString) {
     return true;
 }
 
+float Application::getPresentPeriod() const {
+    return _displayPlugin ? _displayPlugin->getPresentPeriod() : 0.0f;
+}
+
 // thread-safe
 void Application::onPresent(quint32 frameCount) {
     bool expected = false;
@@ -6732,6 +6736,10 @@ void Application::update(float deltaTime) {
                 myAvatar->getCharacterController()->preSimulation();
             }
         }
+
+        // frame pacing (PHYSICS.md "The driver's stutter"): the presents, and these updates with them, are paced at
+        // the display's period, and the physics' paced clock advances by whole periods
+        _physicsEngine->setPresentPeriod(getPresentPeriod());
 
         if (_physicsEnabled) {
             {

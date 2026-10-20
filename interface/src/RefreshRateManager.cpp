@@ -226,16 +226,17 @@ int RefreshRateManager::queryRefreshRateTarget(RefreshRateProfile profile, Refre
 void RefreshRateManager::updateRefreshRateController() const {
     if (_refreshRateOperator) {
         int targetRefreshRate = queryRefreshRateTarget(_refreshRateProfile, _refreshRateRegime, _uxMode);
-        
+        int displayRefreshRate = (int)qApp->getWindow()->windowHandle()->screen()->refreshRate();
+
         if (targetRefreshRate >= 900) {
-            targetRefreshRate = (int)qApp->getWindow()->windowHandle()->screen()->refreshRate();
+            targetRefreshRate = displayRefreshRate;
             // incase refreshRate() is incorrect
             if (targetRefreshRate < 60) {
                 targetRefreshRate = 60;
             }
         }
 
-        _refreshRateOperator(targetRefreshRate);
+        _refreshRateOperator(targetRefreshRate, displayRefreshRate);
         _activeRefreshRate = targetRefreshRate;
     }
 }

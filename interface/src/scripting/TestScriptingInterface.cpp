@@ -23,6 +23,8 @@
 
 #include "Application.h"
 #include <QtGui/QPixmap>
+#include <plugins/DisplayPlugin.h>
+#include <display-plugins/DisplayLink.h>
 
 #include "editor/Editor.h"
 #include "graphics/GraphicsEngine.h"
@@ -324,7 +326,51 @@ QVariantList TestScriptingInterface::takeRenderTrace() {
     QVariantList list;
     for (const auto& sample : qApp->getGraphicsEngine().takeRenderTrace()) {
         list << QVariant(QVariantList { (double)sample.time * 1.0e-3, (double)sample.camera.x, (double)sample.camera.y, (double)sample.camera.z,
-                                        (double)sample.item.x, (double)sample.item.y, (double)sample.item.z });
+                                        (double)sample.item.x, (double)sample.item.y, (double)sample.item.z, (double)sample.frameIndex });
     }
     return list;
+}
+
+void TestScriptingInterface::tracePresents(bool on) {
+    auto displayPlugin = qApp->getActiveDisplayPlugin();
+    if (displayPlugin) {
+        displayPlugin->setPresentTracing(on);
+    }
+}
+
+QVariantList TestScriptingInterface::takePresentTrace() {
+    QVariantList list;
+    auto displayPlugin = qApp->getActiveDisplayPlugin();
+    if (displayPlugin) {
+        for (const auto& sample : displayPlugin->takePresentTrace()) {
+            list << QVariant(QVariantList { (double)sample.time * 1.0e-3, (double)sample.frameIndex, sample.newFrame ? 1.0 : 0.0,
+                                            (double)sample.presentUsecs * 1.0e-3, (double)sample.swapUsecs * 1.0e-3, (double)sample.gpuMs });
+        }
+    }
+    return list;
+}
+
+void TestScriptingInterface::traceRefreshes(bool on) {
+    DisplayLink::instance().setTracing(on);
+}
+
+QVariantList TestScriptingInterface::takeRefreshTrace() {
+    QVariantList list;
+    for (uint64_t time : DisplayLink::instance().takeTrace()) {
+        list << QVariant((double)time * 1.0e-3);
+    }
+    return list;
+}
+
+float TestScriptingInterface::getDisplayRefreshRate() {
+    auto window = qApp->getWindow();
+    if (!window || !window->windowHandle() || !window->windowHandle()->screen()) {
+        return 0.0f;
+    }
+    return (float)window->windowHandle()->screen()->refreshRate();
+}
+
+bool TestScriptingInterface::isVsyncEnabled() {
+    auto displayPlugin = qApp->getActiveDisplayPlugin();
+    return displayPlugin && displayPlugin->isVsyncEnabled();
 }

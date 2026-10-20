@@ -499,20 +499,47 @@ void PhysicsEngine::stepSimulation() {
     // duration and is eased back to the wall clock, within a frame of it; a hitch snaps it back.
     const float FRAME_SMOOTHING = 0.05f;
     const float CLOCK_EASING = 0.05f;
-    if (_smoothedFrameDuration <= 0.0f) {
-        _smoothedFrameDuration = dt;
+    float paced;
+    if (_presentPeriod > 0.0f) {
+        // The presents are paced at the display's period (the editor renderer's frame-pacing round, 10-19): this
+        // update is a whole number of periods after the last, whatever the wall clock read between them (the
+        // threads' wake-up jitter, a fraction of a millisecond). The paced clock advances by that number of
+        // periods, so a frame presented two periods later advances two: the display's time is the frame's time
+        // (PHYSICS.md "The driver's stutter"). The lead is then only the jitter, bounded; it is eased out through
+        // its slow average, so a nominal period a little off the panel's true one never accumulates, and a lead
+        // beyond a period and a half (a wrong period) snaps.
+        const float LEAD_SMOOTHING = 0.02f;
+        float refreshes = glm::max(1.0f, roundf(dt / _presentPeriod));
+        paced = glm::min(refreshes * _presentPeriod, MAX_TIMESTEP);
+        _smoothedFrameDuration = paced;   // where the free-running clock picks up if vsync goes off
+        _pacedClockLead += paced - dt;
+        if (fabsf(_pacedClockLead) > 1.5f * _presentPeriod) {
+            paced -= _pacedClockLead;
+            _pacedClockLead = 0.0f;
+            _smoothedClockLead = 0.0f;
+        } else {
+            _smoothedClockLead += LEAD_SMOOTHING * (_pacedClockLead - _smoothedClockLead);
+            float correction = CLOCK_EASING * _smoothedClockLead;
+            paced -= correction;
+            _pacedClockLead -= correction;
+        }
     } else {
-        _smoothedFrameDuration += FRAME_SMOOTHING * (dt - _smoothedFrameDuration);
-    }
-    float paced = _smoothedFrameDuration;
-    _pacedClockLead += paced - dt;
-    if (fabsf(_pacedClockLead) > _smoothedFrameDuration) {
-        paced -= _pacedClockLead;
-        _pacedClockLead = 0.0f;
-    } else {
-        float correction = CLOCK_EASING * _pacedClockLead;
-        paced -= correction;
-        _pacedClockLead -= correction;
+        if (_smoothedFrameDuration <= 0.0f) {
+            _smoothedFrameDuration = dt;
+        } else {
+            _smoothedFrameDuration += FRAME_SMOOTHING * (dt - _smoothedFrameDuration);
+        }
+        paced = _smoothedFrameDuration;
+        _pacedClockLead += paced - dt;
+        if (fabsf(_pacedClockLead) > _smoothedFrameDuration) {
+            paced -= _pacedClockLead;
+            _pacedClockLead = 0.0f;
+        } else {
+            float correction = CLOCK_EASING * _pacedClockLead;
+            paced -= correction;
+            _pacedClockLead -= correction;
+        }
+        _smoothedClockLead = 0.0f;
     }
     if (_timeShiftPending != 0.0f) {
         // time dilation (round 10): a few percent of each frame's time added or left out until the shift is in

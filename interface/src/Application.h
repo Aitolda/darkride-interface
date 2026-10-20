@@ -327,6 +327,8 @@ public:
     void updateMyAvatarLookAtPosition(float deltaTime);
 
     float getGameLoopRate() const { return _gameLoopCounter.rate(); }
+    // the period the presents are paced at, in seconds; 0 while they are not (DisplayPlugin::getPresentPeriod)
+    float getPresentPeriod() const;
 
     void takeSnapshot(bool notify, bool includeAnimated = false, float aspectRatio = 0.0f, const QString& filename = QString());
     void takeSecondaryCameraSnapshot(const bool& notify, const QString& filename = QString());

@@ -52,6 +52,11 @@
 #include "CompositorHelper.h"
 #include "Logging.h"
 #include "RefreshRateController.h"
+#include "DisplayLink.h"
+
+#include <QtGui/QScreen>
+#include <QtGui/QWindow>
+#include <QtWidgets/QWidget>
 
 using namespace shader::gpu::program;
 
@@ -171,6 +176,7 @@ public:
                             qCDebug(displayPlugins) << "Vsync enabled:" << hasVsync;
 
                             newPlugin->setVsyncEnabled(hasVsync);
+                            newPlugin->_vsyncApplied = wantVsync;
                             newPlugin->customizeContext();
                             CHECK_GL_ERROR();
                             // Force completion of all pending GL commands
@@ -226,12 +232,25 @@ public:
                 currentPlugin->present(_refreshRateController);
                 CHECK_GL_ERROR();
             }
+            // the vsync setting, changed at run time, takes from the next present
+            currentPlugin->applyVsync();
 #if defined(Q_OS_MACOS)
             _context->doneCurrent();
 #endif
             gl::globalRelease(false);
+            // The global lock is not fair. With vsync on this thread holds it through the swap's wait and, with
+            // nothing to sleep for, took it straight back: the QML UI's renderer never got it, and the main thread,
+            // which waits on that renderer's sync, ran its game loop at a frame a second (10-19). A waiter gets a
+            // moment to take the lock; this thread then queues behind it as it should.
+            {
+                const int HANDOFF_WAIT_US = 100;
+                const int HANDOFF_TRIES = 30;   // up to 3 ms, a fraction of the UI's own render
+                for (int i = 0; i < HANDOFF_TRIES && gl::globalLockWanted(); ++i) {
+                    QThread::usleep(HANDOFF_WAIT_US);
+                }
+            }
 
-            _refreshRateController->sleepThreadIfNeeded(this, currentPlugin->isHmd());
+            _refreshRateController->sleepThreadIfNeeded(this, currentPlugin->isHmd(), currentPlugin->isVsyncEnabled());
         }
 
         _context->doneCurrent();
@@ -298,6 +317,8 @@ bool OpenGLDisplayPlugin::activate() {
     if (!_container) {
         return false;
     }
+    // the vsync setting (Render.vsyncEnabled; the present thread applies it when this plugin goes on)
+    _vsyncWanted = _container->getBoolSetting("vsyncEnabled", false);
 
     // Start the present thread if necessary
     QSharedPointer<PresentThread> presentThread;
@@ -327,6 +348,23 @@ bool OpenGLDisplayPlugin::activate() {
     // libraries, etc
     if (!internalActivate()) {
         return false;
+    }
+
+    // the refresh signal of the display the window is on, for pacing the presents in phase with its refreshes
+    // (DisplayLink, RefreshRateController); it follows the window from screen to screen
+    if (!isHmd()) {
+        auto widget = _container->getPrimaryWidget();
+        QWindow* window = (widget && widget->window()) ? widget->window()->windowHandle() : nullptr;
+        if (window) {
+            auto startLink = [window] {
+                QScreen* screen = window->screen();
+                QPoint centre = screen ? screen->geometry().center() : QPoint(0, 0);
+                DisplayLink::instance().start(DisplayLink::displayAt(centre.x(), centre.y()));
+            };
+            startLink();
+            QObject::disconnect(_screenConnection);
+            _screenConnection = connect(window, &QWindow::screenChanged, this, [startLink](QScreen*) { startLink(); });
+        }
     }
 
     // This should not return until the new context has been customized
@@ -756,6 +794,45 @@ void OpenGLDisplayPlugin::internalPresent() {
     _presentRate.increment();
 }
 
+void OpenGLDisplayPlugin::tracePresent(uint64_t startPresent) {
+    if (!_presentTracing) {
+        return;
+    }
+    // the swap has returned: with vsync on, at the display's refresh (or at once, when the driver queued the frame)
+    uint64_t now = usecTimestampNow();
+    std::lock_guard<std::mutex> lock(_presentTraceMutex);
+    if (_presentTrace.size() < 200000) {
+        _presentTrace.push_back({ now, _currentFrame ? _currentFrame->frameIndex : 0u, _presentedNewFrame,
+                                  (uint32_t)(now - startPresent), _lastSwapUsecs,
+                                  _gpuContext ? (float)_gpuContext->getFrameTimerGPUAverage() : 0.0f });
+    }
+}
+
+void OpenGLDisplayPlugin::applyVsync() {
+    bool wanted = wantVsync();
+    if (wanted == _vsyncApplied) {
+        return;
+    }
+    _vsyncApplied = wanted;
+    gl::setSwapInterval(wanted ? 1 : 0);
+    bool hasVsync = gl::getSwapInterval() != 0;
+    qCDebug(displayPlugins) << "Vsync" << (wanted ? "on" : "off") << "asked for at run time; enabled:" << hasVsync;
+    _vsyncEnabled = hasVsync;
+}
+
+void OpenGLDisplayPlugin::setPresentTracing(bool on) {
+    std::lock_guard<std::mutex> lock(_presentTraceMutex);
+    _presentTrace.clear();
+    _presentTracing = on;
+}
+
+std::vector<DisplayPlugin::PresentSample> OpenGLDisplayPlugin::takePresentTrace() {
+    std::lock_guard<std::mutex> lock(_presentTraceMutex);
+    std::vector<PresentSample> samples;
+    samples.swap(_presentTrace);
+    return samples;
+}
+
 void OpenGLDisplayPlugin::present(const std::shared_ptr<RefreshRateController>& refreshRateController) {
     auto frameId = (uint64_t)presentCount();
     PROFILE_RANGE_EX(render, __FUNCTION__, 0xffffff00, frameId)
@@ -774,7 +851,8 @@ void OpenGLDisplayPlugin::present(const std::shared_ptr<RefreshRateController>& 
         {
             withPresentThreadLock([&] {
                 _renderRate.increment();
-                if (_currentFrame.get() != _lastFrame) {
+                _presentedNewFrame = _currentFrame.get() != _lastFrame;
+                if (_presentedNewFrame) {
                     _newFrameRate.increment();
                 }
                 _lastFrame = _currentFrame.get();
@@ -837,11 +915,13 @@ void OpenGLDisplayPlugin::present(const std::shared_ptr<RefreshRateController>& 
             PROFILE_RANGE_EX(render, "internalPresent", 0xff00ffff, frameId)
             internalPresent();
         }
+        tracePresent(startPresent);
 
         gpu::Backend::freeGPUMemSize.set(gpu::gl::getFreeDedicatedMemory());
     } else if (alwaysPresent()) {
         refreshRateController->clockEndTime();
         internalPresent();
+        tracePresent(startPresent);
     } else {
         refreshRateController->clockEndTime();
     }
@@ -860,10 +940,19 @@ float OpenGLDisplayPlugin::presentRate() const {
     return _presentRate.rate();
 }
 
-std::function<void(int)> OpenGLDisplayPlugin::getRefreshRateOperator() {
-    return [](int targetRefreshRate) {
+float OpenGLDisplayPlugin::getPresentPeriod() const {
+    // paced by the controller unless the swap paces (vsync, an HMD)
+    if (isHmd() || _vsyncEnabled || !DependencyManager::isSet<PresentThread>()) {
+        return 0.0f;
+    }
+    return DependencyManager::get<PresentThread>()->getRefreshRateController()->getPacedPeriodSeconds();
+}
+
+std::function<void(int, int)> OpenGLDisplayPlugin::getRefreshRateOperator() {
+    return [](int targetRefreshRate, int displayRefreshRate) {
         auto refreshRateController = DependencyManager::get<PresentThread>()->getRefreshRateController();
         refreshRateController->setRefreshRateLimitPeriod(targetRefreshRate);
+        refreshRateController->setDisplayRefreshRate(displayRefreshRate);
     };
 }
 
@@ -878,7 +967,9 @@ float OpenGLDisplayPlugin::renderRate() const {
 
 void OpenGLDisplayPlugin::swapBuffers() {
     static auto context = _container->getPrimaryWidget()->context();
+    uint64_t start = usecTimestampNow();
     context->swapBuffers();
+    _lastSwapUsecs = (uint32_t)(usecTimestampNow() - start);
 }
 
 void OpenGLDisplayPlugin::withOtherThreadContext(std::function<void()> f) const {
