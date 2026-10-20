@@ -173,7 +173,7 @@ Menu::Menu() {
         QObject::connect(nodeList.data(), &NodeList::canWriteAssetsChanged, assetServerAction, &QAction::setEnabled);
         assetServerAction->setEnabled(nodeList->getThisNodeCanWriteAssets());
     }
-
+    /*
     // Edit > Avatar Packager
 #ifndef Q_OS_ANDROID
     action = addActionToQMenuAndActionHash(editMenu, MenuOption::AvatarPackager);
@@ -181,7 +181,7 @@ Menu::Menu() {
         DependencyManager::get<AvatarPackager>()->open();
     });
 #endif
-
+*/
     // Edit > Reload All Content and clear caches
     addActionToQMenuAndActionHash(editMenu, MenuOption::ReloadContent, 0, qApp, SLOT(reloadResourceCaches()));    
 
