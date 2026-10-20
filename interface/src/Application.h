@@ -539,7 +539,7 @@ private slots:
     void showDesktop();
     void clearDomainOctreeDetails(bool clearAll = true);
     void onAboutToQuit();
-    void onPresent(quint32 frameCount);
+    void onPresent(quint32 frameCount, quint64 presentSlot);
 
     void resettingDomain();
 
@@ -873,6 +873,10 @@ private:
     bool _saveAvatarOverrideUrl{ false };
 
     std::atomic<bool> _pendingIdleEvent{ true };
+    // the slot (the paced refresh interval) of the latest present, from the present thread (onPresent), and the
+    // one the last update was for: the simulation advances by the intervals between them (update)
+    std::atomic<uint64_t> _presentSlot{ 0 };
+    uint64_t _lastUpdateSlot{ 0 };
 
     bool quitWhenFinished{ false };
 

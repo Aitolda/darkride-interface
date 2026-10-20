@@ -45,6 +45,7 @@ std::chrono::nanoseconds RefreshRateController::sleepThreadIfNeeded(QThread* thr
     using namespace std::chrono;
     if (isHmd) {
         _scheduled = false;
+        _slotIndex++;
         return nanoseconds(0);
     }
     // With vsync the swap waits for the display's refresh: a sleep on top of it only beats against the refreshes.
@@ -52,6 +53,7 @@ std::chrono::nanoseconds RefreshRateController::sleepThreadIfNeeded(QThread* thr
     // profiles keep their pacing.
     if (vsync && _displayRefreshRate > 0 && getRefreshRateLimitPeriod() >= _displayRefreshRate) {
         _scheduled = false;
+        _slotIndex++;
         return nanoseconds(0);
     }
     auto period = nanoseconds(_refreshRateLimitPeriod);
@@ -89,18 +91,26 @@ std::chrono::nanoseconds RefreshRateController::sleepThreadIfNeeded(QThread* thr
         while (slot < nowNs - LATE_TOLERANCE_NS) {
             slot += refreshPeriodNs;
         }
+        // the intervals this slot is on from the last (one as a rule; a lost refresh counts)
+        int64_t advanced = _lastSlotNs > 0 ? (slot - _lastSlotNs + refreshPeriodNs / 2) / refreshPeriodNs : 1;
+        _slotIndex += (uint64_t)std::max<int64_t>(1, advanced);
         _lastSlotNs = slot;
         _nextPresent = steady_clock::time_point(nanoseconds(slot));
         _scheduled = false;   // the free schedule restarts from now if the link goes quiet
         _pacedPeriodNs = refreshPeriodNs;
     } else {
-        if (!_scheduled || period != _scheduledPeriod || now > _nextPresent + period) {
+        auto previous = _nextPresent;
+        bool restarted = !_scheduled || period != _scheduledPeriod || now > _nextPresent + period;
+        if (restarted) {
             // the schedule starts, or restarts after a change of rate or a stall of over a period, from now
             _scheduled = true;
             _scheduledPeriod = period;
             _nextPresent = now;
         }
         _nextPresent += period;
+        int64_t advanced = restarted && previous.time_since_epoch().count() > 0 && _nextPresent > previous ?
+            (duration_cast<nanoseconds>(_nextPresent - previous).count() + period.count() / 2) / period.count() : 1;
+        _slotIndex += (uint64_t)std::max<int64_t>(1, std::min<int64_t>(advanced, 16));
         _pacedPeriodNs = period.count();
     }
     auto remaining = duration_cast<nanoseconds>(_nextPresent - now);

@@ -508,20 +508,48 @@ void PhysicsEngine::stepSimulation() {
         // (PHYSICS.md "The driver's stutter"). The lead is then only the jitter, bounded; it is eased out through
         // its slow average, so a nominal period a little off the panel's true one never accumulates, and a lead
         // beyond a period and a half (a wrong period) snaps.
+        // The periods come counted from the present schedule when the game loop has them (Application::update):
+        // an update run late and the next one on time are 2 ms apart on the wall clock, yet each one's frame shows
+        // for a refresh, and rounding that 2 ms up to a period would put a whole period of lead on the clock each
+        // time, to be taken out later as a snap. Without the count, the wall clock rounded.
         const float LEAD_SMOOTHING = 0.02f;
-        float refreshes = glm::max(1.0f, roundf(dt / _presentPeriod));
+        float refreshes = _presentPeriods > 0 ? (float)_presentPeriods : glm::max(1.0f, roundf(dt / _presentPeriod));
         paced = glm::min(refreshes * _presentPeriod, MAX_TIMESTEP);
         _smoothedFrameDuration = paced;   // where the free-running clock picks up if vsync goes off
         _pacedClockLead += paced - dt;
+        if (refreshes >= 2.0f) {
+            _pacedMultiFrames++;
+        }
         if (fabsf(_pacedClockLead) > 1.5f * _presentPeriod) {
-            paced -= _pacedClockLead;
-            _pacedClockLead = 0.0f;
+            // a period and a half off (a wrong period, a stall the count missed): taken out at once, but never
+            // backwards, which the eye reads as a snap: a clock ahead holds this frame's picture (paced 0) and the
+            // rest comes off the next; a clock behind jumps forward, the substep cap below bounding it
+            float taken = glm::min(_pacedClockLead, paced);
+            paced -= taken;
+            _pacedClockLead -= taken;
             _smoothedClockLead = 0.0f;
+            _pacedSnaps++;
+            _pacedSnapTotal += taken;
         } else {
             _smoothedClockLead += LEAD_SMOOTHING * (_pacedClockLead - _smoothedClockLead);
             float correction = CLOCK_EASING * _smoothedClockLead;
             paced -= correction;
             _pacedClockLead -= correction;
+        }
+        // the record, every five seconds while there is something in it
+        const uint64_t PACED_LOG_INTERVAL = 5 * USECS_PER_SECOND;
+        if (_pacedLogTime == 0) {
+            _pacedLogTime = now;
+        } else if (now - _pacedLogTime > PACED_LOG_INTERVAL) {
+            if (_pacedMultiFrames > 0 || _pacedSnaps > 0) {
+                qCDebug(physics) << "paced clock, last" << (int)((now - _pacedLogTime) / USECS_PER_SECOND) << "s:" << _pacedMultiFrames
+                                 << "updates of two or more periods," << _pacedSnaps << "leads taken out at once, total"
+                                 << (_pacedSnapTotal * 1000.0f) << "ms; lead now" << (_pacedClockLead * 1000.0f) << "ms";
+            }
+            _pacedLogTime = now;
+            _pacedMultiFrames = 0;
+            _pacedSnaps = 0;
+            _pacedSnapTotal = 0.0f;
         }
     } else {
         if (_smoothedFrameDuration <= 0.0f) {

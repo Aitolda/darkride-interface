@@ -244,12 +244,17 @@ public:
 signals:
     void recommendedFramebufferSizeChanged(const QSize& size);
     void resetSensorsRequested();
-    void presented(quint32 frame);
+    // the frame count and the present's slot: the refresh interval the present is paced into, counted by the
+    // display plugin (one per present as a rule, more when a present lost a refresh), so the game loop's update
+    // can advance the simulation by the refreshes its frame covers rather than by a wall clock the main thread's
+    // own lateness disturbs
+    void presented(quint32 frame, quint64 slot);
 
 protected:
     void incrementPresentCount();
 
     gpu::ContextPointer _gpuContext;
+    std::atomic<uint64_t> _presentSlot { 0 };   // the slot of the present under way (see presented)
 
     MovingAverage<float, 10> _movingAveragePresent;
 

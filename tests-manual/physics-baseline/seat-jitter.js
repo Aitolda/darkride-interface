@@ -413,11 +413,23 @@
         MyAvatar.position = { x: x + 3, y: LandRover.groundHeight(x + 3, pad.z) + 1.2, z: pad.z };
         chassis = LandRover.create(x, pad.z, 0, LIFETIME).chassis;
         log("rover " + chassis + " at x " + x + ", z " + pad.z);
+        // the car before any input, once a second until the drive: a car that moves here is moved by something
+        // other than its driver (10-20: one run had it 3 m away at 3.5 m/s by the settle check, and in the hills)
+        var preDrive = Script.setInterval(function () {
+            var s = Entities.getEntityProperties(chassis, ["position", "velocity", "angularVelocity"]);
+            if (!s || !s.position) { return; }
+            var st = Entities.getVehicleStats ? Entities.getVehicleStats() : {};
+            var live = st.live || {};
+            log("pre-drive: chassis " + fmtV(s.position) + ", speed " + Vec3.length(s.velocity).toFixed(3) + ", spin " +
+                Vec3.length(s.angularVelocity).toFixed(3) + ", throttle " + (live.forward !== undefined ? live.forward.toFixed(2) : "?") +
+                " steering " + (live.right !== undefined ? live.right.toFixed(2) : "?") + " gear " + live.gear + " wheelRPM " +
+                (live.wheelRPM ? live.wheelRPM.map(function (v) { return v.toFixed(0); }).join("/") : "?"));
+        }, 1000);
         Script.setTimeout(function () {
             var s = Entities.getEntityProperties(chassis, ["position", "velocity"]);
             log("settled: chassis " + fmtV(s.position) + ", speed " + Vec3.length(s.velocity).toFixed(3));
             sit(LandRover.SEATS[0]);
-            Script.setTimeout(drive, 3000);
+            Script.setTimeout(function () { Script.clearInterval(preDrive); drive(); }, 3000);
         }, 4000);
     }
     function setUp() {

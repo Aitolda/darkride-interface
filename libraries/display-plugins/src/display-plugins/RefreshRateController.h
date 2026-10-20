@@ -32,6 +32,9 @@ public:
     // the period the presents are paced at, in seconds (sleepThreadIfNeeded); 0 when they are not paced to a
     // sensible one (a minimized window's, or none set yet)
     float getPacedPeriodSeconds() const;
+    // the slot of the next present: counts the paced intervals, one per present as a rule and more when a present
+    // lost one (DisplayPlugin::presented carries it to the game loop)
+    uint64_t getSlotIndex() const { return _slotIndex; }
 
     void clockStartTime() { _startTime = std::chrono::high_resolution_clock::now(); }
     void clockEndTime() { _endTime = std::chrono::high_resolution_clock::now(); }
@@ -51,6 +54,7 @@ private:
     std::atomic<int64_t> _refreshRateLimitPeriod { 50 };
     std::atomic<int> _displayRefreshRate { 0 };
     std::atomic<int64_t> _pacedPeriodNs { 0 };   // the period of the slots as last paced (the display's when locked)
+    std::atomic<uint64_t> _slotIndex { 0 };
     // the schedule (present thread only)
     uint64_t _presentCount { 0 };
     int64_t _lastSlotNs { 0 };   // the last locked slot: the next is in a later interval
