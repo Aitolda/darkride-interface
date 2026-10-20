@@ -290,6 +290,47 @@ bool TestScriptingInterface::saveInspectorPicture(const QString& path) {
     return !picture.isNull() && picture.save(path);
 }
 
+void TestScriptingInterface::chooseTrackPoint(int index) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "chooseTrackPoint", Q_ARG(int, index));
+        return;
+    }
+    DependencyManager::get<Editor>()->chooseTrackPoint(index, false);
+}
+
+int TestScriptingInterface::chosenTrackPoint() {
+    if (QThread::currentThread() != thread()) {
+        int result = -1;
+        BLOCKING_INVOKE_METHOD(this, "chosenTrackPoint", Q_RETURN_ARG(int, result));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->chosenTrackPoint();
+}
+
+void TestScriptingInterface::insertTrackPoint(float arcLength) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "insertTrackPoint", Q_ARG(float, arcLength));
+        return;
+    }
+    DependencyManager::get<Editor>()->insertTrackPoint(arcLength);
+}
+
+void TestScriptingInterface::deleteTrackPoint() {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "deleteTrackPoint");
+        return;
+    }
+    DependencyManager::get<Editor>()->deleteTrackPoint();
+}
+
+void TestScriptingInterface::editorUndo() {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "editorUndo");
+        return;
+    }
+    DependencyManager::get<Editor>()->undo();
+}
+
 bool TestScriptingInterface::saveWindowPicture(const QString& path) {
     if (QThread::currentThread() != thread()) {
         bool result = false;

@@ -57,12 +57,18 @@ signals:
     void terrainLayersShown();
     // a vehicle's Wheels or Seats list selected a row (-1 none): the part the viewport draws bright
     void vehiclePartChosen(const QString& key, int index);
+    // a Track's Points list selected a row (-1 none): the point the viewport draws bright and the Move gizmo stands on
+    void trackPointChosen(int index);
     void editBegan(const QString& key);
     void liveEdit(const QString& key, const QVariant& value);
     void committed(const QString& key, const QVariant& value);
     void editCancelled(const QString& key);
     // a picture on this computer chosen for a field (a light's Cookie): to be uploaded, its URL then set
     void uploadRequested(const QString& key, const QString& localPath);
+
+public slots:
+    // the viewport chose a track point (a click on its diamond): the Points list follows
+    void chooseTrackPoint(int index);
 
 protected:
     // the content follows the scroll area's width exactly: rows compress rather than run off the edge

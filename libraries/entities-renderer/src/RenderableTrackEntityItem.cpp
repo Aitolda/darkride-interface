@@ -8,9 +8,12 @@
 
 #include "RenderableTrackEntityItem.h"
 
+#include <cfloat>
+
 #include <AbstractViewStateInterface.h>
 #include <EntityTree.h>
 #include <GLMHelpers.h>
+#include <GeometryUtil.h>
 #include <SimulationFlags.h>
 #include <TrackCurve.h>
 #include <gpu/Batch.h>
@@ -78,6 +81,41 @@ void RenderableTrackEntityItem::setUnscaledDimensions(const glm::vec3& value) {
 void RenderableTrackEntityItem::setRegistrationPoint(const glm::vec3& value) {
     TrackEntityItem::setRegistrationPoint(value);
     _needsRenderUpdate = true;
+}
+
+bool RenderableTrackEntityItem::findDetailedRayIntersection(const glm::vec3& origin, const glm::vec3& direction, OctreeElementPointer& element,
+                                                            float& distance, BoxFace& face, glm::vec3& surfaceNormal, QVariantMap& extraInfo,
+                                                            bool precisionPicking) const {
+    // the ray in the track's own space: the mesh is there, in metres, from the entity's position turned by its rotation
+    glm::vec3 position = getWorldPosition();
+    glm::quat rotation = getWorldOrientation();
+    glm::quat toTrack = glm::inverse(rotation);
+    glm::vec3 localOrigin = toTrack * (origin - position);
+    glm::vec3 localDirection = toTrack * direction;
+    bool hit = false;
+    withReadLock([&] {
+        if (_mesh.empty()) {
+            return;   // nothing drawn (profile "none", or not built yet): nothing to pick
+        }
+        float best = FLT_MAX;
+        glm::vec3 bestNormal;
+        for (size_t i = 0; i + 2 < _mesh.indices.size(); i += 3) {
+            const glm::vec3& a = _mesh.vertices[_mesh.indices[i]].position;
+            const glm::vec3& b = _mesh.vertices[_mesh.indices[i + 1]].position;
+            const glm::vec3& c = _mesh.vertices[_mesh.indices[i + 2]].position;
+            float t;
+            if (findRayTriangleIntersection(localOrigin, localDirection, a, b, c, t, true) && t < best) {
+                best = t;
+                bestNormal = glm::normalize(glm::cross(b - a, c - a));
+            }
+        }
+        if (best < FLT_MAX) {
+            distance = best;   // the direction is a unit vector turned, so the parameter is the same in both spaces
+            surfaceNormal = rotation * bestNormal;
+            hit = true;
+        }
+    });
+    return hit;
 }
 
 glm::vec3 RenderableTrackEntityItem::registrationOffset() const {

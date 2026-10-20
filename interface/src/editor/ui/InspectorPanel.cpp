@@ -23,6 +23,7 @@
 #include "ImpostorEditor.h"
 #include "TerrainCapsEditor.h"
 #include "TerrainLayersEditor.h"
+#include "TrackPointsEditor.h"
 #include "UserDataEditor.h"
 #include "VehiclePartsEditor.h"
 
@@ -215,7 +216,8 @@ QWidget* InspectorPanel::buildSection(const QString& sectionId, QWidget* parent)
         auto editor = PropertyEditor::create(*spec, body);
         auto label = editor->createLabel(body);
         label->setObjectName("EditorInspectorLabel");
-        bool parts = spec->kind == PropertyKind::VehicleWheels || spec->kind == PropertyKind::VehicleSeats;
+        bool parts = spec->kind == PropertyKind::VehicleWheels || spec->kind == PropertyKind::VehicleSeats
+            || spec->kind == PropertyKind::TrackPoints;
         bool tall = spec->kind == PropertyKind::Json || spec->kind == PropertyKind::UserData
             || spec->kind == PropertyKind::CollisionMask || spec->kind == PropertyKind::TerrainLayers
             || spec->kind == PropertyKind::Impostor || parts;
@@ -247,6 +249,9 @@ QWidget* InspectorPanel::buildSection(const QString& sectionId, QWidget* parent)
         }
         if (auto parts = qobject_cast<VehiclePartsEditor*>(editor)) {
             connect(parts, &VehiclePartsEditor::partChosen, this, [this, key](int index) { emit vehiclePartChosen(key, index); });
+        }
+        if (auto points = qobject_cast<TrackPointsEditor*>(editor)) {
+            connect(points, &TrackPointsEditor::pointChosen, this, &InspectorPanel::trackPointChosen);
         }
         // right-click on a label: Copy and Paste the row's value, as Unity does
         label->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -355,5 +360,14 @@ void InspectorPanel::applyVisibility(const EntityItemProperties& first) {
     if (auto userData = qobject_cast<UserDataEditor*>(_rows.value(QStringLiteral("userData")).editor)) {
         claimed.sort();
         userData->setClaimedEntries(claimed);
+    }
+}
+
+void InspectorPanel::chooseTrackPoint(int index) {
+    auto row = _rows.find(QStringLiteral("trackPoints"));
+    if (row != _rows.end()) {
+        if (auto points = qobject_cast<TrackPointsEditor*>(row->editor)) {
+            points->choose(index);
+        }
     }
 }

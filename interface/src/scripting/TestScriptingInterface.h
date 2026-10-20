@@ -298,6 +298,39 @@ public slots:
     Q_INVOKABLE bool saveWindowPicture(const QString& path);
 
     /**jsdoc
+     * Chooses a control point of the Track selected on its own in the editor (-1 for none), as a click on its diamond
+     * does: bright in the viewport, the Move gizmo on it, the Inspector's Points list on its row.
+     * @function Test.chooseTrackPoint
+     * @param {number} index - The point's index, from 0.
+     */
+    Q_INVOKABLE void chooseTrackPoint(int index);
+
+    /**jsdoc
+     * @function Test.chosenTrackPoint
+     * @returns {number} The chosen control point's index, -1 for none.
+     */
+    Q_INVOKABLE int chosenTrackPoint();
+
+    /**jsdoc
+     * Inserts a control point on the selected Track's curve at an arc length, as Shift+click on the curve does.
+     * @function Test.insertTrackPoint
+     * @param {number} arcLength - Metres along the curve from its first point.
+     */
+    Q_INVOKABLE void insertTrackPoint(float arcLength);
+
+    /**jsdoc
+     * Removes the selected Track's chosen control point, as Delete does.
+     * @function Test.deleteTrackPoint
+     */
+    Q_INVOKABLE void deleteTrackPoint();
+
+    /**jsdoc
+     * Undoes the editor's last step, as Cmd+Z does in build mode.
+     * @function Test.editorUndo
+     */
+    Q_INVOKABLE void editorUndo();
+
+    /**jsdoc
      * Starts tracing an entity as it is drawn: one sample per rendered frame, taken on the render thread once the frame's
      * scene is in place, of the frame's camera position and the centre of the entity's drawn bound. A null id stops it.
      * @function Test.traceRenderedEntity

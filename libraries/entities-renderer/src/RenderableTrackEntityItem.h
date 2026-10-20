@@ -38,6 +38,12 @@ public:
     void setUnscaledDimensions(const glm::vec3& value) override;
     void setRegistrationPoint(const glm::vec3& value) override;
 
+    // picking: the guideway's own triangles, not the entity's box (which spans the whole loop)
+    bool supportsDetailedIntersection() const override { return true; }
+    bool findDetailedRayIntersection(const glm::vec3& origin, const glm::vec3& direction, OctreeElementPointer& element,
+                                     float& distance, BoxFace& face, glm::vec3& surfaceNormal, QVariantMap& extraInfo,
+                                     bool precisionPicking) const override;
+
     // The mesh is out of date with the curve, the guideway's settings or the entity's box (the collision shape is in
     // box-centred space, so the box's registration offset is part of it).
     bool guidewayIsStale() const;
