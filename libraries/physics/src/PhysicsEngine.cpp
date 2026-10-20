@@ -733,17 +733,21 @@ bool PhysicsEngine::addDynamic(EntityDynamicPointer dynamic) {
     if (dynamic->isAction()) {
         success = true;
     } else if (dynamic->isConstraint()) {
+        // A constraint lives in the world of its owner's body, and both bodies must be there: Jolt's constraint holds
+        // both bodies, and one from another world's physics system would be stepped by neither, then left on a body
+        // that world destroys. Until they are (a frame carries one of them, say), it isn't built, and waits to be
+        // added again. Checked before getConstraint(), which keeps the constraint it builds.
         ObjectConstraint* objectConstraint = static_cast<ObjectConstraint*>(dynamic.get());
-        JPH::Constraint* constraint = objectConstraint->getConstraint();
-        if (constraint) {
-            // a constraint lives in the world of its owner's body; both bodies must be there
-            ObjectMotionState* owner = ownerMotionState(objectConstraint);
-            world = owner ? owner->getWorld() : nullptr;
-            if (world) {
+        ObjectMotionState* owner = ownerMotionState(objectConstraint);
+        PhysicsWorld* ownerWorld = owner ? owner->getWorld() : nullptr;
+        if (ownerWorld && objectConstraint->otherIsInWorld(ownerWorld)) {
+            JPH::Constraint* constraint = objectConstraint->getConstraint();
+            if (constraint) {
+                world = ownerWorld;
                 world->getPhysicsSystem()->AddConstraint(constraint);
                 success = true;
-            }
-        } // else perhaps not all the rigid bodies are available, yet
+            } // else perhaps not all the rigid bodies are available, yet
+        }
     }
 
     if (success) {
