@@ -334,6 +334,8 @@ void PhysicsEngine::removeSetOfObjects(const SetOfMotionStates& objects) {
         }
         object->clearIncomingDirtyFlags();
     }
+    // the ones waiting to go back on a rebuilt body are on no body, so the loop above doesn't find them
+    _dynamicsToRestore.clear();
     std::vector<QUuid> frameIDs;
     for (const auto& entry : _frameStates) {
         frameIDs.push_back(entry.first);
