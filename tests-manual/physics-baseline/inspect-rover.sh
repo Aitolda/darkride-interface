@@ -11,8 +11,6 @@ PORT=${2:-42102}
 R=${3:-"$D/results/inspect-rover"}
 BIN="$APP/Contents/MacOS/Darkride"
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
-SANDBOX=/Users/thistlequell/tivoli-sandboxes/physics
-DOMAIN_SANDBOX=/Users/thistlequell/git/tivolicloud/domain-sandbox.sh
 mkdir -p "$R"
 . "$D/harness.sh"
 HTTP_PORT=$((PORT + 78))
