@@ -156,6 +156,7 @@
 #include <Preferences.h>
 #include <display-plugins/CompositorHelper.h>
 #include <display-plugins/hmd/HmdDisplayPlugin.h>
+#include <display-plugins/OpenGLDisplayPlugin.h>
 #include <display-plugins/RefreshRateController.h>
 #include <avatars-renderer/ScriptAvatar.h>
 #include <RenderableEntityItem.h>
@@ -434,9 +435,47 @@ public:
         _paused = false;
     }
 
+    // When presents stop while the present loop has a display plugin: one line saying where the loop is, once they
+    // have been gone a second and at most every 5 s. Release-1.1's Windows run of 10-21 lost presents and new frames
+    // for 45 s with nothing logged; this names the branch next time. Silent while presents flow, before the first, and
+    // while the loop has no plugin on purpose (minimized, quitting). Its own thread, so it reports whichever of the
+    // main and present threads is stuck.
+    void reportPresentStall() {
+        using namespace std::chrono;
+        const auto STALL = milliseconds(1000);
+        const auto REPORT_EVERY = seconds(5);
+        auto now = steady_clock::now();
+        uint64_t presents = OpenGLDisplayPlugin::getPresentsDone();
+        if (presents != _presentsSeen || presents == 0) {
+            _presentsSeen = presents;
+            _presentsMoved = now;
+            return;
+        }
+        if (OpenGLDisplayPlugin::isPresentLoopIdle() || now - _presentsMoved < STALL
+            || (_stallReported != steady_clock::time_point() && now - _stallReported < REPORT_EVERY)) {
+            return;
+        }
+        _stallReported = now;
+        auto view = gl::viewChangeState();
+        const char* lastChange = "the editor";
+        switch (view.lastEventType) {
+            case QEvent::LayoutRequest: lastChange = "a layout pass"; break;
+            case QEvent::Resize: lastChange = "a resize"; break;
+            case QEvent::Move: lastChange = "a move"; break;
+            case QEvent::MouseButtonRelease: lastChange = "a mouse button release"; break;
+            case QEvent::MouseMove: lastChange = "a drag"; break;
+            default: break;
+        }
+        qCWarning(interfaceapp).nospace() << "Presents stopped " << duration_cast<milliseconds>(now - _presentsMoved).count()
+            << " ms ago: the present loop is " << OpenGLDisplayPlugin::getPresentLoopStage()
+            << "; presentation paused " << gl::isPresentationPaused() << " (" << view.pauseLeftMs << " ms left); "
+            << view.guards << " view changes so far, the last from " << lastChange;
+    }
+
     void run() override {
         while (!_quit) {
             QThread::sleep(HEARTBEAT_UPDATE_INTERVAL_SECS);
+            reportPresentStall();
             // Don't do heartbeat detection under nsight
             if (_paused) {
                 continue;
@@ -510,6 +549,11 @@ public:
     bool _quit { false };
 
     Qt::HANDLE _mainThreadID = nullptr;
+
+    // reportPresentStall's: the present count last seen, when it last moved, the last report
+    uint64_t _presentsSeen { 0 };
+    std::chrono::steady_clock::time_point _presentsMoved;
+    std::chrono::steady_clock::time_point _stallReported;
 };
 
 std::atomic<bool> DeadlockWatchdogThread::_paused;
@@ -4374,7 +4418,7 @@ bool Application::notify(QObject * object, QEvent * event) {
                     break;
             }
             if (changesView) {
-                gl::ViewChangeGuard guard;
+                gl::ViewChangeGuard guard(event->type());
                 return QApplication::notify(object, event);
             }
         }

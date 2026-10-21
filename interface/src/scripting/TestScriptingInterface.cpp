@@ -299,6 +299,10 @@ float TestScriptingInterface::getPresentPeriod() {
     return qApp->getPresentPeriod();
 }
 
+void TestScriptingInterface::holdPresents(int milliseconds) {
+    OpenGLDisplayPlugin::holdPresents(milliseconds);
+}
+
 void TestScriptingInterface::chooseTrackPoint(int index) {
     if (QThread::currentThread() != thread()) {
         BLOCKING_INVOKE_METHOD(this, "chooseTrackPoint", Q_ARG(int, index));
