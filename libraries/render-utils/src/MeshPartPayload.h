@@ -124,6 +124,12 @@ public:
     // dual quaternion skinning
     void updateClusterBuffer(const std::vector<Model::TransformDualQuaternion>& clusterDualQuaternions);
 
+    // A skinned part's culling bound, from the clusters that place its vertices rather than from its mesh node: a
+    // glTF armature exported at 1/100 scale left the node's bound a hundredth of the drawn body, at its feet.
+    void updateSkinnedBound(const Transform& modelTransform, const std::vector<glm::mat4>& clusterMatrices);
+    void updateSkinnedBound(const Transform& modelTransform,
+                            const std::vector<Model::TransformDualQuaternion>& clusterDualQuaternions);
+
     // Render Item interface
     render::ShapeKey getShapeKey() const override;
     void render(RenderArgs* args) override;
