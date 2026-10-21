@@ -335,37 +335,48 @@ void Procedural::prepare(gpu::Batch& batch,
             vertexSource.replacements[PROCEDURAL_BLOCK] = _vertexShaderSource.toStdString();
         }
 
-        // Set any userdata specified uniforms (if any)
-        if (!_data.uniforms.empty()) {
-            // First grab all the possible dialect/variant/reflections
-            std::vector<shader::Reflection*> allFragmentReflections;
-            for (auto dialectIt = fragmentSource.dialectSources.begin(); dialectIt != fragmentSource.dialectSources.end();
-                 ++dialectIt) {
-                for (auto variantIt = (*dialectIt).second.variantSources.begin();
-                     variantIt != (*dialectIt).second.variantSources.end(); ++variantIt) {
-                    allFragmentReflections.push_back(&(*variantIt).second.reflection);
-                }
+        // First grab all the possible dialect/variant/reflections
+        std::vector<shader::Reflection*> allFragmentReflections;
+        for (auto dialectIt = fragmentSource.dialectSources.begin(); dialectIt != fragmentSource.dialectSources.end();
+             ++dialectIt) {
+            for (auto variantIt = (*dialectIt).second.variantSources.begin();
+                 variantIt != (*dialectIt).second.variantSources.end(); ++variantIt) {
+                allFragmentReflections.push_back(&(*variantIt).second.reflection);
             }
-            std::vector<shader::Reflection*> allVertexReflections;
-            for (auto dialectIt = vertexSource.dialectSources.begin(); dialectIt != vertexSource.dialectSources.end();
-                 ++dialectIt) {
-                for (auto variantIt = (*dialectIt).second.variantSources.begin();
-                     variantIt != (*dialectIt).second.variantSources.end(); ++variantIt) {
-                    allVertexReflections.push_back(&(*variantIt).second.reflection);
-                }
+        }
+        std::vector<shader::Reflection*> allVertexReflections;
+        for (auto dialectIt = vertexSource.dialectSources.begin(); dialectIt != vertexSource.dialectSources.end();
+             ++dialectIt) {
+            for (auto variantIt = (*dialectIt).second.variantSources.begin();
+                 variantIt != (*dialectIt).second.variantSources.end(); ++variantIt) {
+                allVertexReflections.push_back(&(*variantIt).second.reflection);
             }
-            // Then fill in every reflections the new custom bindings
-            int customSlot = procedural::slot::uniform::Custom;
-            for (const auto& key : _data.uniforms.keys()) {
-                std::string uniformName = key.toLocal8Bit().data();
-                for (auto reflection : allFragmentReflections) {
-                    reflection->uniforms[uniformName] = customSlot;
+        }
+
+        // The channels and the inputs: GL 4.1 (macOS) has no binding qualifiers, and binds a program's textures and
+        // uniform buffers by name from its reflection, which the template's own did not list (its default block uses
+        // neither, so they were optimized out of it): until 2026-10-21 every procedural on macOS read all four
+        // channels from texture unit 0, whatever was bound there, and its inputs from uniform buffer 0
+        for (auto reflections : { &allFragmentReflections, &allVertexReflections }) {
+            for (auto reflection : *reflections) {
+                for (int i = 0; i < (int)MAX_PROCEDURAL_TEXTURE_CHANNELS; ++i) {
+                    reflection->textures["iChannel" + std::to_string(i)] = procedural::slot::texture::Channel0 + i;
                 }
-                for (auto reflection : allVertexReflections) {
-                    reflection->uniforms[uniformName] = customSlot;
-                }
-                ++customSlot;
+                reflection->uniformBuffers["standardInputsBuffer"] = procedural::slot::buffer::Inputs;
             }
+        }
+
+        // Then fill in every reflections the custom bindings of any userdata specified uniforms
+        int customSlot = procedural::slot::uniform::Custom;
+        for (const auto& key : _data.uniforms.keys()) {
+            std::string uniformName = key.toLocal8Bit().data();
+            for (auto reflection : allFragmentReflections) {
+                reflection->uniforms[uniformName] = customSlot;
+            }
+            for (auto reflection : allVertexReflections) {
+                reflection->uniforms[uniformName] = customSlot;
+            }
+            ++customSlot;
         }
 
         // Leave this here for debugging
