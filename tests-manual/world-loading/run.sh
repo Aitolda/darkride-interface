@@ -66,6 +66,18 @@ mkdir -p "$RUN/config/Tivoli Cloud VR - dev" "$RUN/data" "$RUN/snaps" "$RUN/cach
 CARD_SETTING=""
 [ -n "$CARD" ] && CARD_SETTING=", \"worldLoading/cardOnDesktop\": true"
 echo "{\"snapshotsLocation\": \"$RUN/snaps\"$CARD_SETTING}" > "$RUN/config/Tivoli Cloud VR - dev/Interface.json"
+# BASE_SETTINGS=<Interface.json>: start the walled-off client from a copy of those settings (someone's render options,
+# to reproduce what they see); the copy is the wall's, the file itself is only read
+if [ -n "$BASE_SETTINGS" ]; then
+    python3 - "$BASE_SETTINGS" "$RUN/config/Tivoli Cloud VR - dev/Interface.json" <<'PY'
+import json, sys
+base, wall = sys.argv[1:3]
+settings = json.load(open(base))
+settings.pop("sessionRunTime", None)
+settings.update(json.load(open(wall)))
+json.dump(settings, open(wall, "w"), indent=2)
+PY
+fi
 { echo "var ARRIVAL_SKIP_AFTER = $SKIP;"; cat "$D/arrival.js"; } > "$RUN/arrival.js"
 URL="hifi://localhost:$PORT"
 TEST_SCRIPT="$RUN/arrival.js"

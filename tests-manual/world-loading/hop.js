@@ -52,6 +52,19 @@
             if (events.landed === undefined && typeof HOP_PICTURES !== "undefined") {
                 // and what the world looks like once the screen has gone
                 Script.setTimeout(function () { Window.takeSnapshot(false, false, 0); print("WORLD-LOADING-HOP snapshot 3 s after landing"); }, 3000);
+                // and an overview from high above the arrival, looking at the world's middle (the ground and the
+                // water, which the arrival's own view may not take in), 10 s after landing
+                Script.setTimeout(function () {
+                    var target = { x: 0, y: 0, z: 0 };
+                    var eye = { x: MyAvatar.position.x + 60, y: MyAvatar.position.y + 140, z: MyAvatar.position.z + 160 };
+                    Camera.mode = "independent";
+                    Camera.position = eye;
+                    Camera.orientation = Quat.lookAtSimple(eye, target);
+                    Script.setTimeout(function () {
+                        Window.takeSnapshot(false, false, 0);
+                        print("WORLD-LOADING-HOP overview snapshot 10 s after landing");
+                    }, 1500);
+                }, 8500);
             }
             mark("landed");
         }
@@ -72,7 +85,9 @@
         if (Window.getWorldLoading && Window.getWorldLoading().active) {   // only in clients with whole-world loading
             mark("wholeWorldLoading");
         }
-        if ((events.screenDown !== undefined && t() > events.screenDown + 5) || t() > 120) {
+        // (with pictures, long enough for the overview 10 s after landing)
+        var linger = typeof HOP_PICTURES !== "undefined" ? 14 : 5;
+        if ((events.screenDown !== undefined && t() > events.screenDown + linger) || t() > 120) {
             finished = true;
             var summary = { events: events, gaps: gaps, host: location.hostname };
             // down once landed (and the avatar has loaded: at most 10 s more), never before
