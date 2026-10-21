@@ -14,6 +14,7 @@
 
 #include "EntityTreeRenderer.h"
 #include "RenderableModelEntityItem.h"
+#include "RenderableMaterialEntityItem.h"
 #include "InterfaceLogging.h"
 #include "Application.h"
 #include "avatar/AvatarManager.h"
@@ -198,6 +199,20 @@ bool SafeLanding::isNearby(const EntityItemPointer& entity, const glm::vec3& ava
     }
     bool success = false;
     AABox box = entity->getAABox(success);
+    if (entity->getType() == EntityTypes::Material) {
+        // a material is as near as what it paints: a ground's material sits at the ground's origin, which may be
+        // far from where the avatar stands on it
+        bool parentFound = false;
+        auto parent = entity->getParentPointer(parentFound);
+        if (parentFound && parent && parent->getNestableType() == NestableType::Entity) {
+            bool parentSuccess = false;
+            AABox parentBox = std::static_pointer_cast<EntityItem>(parent)->getAABox(parentSuccess);
+            if (parentSuccess) {
+                box = parentBox;
+                success = true;
+            }
+        }
+    }
     if (!success) {
         return true;
     }
@@ -269,6 +284,14 @@ void SafeLanding::updateTracking() {
                     _entityTreeRenderer->addingEntity(entityMapIter->first);
                 }
                 isVisuallyReady = entity->isVisuallyReady() || (!entityRenderable && !entity->isParentPathComplete());
+                if (entity->getType() == EntityTypes::Material) {
+                    // a material entity draws through its parent, so its own flag says nothing: what it draws must
+                    // have loaded (its textures; a procedural one's shader and image channels)
+                    // (no renderer yet is not ready: it has not begun to load; one that never comes is let go with the
+                    // downloads that never come, below)
+                    auto materialRenderable = std::dynamic_pointer_cast<render::entities::MaterialEntityRenderer>(entityRenderable);
+                    isVisuallyReady = materialRenderable && materialRenderable->isMaterialReady();
+                }
                 if (!isVisuallyReady && entity->getType() == EntityTypes::Model) {
                     // the model and its textures in counts as drawn even before its renderer updates again: a far model
                     // that nothing else updates kept its "not drawn" flag for good, with everything loaded (10-21)

@@ -49,6 +49,10 @@
             mark("leftOldWorld");
         }
         if (events.leftOldWorld !== undefined && location.isConnected && Window.isPhysicsEnabled()) {
+            if (events.landed === undefined && typeof HOP_PICTURES !== "undefined") {
+                // and what the world looks like once the screen has gone
+                Script.setTimeout(function () { Window.takeSnapshot(false, false, 0); print("WORLD-LOADING-HOP snapshot 3 s after landing"); }, 3000);
+            }
             mark("landed");
         }
         var up = screenUp();
