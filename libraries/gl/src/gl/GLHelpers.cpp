@@ -108,7 +108,13 @@ static int64_t steadyMilliseconds() {
 }
 
 bool gl::isPresentationPaused() {
+#ifdef Q_OS_MACOS
     return steadyMilliseconds() < _presentationPausedUntil.load();
+#else
+    // the pause is for macOS, which finishes resizing a view's surface after the change (298e8dba84); elsewhere it only
+    // held presents off, and a steady run of window events could hold them off indefinitely (a Windows run, 10-21)
+    return false;
+#endif
 }
 
 void gl::setViewChangeFlush(const std::function<void()>& flush) {

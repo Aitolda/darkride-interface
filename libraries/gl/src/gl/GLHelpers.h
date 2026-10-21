@@ -65,7 +65,7 @@ namespace gl {
     // (the QML UI's renderer, whose sync the main thread waits on) starves. False where GL is not serialized.
     bool globalLockWanted();
 
-    // Whether the presenting thread should leave the window's GL view alone for now (see ViewChangeGuard)
+    // Whether the presenting thread should leave the window's GL view alone for now (see ViewChangeGuard); macOS only
     bool isPresentationPaused();
     // How the main thread puts its pending window changes in place at once (on macOS, a Core Animation commit,
     // which otherwise waits for the end of the run loop pass): set by the app, run by ViewChangeGuard
