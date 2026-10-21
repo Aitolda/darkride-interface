@@ -383,6 +383,42 @@ void ModelMeshPartPayload::updateClusterBuffer(const std::vector<Model::Transfor
     }
 }
 
+// The part's mesh-space bound carried by every cluster's skinning transform holds wherever the skin can put its
+// vertices, in the model's frame. With one cluster or none the part draws unskinned at the model (updateClusterBuffer
+// keeps no buffer then), so its bound is the mesh's own there.
+void ModelMeshPartPayload::updateSkinnedBound(const Transform& modelTransform, const std::vector<glm::mat4>& clusterMatrices) {
+    graphics::Box modelBound;
+    if (clusterMatrices.size() > 1 && !_localBound.isInvalid()) {
+        for (const auto& clusterMatrix : clusterMatrices) {
+            graphics::Box clusterBound = _localBound;
+            clusterBound.transform(clusterMatrix);
+            modelBound += clusterBound;
+        }
+    }
+    if (modelBound.isInvalid()) {
+        modelBound = _localBound;
+    }
+    _worldBound = modelBound;
+    _worldBound.transform(modelTransform);
+}
+
+void ModelMeshPartPayload::updateSkinnedBound(const Transform& modelTransform,
+                                              const std::vector<Model::TransformDualQuaternion>& clusterDualQuaternions) {
+    graphics::Box modelBound;
+    if (clusterDualQuaternions.size() > 1 && !_localBound.isInvalid()) {
+        for (const auto& clusterDualQuaternion : clusterDualQuaternions) {
+            graphics::Box clusterBound = _localBound;
+            clusterBound.transform(clusterDualQuaternion.getMatrix());
+            modelBound += clusterBound;
+        }
+    }
+    if (modelBound.isInvalid()) {
+        modelBound = _localBound;
+    }
+    _worldBound = modelBound;
+    _worldBound.transform(modelTransform);
+}
+
 // Note that this method is called for models but not for shapes
 void ModelMeshPartPayload::updateKey(const render::ItemKey& key) {
     ItemKey::Builder builder(key);

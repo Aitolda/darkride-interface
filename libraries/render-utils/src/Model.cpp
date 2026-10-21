@@ -243,7 +243,7 @@ void Model::updateRenderItems() {
                 const auto& meshState = self->getMeshState(skinDeformerIndex);
                 bool useDualQuaternionSkinning = self->getUseDualQuaternionSkinning();
 
-                transaction.updateItem<ModelMeshPartPayload>(itemID, [modelTransform, shapeState, meshState, useDualQuaternionSkinning,
+                transaction.updateItem<ModelMeshPartPayload>(itemID, [modelTransform, meshState, useDualQuaternionSkinning,
                                                                       invalidatePayloadShapeKey, primitiveMode, renderItemKeyGlobalFlags, cauterized](ModelMeshPartPayload& data) {
                     if (useDualQuaternionSkinning) {
                         data.updateClusterBuffer(meshState.clusterDualQuaternions);
@@ -253,7 +253,11 @@ void Model::updateRenderItems() {
 
                     Transform renderTransform = modelTransform;
                     data.updateTransform(renderTransform);
-                    data.updateTransformAndBound(modelTransform.worldTransform(shapeState._rootFromJointTransform));
+                    if (useDualQuaternionSkinning) {
+                        data.updateSkinnedBound(modelTransform, meshState.clusterDualQuaternions);
+                    } else {
+                        data.updateSkinnedBound(modelTransform, meshState.clusterMatrices);
+                    }
 
                     data.setCauterized(cauterized);
                     data.updateKey(renderItemKeyGlobalFlags);
