@@ -420,7 +420,13 @@ void Procedural::prepare(gpu::Batch& batch,
             auto gpuTexture = _channels[i]->getGPUTexture();
             if (gpuTexture) {
                 gpuTexture->setSampler(sampler);
-                gpuTexture->setAutoGenerateMips(true);
+                // only a texture without mips of its own has them generated: one from the network comes with the
+                // whole chain, and on macOS (GL41ResourceTexture) asking for generated mips regenerated them as the
+                // GL texture was made, before its levels had streamed in, so its small mips stayed black (Tivoli
+                // Town's ground, its textures tiled 111 times, drew near black until 2026-10-21)
+                if (gpuTexture->getNumMips() <= 1) {
+                    gpuTexture->setAutoGenerateMips(true);
+                }
             }
             batch.setResourceTexture((gpu::uint32)(procedural::slot::texture::Channel0 + i), gpuTexture);
         }
