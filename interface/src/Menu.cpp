@@ -35,6 +35,7 @@
 #include <ScriptEngines.h>
 #include <WasmScriptEngine.h>
 #include <MenuItemProperties.h>
+#include <OffscreenUi.h>
 #include <ui/types/FileTypeProfile.h>
 #include <ui/types/TivoliWebEngineProfile.h>
 
@@ -85,6 +86,24 @@ Menu* Menu::getInstance() {
 
 const char* EXCLUSION_GROUP_KEY = "exclusionGroup";
 
+// Edit > Cut, Copy and Paste run when their shortcut reaches the menu (or from the menu itself). While the 3D view has
+// the keyboard and the overlay's focused item is a web page (the Avatar app's address, Explore's search) or a text
+// field, that item does the edit itself: the made-up key press the menu used to post reached a web page as Option+V on
+// macOS and typed a "√". Otherwise the key is posted to the application object, as before; posted to a widget it
+// would come back to the menu's own shortcut, over and over.
+static bool viewHasKeyboard() {
+    QWidget* focusWidget = QApplication::focusWidget();
+    return !focusWidget || focusWidget == qApp->getPrimaryWidget() || focusWidget == qApp->getWindow();
+}
+
+static void editOrPostKey(const char* action, Qt::Key key) {
+    if (viewHasKeyboard() && DependencyManager::get<OffscreenUi>()->editFocusedItem(action)) {
+        return;
+    }
+    QKeyEvent* keyEvent = new QKeyEvent(QEvent::KeyPress, key, Qt::ControlModifier);
+    QCoreApplication::postEvent(QCoreApplication::instance(), keyEvent);
+}
+
 Menu::Menu() {
     auto dialogsManager = DependencyManager::get<DialogsManager>();
     auto accountManager = DependencyManager::get<AccountManager>();
@@ -124,22 +143,19 @@ Menu::Menu() {
     // Edit > Cut
     auto cutAction = addActionToQMenuAndActionHash(editMenu, "Cut", QKeySequence::Cut);
     connect(cutAction, &QAction::triggered, [] {
-            QKeyEvent* keyEvent = new QKeyEvent(QEvent::KeyPress, Qt::Key_X, Qt::ControlModifier);
-            QCoreApplication::postEvent(QCoreApplication::instance(), keyEvent);
+            editOrPostKey("Cut", Qt::Key_X);
     });
 
     // Edit > Copy
     auto copyAction = addActionToQMenuAndActionHash(editMenu, "Copy", QKeySequence::Copy);
     connect(copyAction, &QAction::triggered, [] {
-            QKeyEvent* keyEvent = new QKeyEvent(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
-            QCoreApplication::postEvent(QCoreApplication::instance(), keyEvent);
+            editOrPostKey("Copy", Qt::Key_C);
     });
 
     // Edit > Paste
     auto pasteAction = addActionToQMenuAndActionHash(editMenu, "Paste", QKeySequence::Paste);
     connect(pasteAction, &QAction::triggered, [] {
-            QKeyEvent* keyEvent = new QKeyEvent(QEvent::KeyPress, Qt::Key_V, Qt::ControlModifier);
-            QCoreApplication::postEvent(QCoreApplication::instance(), keyEvent);
+            editOrPostKey("Paste", Qt::Key_V);
     });
 
     // Edit > Delete
