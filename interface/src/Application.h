@@ -327,6 +327,8 @@ public:
     void updateMyAvatarLookAtPosition(float deltaTime);
 
     float getGameLoopRate() const { return _gameLoopCounter.rate(); }
+    // the period the presents are paced at, in seconds; 0 while they are not (DisplayPlugin::getPresentPeriod)
+    float getPresentPeriod() const;
 
     void takeSnapshot(bool notify, bool includeAnimated = false, float aspectRatio = 0.0f, const QString& filename = QString());
     void takeSecondaryCameraSnapshot(const bool& notify, const QString& filename = QString());
@@ -537,7 +539,7 @@ private slots:
     void showDesktop();
     void clearDomainOctreeDetails(bool clearAll = true);
     void onAboutToQuit();
-    void onPresent(quint32 frameCount);
+    void onPresent(quint32 frameCount, quint64 presentSlot);
 
     void resettingDomain();
 
@@ -871,6 +873,10 @@ private:
     bool _saveAvatarOverrideUrl{ false };
 
     std::atomic<bool> _pendingIdleEvent{ true };
+    // the slot (the paced refresh interval) of the latest present, from the present thread (onPresent), and the
+    // one the last update was for: the simulation advances by the intervals between them (update)
+    std::atomic<uint64_t> _presentSlot{ 0 };
+    uint64_t _lastUpdateSlot{ 0 };
 
     bool quitWhenFinished{ false };
 

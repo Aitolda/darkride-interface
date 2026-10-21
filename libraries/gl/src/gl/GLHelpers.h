@@ -60,6 +60,10 @@ namespace gl {
 
     void globalLock();
     void globalRelease(bool finish = true);
+    // Whether a thread is waiting for the global lock: the lock is not fair, so the thread that holds it most of the
+    // time (the presenting thread, with vsync) gives a waiter a moment to take it after a release, or the waiter
+    // (the QML UI's renderer, whose sync the main thread waits on) starves. False where GL is not serialized.
+    bool globalLockWanted();
 
     // Whether the presenting thread should leave the window's GL view alone for now (see ViewChangeGuard)
     bool isPresentationPaused();

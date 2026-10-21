@@ -395,7 +395,7 @@ void GraphicsEngine::render_performFrame() {
                     glm::vec3 center = item.getBound().calcCenter();
                     std::lock_guard<std::mutex> lock(_traceMutex);
                     if (_traceSamples.size() < 200000) {
-                        _traceSamples.push_back({ usecTimestampNow(), viewFrustum.getPosition(), center });
+                        _traceSamples.push_back({ usecTimestampNow(), viewFrustum.getPosition(), center, _renderFrameCount });
                     }
                 }
             }

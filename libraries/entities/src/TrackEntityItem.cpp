@@ -16,6 +16,13 @@ const float TrackEntityItem::DEFAULT_ACCELERATION = 1.0f;
 const float TrackEntityItem::MAX_SPEED = 200.0f;
 const float TrackEntityItem::MAX_ACCELERATION = 100.0f;
 const quint16 TrackEntityItem::NO_STATION = 0xFFFF;
+const QString TrackEntityItem::DEFAULT_PROFILE = "beam";
+const float TrackEntityItem::DEFAULT_WIDTH = 0.8f;
+const float TrackEntityItem::DEFAULT_HEIGHT = 1.0f;
+const float TrackEntityItem::DEFAULT_CLEARANCE = 0.3f;
+const float TrackEntityItem::DEFAULT_PYLON_SPACING = 10.0f;
+const float TrackEntityItem::DEFAULT_PYLON_FLOOR = -8.0f;
+const float TrackEntityItem::MAX_GUIDEWAY_SIZE = 1000.0f;
 
 EntityItemPointer TrackEntityItem::factory(const EntityItemID& entityID, const EntityItemProperties& properties) {
     Pointer entity(new TrackEntityItem(entityID), [](EntityItem* ptr) { ptr->deleteLater(); });
@@ -42,6 +49,13 @@ EntityItemProperties TrackEntityItem::getProperties(const EntityPropertyFlags& d
     COPY_ENTITY_PROPERTY_TO_PROPERTIES(trainDwell, getTrainDwell);
     COPY_ENTITY_PROPERTY_TO_PROPERTIES(trainStation, getTrainStation);
     COPY_ENTITY_PROPERTY_TO_PROPERTIES(trainTime, getTrainTime);
+    COPY_ENTITY_PROPERTY_TO_PROPERTIES(trackProfile, getTrackProfile);
+    COPY_ENTITY_PROPERTY_TO_PROPERTIES(trackWidth, getTrackWidth);
+    COPY_ENTITY_PROPERTY_TO_PROPERTIES(trackHeight, getTrackHeight);
+    COPY_ENTITY_PROPERTY_TO_PROPERTIES(trackClearance, getTrackClearance);
+    COPY_ENTITY_PROPERTY_TO_PROPERTIES(trackPylonSpacing, getTrackPylonSpacing);
+    COPY_ENTITY_PROPERTY_TO_PROPERTIES(trackPylonFloor, getTrackPylonFloor);
+    COPY_ENTITY_PROPERTY_TO_PROPERTIES(color, getColor);
 
     return properties;
 }
@@ -61,6 +75,13 @@ bool TrackEntityItem::setSubClassProperties(const EntityItemProperties& properti
     SET_ENTITY_PROPERTY_FROM_PROPERTIES(trainDwell, setTrainDwell);
     SET_ENTITY_PROPERTY_FROM_PROPERTIES(trainStation, setTrainStation);
     SET_ENTITY_PROPERTY_FROM_PROPERTIES(trainTime, setTrainTime);
+    SET_ENTITY_PROPERTY_FROM_PROPERTIES(trackProfile, setTrackProfile);
+    SET_ENTITY_PROPERTY_FROM_PROPERTIES(trackWidth, setTrackWidth);
+    SET_ENTITY_PROPERTY_FROM_PROPERTIES(trackHeight, setTrackHeight);
+    SET_ENTITY_PROPERTY_FROM_PROPERTIES(trackClearance, setTrackClearance);
+    SET_ENTITY_PROPERTY_FROM_PROPERTIES(trackPylonSpacing, setTrackPylonSpacing);
+    SET_ENTITY_PROPERTY_FROM_PROPERTIES(trackPylonFloor, setTrackPylonFloor);
+    SET_ENTITY_PROPERTY_FROM_PROPERTIES(color, setColor);
 
     return somethingChanged;
 }
@@ -84,6 +105,13 @@ int TrackEntityItem::readEntitySubclassDataFromBuffer(const unsigned char* data,
     READ_ENTITY_PROPERTY(PROP_TRAIN_DWELL, float, setTrainDwell);
     READ_ENTITY_PROPERTY(PROP_TRAIN_STATION, quint16, setTrainStation);
     READ_ENTITY_PROPERTY(PROP_TRAIN_TIME, quint64, setTrainTime);
+    READ_ENTITY_PROPERTY(PROP_TRACK_PROFILE, QString, setTrackProfile);
+    READ_ENTITY_PROPERTY(PROP_TRACK_WIDTH, float, setTrackWidth);
+    READ_ENTITY_PROPERTY(PROP_TRACK_HEIGHT, float, setTrackHeight);
+    READ_ENTITY_PROPERTY(PROP_TRACK_CLEARANCE, float, setTrackClearance);
+    READ_ENTITY_PROPERTY(PROP_TRACK_PYLON_SPACING, float, setTrackPylonSpacing);
+    READ_ENTITY_PROPERTY(PROP_TRACK_PYLON_FLOOR, float, setTrackPylonFloor);
+    READ_ENTITY_PROPERTY(PROP_COLOR, u8vec3Color, setColor);
 
     return bytesRead;
 }
@@ -103,6 +131,13 @@ EntityPropertyFlags TrackEntityItem::getEntityProperties(EncodeBitstreamParams& 
     requestedProperties += PROP_TRAIN_DWELL;
     requestedProperties += PROP_TRAIN_STATION;
     requestedProperties += PROP_TRAIN_TIME;
+    requestedProperties += PROP_TRACK_PROFILE;
+    requestedProperties += PROP_TRACK_WIDTH;
+    requestedProperties += PROP_TRACK_HEIGHT;
+    requestedProperties += PROP_TRACK_CLEARANCE;
+    requestedProperties += PROP_TRACK_PYLON_SPACING;
+    requestedProperties += PROP_TRACK_PYLON_FLOOR;
+    requestedProperties += PROP_COLOR;
 
     return requestedProperties;
 }
@@ -128,6 +163,13 @@ void TrackEntityItem::appendSubclassData(OctreePacketData* packetData, EncodeBit
     APPEND_ENTITY_PROPERTY(PROP_TRAIN_DWELL, getTrainDwell());
     APPEND_ENTITY_PROPERTY(PROP_TRAIN_STATION, getTrainStation());
     APPEND_ENTITY_PROPERTY(PROP_TRAIN_TIME, getTrainTime());
+    APPEND_ENTITY_PROPERTY(PROP_TRACK_PROFILE, getTrackProfile());
+    APPEND_ENTITY_PROPERTY(PROP_TRACK_WIDTH, getTrackWidth());
+    APPEND_ENTITY_PROPERTY(PROP_TRACK_HEIGHT, getTrackHeight());
+    APPEND_ENTITY_PROPERTY(PROP_TRACK_CLEARANCE, getTrackClearance());
+    APPEND_ENTITY_PROPERTY(PROP_TRACK_PYLON_SPACING, getTrackPylonSpacing());
+    APPEND_ENTITY_PROPERTY(PROP_TRACK_PYLON_FLOOR, getTrackPylonFloor());
+    APPEND_ENTITY_PROPERTY(PROP_COLOR, getColor());
 }
 
 void TrackEntityItem::setTrackPoints(const QVector<glm::vec3>& points) {
@@ -218,6 +260,59 @@ float TrackEntityItem::getTrackAcceleration() const {
 
 uint32_t TrackEntityItem::getTrackVersion() const {
     return resultWithReadLock<uint32_t>([&] { return _trackVersion; });
+}
+
+void TrackEntityItem::setTrackProfile(const QString& profile) {
+    withWriteLock([&] {
+        if (_trackProfile != profile) {
+            _trackProfile = profile;
+            _guidewayVersion++;
+            _needsRenderUpdate = true;
+        }
+    });
+}
+
+QString TrackEntityItem::getTrackProfile() const {
+    return resultWithReadLock<QString>([&] { return _trackProfile; });
+}
+
+#define TRACK_GUIDEWAY_FLOAT(Name, member, minimum) \
+void TrackEntityItem::setTrack##Name(float value) { \
+    value = glm::clamp(value, minimum, MAX_GUIDEWAY_SIZE); \
+    withWriteLock([&] { \
+        if (member != value) { \
+            member = value; \
+            _guidewayVersion++; \
+            _needsRenderUpdate = true; \
+        } \
+    }); \
+} \
+float TrackEntityItem::getTrack##Name() const { \
+    return resultWithReadLock<float>([&] { return member; }); \
+}
+
+TRACK_GUIDEWAY_FLOAT(Width, _trackWidth, 0.01f)
+TRACK_GUIDEWAY_FLOAT(Height, _trackHeight, 0.01f)
+TRACK_GUIDEWAY_FLOAT(Clearance, _trackClearance, -MAX_GUIDEWAY_SIZE)
+TRACK_GUIDEWAY_FLOAT(PylonSpacing, _trackPylonSpacing, 0.0f)
+TRACK_GUIDEWAY_FLOAT(PylonFloor, _trackPylonFloor, -MAX_GUIDEWAY_SIZE)
+#undef TRACK_GUIDEWAY_FLOAT
+
+void TrackEntityItem::setColor(const glm::u8vec3& color) {
+    withWriteLock([&] {
+        if (_color != color) {
+            _color = color;
+            _needsRenderUpdate = true;
+        }
+    });
+}
+
+glm::u8vec3 TrackEntityItem::getColor() const {
+    return resultWithReadLock<glm::u8vec3>([&] { return _color; });
+}
+
+uint32_t TrackEntityItem::getGuidewayVersion() const {
+    return resultWithReadLock<uint32_t>([&] { return _guidewayVersion; });
 }
 
 #define TRAIN_STATE_SETTER(Setter, Getter, Type, member) \

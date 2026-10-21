@@ -63,9 +63,12 @@ bool gl::disableGl45() {
 // it, even with gratuitous use of glFinish hasn't improved the situation
 
 static std::mutex _globalOpenGLLock;
+static std::atomic<int> _globalOpenGLWaiters { 0 };
 
 void gl::globalLock() {
+    ++_globalOpenGLWaiters;
     _globalOpenGLLock.lock();
+    --_globalOpenGLWaiters;
 }
 
 void gl::globalRelease(bool finish) {
@@ -75,10 +78,15 @@ void gl::globalRelease(bool finish) {
     _globalOpenGLLock.unlock();
 }
 
+bool gl::globalLockWanted() {
+    return _globalOpenGLWaiters.load() > 0;
+}
+
 #else
 
 void gl::globalLock() {}
 void gl::globalRelease(bool finish) {}
+bool gl::globalLockWanted() { return false; }
 
 #endif
 

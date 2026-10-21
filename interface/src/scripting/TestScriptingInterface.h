@@ -298,6 +298,39 @@ public slots:
     Q_INVOKABLE bool saveWindowPicture(const QString& path);
 
     /**jsdoc
+     * Chooses a control point of the Track selected on its own in the editor (-1 for none), as a click on its diamond
+     * does: bright in the viewport, the Move gizmo on it, the Inspector's Points list on its row.
+     * @function Test.chooseTrackPoint
+     * @param {number} index - The point's index, from 0.
+     */
+    Q_INVOKABLE void chooseTrackPoint(int index);
+
+    /**jsdoc
+     * @function Test.chosenTrackPoint
+     * @returns {number} The chosen control point's index, -1 for none.
+     */
+    Q_INVOKABLE int chosenTrackPoint();
+
+    /**jsdoc
+     * Inserts a control point on the selected Track's curve at an arc length, as Shift+click on the curve does.
+     * @function Test.insertTrackPoint
+     * @param {number} arcLength - Metres along the curve from its first point.
+     */
+    Q_INVOKABLE void insertTrackPoint(float arcLength);
+
+    /**jsdoc
+     * Removes the selected Track's chosen control point, as Delete does.
+     * @function Test.deleteTrackPoint
+     */
+    Q_INVOKABLE void deleteTrackPoint();
+
+    /**jsdoc
+     * Undoes the editor's last step, as Cmd+Z does in build mode.
+     * @function Test.editorUndo
+     */
+    Q_INVOKABLE void editorUndo();
+
+    /**jsdoc
      * Starts tracing an entity as it is drawn: one sample per rendered frame, taken on the render thread once the frame's
      * scene is in place, of the frame's camera position and the centre of the entity's drawn bound. A null id stops it.
      * @function Test.traceRenderedEntity
@@ -307,11 +340,57 @@ public slots:
     Q_INVOKABLE bool traceRenderedEntity(const QUuid& entityID);
 
     /**jsdoc
-     * Takes the samples traced so far: each is [time in ms, camera x, y, z, item x, y, z].
+     * Takes the samples traced so far: each is [time in ms, camera x, y, z, item x, y, z, frame index].
      * @function Test.takeRenderTrace
      * @returns {Array<Array<number>>} The samples, oldest first.
      */
     Q_INVOKABLE QVariantList takeRenderTrace();
+
+    /**jsdoc
+     * Starts or stops recording the presents: one sample per present, taken on the present thread once the swap has
+     * returned (with vsync on, at the display's refresh). Starting clears what was recorded.
+     * @function Test.tracePresents
+     * @param {boolean} on - Whether to record.
+     */
+    Q_INVOKABLE void tracePresents(bool on);
+
+    /**jsdoc
+     * Takes the presents recorded so far: each is [time in ms, the rendered frame's index (as in the render trace),
+     * 1 if that frame was new or 0 if the last frame was shown again, the present's whole duration in ms, the swap's
+     * own duration in ms (its wait for the display, with vsync), the GPU's averaged time per frame in ms].
+     * @function Test.takePresentTrace
+     * @returns {Array<Array<number>>} The samples, oldest first.
+     */
+    Q_INVOKABLE QVariantList takePresentTrace();
+
+    /**jsdoc
+     * Starts or stops recording the display's refreshes (macOS: the display link's callbacks, each with the instant
+     * of the refresh it announces). Starting clears what was recorded.
+     * @function Test.traceRefreshes
+     * @param {boolean} on - Whether to record.
+     */
+    Q_INVOKABLE void traceRefreshes(bool on);
+
+    /**jsdoc
+     * Takes the refreshes recorded so far: the time of each in ms, on the clock of the present trace.
+     * @function Test.takeRefreshTrace
+     * @returns {Array<number>} The refresh times, oldest first; empty where the display gives no signal.
+     */
+    Q_INVOKABLE QVariantList takeRefreshTrace();
+
+    /**jsdoc
+     * The refresh rate of the display the window is on, in Hz, as the platform reports it (0 when it does not).
+     * @function Test.getDisplayRefreshRate
+     * @returns {number} The refresh rate.
+     */
+    Q_INVOKABLE float getDisplayRefreshRate();
+
+    /**jsdoc
+     * Whether the swap waits for the display's refresh (Render.vsyncEnabled, or TIVOLI_VSYNC in the environment).
+     * @function Test.isVsyncEnabled
+     * @returns {boolean} Whether vsync is on.
+     */
+    Q_INVOKABLE bool isVsyncEnabled();
 
 private:
     bool waitForCondition(qint64 maxWaitMs, std::function<bool()> condition);

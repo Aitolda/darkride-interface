@@ -295,6 +295,7 @@ enum class EntityVersion : PacketVersion {
     Vehicles, // darkride: the vehicle property group on every entity (PHYSICS.md round 6)
     Airships, // darkride: the airship's properties in the vehicle group (PHYSICS.md round 7)
     Aircraft, // darkride: the aircraft's properties in the vehicle group (PHYSICS.md round 8)
+    TrackGuideway, // darkride: the Track entity's guideway (profile, beam size, pylons, colour): what it draws and collides as
     // TO DO - reinstate with tonemapping in zones
     // ToneMappingMode, // caitlyn
     

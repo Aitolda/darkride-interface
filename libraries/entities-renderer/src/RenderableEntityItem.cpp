@@ -23,6 +23,7 @@
 #include "RenderableZoneEntityItem.h"
 #include "RenderableMaterialEntityItem.h"
 #include "RenderableTerrainEntityItem.h"
+#include "RenderableTrackEntityItem.h"
 #include "ImpostorCard.h"
 
 using namespace render;
@@ -32,6 +33,7 @@ void EntityRenderer::initEntityRenderers() {
     REGISTER_ENTITY_TYPE_WITH_FACTORY(Model, RenderableModelEntityItem::factory)
     REGISTER_ENTITY_TYPE_WITH_FACTORY(PolyVox, RenderablePolyVoxEntityItem::factory)
     REGISTER_ENTITY_TYPE_WITH_FACTORY(Terrain, RenderableTerrainEntityItem::factory)
+    REGISTER_ENTITY_TYPE_WITH_FACTORY(Track, RenderableTrackEntityItem::factory)
 }
 
 const Transform& EntityRenderer::getModelTransform() const {
@@ -293,6 +295,10 @@ EntityRenderer::Pointer EntityRenderer::addToScene(EntityTreeRenderer& renderer,
 
         case Type::Terrain:
             result = make_renderer<TerrainEntityRenderer>(entity);
+            break;
+
+        case Type::Track:
+            result = make_renderer<TrackEntityRenderer>(entity);
             break;
 
         default:

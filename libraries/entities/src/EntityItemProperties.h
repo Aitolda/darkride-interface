@@ -413,6 +413,12 @@ public:
     DEFINE_PROPERTY(PROP_TRAIN_DWELL, TrainDwell, trainDwell, float, 0.0f);
     DEFINE_PROPERTY(PROP_TRAIN_STATION, TrainStation, trainStation, quint16, TrackEntityItem::NO_STATION);
     DEFINE_PROPERTY(PROP_TRAIN_TIME, TrainTime, trainTime, quint64, 0);
+    DEFINE_PROPERTY_REF(PROP_TRACK_PROFILE, TrackProfile, trackProfile, QString, TrackEntityItem::DEFAULT_PROFILE);
+    DEFINE_PROPERTY(PROP_TRACK_WIDTH, TrackWidth, trackWidth, float, TrackEntityItem::DEFAULT_WIDTH);
+    DEFINE_PROPERTY(PROP_TRACK_HEIGHT, TrackHeight, trackHeight, float, TrackEntityItem::DEFAULT_HEIGHT);
+    DEFINE_PROPERTY(PROP_TRACK_CLEARANCE, TrackClearance, trackClearance, float, TrackEntityItem::DEFAULT_CLEARANCE);
+    DEFINE_PROPERTY(PROP_TRACK_PYLON_SPACING, TrackPylonSpacing, trackPylonSpacing, float, TrackEntityItem::DEFAULT_PYLON_SPACING);
+    DEFINE_PROPERTY(PROP_TRACK_PYLON_FLOOR, TrackPylonFloor, trackPylonFloor, float, TrackEntityItem::DEFAULT_PYLON_FLOOR);
 
     DEFINE_PROPERTY_REF(PROP_LINE_POINTS, LinePoints, linePoints, QVector<glm::vec3>, ENTITY_ITEM_DEFAULT_EMPTY_VEC3_QVEC);
     DEFINE_PROPERTY(PROP_STROKE_WIDTHS, StrokeWidths, strokeWidths, QVector<float>, QVector<float>());

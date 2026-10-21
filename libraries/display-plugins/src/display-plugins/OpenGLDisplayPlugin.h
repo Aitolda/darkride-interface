@@ -9,9 +9,12 @@
 
 #include "DisplayPlugin.h"
 
+#include <atomic>
 #include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <queue>
+#include <vector>
 
 #include <QtCore/QThread>
 #include <QtCore/QByteArray>
@@ -45,7 +48,8 @@ public:
     // These must be final to ensure proper ordering of operations
     // between the main thread and the presentation thread
 
-    static std::function<void(int)> getRefreshRateOperator();
+    // (the target rate, the display's own rate)
+    static std::function<void(int, int)> getRefreshRateOperator();
 
     bool activate() override final;
     void deactivate() override final;
@@ -75,15 +79,22 @@ public:
 
     bool beginFrameRender(uint32_t frameIndex) override;
 
-    // the desktop window swaps as soon as a frame is drawn, the display showing whichever frame is newest at each of
-    // its own refreshes; TIVOLI_VSYNC=1 in the environment locks the swap to the display's refresh instead (an
-    // experiment of 2026-10-19 on the driver's stutter, PHYSICS.md "The driver's stutter")
+    // Vsync: the swap waits for the display's refresh. Off by default: the presents are paced at the display's period
+    // instead (RefreshRateController) and the compositor shows the newest at each refresh, which is even; with vsync
+    // on, macOS's GL swap was measured (10-19) to wait two refreshes and to queue the odd frame without waiting, a
+    // ragged 72 Hz on a 144 Hz panel (PHYSICS.md "The driver's stutter"). Wanted = the Render.vsyncEnabled setting,
+    // read at activation and pushed on a change; TIVOLI_VSYNC=1 or 0 in the environment forces it; the HMD plugins
+    // always want it. The present thread applies it (applyVsync).
     virtual bool wantVsync() const {
-        static const bool forced = !qgetenv("TIVOLI_VSYNC").isEmpty() && qgetenv("TIVOLI_VSYNC") != "0";
-        return forced;
+        static const int forced = qgetenv("TIVOLI_VSYNC").isEmpty() ? -1 : (qgetenv("TIVOLI_VSYNC") != "0" ? 1 : 0);
+        return forced < 0 ? _vsyncWanted.load() : (forced != 0);
     }
     void setVsyncEnabled(bool vsyncEnabled) { _vsyncEnabled = vsyncEnabled; }
-    bool isVsyncEnabled() const { return _vsyncEnabled; }
+    bool isVsyncEnabled() const override { return _vsyncEnabled; }
+    void setVsyncWanted(bool wanted) override { _vsyncWanted = wanted; }
+    float getPresentPeriod() const override;
+    void setPresentTracing(bool on) override;
+    std::vector<PresentSample> takePresentTrace() override;
     // Three threads, one for rendering, one for texture transfers, one reserved for the GL driver
     // Drop to one reserved for better other-task performance in desktop
     int getRequiredThreadCount() const override { return 1; }
@@ -144,10 +155,22 @@ protected:
 
     void present(const std::shared_ptr<RefreshRateController>& refreshRateController);
     virtual void swapBuffers();
+    // present thread only, the context current: sets the swap interval to what is wanted when that changed
+    void applyVsync();
+    // present thread only, after the swap: records this present when the trace is on
+    void tracePresent(uint64_t startPresent);
 
     void render(std::function<void(gpu::Batch& batch)> f);
 
-    bool _vsyncEnabled{ false };
+    std::atomic<bool> _vsyncEnabled{ false };   // what the swap does (the driver's answer)
+    std::atomic<bool> _vsyncWanted{ false };    // the setting
+    bool _vsyncApplied{ false };                // what the present thread last asked the driver for
+    std::atomic<bool> _presentTracing{ false };
+    std::mutex _presentTraceMutex;
+    std::vector<PresentSample> _presentTrace;
+    bool _presentedNewFrame{ false };           // this present's frame was not shown before
+    uint32_t _lastSwapUsecs{ 0 };               // how long the last swap took (the wait for the display, with vsync)
+    QMetaObject::Connection _screenConnection;  // the window's screen change restarts the display link
     QThread* _presentThread{ nullptr };
     std::queue<gpu::FramePointer> _newFrameQueue;
     RateCounter<200> _droppedFrameRate;
