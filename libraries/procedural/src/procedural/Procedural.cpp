@@ -319,7 +319,8 @@ void Procedural::prepare(gpu::Batch& batch,
         }
 
         gpu::Shader::Source& fragmentSource =
-            (key.isTransparent() && _transparentFragmentSource.valid()) ? _transparentFragmentSource : _opaqueFragmentSource;
+            (key.isTransparent() && _transparentFragmentSource.valid()) ? _transparentFragmentSource
+            : ((key.isForward() && _opaqueForwardFragmentSource.valid()) ? _opaqueForwardFragmentSource : _opaqueFragmentSource);
 
         // Build the fragment and vertex shaders
         auto versionDefine = "#define PROCEDURAL_V" + std::to_string(_data.version);
@@ -385,7 +386,6 @@ void Procedural::prepare(gpu::Batch& batch,
         recompiledShader = true;
     }
 
-    // FIXME: need to handle forward rendering
     batch.setPipeline(recompiledShader ? _proceduralPipelines[key] : pipeline->second);
 
     bool recreateUniforms = _shaderDirty || _uniformsDirty || recompiledShader || _prevKey != key;
@@ -531,8 +531,12 @@ void graphics::ProceduralMaterial::initializeProcedural() {
     _procedural._vertexSourceSkinnedDQ =
         gpu::Shader::getVertexShaderSource(shader::render_utils::vertex::simple_procedural_deformeddq);
 
-    // FIXME: Setup proper uniform slots and use correct pipelines for forward rendering
+    // the opaque one writes the deferred path's buffers; in the forward path, which has only the colour, the forward one
+    // lights the fragment itself (before 2026-10-21 the forward path drew the deferred one: its albedo unlit, its emissive
+    // lost, so an emissive-only procedural such as Tivoli Town's ocean drew black)
     _procedural._opaqueFragmentSource = gpu::Shader::getFragmentShaderSource(shader::render_utils::fragment::simple_procedural);
+    _procedural._opaqueForwardFragmentSource =
+        gpu::Shader::getFragmentShaderSource(shader::render_utils::fragment::simple_procedural_forward);
     _procedural._transparentFragmentSource =
         gpu::Shader::getFragmentShaderSource(shader::render_utils::fragment::simple_procedural_translucent);
 }
