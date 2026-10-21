@@ -295,7 +295,8 @@ void ModelResource::downloadFinished(const QByteArray& data) {
             _url = _effectiveBaseURL;
             _textureBaseURL = _effectiveBaseURL;
         }
-        QThreadPool::globalInstance()->start(new GeometryReader(_modelLoader, _self, _effectiveBaseURL, _mappingPair, data, _combineParts, _request->getWebMediaType()));
+        QThreadPool::globalInstance()->start(new GeometryReader(_modelLoader, _self, _effectiveBaseURL, _mappingPair, data, _combineParts, _request->getWebMediaType()),
+                                             getThreadPoolPriority());
     }
 }
 
@@ -461,6 +462,28 @@ void NetworkModel::setTextures(const QVariantMap& textureMap) {
         areTexturesLoaded();
     } else {
         qCWarning(modelnetworking) << "Ignoring setTextures(); NetworkModel not ready";
+    }
+}
+
+void NetworkModel::setTextureLoadPriority(QObject* owner, float priority) const {
+    QPointer<QObject> guardedOwner(owner);
+    for (const auto& material : _materials) {
+        if (!material) {
+            continue;
+        }
+        for (const auto& entry : material->getTextures()) {
+            NetworkTexturePointer texture = entry.second.texture;
+            if (!texture || texture->isLoaded()) {
+                continue;
+            }
+            texture->setLoadPriority(guardedOwner, priority);
+            QWeakPointer<NetworkTexture> weakTexture = texture;
+            QObject::connect(texture.data(), &Resource::finished, owner, [weakTexture, guardedOwner](bool) {
+                if (auto loaded = weakTexture.lock()) {
+                    loaded->clearLoadPriority(guardedOwner);
+                }
+            });
+        }
     }
 }
 

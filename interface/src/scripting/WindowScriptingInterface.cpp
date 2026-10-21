@@ -65,6 +65,7 @@ WindowScriptingInterface::WindowScriptingInterface() {
     connect(qApp, &Application::interstitialModeChanged, [this] (bool interstitialMode) {
         emit interstitialModeChanged(interstitialMode);
     });
+    connect(qApp, &Application::worldLoadingChanged, this, &WindowScriptingInterface::worldLoadingChanged);
 }
 
 WindowScriptingInterface::~WindowScriptingInterface() {
@@ -619,6 +620,14 @@ void WindowScriptingInterface::onMessageBoxSelected(int button) {
 
 float WindowScriptingInterface::domainLoadingProgress() {
     return qApp->getOctreePacketProcessor().domainLoadingProgress();
+}
+
+QVariantMap WindowScriptingInterface::getWorldLoading() {
+    return qApp->getWorldLoadingState();
+}
+
+void WindowScriptingInterface::showWorldNow() {
+    QMetaObject::invokeMethod(qApp, [] { qApp->showWorldNow(); });
 }
 
 int WindowScriptingInterface::getDisplayPluginCount() {

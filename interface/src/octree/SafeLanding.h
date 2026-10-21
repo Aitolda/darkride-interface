@@ -39,8 +39,17 @@ public:
     void stopTracking();
     void reset();
     bool isTracking() const { return _trackingEntities; }
-    // wait until the entities are also drawn (models and textures loaded), as interstitial mode does
-    void setWaitForVisuals(bool wait) { _waitForVisuals = wait; }
+    // Wait until the entities are also drawn, as interstitial mode does: a model's mesh and textures loaded, or the
+    // impostor card it shows in their place from afar (RenderableModelEntityItem::isVisuallyReady). The radius is
+    // whole-world loading's (WORLD-LOADING.md): the metres from the avatar within which the landing waits, 0 for every
+    // entity in the world; negative keeps the arrival gate's own (arrival/nearbyRadius).
+    void setWaitForVisuals(bool wait, float radius = -1.0f) { _visualsRadius = radius; _waitForVisuals = wait; }
+    struct Progress {
+        int received { 0 };            // entities received since tracking started
+        int waiting { 0 };             // tracked entities near enough to hold the landing that are not ready yet
+        bool serverDone { false };     // the entity server has said its first pass is complete
+    };
+    Progress getProgress();
     bool trackingIsComplete() const;
 
     void finishSequence(OCTREE_PACKET_SEQUENCE last);  // the number after the scene's last packet; the start is the first seen since tracking began
@@ -62,6 +71,9 @@ private:
     using Locker = std::lock_guard<std::mutex>;
     bool _trackingEntities { false };
     std::atomic<bool> _waitForVisuals { false };
+    std::atomic<float> _visualsRadius { -1.0f };
+    int32_t _receivedEntityCount { 0 };
+    int32_t _blockingCount { 0 };       // tracked entities the last update still waited for
     QSharedPointer<EntityTreeRenderer> _entityTreeRenderer;
     using EntityMap = std::map<EntityItemID, EntityItemPointer>;
     EntityMap _trackedEntities;
@@ -89,7 +101,9 @@ private:
     using SequenceSet = std::set<OCTREE_PACKET_SEQUENCE, SequenceLessThan>;
     SequenceSet _sequenceNumbers;
 
-    static CalculateEntityLoadingPriority entityLoadingOperatorElevateCollidables;
+    float loadingPriority(const EntityItem& entityItem) const;
+    // the radius the landing waits within now: whole-world loading's while it asks, else the arrival gate's
+    float effectiveRadius() const;
     CalculateEntityLoadingPriority _prevEntityLoadingPriorityOperator { nullptr };
 };
 

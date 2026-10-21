@@ -1273,8 +1273,14 @@ void Model::setURL(const QUrl& url) {
 void Model::loadURLFinished(bool success) {
     if (!success) {
         _visualGeometryRequestFailed = true;
-    } else if (!_pendingTextures.empty()) {
-        setTextures(_pendingTextures);
+    } else {
+        if (!_pendingTextures.empty()) {
+            setTextures(_pendingTextures);
+        }
+        // its textures load as soon as it would have (on arrival, the nearest first), not after every model in the queue
+        if (_renderGeometry) {
+            _renderGeometry->setTextureLoadPriority(this, _loadingPriority);
+        }
     }
     emit setURLFinished(success);
 }

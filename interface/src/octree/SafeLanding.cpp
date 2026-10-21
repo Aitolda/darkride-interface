@@ -37,10 +37,40 @@ static QString describe(const EntityItemPointer& entity) {
 }
 
 
-CalculateEntityLoadingPriority SafeLanding::entityLoadingOperatorElevateCollidables = [](const EntityItem& entityItem) {
-    const int COLLIDABLE_ENTITY_PRIORITY = 10.0f;
-    return entityItem.getCollisionless() * COLLIDABLE_ENTITY_PRIORITY;
-};
+float SafeLanding::effectiveRadius() const {
+    float wholeWorld = _visualsRadius.load();
+    return (_waitForVisuals && wholeWorld >= 0.0f) ? wholeWorld : _nearbyRadius;
+}
+
+// While landing, what the landing waits for loads first: the entities within the radius it waits within, when it
+// waits for drawing (a loading screen is up); then the solid ones physics waits for; and within each, the usual order
+// (the nearest and biggest first). High Fidelity's rule here put the collisionless first, by mistake, and dropped the
+// distance, so a world's nearby models loaded no sooner than its far ones (WORLD-LOADING.md, 10-18).
+float SafeLanding::loadingPriority(const EntityItem& entityItem) const {
+    const float WAITED_FOR_PRIORITY = 20.0f;
+    const float COLLIDABLE_PRIORITY = 10.0f;
+    float priority = _prevEntityLoadingPriorityOperator ? _prevEntityLoadingPriorityOperator(entityItem) : 0.0f;
+    if (!entityItem.getCollisionless()) {
+        priority += COLLIDABLE_PRIORITY;
+    }
+    if (_waitForVisuals) {
+        float radius = effectiveRadius();
+        bool waitedFor = true;
+        if (radius > 0.0f) {
+            bool success = false;
+            AABox box = entityItem.getAABox(success);
+            if (success) {
+                glm::vec3 center = DependencyManager::get<AvatarManager>()->getMyAvatar()->getWorldPosition();
+                glm::vec3 closest = glm::clamp(center, box.getMinimumPoint(), box.getMaximumPoint());
+                waitedFor = glm::distance(center, closest) <= radius;
+            }
+        }
+        if (waitedFor) {
+            priority += WAITED_FOR_PRIORITY;
+        }
+    }
+    return priority;
+}
 
 namespace {
     template<typename T> bool lessThanWraparound(int32_t a, int32_t b) {
@@ -75,6 +105,8 @@ void SafeLanding::startTracking(QSharedPointer<EntityTreeRenderer> entityTreeRen
             _notTrackedNotFound = 0;
             _notTrackedLocal = 0;
             _completionCount = 0;
+            _receivedEntityCount = 0;
+            _blockingCount = 0;
             _nearbyRadius = nearbyRadiusSetting.get();
 
             connect(std::const_pointer_cast<EntityTree>(entityTree).get(),
@@ -83,19 +115,23 @@ void SafeLanding::startTracking(QSharedPointer<EntityTreeRenderer> entityTreeRen
                 &EntityTree::deletingEntity, this, &SafeLanding::deleteTrackedEntity);
 
             _prevEntityLoadingPriorityOperator = EntityTreeRenderer::getEntityLoadingPriorityOperator();
-            EntityTreeRenderer::setEntityLoadingPriorityFunction(entityLoadingOperatorElevateCollidables);
+            EntityTreeRenderer::setEntityLoadingPriorityFunction([this](const EntityItem& item) { return loadingPriority(item); });
 
             // What is already near the avatar is tracked again: a landing restarted by a teleport (the arrival's own
             // path lookup, a hop within the world) lands among entities the tree already holds, which only an earlier
             // landing checked, at another place
-            if (_nearbyRadius > 0.0f) {
+            float seedRadius = effectiveRadius();
+            if (seedRadius >= 0.0f) {
+                // (0 is whole-world loading's "every entity": all the tree holds)
+                const float EVERYWHERE = 100000.0f;
+                seedRadius = seedRadius > 0.0f ? seedRadius : EVERYWHERE;
                 glm::vec3 center = DependencyManager::get<AvatarManager>()->getMyAvatar()->getWorldPosition();
                 PickFilter::Flags flags;
                 flags.set(PickFilter::DOMAIN_ENTITIES); flags.set(PickFilter::VISIBLE); flags.set(PickFilter::INVISIBLE);
                 flags.set(PickFilter::COLLIDABLE); flags.set(PickFilter::NONCOLLIDABLE);
                 QVector<QUuid> nearby;
                 auto tree = std::const_pointer_cast<EntityTree>(entityTree);
-                tree->withReadLock([&] { tree->evalEntitiesInSphere(center, _nearbyRadius, PickFilter(flags), nearby); });
+                tree->withReadLock([&] { tree->evalEntitiesInSphere(center, seedRadius, PickFilter(flags), nearby); });
                 for (const QUuid& id : nearby) {
                     trackEntity(id, tree);
                 }
@@ -128,6 +164,7 @@ void SafeLanding::trackEntity(const EntityItemID& entityID, const EntityTreePoin
     if (entity && !entity->isLocalEntity() && entity->getCreated() < _startTime) {
         if (_trackedEntities.emplace(entityID, entity).second) {
             _addedCount++;
+            _receivedEntityCount++;
             if (arrivalTrace()) {
                 qDebug() << "arrival trace: tracking" << qPrintable(describe(entity)) << "drawn" << entity->isVisuallyReady()
                     << "collisionless" << entity->getCollisionless() << "shape" << entity->getShapeType()
@@ -146,7 +183,8 @@ void SafeLanding::trackEntity(const EntityItemID& entityID, const EntityTreePoin
 // Whether the entity is within the nearby radius of the avatar: the distance from the avatar's position to the
 // entity's box (a floor you stand on counts, wherever its centre is). Without a box, it counts as near.
 bool SafeLanding::isNearby(const EntityItemPointer& entity, const glm::vec3& avatarPosition) const {
-    if (_nearbyRadius <= 0.0f) {
+    float radius = effectiveRadius();
+    if (radius <= 0.0f) {
         return true;
     }
     bool success = false;
@@ -155,7 +193,7 @@ bool SafeLanding::isNearby(const EntityItemPointer& entity, const glm::vec3& ava
         return true;
     }
     glm::vec3 closest = glm::clamp(avatarPosition, box.getMinimumPoint(), box.getMaximumPoint());
-    return glm::distance(avatarPosition, closest) <= _nearbyRadius;
+    return glm::distance(avatarPosition, closest) <= radius;
 }
 
 void SafeLanding::deleteTrackedEntity(const EntityItemID& entityID) {
@@ -207,7 +245,7 @@ void SafeLanding::updateTracking() {
             // more needed on arrival than they are later)
             if (!isNearby(entity, avatarPosition)) {
                 if (arrivalTrace()) {
-                    qDebug() << "arrival trace: released" << qPrintable(describe(entity)) << ": beyond" << _nearbyRadius << "m,"
+                    qDebug() << "arrival trace: released" << qPrintable(describe(entity)) << ": beyond" << effectiveRadius() << "m,"
                         << (usecTimestampNow() - _startTime) / 1000 << "ms after the start";
                 }
                 entityMapIter = _trackedEntities.erase(entityMapIter);
@@ -234,6 +272,7 @@ void SafeLanding::updateTracking() {
                 entityMapIter++;
             }
         }
+        _blockingCount = (int32_t)_trackedEntities.size();   // what is left is near and not ready
         if (enableInterstitial) {
             _trackedEntityStabilityCount++;
         }
@@ -271,7 +310,7 @@ void SafeLanding::updateTracking() {
                 }
             }
             qDebug() << "safe landing: tracking" << _trackedEntities.size() << "of" << _maxTrackedEntityCount << "entities within"
-                << _nearbyRadius << "m (" << physicsWaiting << "not ready for physics," << visualsWaiting << "not drawn; added" << _addedCount
+                << effectiveRadius() << "m (" << physicsWaiting << "not ready for physics," << visualsWaiting << "not drawn; added" << _addedCount
                 << "of which" << _seededCount << "already held"
                 << ", not tracked: created after the start" << _notTrackedCreatedLater << ", not found" << _notTrackedNotFound
                 << ", local" << _notTrackedLocal << "), sequence"
@@ -325,9 +364,20 @@ void SafeLanding::reset() {
     _trackingEntities = false;
     _trackedEntities.clear();
     _maxTrackedEntityCount = 0;
+    _receivedEntityCount = 0;
+    _blockingCount = 0;
     _sequenceStart = SafeLanding::INVALID_SEQUENCE;
     _sequenceEnd = SafeLanding::INVALID_SEQUENCE;
     _firstSequence = SafeLanding::INVALID_SEQUENCE;
+}
+
+SafeLanding::Progress SafeLanding::getProgress() {
+    Locker lock(_lock);
+    Progress progress;
+    progress.received = _receivedEntityCount;
+    progress.waiting = _blockingCount;
+    progress.serverDone = _sequenceStart != SafeLanding::INVALID_SEQUENCE;
+    return progress;
 }
 
 bool SafeLanding::trackingIsComplete() const {
