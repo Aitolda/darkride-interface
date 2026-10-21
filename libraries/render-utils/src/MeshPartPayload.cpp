@@ -26,13 +26,11 @@
 #include "RenderPipelines.h"
 #include "MeshPartPayload.h"
 
-#ifdef Q_OS_MACOS
-bool MeshPartPayload::DEFAULT_ENABLE_MATERIAL_PROCEDURAL_SHADERS = false;
-bool MeshPartPayload::enableMaterialProceduralShaders = false;
-#else
+// On everywhere (Settings > Custom Shaders on Models). It was off on macOS from 2020, when a procedural on a Mac read
+// the wrong textures and inputs and drew its small mips black; with it off, a model whose material is a procedural
+// draws nothing at all (Tivoli Town's ground)
 bool MeshPartPayload::DEFAULT_ENABLE_MATERIAL_PROCEDURAL_SHADERS = true;
 bool MeshPartPayload::enableMaterialProceduralShaders = true;
-#endif
 
 bool MeshPartPayload::sceneIsReady = false;
 
