@@ -62,9 +62,13 @@
                     Camera.orientation = Quat.lookAtSimple(eye, target);
                     Script.setTimeout(function () {
                         Window.takeSnapshot(false, false, 0);
-                        print("WORLD-LOADING-HOP overview snapshot 10 s after landing");
+                        print("WORLD-LOADING-HOP overview snapshot 10 s after landing (render method " + Render.renderMethod + ")");
                     }, 1500);
                 }, 8500);
+            }
+            // RENDER_METHOD (run.sh): the method to draw with from here on, as the presets set forward at start-up
+            if (events.landed === undefined && typeof HOP_RENDER_METHOD !== "undefined") {
+                Render.renderMethod = HOP_RENDER_METHOD;
             }
             mark("landed");
         }

@@ -6,6 +6,8 @@
 # LOADING_TIME_LIMIT=<seconds> its loading.time_limit (default 60). HOP=1 arrives by a hop instead, as Explore makes
 # one (hop.js): the client starts in a file world, says on "Darkride-Hop" that a hop has started, and goes to the
 # domain 3 s later (HOP_DELAY=<ms> to change it: Explore goes at once); the loading screen must cover the whole way.
+# RENDER_METHOD=0|1 (with HOP=1): draw deferred (0) or forward (1) from the landing on; every graphics preset sets
+# forward at start-up, so the hop script sets it once it has landed.
 # The world dir has the snapshot layout of instances/tivoli-instance.sh (models.json.gz, config.json with the spawn
 # point, assets/map.json and assets/files/<sha256>); the default is the Tivoli Town copy in ~/tivoli-test-worlds.
 # The sandbox ("loading", ~/tivoli-sandboxes/loading) gets a fresh copy of the world and the domain's loading
@@ -82,7 +84,7 @@ fi
 URL="hifi://localhost:$PORT"
 TEST_SCRIPT="$RUN/arrival.js"
 if [ -n "$HOP" ]; then
-    { echo "var HOP_URL = \"hifi://localhost:$PORT\";"; [ -n "$HOP_DELAY" ] && echo "var HOP_DELAY = $HOP_DELAY;"; [ -n "$PICTURES" ] && echo "var HOP_PICTURES = \"$RUN\";"; cat "$D/hop.js"; } > "$RUN/hop.js"
+    { echo "var HOP_URL = \"hifi://localhost:$PORT\";"; [ -n "$HOP_DELAY" ] && echo "var HOP_DELAY = $HOP_DELAY;"; [ -n "$PICTURES" ] && echo "var HOP_PICTURES = \"$RUN\";"; [ -n "$RENDER_METHOD" ] && echo "var HOP_RENDER_METHOD = $RENDER_METHOD;"; cat "$D/hop.js"; } > "$RUN/hop.js"
     URL="file://$D/../physics-baseline/world.json"
     TEST_SCRIPT="$RUN/hop.js"
 fi
