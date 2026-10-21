@@ -112,6 +112,7 @@ public slots:
      * @function Window.prompt
      * @param {string} message - The question to display.
      * @param {string} defaultText - The default answer text.
+     * @param {Window.PromptOptions} [options] - How the prompt looks.
      * @returns {string} The text that the user entered if they select "OK", otherwise "".
      * @example <caption>Ask the user a question requiring a text answer.</caption>
      * var answer = Window.prompt("Question", "answer");
@@ -121,7 +122,16 @@ public slots:
      *     print("User answer: " + answer);
      * }
      */
-    QVariant prompt(const QString& message, const QString& defaultText);
+    QVariant prompt(const QString& message, const QString& defaultText, const QVariantMap& options = QVariantMap());
+
+    /**jsdoc
+     * How a {@link Window.prompt|prompt} or {@link Window.promptAsync|promptAsync} dialog looks.
+     * @typedef {object} Window.PromptOptions
+     * @property {string} [placeholderText=""] - Grey words in the empty text box, such as an example of what to type.
+     * @property {string} [buttonText="OK"] - The words on the button that answers.
+     * @property {boolean} [monospace=false] - <code>true</code> to show the text in a fixed-width face, for paths and
+     *     addresses.
+     */
 
     /**jsdoc
      * Prompts the user to enter some text. Displays a non-modal dialog with a message and a text box, plus "OK" and "Cancel" 
@@ -130,6 +140,7 @@ public slots:
      * @function Window.promptAsync
      * @param {string} [message=""] - The question to display.
      * @param {string} [defaultText=""] - The default answer text.
+     * @param {Window.PromptOptions} [options] - How the prompt looks.
      * @example <caption>Ask the user a question requiring a text answer without waiting for the answer.</caption>
      * function onPromptTextChanged(text) {
      *     print("User answer: " + text);
@@ -139,7 +150,7 @@ public slots:
      * Window.promptAsync("Question", "answer");
      * print("Script continues without waiting");
      */
-    void promptAsync(const QString& message = "", const QString& defaultText = "");
+    void promptAsync(const QString& message = "", const QString& defaultText = "", const QVariantMap& options = QVariantMap());
 
     /**jsdoc
      * Prompts the user to choose a directory. Displays a modal dialog that navigates the directory tree.

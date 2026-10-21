@@ -13,6 +13,8 @@ export class Buttons {
 	buttonManager = new ButtonManager();
 
 	readonly exploreMappingName = "com.tivolicloud.explore";
+	// a local "open" here opens Explore: the viewer's "Can't reach" alert sends it
+	readonly exploreChannel = "com.tivolicloud.explore";
 
 	constructor() {
 		// old order from hifi
@@ -70,6 +72,20 @@ export class Buttons {
 					}
 				}
 			});
+		Messages.subscribe(this.exploreChannel);
+		this.signalManager.connect(
+			Messages.messageReceived,
+			(channel: string, message: string, senderID: Uuid, localOnly: boolean) => {
+				if (
+					channel == this.exploreChannel &&
+					localOnly &&
+					message == "open" &&
+					!explore.button.getProperties().isActive
+				) {
+					explore.open();
+				}
+			},
+		);
 
 		// market
 		// const market = this.buttonManager.addWebButton(
@@ -94,6 +110,7 @@ export class Buttons {
 
 	cleanup = () => {
 		Controller.disableMapping(this.exploreMappingName);
+		Messages.unsubscribe(this.exploreChannel);
 
 		this.buttonManager.cleanup();
 		this.signalManager.cleanup();

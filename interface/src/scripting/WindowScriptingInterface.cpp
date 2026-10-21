@@ -56,7 +56,8 @@ WindowScriptingInterface::WindowScriptingInterface() {
             QUrl url(urlString);
             emit svoImportRequested(url.url());
         } else {
-            OffscreenUi::asyncWarning("Import SVO Error", "You need to be running edit.js to import entities.");
+            OffscreenUi::asyncWarning("Can't import objects right now",
+                                      "The Create app isn't running. Start it again in Running Scripts.");
         }
     });
 
@@ -112,12 +113,29 @@ QVariant WindowScriptingInterface::confirm(const QString& message) {
     return QVariant((QMessageBox::Yes == OffscreenUi::question("", message, QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes)));
 }
 
+// A script's Window.PromptOptions as the prompt's properties.
+static QVariantMap promptProperties(const QVariantMap& options) {
+    QVariantMap properties;
+    if (options.contains("placeholderText")) {
+        properties.insert("placeholderText", options.value("placeholderText").toString());
+    }
+    if (options.contains("buttonText")) {
+        properties.insert("buttonTexts", QVariantMap { { QString::number(QMessageBox::Ok), options.value("buttonText").toString() } });
+    }
+    if (options.contains("monospace")) {
+        properties.insert("monospace", options.value("monospace").toBool());
+    }
+    return properties;
+}
+
 /// Display a prompt with a text box
 /// \param const QString& message message to display
 /// \param const QString& defaultText default text in the text box
+/// \param const QVariantMap& options how the prompt looks (Window.PromptOptions)
 /// \return the text in the text box if the dialog was accepted, `null` otherwise.
-QVariant WindowScriptingInterface::prompt(const QString& message, const QString& defaultText) {
-    QString result = OffscreenUi::getText(nullptr, "", message, QLineEdit::Normal, defaultText);
+QVariant WindowScriptingInterface::prompt(const QString& message, const QString& defaultText, const QVariantMap& options) {
+    QString result = DependencyManager::get<OffscreenUi>()->inputDialog(OffscreenUi::ICON_NONE, "", message, defaultText,
+                                                                        promptProperties(options)).toString();
     if (result.isEmpty()) {
         return nullResult();
     }
@@ -127,9 +145,10 @@ QVariant WindowScriptingInterface::prompt(const QString& message, const QString&
 /// Display a prompt with a text box
 /// \param const QString& message message to display
 /// \param const QString& defaultText default text in the text box
-void WindowScriptingInterface::promptAsync(const QString& message, const QString& defaultText) {
-    bool ok = false;
-    ModalDialogListener* dlg = OffscreenUi::getTextAsync(nullptr, "", message, QLineEdit::Normal, defaultText, &ok);
+/// \param const QVariantMap& options how the prompt looks (Window.PromptOptions)
+void WindowScriptingInterface::promptAsync(const QString& message, const QString& defaultText, const QVariantMap& options) {
+    ModalDialogListener* dlg = DependencyManager::get<OffscreenUi>()->inputDialogAsync(OffscreenUi::ICON_NONE, "", message,
+                                                                                      defaultText, promptProperties(options));
     connect(dlg, &ModalDialogListener::response, this, [=] (QVariant result) {
         disconnect(dlg, &ModalDialogListener::response, this, nullptr);
         emit promptTextChanged(result.toString());

@@ -415,6 +415,20 @@ ModalDialogListener* OffscreenUi::asyncWarning(const QString& title, const QStri
     return DependencyManager::get<OffscreenUi>()->asyncMessageBox(OffscreenUi::Icon::ICON_WARNING, title, text, buttons, defaultButton);
 }
 
+void OffscreenUi::setButtonText(QQuickItem* dialog, QMessageBox::StandardButton button, const QString& text) {
+    if (!dialog) {
+        return;
+    }
+    // buttonTexts maps each button, by its number, to its words; the box keeps the standard words for the others
+    QVariant texts = dialog->property("buttonTexts");
+    if (texts.userType() == qMetaTypeId<QJSValue>()) {
+        texts = texts.value<QJSValue>().toVariant();
+    }
+    QVariantMap map = texts.toMap();
+    map.insert(QString::number(button), text);
+    dialog->setProperty("buttonTexts", map);
+}
+
 
 class InputDialogListener : public ModalDialogListener {
     Q_OBJECT
@@ -496,6 +510,15 @@ ModalDialogListener* OffscreenUi::getItemAsync(const Icon icon, const QString& t
 }
 
 QVariant OffscreenUi::inputDialog(const Icon icon, const QString& title, const QString& label, const QVariant& current) {
+    return inputDialog(icon, title, label, current, QVariantMap());
+}
+
+ModalDialogListener* OffscreenUi::inputDialogAsync(const Icon icon, const QString& title, const QString& label, const QVariant& current) {
+    return inputDialogAsync(icon, title, label, current, QVariantMap());
+}
+
+QVariant OffscreenUi::inputDialog(const Icon icon, const QString& title, const QString& label, const QVariant& current,
+                                  const QVariantMap& properties) {
     if (QThread::currentThread() != thread()) {
         QVariant result;
         BLOCKING_INVOKE_METHOD(this, "inputDialog",
@@ -503,14 +526,16 @@ QVariant OffscreenUi::inputDialog(const Icon icon, const QString& title, const Q
             Q_ARG(Icon, icon),
             Q_ARG(QString, title),
             Q_ARG(QString, label),
-            Q_ARG(QVariant, current));
+            Q_ARG(QVariant, current),
+            Q_ARG(QVariantMap, properties));
         return result;
     }
 
-    return waitForInputDialogResult(createInputDialog(icon, title, label, current));
+    return waitForInputDialogResult(createInputDialog(icon, title, label, current, properties));
 }
 
-ModalDialogListener* OffscreenUi::inputDialogAsync(const Icon icon, const QString& title, const QString& label, const QVariant& current) {
+ModalDialogListener* OffscreenUi::inputDialogAsync(const Icon icon, const QString& title, const QString& label,
+                                                   const QVariant& current, const QVariantMap& properties) {
     if (QThread::currentThread() != thread()) {
         ModalDialogListener* ret;
         BLOCKING_INVOKE_METHOD(this, "inputDialogAsync",
@@ -518,11 +543,12 @@ ModalDialogListener* OffscreenUi::inputDialogAsync(const Icon icon, const QStrin
             Q_ARG(Icon, icon),
             Q_ARG(QString, title),
             Q_ARG(QString, label),
-            Q_ARG(QVariant, current));
+            Q_ARG(QVariant, current),
+            Q_ARG(QVariantMap, properties));
         return ret;
     }
 
-    InputDialogListener* inputDialogListener = new InputDialogListener(createInputDialog(icon, title, label, current));
+    InputDialogListener* inputDialogListener = new InputDialogListener(createInputDialog(icon, title, label, current, properties));
     QObject* inputDialog = qobject_cast<QObject*>(inputDialogListener);
     _modalDialogListeners.push_back(inputDialog);
     return inputDialogListener;
@@ -595,9 +621,9 @@ void OffscreenUi::addMenuInitializer(std::function<void(VrMenu*)> f) {
 }
 
 QQuickItem* OffscreenUi::createInputDialog(const Icon icon, const QString& title, const QString& label,
-    const QVariant& current) {
+    const QVariant& current, const QVariantMap& properties) {
 
-    QVariantMap map;
+    QVariantMap map = properties;
     map.insert("title", title);
     map.insert("icon", icon);
     map.insert("label", label);
