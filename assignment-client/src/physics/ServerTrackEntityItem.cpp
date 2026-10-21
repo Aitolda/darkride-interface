@@ -8,11 +8,21 @@
 
 #include "ServerTrackEntityItem.h"
 
+#include <atomic>
+
 #include <EntityTree.h>
 #include <PhysicsLogging.h>
 #include <SimulationFlags.h>
 #include <TrackCurve.h>
 #include <TrackGuideway.h>
+
+// The serial in a shape key ("track/<id>/<serial>") comes from one counter for the whole process: per entity object it
+// restarted at 1 whenever the entity was made again (leaving and re-entering a domain), and the shape manager keeps
+// released shapes for a while under their keys, so a changed shape could come back as the old one (10-21 review).
+static uint64_t nextShapeSerial() {
+    static std::atomic<uint64_t> serial { 0 };
+    return ++serial;
+}
 
 EntityItemPointer ServerTrackEntityItem::factory(const EntityItemID& entityID, const EntityItemProperties& properties) {
     std::shared_ptr<ServerTrackEntityItem> entity(new ServerTrackEntityItem(entityID), [](ServerTrackEntityItem* ptr) { ptr->deleteLater(); });
@@ -84,7 +94,7 @@ void ServerTrackEntityItem::build() {
     TrackGuidewayMesh mesh;
     TrackGuideway::build(curve, spec, mesh);
 
-    ++_shapeSerial;
+    _shapeSerial = nextShapeSerial();
     ShapeInfo info;
     if (mesh.vertices.size() >= 3 && mesh.indices.size() >= 3) {
         ShapeInfo::PointList shapePoints;

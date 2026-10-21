@@ -30,8 +30,12 @@ namespace {
     const float CURVE_PICK_PIXELS = 8.0f;
     const int STATION_SEGMENTS = 20;
     // along the track, in metres
-    const float SAMPLE_SPACING = 0.5f;        // between the vertices of the drawn curve
-    const float TICK_SPACING = 4.0f;          // between the ticks for the banked up
+    const float SAMPLE_SPACING = 0.5f;        // between the vertices of the drawn curve, about
+    const float TICK_SPACING = 4.0f;          // between the ticks for the banked up, about
+    // the most vertices and ticks a track is drawn with: a longer track gets them further apart (a mistyped point
+    // made a curve of thousands of kilometres, sampled every half metre every frame, 10-21 review)
+    const float MAX_SAMPLES = 4096.0f;
+    const float MAX_TICKS = 512.0f;
     const float TICK_LENGTH = 0.6f;
 
     // teal, apart from the lights' yellow and the zones' green; dimmer for a track not selected
@@ -224,7 +228,8 @@ void EditorTrackGizmos::sampleCurve(const EditorTrackGizmoTrack& track, Curve& c
     curve.bank = track.bank;
     curve.closed = track.closed;
     curve.curve.build(track.points, track.bank, track.closed);
-    curve.poses = curve.curve.isValid() ? curve.curve.poses(SAMPLE_SPACING) : std::vector<TrackCurve::Pose>();
+    float spacing = std::max(SAMPLE_SPACING, curve.curve.length() / MAX_SAMPLES);
+    curve.poses = curve.curve.isValid() ? curve.curve.poses(spacing) : std::vector<TrackCurve::Pose>();
 }
 
 int EditorTrackGizmos::pointAt(const PickRay& ray) const {
@@ -315,9 +320,10 @@ void EditorTrackGizmos::rebuild() {
 
             // ticks for the banked up, every few metres: the lean of the beam is visible from afar
             float length = curve.curve.length();
-            int ticks = std::max(1, (int)std::floor(length / TICK_SPACING));
+            float tickSpacing = std::max(TICK_SPACING, length / MAX_TICKS);
+            int ticks = std::max(1, (int)std::min(std::floor(length / tickSpacing), MAX_TICKS));
             for (int k = 0; k <= ticks; ++k) {
-                float s = std::min(length, TICK_SPACING * (float)k);
+                float s = std::min(length, tickSpacing * (float)k);
                 TrackCurve::Pose pose = curve.curve.poseAt(s);
                 glm::vec3 world = track.position + track.rotation * pose.position;
                 glm::vec3 up = track.rotation * pose.up;

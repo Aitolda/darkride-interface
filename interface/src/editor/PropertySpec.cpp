@@ -1653,6 +1653,9 @@ QStringList storedKeys(const QString& key) {
     if (key == QStringLiteral("scale")) {
         return { QStringLiteral("dimensions") };
     }
+    if (key == QStringLiteral("trackPoints")) {
+        return { key, QStringLiteral("dimensions") };   // a points edit refits the track's box (Editor::fitTrackBox)
+    }
     if (key == QLatin1String(SHADOWS_KEY)) {
         return { QStringLiteral("userData"), QStringLiteral("canCastShadow") };
     }

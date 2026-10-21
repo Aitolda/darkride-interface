@@ -64,6 +64,7 @@ public:
     static const float DEFAULT_PYLON_SPACING;  // m along the track
     static const float DEFAULT_PYLON_FLOOR;    // m, the pylons' feet in the track's own space
     static const float MAX_GUIDEWAY_SIZE;      // m, any of the above
+    static const float MAX_POINT_COORDINATE;   // m, a control point's coordinates either way (the domain's half extent)
 
     void setTrackPoints(const QVector<glm::vec3>& points);
     QVector<glm::vec3> getTrackPoints() const;

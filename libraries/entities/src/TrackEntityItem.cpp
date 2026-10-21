@@ -8,6 +8,8 @@
 
 #include "TrackEntityItem.h"
 
+#include <cmath>
+
 #include "EntityItemProperties.h"
 
 const int TrackEntityItem::MAX_POINTS = 256;
@@ -23,6 +25,7 @@ const float TrackEntityItem::DEFAULT_CLEARANCE = 0.3f;
 const float TrackEntityItem::DEFAULT_PYLON_SPACING = 10.0f;
 const float TrackEntityItem::DEFAULT_PYLON_FLOOR = -8.0f;
 const float TrackEntityItem::MAX_GUIDEWAY_SIZE = 1000.0f;
+const float TrackEntityItem::MAX_POINT_COORDINATE = 16384.0f;
 
 EntityItemPointer TrackEntityItem::factory(const EntityItemID& entityID, const EntityItemProperties& properties) {
     Pointer entity(new TrackEntityItem(entityID), [](EntityItem* ptr) { ptr->deleteLater(); });
@@ -172,9 +175,40 @@ void TrackEntityItem::appendSubclassData(OctreePacketData* packetData, EncodeBit
     APPEND_ENTITY_PROPERTY(PROP_COLOR, getColor());
 }
 
+namespace {
+    // A list from a script or an edit packet with a NaN or an infinity in it is refused whole (the entity keeps what it
+    // had): such a value would reach the curve, the meshes and Jolt, and a NaN never equals the stored value, so it
+    // would count as a change at every edit (10-21 review).
+    template <typename T>
+    bool allFinite(const QVector<T>& values) {
+        for (const T& value : values) {
+            if (!std::isfinite(value)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    bool allFinite(const QVector<glm::vec3>& points) {
+        for (const glm::vec3& point : points) {
+            if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
 void TrackEntityItem::setTrackPoints(const QVector<glm::vec3>& points) {
+    if (!allFinite(points)) {
+        return;
+    }
     withWriteLock([&] {
         QVector<glm::vec3> clipped = points.size() > MAX_POINTS ? points.mid(0, MAX_POINTS) : points;
+        // within the domain: a point typed a hundred kilometres out would make a track whose drawing and collision,
+        // however capped, stretch across nothing
+        for (glm::vec3& point : clipped) {
+            point = glm::clamp(point, glm::vec3(-MAX_POINT_COORDINATE), glm::vec3(MAX_POINT_COORDINATE));
+        }
         if (_trackPoints != clipped) {
             _trackPoints = clipped;
             _trackVersion++;
@@ -188,6 +222,9 @@ QVector<glm::vec3> TrackEntityItem::getTrackPoints() const {
 }
 
 void TrackEntityItem::setTrackBank(const QVector<float>& bank) {
+    if (!allFinite(bank)) {
+        return;
+    }
     withWriteLock([&] {
         QVector<float> clipped = bank.size() > MAX_POINTS ? bank.mid(0, MAX_POINTS) : bank;
         if (_trackBank != clipped) {
@@ -203,6 +240,9 @@ QVector<float> TrackEntityItem::getTrackBank() const {
 }
 
 void TrackEntityItem::setTrackDwell(const QVector<float>& dwell) {
+    if (!allFinite(dwell)) {
+        return;
+    }
     withWriteLock([&] {
         QVector<float> clipped = dwell.size() > MAX_POINTS ? dwell.mid(0, MAX_POINTS) : dwell;
         if (_trackDwell != clipped) {
@@ -231,6 +271,9 @@ bool TrackEntityItem::getTrackClosed() const {
 }
 
 void TrackEntityItem::setTrackSpeed(float speed) {
+    if (!std::isfinite(speed)) {
+        return;   // glm::clamp keeps a NaN
+    }
     speed = glm::clamp(speed, 0.0f, MAX_SPEED);
     withWriteLock([&] {
         if (_trackSpeed != speed) {
@@ -245,6 +288,9 @@ float TrackEntityItem::getTrackSpeed() const {
 }
 
 void TrackEntityItem::setTrackAcceleration(float acceleration) {
+    if (!std::isfinite(acceleration)) {
+        return;
+    }
     acceleration = glm::clamp(acceleration, 0.0f, MAX_ACCELERATION);
     withWriteLock([&] {
         if (_trackAcceleration != acceleration) {
@@ -278,6 +324,9 @@ QString TrackEntityItem::getTrackProfile() const {
 
 #define TRACK_GUIDEWAY_FLOAT(Name, member, minimum) \
 void TrackEntityItem::setTrack##Name(float value) { \
+    if (!std::isfinite(value)) { \
+        return; /* glm::clamp keeps a NaN, and a NaN is never equal to the stored value: a rebuild at every edit */ \
+    } \
     value = glm::clamp(value, minimum, MAX_GUIDEWAY_SIZE); \
     withWriteLock([&] { \
         if (member != value) { \

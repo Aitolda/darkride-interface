@@ -39,6 +39,9 @@ public:
 
     // the viewport chose a point (a click on its diamond): the row follows, without a pointChosen back
     void choose(int index);
+    // another selection is about to be shown: no row is chosen in it (a row kept from the track shown before was
+    // chosen in the next one, so Delete removed its point instead of deleting it, 10-21 review)
+    void forgetChoice();
     int chosen() const { return _selected; }
 
 signals:

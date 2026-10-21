@@ -121,6 +121,7 @@ namespace {
     const int LIGHT_SEARCH_FRAMES = 15;
     const float LIGHT_SEARCH_RADIUS = 150.0f;
     const int TRACK_SEARCH_FRAMES = 15;
+    const QString TRACK_POINTS_KEY = QStringLiteral("trackPoints");
     const float TRACK_SEARCH_RADIUS = 600.0f;   // a track runs far; its gizmo is wanted from afar
     const float TRACK_BOX_MARGIN = 0.5f;        // m round the curve and guideway in a fitted Track box
     // what the light handles can drag to: the Inspector's own limits, and no narrower a cone than this
@@ -305,6 +306,12 @@ void Editor::setActive(bool active) {
         _vehicleGizmos.setVehicles(_vehicleGizmoVehicles);
         _nearbyLights.clear();
         _lightSearchFrame = -1;
+        // the tracks' curves too: update() stops once build mode is off, so the overlay would stay, into the next world
+        _trackGizmos.clear();
+        _nearbyTracks.clear();
+        _trackSearchFrame = -1;
+        _trackPointChosen = -1;
+        _trackPointTrack = QUuid();
         _inspectorRefresh.stop();
         if (_gizmo.isDragging()) {
             applyDrag(true);
@@ -1582,6 +1589,12 @@ void Editor::onInspectorEditCancelled(const QString& key) {
     refreshInspector(false);
 }
 
+void Editor::testInspectorEdit(const QString& key, const QVariant& value) {
+    onInspectorEditBegan(key);
+    onInspectorLiveEdit(key, value);
+    onInspectorCommitted(key, value);
+}
+
 void Editor::onInspectorCommitted(const QString& key, const QVariant& value) {
     commitInspectorEdit(key, value, _selection.ids());
 }
@@ -1658,6 +1671,22 @@ void Editor::commitInspectorEdit(const QString& key, const QVariant& value, cons
     QVector<EntityItemProperties> after;
     for (int i = 0; i < ids.size(); ++i) {
         after << inspectorEdit(key, value, naturalSizes[i], before[i]);
+    }
+    if (key == TRACK_POINTS_KEY) {
+        // the box follows the curve, as after a drag, an insert or a delete in the viewport; a scrub's points went out
+        // live without it, so the box goes now (the undo point holds the dimensions: storedKeys)
+        auto tree = entityTree();
+        auto entities = DependencyManager::get<EntityScriptingInterface>();
+        for (int i = 0; i < ids.size() && tree; ++i) {
+            tree->withReadLock([&] {
+                if (auto entity = tree->findEntityByEntityItemID(ids[i])) {
+                    fitTrackBox(entity, after[i].getTrackPoints(), after[i]);
+                }
+            });
+            if (alreadyApplied) {
+                entities->editEntity(ids[i], after[i]);
+            }
+        }
     }
     auto spec = PropertySpecs::find(key);
     _undo.pushPropertyEdit(spec ? spec->label : key, ids, before, after, alreadyApplied);
