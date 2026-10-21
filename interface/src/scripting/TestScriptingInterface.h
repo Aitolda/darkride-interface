@@ -331,6 +331,22 @@ public slots:
     Q_INVOKABLE void editorUndo();
 
     /**jsdoc
+     * Turns build mode on or off, as Build > Build Mode does.
+     * @function Test.setBuildMode
+     * @param {boolean} on - Whether build mode is on.
+     */
+    Q_INVOKABLE void setBuildMode(bool on);
+
+    /**jsdoc
+     * Edits a property of the editor's selection as its Inspector field does when a list's + button or a field commits:
+     * the undo point taken, the value sent, one step recorded.
+     * @function Test.commitInspectorEdit
+     * @param {string} key - The Inspector's key for the property (e.g. "trackPoints").
+     * @param {string|number|boolean} value - The value as the field holds it.
+     */
+    Q_INVOKABLE void commitInspectorEdit(const QString& key, const QVariant& value);
+
+    /**jsdoc
      * Starts tracing an entity as it is drawn: one sample per rendered frame, taken on the render thread once the frame's
      * scene is in place, of the frame's camera position and the centre of the entity's drawn bound. A null id stops it.
      * @function Test.traceRenderedEntity
@@ -391,6 +407,21 @@ public slots:
      * @returns {boolean} Whether vsync is on.
      */
     Q_INVOKABLE bool isVsyncEnabled();
+
+    /**jsdoc
+     * Makes every present cost this many microseconds more, busy-waited, as a heavy scene's would: for measuring the frame
+     * pacing when presents overrun their period. 0 is none. TIVOLI_PRESENT_LOAD_US in the environment sets it at start.
+     * @function Test.setPresentLoad
+     * @param {number} microseconds - The extra time each present takes.
+     */
+    Q_INVOKABLE void setPresentLoad(int microseconds);
+
+    /**jsdoc
+     * @function Test.getPresentPeriod
+     * @returns {number} The period the presents are paced at, in seconds, as the physics reads it; 0 while they are not
+     *     paced (vsync, an HMD, or a schedule that restarted after a present overran).
+     */
+    Q_INVOKABLE float getPresentPeriod();
 
 private:
     bool waitForCondition(qint64 maxWaitMs, std::function<bool()> condition);

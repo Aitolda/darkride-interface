@@ -55,6 +55,11 @@ private:
     std::atomic<int> _displayRefreshRate { 0 };
     std::atomic<int64_t> _pacedPeriodNs { 0 };   // the period of the slots as last paced (the display's when locked)
     std::atomic<uint64_t> _slotIndex { 0 };
+    // after the free schedule restarts (a present that overran its period, a change of rate) the slots are not whole
+    // periods after the last ones: the clock is reported unpaced (getPacedPeriodSeconds 0) for this many presents more
+    std::atomic<int> _unpacedPresents { 0 };
+    // how late the kernel's sleep wakes the present thread, a decaying maximum: the spin before a slot covers it
+    int64_t _sleepLateNs { 600000 };
     // the schedule (present thread only)
     uint64_t _presentCount { 0 };
     int64_t _lastSlotNs { 0 };   // the last locked slot: the next is in a later interval

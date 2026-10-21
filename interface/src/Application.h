@@ -788,6 +788,11 @@ private:
     LoginStateManager _loginStateManager;
     PerformanceManager _performanceManager;
     RefreshRateManager _refreshRateManager;
+    // the window's screen, followed: moved to another screen, or the screen's rate changed, the pacing takes the new
+    // rate (until the 10-21 review it was read only when the profile or the regime changed)
+    void followScreenRefreshRate();
+    QMetaObject::Connection _screenChangedConnection;
+    QMetaObject::Connection _screenRateConnection;
 
     GameWorkload _gameWorkload;
 

@@ -25,6 +25,7 @@
 #include <QtGui/QPixmap>
 #include <plugins/DisplayPlugin.h>
 #include <display-plugins/DisplayLink.h>
+#include <display-plugins/OpenGLDisplayPlugin.h>
 
 #include "editor/Editor.h"
 #include "graphics/GraphicsEngine.h"
@@ -290,6 +291,14 @@ bool TestScriptingInterface::saveInspectorPicture(const QString& path) {
     return !picture.isNull() && picture.save(path);
 }
 
+void TestScriptingInterface::setPresentLoad(int microseconds) {
+    OpenGLDisplayPlugin::setPresentLoad(microseconds);
+}
+
+float TestScriptingInterface::getPresentPeriod() {
+    return qApp->getPresentPeriod();
+}
+
 void TestScriptingInterface::chooseTrackPoint(int index) {
     if (QThread::currentThread() != thread()) {
         BLOCKING_INVOKE_METHOD(this, "chooseTrackPoint", Q_ARG(int, index));
@@ -321,6 +330,22 @@ void TestScriptingInterface::deleteTrackPoint() {
         return;
     }
     DependencyManager::get<Editor>()->deleteTrackPoint();
+}
+
+void TestScriptingInterface::setBuildMode(bool on) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "setBuildMode", Q_ARG(bool, on));
+        return;
+    }
+    DependencyManager::get<Editor>()->setActive(on);
+}
+
+void TestScriptingInterface::commitInspectorEdit(const QString& key, const QVariant& value) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "commitInspectorEdit", Q_ARG(QString, key), Q_ARG(QVariant, value));
+        return;
+    }
+    DependencyManager::get<Editor>()->testInspectorEdit(key, value);
 }
 
 void TestScriptingInterface::editorUndo() {
