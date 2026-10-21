@@ -4511,7 +4511,23 @@ bool Application::eventFilter(QObject* object, QEvent* event) {
 
     if (event->type() == QEvent::ShortcutOverride) {
 #if !defined(DISABLE_QML)
-        if (getOffscreenUI()->shouldSwallowShortcut(event)) {
+        // The check passes untouched on its way to the overlay's focused item, below
+        static bool forwardingToOverlay = false;
+        if (forwardingToOverlay) {
+            return false;
+        }
+        auto offscreenUi = getOffscreenUI();
+        if (offscreenUi->shouldSwallowShortcut(event)) {
+            if (QApplication::focusWidget() == _glWidget && !offscreenUi->isPaused()) {
+                // The key press that follows goes on to the overlay's focused item (OffscreenUi filters the GL widget's
+                // events), so the item gets to claim the shortcut first, as it would as a widget of its own. A web page
+                // acts on an edit shortcut (paste, copy, cut, select all, undo) only if it claimed it here: on macOS it
+                // otherwise leaves them to the app's Edit menu, which a swallowed shortcut never reaches.
+                event->ignore();
+                forwardingToOverlay = true;
+                QCoreApplication::sendEvent(offscreenUi->getWindow(), event);
+                forwardingToOverlay = false;
+            }
             event->accept();
             return true;
         }
