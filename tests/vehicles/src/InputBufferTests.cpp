@@ -225,3 +225,45 @@ void InputBufferTests::leadAdaptation() {
     }
     QCOMPARE(lead.shift(t), 0);
 }
+
+// Round 12: the driver drives, stands up for ten seconds (no inputs), sits again and drives on with the same counter. The
+// buffer is quiet while nobody drives (no tick or margin to report: the margin of the standing time is what jumped the
+// driver's clock a second ahead on a second sit), and the first input after the gap aligns it afresh at the initial lead.
+void InputBufferTests::standingAndSittingAgain() {
+    InputBuffer buffer;
+    VehicleInput out;
+    QVERIFY(buffer.quiet(1000));   // nothing yet
+    uint32_t step = 1000;
+    uint32_t tick = 1;
+    for (int i = 0; i < 300; ++i, ++step, ++tick) {
+        buffer.push(inputAt(tick), step);
+        buffer.take(step, out);
+    }
+    QVERIFY(!buffer.quiet(step));
+    QVERIFY(std::abs(buffer.margin(step)) <= InputBuffer::INITIAL_LEAD + 1);
+    // standing: ten seconds of substeps with nothing; quiet once more than a lead's worth has passed
+    uint32_t stoodAt = step;
+    for (int i = 0; i < 900; ++i, ++step) {
+        buffer.take(step, out);
+        if ((int)(step - stoodAt) <= InputBuffer::MAX_LEAD - 1) {
+            QVERIFY(!buffer.quiet(step));
+        }
+    }
+    QVERIFY(buffer.quiet(step));
+    QVERIFY(buffer.margin(step) < -800);   // what the stream used to report: hundreds of ticks behind
+    // sitting again: the counter goes on where it was; the first input aligns afresh, the margin is the initial lead's
+    int realigned = buffer.counts().realigned;
+    QCOMPARE(buffer.push(inputAt(tick), step), InputBuffer::Push::Stored);
+    QCOMPARE(buffer.counts().realigned, realigned + 1);
+    QVERIFY(!buffer.quiet(step));
+    QCOMPARE(buffer.tickForStep(step + InputBuffer::INITIAL_LEAD), tick);
+    // and drives on: every substep takes its tick from there
+    for (int i = 0; i < 30; ++i) {
+        buffer.push(inputAt(tick + 1 + i), step + 1 + i);
+    }
+    QVERIFY(!buffer.take(step, out) || out.sequence < tick);   // the hold before the first is applied
+    QVERIFY(!buffer.take(step + 1, out) || out.sequence < tick);
+    QVERIFY(buffer.take(step + InputBuffer::INITIAL_LEAD, out));
+    QCOMPARE(out.sequence, tick);
+    QCOMPARE(buffer.counts().realigned, realigned + 1);   // once, not on every input after
+}

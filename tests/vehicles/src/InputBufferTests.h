@@ -27,6 +27,7 @@ private slots:
     void margin();
     void realignment();
     void leadAdaptation();
+    void standingAndSittingAgain();
 };
 
 #endif // hifi_InputBufferTests_h
