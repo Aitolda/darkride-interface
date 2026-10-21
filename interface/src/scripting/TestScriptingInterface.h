@@ -424,6 +424,14 @@ public slots:
     Q_INVOKABLE float getPresentPeriod();
 
     /**jsdoc
+     * Holds the present loop off for a while, as a stall would: nothing is presented, so no new frames are made. The
+     * deadlock watchdog's report names the loop as held for a test once a second has passed.
+     * @function Test.holdPresents
+     * @param {number} milliseconds - How long; 0 lets presents go at once.
+     */
+    Q_INVOKABLE void holdPresents(int milliseconds);
+
+    /**jsdoc
      * Drags the editor's selection as the gizmo would, from a script: turns build mode on, and with begin captures the
      * selection as a press on the gizmo does; every call applies the move or the rotation (a roll about the selection's
      * own centre) as the pointer's motion does; final takes the undo step as the release does.

@@ -55,6 +55,15 @@ public:
     // while running; 0, the default, is no load.
     static void setPresentLoad(int microseconds);
     static int getPresentLoad();
+    // The present loop's state, for the report when presents stop (Application's deadlock watchdog; release-1.1's
+    // Windows run of 10-21, where presents and new frames stopped while the loop kept going): the frames it has
+    // presented, where it is now, and whether it has no display plugin on purpose (deactivated: minimized, quitting).
+    // Kept with relaxed atomic stores, so it costs the loop nothing to speak of.
+    static uint64_t getPresentsDone();
+    static const char* getPresentLoopStage();
+    static bool isPresentLoopIdle();
+    // A test knob: the present loop presents nothing for this long, as a stall would (Test.holdPresents)
+    static void holdPresents(int milliseconds);
 
     bool activate() override final;
     void deactivate() override final;

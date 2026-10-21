@@ -10,6 +10,7 @@
 #ifndef hifi_GLHelpers_h
 #define hifi_GLHelpers_h
 
+#include <cstdint>
 #include <functional>
 #include <QJsonObject>
 
@@ -88,11 +89,20 @@ namespace gl {
     // only, nests; nothing under it may wait for the QML render thread, which takes the lock too.
     class ViewChangeGuard {
     public:
-        ViewChangeGuard();
+        // eventType: the Qt event that changes the view, for the present-stall report (0 for the editor's own changes)
+        explicit ViewChangeGuard(int eventType = 0);
         ~ViewChangeGuard();
         ViewChangeGuard(const ViewChangeGuard&) = delete;
         ViewChangeGuard& operator=(const ViewChangeGuard&) = delete;
     };
+
+    // The view changes so far, for the report when presents stop (Application's deadlock watchdog)
+    struct ViewChangeState {
+        uint32_t guards { 0 };          // changes begun since start
+        int lastEventType { 0 };        // the last one's Qt event type, 0 for the editor's own
+        int64_t pauseLeftMs { 0 };      // how much longer presents are held off (honoured on macOS only)
+    };
+    ViewChangeState viewChangeState();
 
     bool debugContextEnabled();
 
