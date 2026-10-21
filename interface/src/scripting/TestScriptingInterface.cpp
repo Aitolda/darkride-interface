@@ -440,3 +440,16 @@ bool TestScriptingInterface::isVsyncEnabled() {
     auto displayPlugin = qApp->getActiveDisplayPlugin();
     return displayPlugin && displayPlugin->isVsyncEnabled();
 }
+
+void TestScriptingInterface::editorDrag(const glm::vec3& delta, float yawDegrees, float rollDegrees, bool begin, bool final) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "editorDrag", Q_ARG(glm::vec3, delta), Q_ARG(float, yawDegrees), Q_ARG(float, rollDegrees),
+                               Q_ARG(bool, begin), Q_ARG(bool, final));
+        return;
+    }
+    // a rotate ring's drag when any rotation is asked for: the kind is the handle's, not the size of the first step
+    // (the first step of a slow drag is a degree or two)
+    bool rotate = yawDegrees != 0.0f || rollDegrees != 0.0f;
+    glm::quat rotation = glm::quat(glm::radians(glm::vec3(0.0f, yawDegrees, rollDegrees)));
+    DependencyManager::get<Editor>()->dragSelectionForTest(delta, rotation, rotate, begin, final);
+}

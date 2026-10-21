@@ -423,6 +423,19 @@ public slots:
      */
     Q_INVOKABLE float getPresentPeriod();
 
+    /**jsdoc
+     * Drags the editor's selection as the gizmo would, from a script: turns build mode on, and with begin captures the
+     * selection as a press on the gizmo does; every call applies the move or the rotation (a roll about the selection's
+     * own centre) as the pointer's motion does; final takes the undo step as the release does.
+     * @function Test.editorDrag
+     * @param {Vec3} delta - The move, in metres (ignored when the rotation is not zero).
+     * @param {number} yawDegrees - A rotation about the vertical.
+     * @param {number} rollDegrees - A rotation about the forward axis.
+     * @param {boolean} begin - The first call of a drag.
+     * @param {boolean} final - The last call of a drag.
+     */
+    Q_INVOKABLE void editorDrag(const glm::vec3& delta, float yawDegrees, float rollDegrees, bool begin, bool final);
+
 private:
     bool waitForCondition(qint64 maxWaitMs, std::function<bool()> condition);
     QString _testResultsLocation;

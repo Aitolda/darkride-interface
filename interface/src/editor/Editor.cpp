@@ -1834,6 +1834,59 @@ QPixmap Editor::inspectorPicture() const {
     return _inspector ? _inspector->contentPicture() : QPixmap();
 }
 
+void Editor::dragSelectionForTest(const glm::vec3& delta, const glm::quat& rotationDelta, bool rotate, bool begin, bool final) {
+    if (!_active) {
+        setActive(true);
+    }
+    if (begin || _dragKind == DragKind::None) {
+        _dragIds.clear();
+        _dragPositions.clear();
+        _dragRotations.clear();
+        _dragDimensions.clear();
+        _dragBefore.clear();
+        auto tree = entityTree();
+        if (!tree) {
+            return;
+        }
+        DragKind kind = rotate ? DragKind::Rotate : DragKind::Move;
+        tree->withReadLock([&] {
+            for (const auto& id : _selection.topLevel()) {
+                auto entity = tree->findEntityByEntityItemID(id);
+                if (!entity || entity->getLocked()) {
+                    continue;
+                }
+                glm::vec3 position = entity->getWorldPosition();
+                glm::quat rotation = entity->getWorldOrientation();
+                EntityItemProperties before;
+                before.setPosition(position);
+                if (kind == DragKind::Rotate) {
+                    before.setRotation(rotation);
+                }
+                _dragIds << id;
+                _dragPositions << position;
+                _dragRotations << rotation;
+                _dragDimensions << entity->getScaledDimensions();
+                _dragBefore << before;
+            }
+        });
+        if (_dragIds.isEmpty()) {
+            return;
+        }
+        _dragKind = kind;
+        _dragPivot = _dragPositions.first();
+        _dragGizmoRotation = _gizmo.rotation();
+        _dragScale = glm::vec3(1.0f);
+        _editTimer.start();
+    }
+    _dragDelta = delta;
+    _dragRotationDelta = rotationDelta;
+    applyDrag(final);
+    if (final) {
+        _dragKind = DragKind::None;
+        _dragIds.clear();
+    }
+}
+
 void Editor::selectAll() {
     if (_active && _treeModel) {
         _selection.set(_treeModel->allIds());
