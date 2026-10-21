@@ -28,7 +28,7 @@ export class AvatarUrlComponent {
 	}
 
 	onUpdate(input: any) {
-		let avatarUrl = input.value;
+		let avatarUrl = input.value.trim();
 		const isWindows = /^[A-Z]:\\/i.test(avatarUrl);
 		const isUnix = /^\//.test(avatarUrl);
 		if (isWindows || isUnix) {
