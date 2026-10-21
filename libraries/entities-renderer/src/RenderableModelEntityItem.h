@@ -60,6 +60,9 @@ public:
 
     // for the arrival's log (SafeLanding): whether the renderer has made the model, and its geometry's and textures' state
     QString loadStateForLog() const;
+    // the model and all its textures have loaded, whether or not the renderer has updated since (SafeLanding: a far model
+    // nothing else updates can keep its "not drawn" flag long after it has loaded)
+    bool isModelLoadedWithTextures() const;
 
     RenderableModelEntityItem(const EntityItemID& entityItemID, bool dimensionsInitialized);
     virtual ~RenderableModelEntityItem();

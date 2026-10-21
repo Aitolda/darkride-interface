@@ -63,6 +63,11 @@ bool ModelEntityWrapper::isModelLoaded() const {
     });
 }
 
+bool RenderableModelEntityItem::isModelLoadedWithTextures() const {
+    ModelPointer model = getModel();
+    return model && model->isLoaded() && model->getNetworkModel() && model->getNetworkModel()->areTexturesLoaded();
+}
+
 QString RenderableModelEntityItem::loadStateForLog() const {
     ModelPointer model = getModel();
     if (!model) {

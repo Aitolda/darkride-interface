@@ -269,6 +269,12 @@ void SafeLanding::updateTracking() {
                     _entityTreeRenderer->addingEntity(entityMapIter->first);
                 }
                 isVisuallyReady = entity->isVisuallyReady() || (!entityRenderable && !entity->isParentPathComplete());
+                if (!isVisuallyReady && entity->getType() == EntityTypes::Model) {
+                    // the model and its textures in counts as drawn even before its renderer updates again: a far model
+                    // that nothing else updates kept its "not drawn" flag for good, with everything loaded (10-21)
+                    auto modelEntity = std::dynamic_pointer_cast<RenderableModelEntityItem>(entity);
+                    isVisuallyReady = modelEntity && modelEntity->isModelLoadedWithTextures();
+                }
             }
             if (isEntityPhysicsReady(entity) && isVisuallyReady) {
                 if (arrivalTrace()) {
