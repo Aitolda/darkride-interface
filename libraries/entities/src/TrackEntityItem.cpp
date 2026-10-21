@@ -372,10 +372,22 @@ uint32_t TrackEntityItem::getGuidewayVersion() const {
         return resultWithReadLock<Type>([&] { return member; }); \
     }
 
-TRAIN_STATE_SETTER(setTrainDistance, getTrainDistance, float, _trainDistance)
-TRAIN_STATE_SETTER(setTrainSpeed, getTrainSpeed, float, _trainSpeed)
+// a script can write these, and a NaN would put every follower into a residual no later state clears (and persist)
+#define TRAIN_STATE_FLOAT_SETTER(Setter, Getter, member) \
+    void TrackEntityItem::Setter(float value) { \
+        if (!std::isfinite(value)) { \
+            return; \
+        } \
+        withWriteLock([&] { member = value; }); \
+    } \
+    float TrackEntityItem::Getter() const { \
+        return resultWithReadLock<float>([&] { return member; }); \
+    }
+
+TRAIN_STATE_FLOAT_SETTER(setTrainDistance, getTrainDistance, _trainDistance)
+TRAIN_STATE_FLOAT_SETTER(setTrainSpeed, getTrainSpeed, _trainSpeed)
 TRAIN_STATE_SETTER(setTrainReversed, getTrainReversed, bool, _trainReversed)
-TRAIN_STATE_SETTER(setTrainDwell, getTrainDwell, float, _trainDwell)
+TRAIN_STATE_FLOAT_SETTER(setTrainDwell, getTrainDwell, _trainDwell)
 TRAIN_STATE_SETTER(setTrainStation, getTrainStation, quint16, _trainStation)
 
 // the time is written last, by the wire and by the server, so it is the one that counts a state
