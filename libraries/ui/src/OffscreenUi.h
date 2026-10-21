@@ -67,6 +67,8 @@ public:
     bool isVisible(const QString& name);
     void toggle(const QUrl& url, const QString& name, std::function<void(QQmlContext*, QObject*)> f = [](QQmlContext*, QObject*) {});
     bool shouldSwallowShortcut(QEvent* event);
+    // "Cut", "Copy" or "Paste" done by the overlay's focused item itself; false when nothing there takes it
+    bool editFocusedItem(const char* action);
     bool navigationFocused();
     void setNavigationFocused(bool focused);
     void unfocusWindows();
