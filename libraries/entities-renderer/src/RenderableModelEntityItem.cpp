@@ -1324,22 +1324,7 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
     ImpostorStandIn standIn;
     const bool deferMesh = _hasModel && shouldDeferMesh(entity, standIn);
 
-    withWriteLock([&] {
-        bool visuallyReady = true;
-        if (_hasModel) {
-            if (deferMesh) {
-                // what it draws now is its card: ready once the card's atlases are
-                visuallyReady = standIn.atlasesLoaded;
-            } else if (!model) {
-                // the model is made below, on this first update: nothing is drawn yet (until 2026-10-19 this read as
-                // drawn, and the arrival's landing let a cold model through before its download had begun)
-                visuallyReady = false;
-            } else if (_didLastVisualGeometryRequestSucceed) {
-                visuallyReady = (_prevModelLoaded && _texturesLoaded);
-            }
-        }
-        entity->setVisuallyReady(visuallyReady);
-    });
+    updateVisuallyReady(entity, deferMesh, standIn.atlasesLoaded);
 
     // Check for removal
     if (!_hasModel) {
@@ -1410,6 +1395,7 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
         withWriteLock([&] {
             _prevModelLoaded = false;
         });
+        updateVisuallyReady(entity, deferMesh, standIn.atlasesLoaded);
         reportImpostorStandIn(entity);
         emit requestRenderUpdate();
         return;
@@ -1515,6 +1501,9 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
     } else if (!_texturesLoaded) {
         emit requestRenderUpdate();
     }
+    // the update that sees the model and its textures load is often the last one a loaded model gets: the flag set at
+    // the top, from before it, stayed false for good (far models on arrival, 2026-10-21)
+    updateVisuallyReady(entity, deferMesh, standIn.atlasesLoaded);
     reportImpostorStandIn(entity);
 
     if (!_allProceduralMaterialsLoaded) {
@@ -1625,6 +1614,27 @@ bool ModelEntityRenderer::shouldDeferMesh(const TypedEntityPointer& entity, Impo
         }
     }
     return reason == nullptr;
+}
+
+// What the entity draws now has loaded (the arrival's landing waits for it, WORLD-LOADING.md): the card's atlases while
+// the card stands in for a waiting mesh, else the model and its textures
+void ModelEntityRenderer::updateVisuallyReady(const TypedEntityPointer& entity, bool deferMesh, bool atlasesLoaded) {
+    withWriteLock([&] {
+        bool visuallyReady = true;
+        if (_hasModel) {
+            if (deferMesh) {
+                // what it draws now is its card: ready once the card's atlases are
+                visuallyReady = atlasesLoaded;
+            } else if (!_model) {
+                // the model is made on this first update: nothing is drawn yet (until 2026-10-19 this read as drawn,
+                // and the arrival's landing let a cold model through before its download had begun)
+                visuallyReady = false;
+            } else if (_didLastVisualGeometryRequestSucceed) {
+                visuallyReady = (_prevModelLoaded && _texturesLoaded);
+            }
+        }
+        entity->setVisuallyReady(visuallyReady);
+    });
 }
 
 bool ModelEntityRenderer::needsImpostorStandIn() const {
