@@ -86,9 +86,22 @@
         start = Date.now();
         Messages.sendLocalMessage("Darkride-Hop", JSON.stringify({ type: "start", world: "Tivoli Town", author: "Caitlyn",
             picture: "https://vr.darkride.ai/api/domain/test/image" }));
-        print("WORLD-LOADING-HOP hop to Tivoli Town started; going to " + URL + " in 3 s");
-        Script.setTimeout(function () { Window.takeSnapshot(false, false, 0); }, 1500);
-        Script.setTimeout(function () { mark("goTo"); location.handleLookupString(URL); }, 3000);
+        // HOP_DELAY (ms, default 3000): how long after the hop's start the client goes; Explore goes at once (0), the
+        // 3 s are to see the screen cover the old world first
+        var delay = typeof HOP_DELAY !== "undefined" ? HOP_DELAY : 3000;
+        print("WORLD-LOADING-HOP hop to Tivoli Town started; going to " + URL + " in " + (delay / 1000) + " s");
+        Script.setTimeout(function () { Window.takeSnapshot(false, false, 0); }, Math.min(1500, delay));
+        Script.setTimeout(function () { mark("goTo"); location.handleLookupString(URL); }, delay);
+        // PICTURES=1 (run.sh): snapshots of the loading screen at 2.5 s and 12 s after the hop, into the run's folder
+        // (a snapshot takes in the desktop screen; Test.saveWindowPicture comes out white, the window being the GPU's)
+        if (typeof HOP_PICTURES !== "undefined") {
+            [2500, 12000].forEach(function (ms) {
+                Script.setTimeout(function () {
+                    Window.takeSnapshot(false, false, 0);
+                    print("WORLD-LOADING-HOP snapshot at " + (ms / 1000) + " s after the hop");
+                }, delay + ms);
+            });
+        }
         sample();
     }, 10000);
 }());

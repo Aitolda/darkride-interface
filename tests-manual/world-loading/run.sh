@@ -5,7 +5,7 @@
 # LOADING_RADIUS=<metres> sets the domain's loading.radius (default 100; 0 waits for every model in the world), and
 # LOADING_TIME_LIMIT=<seconds> its loading.time_limit (default 60). HOP=1 arrives by a hop instead, as Explore makes
 # one (hop.js): the client starts in a file world, says on "Darkride-Hop" that a hop has started, and goes to the
-# domain 3 s later; the loading screen must cover the whole way.
+# domain 3 s later (HOP_DELAY=<ms> to change it: Explore goes at once); the loading screen must cover the whole way.
 # The world dir has the snapshot layout of instances/tivoli-instance.sh (models.json.gz, config.json with the spawn
 # point, assets/map.json and assets/files/<sha256>); the default is the Tivoli Town copy in ~/tivoli-test-worlds.
 # The sandbox ("loading", ~/tivoli-sandboxes/loading) gets a fresh copy of the world and the domain's loading
@@ -22,8 +22,10 @@ WORLD=${4:-$HOME/tivoli-test-worlds/tivolitown-v2}
 SKIP=${5:--1}
 PORT=${6:-42102}
 SANDBOX=$HOME/tivoli-sandboxes/loading
-APP="$BUILD/interface/interface.app"
-BIN="$APP/Contents/MacOS/interface"
+# the client is Darkride.app since main 133685ae0f (the app's rename), interface.app before
+APP="$BUILD/interface/Darkride.app"
+[ -d "$APP" ] || APP="$BUILD/interface/interface.app"
+BIN="$APP/Contents/MacOS/$(basename "$APP" .app)"
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 [ -f "$WORLD/models.json.gz" ] || { echo "no world at $WORLD" >&2; exit 1; }
 case "$MODE" in whole|progressive) ;; *) echo "mode is whole or progressive" >&2; exit 1;; esac
@@ -34,6 +36,10 @@ for pidfile in "$SANDBOX"/*.pid(N); do
     pid=$(cat "$pidfile"); case "$(ps -o command= -p $pid 2>/dev/null)" in *"$BUILD"*) kill $pid;; esac; rm -f "$pidfile"
 done
 cp "$WORLD/models.json.gz" "$SANDBOX/entities/models.json.gz"
+# and the domain-server's own copy, which it hands its entity server when the ids differ (a world other than the last
+# one run would otherwise be replaced by that one)
+mkdir -p "$SANDBOX/appdata/entities"
+cp "$WORLD/models.json.gz" "$SANDBOX/appdata/entities/models.json.gz"
 rm -rf "$SANDBOX/assets"; mkdir -p "$SANDBOX/assets"
 [ -d "$WORLD/assets" ] && cp -R "$WORLD/assets/." "$SANDBOX/assets/"
 # the domain's settings: the loading mode and the world's spawn point
@@ -64,7 +70,7 @@ echo "{\"snapshotsLocation\": \"$RUN/snaps\"$CARD_SETTING}" > "$RUN/config/Tivol
 URL="hifi://localhost:$PORT"
 TEST_SCRIPT="$RUN/arrival.js"
 if [ -n "$HOP" ]; then
-    { echo "var HOP_URL = \"hifi://localhost:$PORT\";"; cat "$D/hop.js"; } > "$RUN/hop.js"
+    { echo "var HOP_URL = \"hifi://localhost:$PORT\";"; [ -n "$HOP_DELAY" ] && echo "var HOP_DELAY = $HOP_DELAY;"; [ -n "$PICTURES" ] && echo "var HOP_PICTURES = \"$RUN\";"; cat "$D/hop.js"; } > "$RUN/hop.js"
     URL="file://$D/../physics-baseline/world.json"
     TEST_SCRIPT="$RUN/hop.js"
 fi

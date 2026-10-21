@@ -37,6 +37,41 @@
         mark(loading ? "loadingScreenUp" : "loadingScreenDown");
     });
 
+    // what the screen shows, as worldLoading.js sends it: when it goes up and down, each change of its line, and the
+    // whole-world bar at each tenth (Caity, 10-21: "Arriving…" or "Loading the world…", up at least 2 s)
+    var screenUpAt = null;
+    var lastStatus = null;
+    var lastTenth = -1;
+    Messages.subscribe("Darkride-Hop");
+    Messages.messageReceived.connect(function (channel, message, sender, localOnly) {
+        if (channel !== "Darkride-Hop" || !localOnly) {
+            return;
+        }
+        var data;
+        try { data = JSON.parse(message); } catch (e) { return; }
+        if (data.type !== "screen") {
+            return;
+        }
+        var t = now();
+        if (data.up && screenUpAt === null) {
+            screenUpAt = t;
+            print("WORLD-LOADING screen up at " + t.toFixed(2) + " s");
+        }
+        if (data.up && data.status !== lastStatus) {
+            lastStatus = data.status;
+            print("WORLD-LOADING screen line \"" + data.status + "\" at " + t.toFixed(2) + " s");
+        }
+        var tenth = data.progress >= 0 ? Math.floor(data.progress * 10) : -1;
+        if (data.up && tenth > lastTenth) {
+            lastTenth = tenth;
+            print("WORLD-LOADING screen bar " + (tenth * 10) + " % at " + t.toFixed(2) + " s");
+        }
+        if (!data.up && screenUpAt !== null) {
+            print("WORLD-LOADING screen down at " + t.toFixed(2) + " s, up for " + (t - screenUpAt).toFixed(2) + " s");
+            mark("screenDown");
+        }
+    });
+
     var timer = Script.setInterval(function () {
         if (done) {
             return;
