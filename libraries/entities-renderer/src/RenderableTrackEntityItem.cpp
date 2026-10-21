@@ -119,8 +119,9 @@ bool RenderableTrackEntityItem::findDetailedRayIntersection(const glm::vec3& ori
             float boxDistance;
             BoxFace boxFace;
             glm::vec3 boxNormal;
-            if (!_pickChunks[chunk].findRayIntersection(localOrigin, localDirection, inverseDirection, boxDistance, boxFace, boxNormal)
-                    && !_pickChunks[chunk].contains(localOrigin)) {
+            if (_pickChunks[chunk].contains(localOrigin)) {
+                boxDistance = 0.0f;   // from inside, the box test gives the distance where the ray leaves the box
+            } else if (!_pickChunks[chunk].findRayIntersection(localOrigin, localDirection, inverseDirection, boxDistance, boxFace, boxNormal)) {
                 continue;
             }
             if (boxDistance > best) {
