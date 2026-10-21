@@ -130,6 +130,10 @@ public:
 
     // the whole Inspector as drawn, scrolled or not (a scripted test's picture of it, Test.saveInspectorPicture)
     QPixmap inspectorPicture() const;
+    // a gizmo drag of the selection driven by a scripted test (Test.editorDrag): begin captures the selection as a
+    // press on the gizmo would (a move handle, or a rotate ring when rotate), every call applies the delta or the
+    // rotation about the selection's centre as the pointer's motion would, final takes the undo step as the release would
+    void dragSelectionForTest(const glm::vec3& delta, const glm::quat& rotationDelta, bool rotate, bool begin, bool final);
 
 public slots:
     void setActive(bool active);
