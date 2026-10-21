@@ -51,6 +51,7 @@
 #include "EditorUndo.h"
 #include "ui/EditorToolBar.h"
 
+class EditorEntityList;
 class QAction;
 class QDropEvent;
 class QKeyEvent;
@@ -168,6 +169,15 @@ public slots:
     // docks the panels back where they started, for a panel that was torn off and lost
     void resetLayout();
     void frameSelection();
+    // flies the build camera to a Hierarchy row that is not loaded, so the stream brings it; it is selected when it
+    // arrives (NATIVE-EDITOR.md 8). A loaded entity is selected and framed
+    void goToListed(const QUuid& id);
+    // asks the entity server again for its list of every entity (the Hierarchy's Refresh)
+    void refreshEntityList();
+    // the Hierarchy's rows in all and loaded, and the list's state, for scripted tests (Test.getHierarchyCounts)
+    QVariantMap hierarchyCounts() const;
+    // what a click on the entity's row in the Hierarchy does (Test.clickHierarchyRow)
+    void clickHierarchyRow(const QUuid& id);
     void goToSelection();           // Shift+F: frame it and take the avatar there
     void bringSelectionHere();      // Option+Shift+F: move it to the avatar
     void create(const QString& key);
@@ -451,6 +461,17 @@ private:
     QStatusBar* _statusBar { nullptr };   // the bottom of the window, in build mode: notes go there
     QLabel* _statusLabel { nullptr };
     EntityTreeModel* _treeModel { nullptr };
+    // the entity server's list for the Hierarchy, and the rows chosen there that are on their way: they join the
+    // selection as they arrive
+    EditorEntityList* _entityList { nullptr };
+    QList<QUuid> _arrivalIds;
+    bool _selectingArrival { false };
+    QUuid _goingTo;                       // the row the camera flew to, for the status bar
+    QString _goingToName;
+    QTimer _arrivalTimer;
+    void onHierarchySelection(const QList<QUuid>& ids);
+    void onEntityLoaded(const QUuid& id);
+    void updateListNote();
     Setting::Handle<QByteArray> _layoutSetting { "editor/layout3", QByteArray() };   // 2: the panels no longer float; 3: the Assets dock
     // build mode narrows the field of view; the user's own is kept here so it survives a crash
     Setting::Handle<float> _fovBeforeBuild { "editor/fovBeforeBuild", 0.0f };

@@ -24,6 +24,7 @@
 #include <QtCore/QSet>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QUrl>
+#include <QtGui/QClipboard>
 #include <QtGui/QCursor>
 #include <QtGui/QImage>
 #include <QtGui/QDropEvent>
@@ -82,6 +83,7 @@
 #include "avatar/MyAvatar.h"
 #include "EditorCreate.h"
 #include "EditorWorld.h"
+#include "EditorEntityList.h"
 #include "EntityTreeModel.h"
 #include "InterfaceLogging.h"
 #include "Menu.h"
@@ -230,6 +232,16 @@ Editor::Editor() : _selection(this), _undo(this), _terrain(&_undo, this) {
     });
     _statusTimer.setSingleShot(true);
     connect(&_statusTimer, &QTimer::timeout, this, [this] { setStatus(QString()); });
+    const int ARRIVAL_WAIT_MS = 10000;
+    _arrivalTimer.setSingleShot(true);
+    _arrivalTimer.setInterval(ARRIVAL_WAIT_MS);
+    connect(&_arrivalTimer, &QTimer::timeout, this, [this] {
+        if (!_goingTo.isNull() && _treeModel && !_treeModel->isLoaded(_goingTo)) {
+            setStatus(QString("%1 hasn't arrived. It may have been deleted since the list was made: "
+                              "Refresh the Hierarchy.").arg(_goingToName), STATUS_CLEAR_MS);
+        }
+        _goingTo = QUuid();
+    });
 }
 
 // --- build mode on and off ----------------------------------------------------------------------
@@ -309,6 +321,7 @@ void Editor::setActive(bool active) {
         if (_treeModel) {
             _treeModel->attach();
         }
+        refreshEntityList();
         _axesValid = false;
         updateAxes();
         refreshInspector(true);
@@ -333,6 +346,9 @@ void Editor::setActive(bool active) {
         _trackSearchFrame = -1;
         _trackPointChosen = -1;
         _trackPointTrack = QUuid();
+        _arrivalIds.clear();
+        _goingTo = QUuid();
+        _arrivalTimer.stop();
         _inspectorRefresh.stop();
         if (_gizmo.isDragging()) {
             applyDrag(true);
@@ -582,20 +598,29 @@ void Editor::createPanels() {
     connect(_treeModel, &EntityTreeModel::renameRequested, this, &Editor::rename);
     connect(_treeModel, &EntityTreeModel::reparentRequested, this, &Editor::reparent);
 
+    connect(_treeModel, &EntityTreeModel::entityLoaded, this, &Editor::onEntityLoaded);
+    // a domain change empties the tree and the list with it: ask the new server
+    connect(_treeModel, &EntityTreeModel::listCleared, this, &Editor::refreshEntityList);
+
+    _entityList = new EditorEntityList(this);
+    connect(_entityList, &EditorEntityList::received, this, [this](const QVector<EntityListMessage::Record>& records) {
+        _treeModel->setListed(records);
+    });
+    connect(_entityList, &EditorEntityList::stateChanged, this, &Editor::updateListNote);
+
     _hierarchy = new HierarchyPanel(window);
     _hierarchy->setModel(_treeModel);
-    connect(_hierarchy, &HierarchyPanel::selectionChangedByUser, this, [this](const QList<QUuid>& ids) {
-        if (_syncingSelection) {
+    connect(_hierarchy, &HierarchyPanel::selectionChangedByUser, this, &Editor::onHierarchySelection);
+    connect(_hierarchy, &HierarchyPanel::frameRequested, this, [this](const QUuid& id) {
+        if (_treeModel && !_treeModel->isLoaded(id)) {
+            goToListed(id);
             return;
         }
-        _syncingSelection = true;
-        _selection.set(ids);
-        _syncingSelection = false;
-    });
-    connect(_hierarchy, &HierarchyPanel::frameRequested, this, [this](const QUuid& id) {
         _selection.set({ id });
         frameSelection();
     });
+    connect(_hierarchy, &HierarchyPanel::goToRequested, this, &Editor::goToListed);
+    connect(_hierarchy, &HierarchyPanel::refreshRequested, this, &Editor::refreshEntityList);
     connect(_hierarchy, &HierarchyPanel::contextMenuRequested, this, &Editor::showHierarchyMenu);
 
     _inspector = new InspectorPanel(window);
@@ -1487,9 +1512,13 @@ void Editor::onSelectionChanged() {
         _trackPointChosen = -1;
         _trackPointTrack = QUuid();
     }
+    // rows chosen in the Hierarchy that have not arrived are given up when the selection is made elsewhere
+    if (!_syncingSelection && !_selectingArrival) {
+        _arrivalIds.clear();
+    }
     if (_hierarchy && !_syncingSelection) {
         _syncingSelection = true;
-        _hierarchy->selectIds(_selection.ids());
+        _hierarchy->selectIds(_selection.ids() + _arrivalIds);
         _syncingSelection = false;
     }
     refreshInspector(true);
@@ -2220,6 +2249,126 @@ void Editor::frameSelection() {
     if (_active && _selection.bounds(box)) {
         _camera.frame(box);
         updateAxes();
+    }
+}
+
+// --- the Hierarchy's rows that are not loaded (NATIVE-EDITOR.md 8) -----------------------------
+
+void Editor::onHierarchySelection(const QList<QUuid>& ids) {
+    if (_syncingSelection) {
+        return;
+    }
+    // the gizmo, the outline and the Inspector need the entity: rows that are not loaded wait for it
+    QList<QUuid> loaded;
+    QList<QUuid> waiting;
+    for (const auto& id : ids) {
+        if (!_treeModel || _treeModel->isLoaded(id)) {
+            loaded << id;
+        } else {
+            waiting << id;
+        }
+    }
+    _arrivalIds = waiting;
+    _syncingSelection = true;
+    _selection.set(loaded);
+    _syncingSelection = false;
+}
+
+void Editor::goToListed(const QUuid& id) {
+    if (!_active || !_treeModel) {
+        return;
+    }
+    AACube cube;
+    QString name;
+    if (!_treeModel->listedPlace(id, cube, name)) {
+        if (_treeModel->isLoaded(id)) {
+            _selection.set({ id });
+            frameSelection();
+        }
+        return;
+    }
+    if (!_arrivalIds.contains(id)) {
+        _arrivalIds << id;
+    }
+    // the stream follows the build camera: once the entity looks big enough from here, the server sends it
+    _goingTo = id;
+    _goingToName = name;
+    _camera.frame(AABox(cube));
+    updateAxes();
+    setStatus(QString("Going to %1. It shows when the server sends it.").arg(name));
+    _arrivalTimer.start();
+}
+
+void Editor::onEntityLoaded(const QUuid& id) {
+    if (id == _goingTo) {
+        _arrivalTimer.stop();
+        setStatus(QString("%1 is here.").arg(_goingToName), STATUS_CLEAR_MS);
+        _goingTo = QUuid();
+    }
+    if (_arrivalIds.removeOne(id)) {
+        _selectingArrival = true;
+        _selection.add(id);
+        _selectingArrival = false;
+    }
+}
+
+void Editor::refreshEntityList() {
+    if (_active && _entityList) {
+        _entityList->request();
+    }
+}
+
+void Editor::updateListNote() {
+    if (!_hierarchy || !_entityList) {
+        return;
+    }
+    QString note;
+    switch (_entityList->state()) {
+        case EditorEntityList::State::Waiting:
+            note = "Asking the server for everything in the world…";
+            break;
+        case EditorEntityList::State::Unanswered:
+            note = "The server did not send its list: only what has loaded is shown.";
+            break;
+        default:
+            break;
+    }
+    _hierarchy->setListNote(note);
+}
+
+QVariantMap Editor::hierarchyCounts() const {
+    QVariantMap counts;
+    counts["entities"] = _treeModel ? _treeModel->count() : 0;
+    counts["loaded"] = _treeModel ? _treeModel->loadedCount() : 0;
+    counts["listed"] = _treeModel && _treeModel->hasList();
+    QString state = "none";
+    if (_entityList) {
+        switch (_entityList->state()) {
+            case EditorEntityList::State::Waiting: state = "waiting"; break;
+            case EditorEntityList::State::Answered: state = "answered"; break;
+            case EditorEntityList::State::Unanswered: state = "unanswered"; break;
+            default: break;
+        }
+    }
+    counts["state"] = state;
+    QVariantList selected;
+    for (const auto& id : _selection.ids()) {
+        selected << id.toString(QUuid::WithoutBraces);
+    }
+    counts["selected"] = selected;
+    return counts;
+}
+
+void Editor::clickHierarchyRow(const QUuid& id) {
+    if (!_active || !_hierarchy) {
+        return;
+    }
+    _syncingSelection = true;
+    _hierarchy->selectIds({ id });
+    _syncingSelection = false;
+    onHierarchySelection({ id });
+    if (_treeModel && !_treeModel->isLoaded(id)) {
+        goToListed(id);
     }
 }
 
@@ -3382,6 +3531,20 @@ void Editor::addSelectionActions(QMenu& menu, const glm::vec3* pasteTarget) {
 }
 
 void Editor::showHierarchyMenu(const QPoint& globalPos) {
+    // a row that is not loaded: there is nothing to edit yet
+    if (_hierarchy && _treeModel) {
+        auto tree = _hierarchy->treeView();
+        QUuid id = tree->indexAt(tree->viewport()->mapFromGlobal(globalPos)).data(EntityTreeModel::IdRole).toUuid();
+        if (!id.isNull() && !_treeModel->isLoaded(id)) {
+            QMenu menu;
+            menu.addAction("Go There", this, [this, id] { goToListed(id); });
+            menu.addAction("Copy ID", this, [id] {
+                QGuiApplication::clipboard()->setText(id.toString(QUuid::WithoutBraces));
+            });
+            menu.exec(globalPos);
+            return;
+        }
+    }
     QMenu menu;
     QMenu* create = buildCreateMenu(&menu);
     create->setEnabled(!_readOnly);

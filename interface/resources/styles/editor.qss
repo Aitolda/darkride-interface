@@ -311,6 +311,23 @@ QToolBar#EditorToolBar QToolButton#EditorWorldEdit:checked:hover {
 #EditorHierarchy QTreeView[readOnly="true"] {
     color: #8a8a8a;
 }
+#EditorHierarchy QLabel#EditorHierarchyCounts {
+    color: #9a9a9a;
+    padding: 2px 4px;
+}
+#EditorHierarchy QToolButton#EditorHierarchyRefresh {
+    color: #d0d0d0;
+    background: #454545;
+    border: 1px solid #2a2a2a;
+    border-radius: 3px;
+    padding: 1px 8px;
+}
+#EditorHierarchy QToolButton#EditorHierarchyRefresh:hover {
+    background: #505050;
+}
+#EditorHierarchy QToolButton#EditorHierarchyRefresh:pressed {
+    background: #2c5d87;
+}
 #EditorInspector QDoubleSpinBox:disabled, #EditorInspector QLineEdit:disabled, #EditorInspector QComboBox:disabled,
 #EditorInspector QPlainTextEdit:disabled, #EditorInspector QToolButton:disabled {
     color: #7a7a7a;
