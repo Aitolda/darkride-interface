@@ -655,8 +655,9 @@ public slots:
      * Shows, updates or hides Darkride's loading screen over the window (<code>WorldLoadingScreen.qml</code>). A field
      * left out keeps its last value.
      * @function Window.setLoadingScreen
-     * @param {object} state - <code>up</code> (boolean), and the strings <code>world</code>, <code>author</code>,
-     *     <code>picture</code> (a URL) and <code>status</code>.
+     * @param {object} state - <code>up</code> (boolean), the strings <code>world</code>, <code>author</code>,
+     *     <code>picture</code> (a URL) and <code>status</code>, and <code>progress</code>: 0 to 1 and the bar fills, or
+     *     negative and it glides.
      */
     void setLoadingScreen(const QVariantMap& state);
 

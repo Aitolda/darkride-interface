@@ -6,7 +6,8 @@
 //  that glides; one short line saying what's happening. It fades in at once and fades out into the world.
 //
 //  It draws only; scripts/system/worldLoading.js decides, calling Window.setLoadingScreen({up: true|false, world,
-//  author, picture: "<url>", status}), any field left out keeping its last value. (QML may not listen to the
+//  author, picture: "<url>", status, progress}), any field left out keeping its last value. progress is 0 to 1 while a
+//  world its owner set to load whole first is loading, and the bar fills; negative (the default) and the bar glides. (QML may not listen to the
 //  Messages client, which lives on the network thread; Window lives on the main thread with this.) In a headset
 //  the script shows its own card instead, and this stays hidden.
 //
@@ -31,6 +32,7 @@ Item {
     property string author: ""
     property string picture: ""
     property string status: ""
+    property real progress: -1
 
     readonly property bool shown: up && !HMD.active
     opacity: shown ? 1.0 : 0.0
@@ -168,7 +170,8 @@ Item {
             height: 44
         }
 
-        // a bar with a short light gliding along it, back and forth, while anything is under way
+        // a bar with a short light gliding along it, back and forth, while anything is under way; or, while a world
+        // loads whole, filling from the left
         Item {
             id: bar
             anchors.horizontalCenter: parent.horizontalCenter
@@ -181,14 +184,26 @@ Item {
                 color: "#2effffff"
             }
             Rectangle {
+                id: fill
+                visible: root.progress >= 0
+                width: Math.max(height, bar.width * Math.min(1, Math.max(0, root.progress)))
+                height: parent.height
+                radius: height / 2
+                color: "#e6ffffff"
+                Behavior on width {
+                    NumberAnimation { duration: 300; easing.type: Easing.OutCubic }
+                }
+            }
+            Rectangle {
                 id: glider
+                visible: root.progress < 0
                 width: 90
                 height: parent.height
                 radius: height / 2
                 color: "#e6ffffff"
 
                 SequentialAnimation on x {
-                    running: root.visible
+                    running: root.visible && root.progress < 0
                     loops: Animation.Infinite
                     NumberAnimation { from: 0; to: bar.width - glider.width; duration: 1100; easing.type: Easing.InOutSine }
                     NumberAnimation { from: bar.width - glider.width; to: 0; duration: 1100; easing.type: Easing.InOutSine }
@@ -221,6 +236,9 @@ Item {
             }
             if (state.status !== undefined) {
                 root.status = state.status || "";
+            }
+            if (state.progress !== undefined) {
+                root.progress = state.progress;
             }
             if (state.up !== undefined) {
                 root.up = !!state.up;
