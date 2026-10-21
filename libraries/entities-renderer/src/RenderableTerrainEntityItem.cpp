@@ -8,6 +8,8 @@
 
 #include "RenderableTerrainEntityItem.h"
 
+#include <atomic>
+
 #include <cfloat>
 #include <mutex>
 #include <set>
@@ -35,6 +37,14 @@
 
 #include "EntitiesRendererLogging.h"
 #include "entities-renderer/ShaderConstants.h"
+
+// The serial in a shape key ("terrain/<id>/<serial>") comes from one counter for the whole process: per entity object it
+// restarted at 1 whenever the entity was made again (leaving and re-entering a domain), and the shape manager keeps
+// released shapes for a while under their keys, so a changed shape could come back as the old one (10-21 review).
+static uint64_t nextShapeSerial() {
+    static std::atomic<uint64_t> serial { 0 };
+    return ++serial;
+}
 
 using namespace render;
 using namespace render::entities;
@@ -489,7 +499,7 @@ void RenderableTerrainEntityItem::updateCollisionShape() {
         }
     }
 
-    ++_shapeSerial;
+    _shapeSerial = nextShapeSerial();
     ShapeInfo info;
     if (points.size() >= 3 && indices.size() >= 3) {
         // the key names this build of the shape, so the shape manager makes a new one rather than hashing the points

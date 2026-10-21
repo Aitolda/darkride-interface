@@ -8,6 +8,8 @@
 
 #include "RenderableTrackEntityItem.h"
 
+#include <atomic>
+
 #include <cfloat>
 
 #include <AbstractViewStateInterface.h>
@@ -21,8 +23,20 @@
 
 #include "RenderPipelines.h"
 
+// The serial in a shape key ("track/<id>/<serial>") comes from one counter for the whole process: per entity object it
+// restarted at 1 whenever the entity was made again (leaving and re-entering a domain), and the shape manager keeps
+// released shapes for a while under their keys, so a changed shape could come back as the old one (10-21 review).
+static uint64_t nextShapeSerial() {
+    static std::atomic<uint64_t> serial { 0 };
+    return ++serial;
+}
+
 using namespace render;
 using namespace render::entities;
+
+namespace {
+    const size_t PICK_CHUNK_TRIANGLES = 256;
+}
 
 // The entity
 
@@ -92,6 +106,7 @@ bool RenderableTrackEntityItem::findDetailedRayIntersection(const glm::vec3& ori
     glm::quat toTrack = glm::inverse(rotation);
     glm::vec3 localOrigin = toTrack * (origin - position);
     glm::vec3 localDirection = toTrack * direction;
+    glm::vec3 inverseDirection = 1.0f / localDirection;
     bool hit = false;
     withReadLock([&] {
         if (_mesh.empty()) {
@@ -99,14 +114,29 @@ bool RenderableTrackEntityItem::findDetailedRayIntersection(const glm::vec3& ori
         }
         float best = FLT_MAX;
         glm::vec3 bestNormal;
-        for (size_t i = 0; i + 2 < _mesh.indices.size(); i += 3) {
-            const glm::vec3& a = _mesh.vertices[_mesh.indices[i]].position;
-            const glm::vec3& b = _mesh.vertices[_mesh.indices[i + 1]].position;
-            const glm::vec3& c = _mesh.vertices[_mesh.indices[i + 2]].position;
-            float t;
-            if (findRayTriangleIntersection(localOrigin, localDirection, a, b, c, t, true) && t < best) {
-                best = t;
-                bestNormal = glm::normalize(glm::cross(b - a, c - a));
+        const size_t triangles = _mesh.indices.size() / 3;
+        for (size_t chunk = 0; chunk < _pickChunks.size(); ++chunk) {
+            float boxDistance;
+            BoxFace boxFace;
+            glm::vec3 boxNormal;
+            if (!_pickChunks[chunk].findRayIntersection(localOrigin, localDirection, inverseDirection, boxDistance, boxFace, boxNormal)
+                    && !_pickChunks[chunk].contains(localOrigin)) {
+                continue;
+            }
+            if (boxDistance > best) {
+                continue;   // a nearer hit is already in hand
+            }
+            size_t end = std::min(triangles, (chunk + 1) * PICK_CHUNK_TRIANGLES);
+            for (size_t triangle = chunk * PICK_CHUNK_TRIANGLES; triangle < end; ++triangle) {
+                size_t i = 3 * triangle;
+                const glm::vec3& a = _mesh.vertices[_mesh.indices[i]].position;
+                const glm::vec3& b = _mesh.vertices[_mesh.indices[i + 1]].position;
+                const glm::vec3& c = _mesh.vertices[_mesh.indices[i + 2]].position;
+                float t;
+                if (findRayTriangleIntersection(localOrigin, localDirection, a, b, c, t, true) && t < best) {
+                    best = t;
+                    bestNormal = glm::normalize(glm::cross(b - a, c - a));
+                }
             }
         }
         if (best < FLT_MAX) {
@@ -140,7 +170,7 @@ void RenderableTrackEntityItem::rebuildGuideway() {
     TrackGuidewayMesh mesh;
     TrackGuideway::build(curve, guidewaySpec(), mesh);
 
-    ++_shapeSerial;
+    _shapeSerial = nextShapeSerial();
     ShapeInfo info;
     if (mesh.vertices.size() >= 3 && mesh.indices.size() >= 3) {
         ShapeInfo::PointList shapePoints;
@@ -163,8 +193,20 @@ void RenderableTrackEntityItem::rebuildGuideway() {
         info.setParams(SHAPE_TYPE_NONE, 0.5f * getScaledDimensions());
     }
 
+    std::vector<AABox> chunks;
+    const size_t triangles = mesh.indices.size() / 3;
+    for (size_t first = 0; first < triangles; first += PICK_CHUNK_TRIANGLES) {
+        AABox box;
+        size_t end = std::min(triangles, first + PICK_CHUNK_TRIANGLES);
+        for (size_t i = 3 * first; i < 3 * end; ++i) {
+            box += mesh.vertices[mesh.indices[i]].position;
+        }
+        chunks.push_back(box);
+    }
+
     withWriteLock([&] {
         _mesh = std::move(mesh);
+        _pickChunks = std::move(chunks);
         ++_meshVersion;
         _builtTrackVersion = trackVersion;
         _builtGuidewayVersion = guidewayVersion;

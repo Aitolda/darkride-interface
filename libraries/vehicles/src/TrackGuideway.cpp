@@ -15,6 +15,8 @@
 
 namespace {
     const int MAX_RINGS = 4096;                 // a long track gets its rings further apart rather than more of them
+    const int MAX_PYLONS = 512;                 // and its pylons: whatever the length and spacing, the mesh stays small
+    const float MIN_PYLON_SPACING = 1.0f;       // m: a spacing typed as 0.001 is not a million pylons (10-21 review)
     const float MIN_SIZE = 0.01f;               // m: no beam thinner than this
     const float PYLON_WIDTH_FRACTION = 0.6f;    // a pylon's side, as a fraction of the beam's width
     const float PYLON_OVERLAP = 0.05f;          // m the pylon reaches up into the beam, so no seam shows between them
@@ -165,7 +167,9 @@ namespace {
             return;
         }
         float length = curve.length();
-        int count = std::max(1, (int)std::lround(length / std::max(spec.pylonSpacing, MIN_SIZE)));
+        // the count in double and clamped before it becomes an int: a long track at a small spacing must not overflow
+        double wanted = std::round((double)length / (double)std::max(spec.pylonSpacing, MIN_PYLON_SPACING));
+        int count = (int)std::min(std::max(wanted, 1.0), (double)MAX_PYLONS);
         float spacing = length / (float)count;
         float side = std::max(std::max(spec.width, MIN_SIZE) * PYLON_WIDTH_FRACTION, MIN_SIZE);
         // a loop has a pylon every spacing round; a shuttle track one at each end too, set in by half a pylon so it

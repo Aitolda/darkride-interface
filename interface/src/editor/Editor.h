@@ -141,6 +141,8 @@ public slots:
     // diamond, Shift+click on the curve and Delete do
     void chooseTrackPoint(int index, bool fromInspector);
     int chosenTrackPoint() const { return _trackPointChosen; }
+    // an Inspector edit of the selection, begun and committed as a list's + button does (Test.commitInspectorEdit)
+    void testInspectorEdit(const QString& key, const QVariant& value);
     void insertTrackPoint(float arcLength);
     void deleteTrackPoint();
     void setGridVisible(bool visible);

@@ -138,6 +138,13 @@ void InspectorPanel::showEntities(const QVector<EntityItemProperties>& snapshots
         _scroll->takeWidget();
         _scroll->setWidget(_content);
     }
+    // a new selection: a track's Points list starts with no point chosen (the editors are kept between selections of
+    // one type, and the row chosen in the last track must not carry over to this one)
+    for (auto& row : _rows) {
+        if (auto points = qobject_cast<TrackPointsEditor*>(row.editor)) {
+            points->forgetChoice();
+        }
+    }
     applyValues(snapshots, true);
 }
 

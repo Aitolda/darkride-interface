@@ -4277,6 +4277,24 @@ bool Application::importImage(const QString& urlString) {
     return true;
 }
 
+void Application::followScreenRefreshRate() {
+    QWindow* handle = _window ? _window->windowHandle() : nullptr;
+    if (!handle || _screenChangedConnection) {
+        return;
+    }
+    auto followScreen = [this, handle] {
+        QObject::disconnect(_screenRateConnection);
+        if (QScreen* screen = handle->screen()) {
+            _screenRateConnection = connect(screen, &QScreen::refreshRateChanged, this, [this](qreal) {
+                getRefreshRateManager().updateRefreshRateController();
+            });
+        }
+        getRefreshRateManager().updateRefreshRateController();
+    };
+    _screenChangedConnection = connect(handle, &QWindow::screenChanged, this, [followScreen](QScreen*) { followScreen(); });
+    followScreen();
+}
+
 float Application::getPresentPeriod() const {
     return _displayPlugin ? _displayPlugin->getPresentPeriod() : 0.0f;
 }
@@ -9378,6 +9396,7 @@ void Application::setDisplayPlugin(DisplayPluginPointer newDisplayPlugin) {
             RefreshRateManager::UXMode::DESKTOP;
 
         refreshRateManager.setUXMode(uxMode);
+        followScreenRefreshRate();
     }
 
     bool isHmd = _displayPlugin->isHmd();

@@ -50,6 +50,11 @@ public:
 
     // (the target rate, the display's own rate)
     static std::function<void(int, int)> getRefreshRateOperator();
+    // A test knob: every present costs this many microseconds more, busy-waited, as a heavy scene's would (the
+    // pacing's overrun cases, 10-21 review). TIVOLI_PRESENT_LOAD_US in the environment sets it at start, Test.setPresentLoad
+    // while running; 0, the default, is no load.
+    static void setPresentLoad(int microseconds);
+    static int getPresentLoad();
 
     bool activate() override final;
     void deactivate() override final;
@@ -84,7 +89,8 @@ public:
     // on, macOS's GL swap was measured (10-19) to wait two refreshes and to queue the odd frame without waiting, a
     // ragged 72 Hz on a 144 Hz panel (PHYSICS.md "The driver's stutter"). Wanted = the Render.vsyncEnabled setting,
     // read at activation and pushed on a change; TIVOLI_VSYNC=1 or 0 in the environment forces it; the HMD plugins
-    // always want it. The present thread applies it (applyVsync).
+    // never want it (HmdDisplayPlugin::wantVsync: the headset's compositor paces them). The present thread applies it
+    // (applyVsync).
     virtual bool wantVsync() const {
         static const int forced = qgetenv("TIVOLI_VSYNC").isEmpty() ? -1 : (qgetenv("TIVOLI_VSYNC") != "0" ? 1 : 0);
         return forced < 0 ? _vsyncWanted.load() : (forced != 0);
@@ -171,6 +177,7 @@ protected:
     bool _presentedNewFrame{ false };           // this present's frame was not shown before
     uint32_t _lastSwapUsecs{ 0 };               // how long the last swap took (the wait for the display, with vsync)
     QMetaObject::Connection _screenConnection;  // the window's screen change restarts the display link
+    QMetaObject::Connection _visibilityConnection;  // minimizing the window stops it, showing it starts it
     QThread* _presentThread{ nullptr };
     std::queue<gpu::FramePointer> _newFrameQueue;
     RateCounter<200> _droppedFrameRate;

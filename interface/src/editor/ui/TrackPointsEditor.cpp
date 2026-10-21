@@ -25,6 +25,7 @@
 #include <glm/glm.hpp>
 
 #include <TrackCurve.h>
+#include <TrackEntityItem.h>
 
 namespace {
     const int ROW_PIXELS = 22;
@@ -132,7 +133,8 @@ TrackPointsEditor::TrackPointsEditor(const PropertySpec& spec, QWidget* parent) 
         wireField(row, editor);
         return editor;
     };
-    _position = field(0, "position", "Position", PropertyKind::Vec3, -DBL_MAX, DBL_MAX, 0.1, 3, "m",
+    const double reach = TrackEntityItem::MAX_POINT_COORDINATE;   // the entity clamps a point to the domain anyway
+    _position = field(0, "position", "Position", PropertyKind::Vec3, -reach, reach, 0.1, 3, "m",
                       "Where the point is, in the track's own metres (from the entity's position, turned by its rotation)");
     _bank = field(1, "bank", "Bank", PropertyKind::Float, -89, 89, 1, 1, "°",
                   "The lean of the track at this point, a roll about its direction: positive leans the right side up");
@@ -255,6 +257,12 @@ void TrackPointsEditor::choose(int index) {
     _updating = false;
     markSelectedRow();
     showSelected();
+}
+
+void TrackPointsEditor::forgetChoice() {
+    _selected = -1;
+    _shown.clear();   // the next setValue rebuilds the list, with no row current
+    _mixed = false;
 }
 
 void TrackPointsEditor::rebuildList() {

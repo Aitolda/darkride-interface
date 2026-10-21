@@ -57,6 +57,9 @@ private:
     glm::vec3 registrationOffset() const;   // from the entity's origin (its registration point) to its box's centre
 
     TrackGuidewayMesh _mesh;                // main thread's; the renderer copies it into GPU buffers
+    // the mesh's triangles in runs of PICK_CHUNK_TRIANGLES, a box each, so a ray tests the boxes and only the runs it
+    // meets (a mouse pick can run every frame; the mesh is up to some forty thousand triangles)
+    std::vector<AABox> _pickChunks;
     uint64_t _meshVersion { 0 };
     uint32_t _builtTrackVersion { 0 };
     uint32_t _builtGuidewayVersion { 0 };

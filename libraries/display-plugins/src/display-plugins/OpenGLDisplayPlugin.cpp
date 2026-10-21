@@ -356,14 +356,23 @@ bool OpenGLDisplayPlugin::activate() {
         auto widget = _container->getPrimaryWidget();
         QWindow* window = (widget && widget->window()) ? widget->window()->windowHandle() : nullptr;
         if (window) {
+            // the link runs while the window can be seen: a minimized or hidden window has nothing to pace, and the
+            // link's thread would wake at every refresh for nothing (10-21 review)
             auto startLink = [window] {
+                QWindow::Visibility visibility = window->visibility();
+                if (visibility == QWindow::Minimized || visibility == QWindow::Hidden) {
+                    DisplayLink::instance().stop();
+                    return;
+                }
                 QScreen* screen = window->screen();
                 QPoint centre = screen ? screen->geometry().center() : QPoint(0, 0);
                 DisplayLink::instance().start(DisplayLink::displayAt(centre.x(), centre.y()));
             };
             startLink();
             QObject::disconnect(_screenConnection);
+            QObject::disconnect(_visibilityConnection);
             _screenConnection = connect(window, &QWindow::screenChanged, this, [startLink](QScreen*) { startLink(); });
+            _visibilityConnection = connect(window, &QWindow::visibilityChanged, this, [startLink](QWindow::Visibility) { startLink(); });
         }
     }
 
@@ -390,6 +399,11 @@ bool OpenGLDisplayPlugin::activate() {
 void OpenGLDisplayPlugin::deactivate() {
     auto compositorHelper = DependencyManager::get<CompositorHelper>();
     disconnect(compositorHelper.data());
+
+    // the display link paces this plugin's presents only: off with it (the next desktop plugin starts it again)
+    QObject::disconnect(_screenConnection);
+    QObject::disconnect(_visibilityConnection);
+    DisplayLink::instance().stop();
 
     auto presentThread = DependencyManager::get<PresentThread>();
     // Does not return until the GL transition has completeed
@@ -833,11 +847,29 @@ std::vector<DisplayPlugin::PresentSample> OpenGLDisplayPlugin::takePresentTrace(
     return samples;
 }
 
+static std::atomic<int>& presentLoadUs() {
+    static std::atomic<int> load { qgetenv("TIVOLI_PRESENT_LOAD_US").toInt() };
+    return load;
+}
+
+void OpenGLDisplayPlugin::setPresentLoad(int microseconds) {
+    presentLoadUs() = std::max(0, microseconds);
+}
+
+int OpenGLDisplayPlugin::getPresentLoad() {
+    return presentLoadUs();
+}
+
 void OpenGLDisplayPlugin::present(const std::shared_ptr<RefreshRateController>& refreshRateController) {
     auto frameId = (uint64_t)presentCount();
     PROFILE_RANGE_EX(render, __FUNCTION__, 0xffffff00, frameId)
     uint64_t startPresent = usecTimestampNow();
     refreshRateController->clockStartTime();
+    if (int load = presentLoadUs()) {
+        // the test knob (setPresentLoad): a heavier present, busy-waited
+        while (usecTimestampNow() - startPresent < (uint64_t)load) {
+        }
+    }
     {
         PROFILE_RANGE_EX(render, "updateFrameData", 0xff00ff00, frameId)
         updateFrameData();

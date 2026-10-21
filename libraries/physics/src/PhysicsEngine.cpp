@@ -560,8 +560,13 @@ void PhysicsEngine::stepSimulation() {
         paced = _smoothedFrameDuration;
         _pacedClockLead += paced - dt;
         if (fabsf(_pacedClockLead) > _smoothedFrameDuration) {
-            paced -= _pacedClockLead;
-            _pacedClockLead = 0.0f;
+            // more than a frame off: taken out at once, but never backwards (the eye reads a step back as a snap): a
+            // clock ahead holds this frame (paced 0) and the rest comes off the next frames; a clock behind jumps
+            // forward. Until the 10-21 review this subtracted the whole lead, which could make paced negative; the
+            // free clock runs whenever the presents are not paced (vsync, a present that overran, a restart).
+            float taken = _pacedClockLead > 0.0f ? glm::min(_pacedClockLead, paced) : _pacedClockLead;
+            paced -= taken;
+            _pacedClockLead -= taken;
         } else {
             float correction = CLOCK_EASING * _pacedClockLead;
             paced -= correction;
