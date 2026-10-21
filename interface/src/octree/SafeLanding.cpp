@@ -17,6 +17,7 @@
 #include "InterfaceLogging.h"
 #include "Application.h"
 #include "avatar/AvatarManager.h"
+#include <ResourceCache.h>
 #include <SettingHandle.h>
 #include <PickFilter.h>
 
@@ -105,6 +106,8 @@ void SafeLanding::startTracking(QSharedPointer<EntityTreeRenderer> entityTreeRen
             _notTrackedNotFound = 0;
             _notTrackedLocal = 0;
             _completionCount = 0;
+            _downloadsIdleSince = 0;
+            _releasedStalled = 0;
             _receivedEntityCount = 0;
             _blockingCount = 0;
             _nearbyRadius = nearbyRadiusSetting.get();
@@ -114,8 +117,14 @@ void SafeLanding::startTracking(QSharedPointer<EntityTreeRenderer> entityTreeRen
             connect(std::const_pointer_cast<EntityTree>(entityTree).get(),
                 &EntityTree::deletingEntity, this, &SafeLanding::deleteTrackedEntity);
 
-            _prevEntityLoadingPriorityOperator = EntityTreeRenderer::getEntityLoadingPriorityOperator();
-            EntityTreeRenderer::setEntityLoadingPriorityFunction([this](const EntityItem& item) { return loadingPriority(item); });
+            // the loading priority, once: a landing begun while this one's is still installed must not take its own for
+            // the one before (loadingPriority calls it: the client overflowed its stack on a hop into a whole-world
+            // world, 10-21, after a landing ended by reset() had left its function in place)
+            if (!_priorityInstalled) {
+                _prevEntityLoadingPriorityOperator = EntityTreeRenderer::getEntityLoadingPriorityOperator();
+                EntityTreeRenderer::setEntityLoadingPriorityFunction([this](const EntityItem& item) { return loadingPriority(item); });
+                _priorityInstalled = true;
+            }
 
             // What is already near the avatar is tracked again: a landing restarted by a teleport (the arrival's own
             // path lookup, a hop within the world) lands among entities the tree already holds, which only an earlier
@@ -272,6 +281,42 @@ void SafeLanding::updateTracking() {
                 entityMapIter++;
             }
         }
+        // What waits for a download that will never come (a link no request can be made for, as a tea:// model on a
+        // build without the tea protocol plugin, or one that neither loads nor fails) does not hold the landing: once
+        // the resource caches have had nothing in flight or queued for a few seconds while entities still wait, nothing
+        // more is coming for them, and they are let go. Whole-world loading met it in the Tivoli Town copy, 10-21: 460
+        // trees from four tea:// models held the screen to its time limit with no download in flight.
+        const quint64 STALLED_DOWNLOADS_USECS = 3 * USECS_PER_SECOND;
+        quint64 now = usecTimestampNow();
+        bool downloadsIdle = ResourceCache::getLoadingRequestCount() == 0 && ResourceCache::getPendingRequestCount() == 0;
+        if (!downloadsIdle || _trackedEntities.empty()) {
+            _downloadsIdleSince = 0;
+        } else if (_downloadsIdleSince == 0) {
+            _downloadsIdleSince = now;
+        } else if (now - _downloadsIdleSince > STALLED_DOWNLOADS_USECS) {
+            // only what waits to be drawn: an entity not yet ready for physics (its collision shape still being made,
+            // which takes no download) keeps holding the landing, so the avatar cannot fall through it
+            QStringList released;
+            int count = 0;
+            for (auto it = _trackedEntities.begin(); it != _trackedEntities.end();) {
+                if (isEntityPhysicsReady(it->second)) {
+                    if (released.size() < 4) {
+                        released << describe(it->second);
+                    }
+                    ++count;
+                    it = _trackedEntities.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            if (count > 0) {
+                _releasedStalled += count;
+                qDebug() << "safe landing: let go of" << count << "entities waiting to be drawn, for downloads none of which is"
+                    << "in flight or queued (for" << (now - _downloadsIdleSince) / USECS_PER_MSEC << "ms), such as"
+                    << qPrintable(released.join(", "));
+            }
+            _downloadsIdleSince = 0;
+        }
         _blockingCount = (int32_t)_trackedEntities.size();   // what is left is near and not ready
         if (enableInterstitial) {
             _trackedEntityStabilityCount++;
@@ -296,9 +341,17 @@ void SafeLanding::updateTracking() {
                 if (!physicsReady) { physicsWaiting++; }
                 if (!visuallyReady) { visualsWaiting++; }
                 if (examples.size() < 4 && (!physicsReady || !visuallyReady)) {
-                    examples << QString("%1 '%2' %3 m %4%5").arg(EntityTypes::getEntityTypeName(entity->getType()), entity->getName(),
+                    // a model's own state: whether its renderer has made it, its geometry and its textures
+                    QString state;
+                    if (entity->getType() == EntityTypes::Model) {
+                        auto modelEntity = std::dynamic_pointer_cast<RenderableModelEntityItem>(entity);
+                        auto renderable = _entityTreeRenderer->renderableForEntityId(entry.first);
+                        state = QString(" (%1, %2)").arg(modelEntity ? modelEntity->loadStateForLog() : QString("not a renderable model"),
+                            renderable ? "renderer made" : "no renderer");
+                    }
+                    examples << QString("%1 '%2' %3 m %4%5%6").arg(EntityTypes::getEntityTypeName(entity->getType()), entity->getName(),
                         QString::number(glm::distance(avatarPosition, entity->getWorldPosition()), 'f', 1),
-                        physicsReady ? "" : "physics ", visuallyReady ? "" : "drawing");
+                        physicsReady ? "" : "physics ", visuallyReady ? "" : "drawing", state);
                 }
             }
             QStringList gaps;
@@ -317,6 +370,16 @@ void SafeLanding::updateTracking() {
                 << _sequenceStart << "to" << _sequenceEnd << "," << _sequenceNumbers.size() << "packets seen, gaps ["
                 << qPrintable(gaps.join(" ")) << "], missing" << qApp->isMissingSequenceNumbers()
                 << (examples.isEmpty() ? "" : qPrintable("; waiting for " + examples.join("; ")));
+            // the downloads in flight and queued: the resource cache loads a few at a time, and a stall there holds
+            // every model behind it (whole-world loading, 10-21)
+            QStringList inFlight;
+            for (const auto& resource : ResourceCache::getLoadingRequests()) {
+                if (resource && inFlight.size() < 6) {
+                    inFlight << resource->getURL().toString().right(70);
+                }
+            }
+            qDebug() << "safe landing: downloads" << ResourceCache::getLoadingRequestCount() << "in flight,"
+                << ResourceCache::getPendingRequestCount() << "queued:" << qPrintable(inFlight.join(" | "));
         }
     }
     if (_trackedEntities.empty()) {
@@ -356,12 +419,18 @@ void SafeLanding::stopTracking() {
                 &EntityTree::deletingEntity, this, &SafeLanding::deleteTrackedEntity);
             _entityTreeRenderer.reset();
         }
+    }
+    if (_priorityInstalled) {
         EntityTreeRenderer::setEntityLoadingPriorityFunction(_prevEntityLoadingPriorityOperator);
+        _priorityInstalled = false;
     }
 }
 
+// The end of a landing (physics on): what tracking took (the tree's signals, the loading priority) is given back as when
+// it completes, then everything is cleared for the next. Until 10-21 this only cleared, leaving both in place.
 void SafeLanding::reset() {
-    _trackingEntities = false;
+    stopTracking();
+    Locker lock(_lock);
     _trackedEntities.clear();
     _maxTrackedEntityCount = 0;
     _receivedEntityCount = 0;

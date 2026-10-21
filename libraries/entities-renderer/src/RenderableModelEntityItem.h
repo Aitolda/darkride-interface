@@ -58,6 +58,9 @@ class RenderableModelEntityItem : public ModelEntityWrapper {
 public:
     static EntityItemPointer factory(const EntityItemID& entityID, const EntityItemProperties& properties);
 
+    // for the arrival's log (SafeLanding): whether the renderer has made the model, and its geometry's and textures' state
+    QString loadStateForLog() const;
+
     RenderableModelEntityItem(const EntityItemID& entityItemID, bool dimensionsInitialized);
     virtual ~RenderableModelEntityItem();
 

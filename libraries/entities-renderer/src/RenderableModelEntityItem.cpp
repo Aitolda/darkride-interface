@@ -63,6 +63,16 @@ bool ModelEntityWrapper::isModelLoaded() const {
     });
 }
 
+QString RenderableModelEntityItem::loadStateForLog() const {
+    ModelPointer model = getModel();
+    if (!model) {
+        return "no model yet";
+    }
+    bool texturesLoaded = model->getNetworkModel() && model->getNetworkModel()->areTexturesLoaded();
+    return QString("url %1, geometry %2, textures %3").arg(model->getURL().isEmpty() ? "none" : "set",
+        model->isLoaded() ? "in" : "loading", texturesLoaded ? "in" : "loading");
+}
+
 EntityItemPointer RenderableModelEntityItem::factory(const EntityItemID& entityID, const EntityItemProperties& properties) {
     EntityItemPointer entity(new RenderableModelEntityItem(entityID, properties.getDimensionsInitialized()),
                              [](EntityItem* ptr) { ptr->deleteLater(); });

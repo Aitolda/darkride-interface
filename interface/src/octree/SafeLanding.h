@@ -86,6 +86,8 @@ private:
     int32_t _maxTrackedEntityCount { 0 };
     int32_t _trackedEntityStabilityCount { 0 };
     quint64 _lastProgressLog { 0 };
+    quint64 _downloadsIdleSince { 0 };   // when the resource caches last had nothing in flight or queued, 0 while they do
+    int _releasedStalled { 0 };          // entities let go because nothing they need was downloading any more
     int _addedCount { 0 };               // diagnostics: entities tracked since the start, and those not tracked, by reason
     int _notTrackedCreatedLater { 0 };
     int _notTrackedNotFound { 0 };
@@ -105,6 +107,7 @@ private:
     // the radius the landing waits within now: whole-world loading's while it asks, else the arrival gate's
     float effectiveRadius() const;
     CalculateEntityLoadingPriority _prevEntityLoadingPriorityOperator { nullptr };
+    bool _priorityInstalled { false };   // loadingPriority is the renderer's function now, _prev... the one before it
 };
 
 #endif  // hifi_SafeLanding_h
