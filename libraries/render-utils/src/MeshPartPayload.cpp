@@ -26,13 +26,11 @@
 #include "RenderPipelines.h"
 #include "MeshPartPayload.h"
 
-#ifdef Q_OS_MACOS
-bool MeshPartPayload::DEFAULT_ENABLE_MATERIAL_PROCEDURAL_SHADERS = false;
-bool MeshPartPayload::enableMaterialProceduralShaders = false;
-#else
+// On everywhere (Settings > Custom Shaders on Models). It was off on macOS from 2020, when a procedural on a Mac read
+// the wrong textures and inputs and drew its small mips black; with it off, a model whose material is a procedural
+// draws nothing at all (Tivoli Town's ground)
 bool MeshPartPayload::DEFAULT_ENABLE_MATERIAL_PROCEDURAL_SHADERS = true;
 bool MeshPartPayload::enableMaterialProceduralShaders = true;
-#endif
 
 bool MeshPartPayload::sceneIsReady = false;
 
@@ -211,8 +209,13 @@ void MeshPartPayload::render(RenderArgs* args) {
         auto& schema = _drawMaterials.getSchemaBuffer().get<graphics::MultiMaterial::Schema>();
         glm::vec4 outColor = glm::vec4(ColorUtils::tosRGBVec3(schema._albedo), schema._opacity);
         outColor = procedural->getColor(outColor);
+        const bool forward = DeferredLightingEffect::isForwardLit(args);
         procedural->prepare(batch, _worldFromLocalTransform.getTranslation(), _worldFromLocalTransform.getScale(),
-                            _worldFromLocalTransform.getRotation(), _created, ProceduralProgramKey(outColor.a < 1.0f));
+                            _worldFromLocalTransform.getRotation(), _created,
+                            ProceduralProgramKey(outColor.a < 1.0f, false, false, forward));
+        if (forward) {
+            DependencyManager::get<DeferredLightingEffect>()->setupForwardLightingBatch(args, batch);
+        }
         batch._glColor4f(outColor.r, outColor.g, outColor.b, outColor.a);
     } else {
         // apply material properties
@@ -533,9 +536,13 @@ void ModelMeshPartPayload::render(RenderArgs* args) {
         auto& schema = _drawMaterials.getSchemaBuffer().get<graphics::MultiMaterial::Schema>();
         glm::vec4 outColor = glm::vec4(ColorUtils::tosRGBVec3(schema._albedo), schema._opacity);
         outColor = procedural->getColor(outColor);
+        const bool forward = DeferredLightingEffect::isForwardLit(args);
         procedural->prepare(batch, _worldFromLocalTransform.getTranslation(), _worldFromLocalTransform.getScale(),
                             _worldFromLocalTransform.getRotation(), _created,
-                            ProceduralProgramKey(outColor.a < 1.0f, _shapeKey.isDeformed(), _shapeKey.isDualQuatSkinned()));
+                            ProceduralProgramKey(outColor.a < 1.0f, _shapeKey.isDeformed(), _shapeKey.isDualQuatSkinned(), forward));
+        if (forward) {
+            DependencyManager::get<DeferredLightingEffect>()->setupForwardLightingBatch(args, batch);
+        }
         batch._glColor4f(outColor.r, outColor.g, outColor.b, outColor.a);
     } else {
         // apply material properties

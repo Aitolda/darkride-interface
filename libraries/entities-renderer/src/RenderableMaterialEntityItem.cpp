@@ -9,6 +9,7 @@
 #include "RenderableMaterialEntityItem.h"
 
 #include "RenderPipelines.h"
+#include "DeferredLightingEffect.h"
 #include "GeometryCache.h"
 
 #include <procedural/Procedural.h>
@@ -314,8 +315,13 @@ void MaterialEntityRenderer::doRender(RenderArgs* args) {
         auto proceduralDrawMaterial = std::static_pointer_cast<graphics::ProceduralMaterial>(drawMaterial);
         glm::vec4 outColor = glm::vec4(drawMaterial->getAlbedo(), drawMaterial->getOpacity());
         outColor = proceduralDrawMaterial->getColor(outColor);
+        const bool forward = DeferredLightingEffect::isForwardLit(args);
         proceduralDrawMaterial->prepare(batch, renderTransform.getTranslation(), renderTransform.getScale(),
-                                        renderTransform.getRotation(), _created, ProceduralProgramKey(outColor.a < 1.0f));
+                                        renderTransform.getRotation(), _created,
+                                        ProceduralProgramKey(outColor.a < 1.0f, false, false, forward));
+        if (forward) {
+            DependencyManager::get<DeferredLightingEffect>()->setupForwardLightingBatch(args, batch);
+        }
         if (render::ShapeKey(args->_globalShapeKey).isWireframe() || _primitiveMode == PrimitiveMode::LINES) {
             DependencyManager::get<GeometryCache>()->renderWireSphere(batch, outColor);
         } else {
