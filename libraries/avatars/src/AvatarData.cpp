@@ -145,7 +145,6 @@ void AvatarData::randomizeDefaultFullAvatarModelUrl() {
 
 const QUrl& AvatarData::defaultFullAvatarModelUrl() {
     if (_defaultFullAvatarModelUrl.isEmpty()) {
-        // _defaultFullAvatarModelUrl = PathUtils::resourcesUrl("/meshes/lynden/lynden.fst");
         randomizeDefaultFullAvatarModelUrl();
     }
 
