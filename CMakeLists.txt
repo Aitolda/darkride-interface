@@ -155,7 +155,6 @@ set(BUILD_TOOLS_OPTION ON)
 set(BUILD_INSTALLER_OPTION ON)
 set(GLES_OPTION OFF)
 set(DISABLE_QML_OPTION OFF)
-set(DOWNLOAD_SERVERLESS_CONTENT_OPTION OFF)
 
 if (ANDROID OR UWP)
   set(BUILD_SERVER_OPTION OFF)
@@ -223,11 +222,6 @@ option(DISABLE_QML "Disable QML" ${DISABLE_QML_OPTION})
 option(DISABLE_KTX_CACHE "Disable KTX Cache" OFF)
 option(DISABLE_PCM_CODEC "Disable PCM codec" OFF)
 option(DISABLE_HIFI_CODEC "Disable Hifi codec" OFF)
-option(
-  DOWNLOAD_SERVERLESS_CONTENT
-  "Download and setup default serverless content beside Interface"
-  ${DOWNLOAD_SERVERLESS_CONTENT_OPTION}
-)
 
 if (NOT OpenGL_GL_PREFERENCE)
   set(OpenGL_GL_PREFERENCE GLVND)
@@ -259,7 +253,6 @@ MESSAGE(STATUS "Build tests:           " ${BUILD_TESTS})
 MESSAGE(STATUS "Build tools:           " ${BUILD_TOOLS})
 MESSAGE(STATUS "Build installer:       " ${BUILD_INSTALLER})
 MESSAGE(STATUS "GL ES:                 " ${USE_GLES})
-MESSAGE(STATUS "DL serverless content: " ${DOWNLOAD_SERVERLESS_CONTENT})
 
 if (DISABLE_QML)
   MESSAGE(STATUS "QML disabled!")
@@ -283,10 +276,9 @@ add_custom_target(cmake SOURCES ${CMAKE_SRC})
 GroupSources("cmake")
 unset(CMAKE_SRC)
 
-file(GLOB_RECURSE JS_SRC scripts/*.js unpublishedScripts/*.js)
+file(GLOB_RECURSE JS_SRC scripts/*.js)
 add_custom_target(js SOURCES ${JS_SRC})
 GroupSources("scripts")
-GroupSources("unpublishedScripts")
 unset(JS_SRC)
 
 set_packaging_parameters()
@@ -344,12 +336,10 @@ if (BUILD_CLIENT)
   add_subdirectory(interface)
   set_target_properties(interface PROPERTIES FOLDER "Apps")
 
-  option(USE_SIXENSE "Build Interface with sixense library/plugin" OFF)
 endif()
 
 if (BUILD_CLIENT OR BUILD_SERVER)
   add_subdirectory(plugins)
-  # add_subdirectory(server-console)
 endif()
 
 # BUILD_TOOLS option will be handled inside the tools's CMakeLists.txt because 'scribe' tool is required for build anyway

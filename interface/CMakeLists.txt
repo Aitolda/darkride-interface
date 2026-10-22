@@ -203,11 +203,6 @@ add_dependencies(${TARGET_NAME} resources)
 if (WIN32)
   # These are external plugins, but we need to do the 'add dependency' here so that their
   # binary directories get added to the fixup path
-
-  if (USE_SIXENSE)
-    add_dependency_external_projects(sixense)
-  endif ()
-
   add_dependency_external_projects(wasapi)
 endif()
 
@@ -464,19 +459,6 @@ if (SCRIPTS_INSTALL_DIR)
   )
 endif()
 
-if (DOWNLOAD_SERVERLESS_CONTENT)
-  add_dependency_external_projects(serverless-content)
-
-  ExternalProject_Get_Property(serverless-content SOURCE_DIR)
-
-  # for dev builds, copy the serverless content to the resources folder
-  add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-    COMMAND "${CMAKE_COMMAND}" -E copy_directory
-      "${SOURCE_DIR}"
-      "${RESOURCES_DEV_DIR}/serverless"
-  )
-endif ()
-
 if (WIN32)
     set(EXTRA_DEPLOY_OPTIONS "--qmldir  \"${PROJECT_SOURCE_DIR}/resources/qml\"")
 
@@ -486,6 +468,7 @@ if (WIN32)
 
     package_libraries_for_deployment()
 endif()
+
 
 # tell CMake to exclude ui_console.h for policy CMP0071
 set_property(SOURCE ui_console.h PROPERTY SKIP_AUTOMOC ON)
