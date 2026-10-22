@@ -1393,22 +1393,6 @@
           "advanced": true
         },
         {
-          "name": "dynamicDomainVerificationTimeMin",
-          "label": "Dynamic Domain Verification Time (seconds) - Minimum",
-          "help": "The lower limit on the amount of time that passes before Dynamic Domain Verification on entities occurs. Units are seconds.",
-          "placeholder": "2700",
-          "default": "2700",
-          "advanced": true
-        },
-        {
-          "name": "dynamicDomainVerificationTimeMax",
-          "label": "Dynamic Domain Verification Time (seconds) - Maximum",
-          "help": "The upper limit on the amount of time that passes before Dynamic Domain Verification on entities occurs. Units are seconds.",
-          "placeholder": "3600",
-          "default": "3600",
-          "advanced": true
-        },
-        {
           "name": "entityScriptSourceWhitelist",
           "label": "Entity Scripts Allowed from:",
           "help": "Comma separated list of URLs (with optional paths) that entity scripts are allowed from. If someone attempts to create and entity or edit an entity to have a different domain, it will be rejected. If left blank, any domain is allowed.",
