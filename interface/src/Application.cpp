@@ -1445,6 +1445,23 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     });
 
     connect(addressManager.data(), &AddressManager::hostChanged, this, &Application::updateWindowTitle);
+
+    // a hop to a place or a person the metaverse doesn't find goes nowhere: say why. It finds a world by its address (a
+    // world's name is no address), and for a person it answers the same whether they are offline, out of sight or unknown
+    connect(addressManager.data(), &AddressManager::lookupResultIsNotFound, this, [](const QString& lookedUp, bool isUser) {
+        const QString name = lookedUp.trimmed();
+        if (isUser) {
+            OffscreenUi::asyncWarning(QString("Couldn't join %1").arg(name).trimmed(), "They're offline, or somewhere you can't join.");
+        } else {
+            OffscreenUi::asyncWarning(name.isEmpty() ? QString("Couldn't find that world")
+                                                     : QString::fromUtf8("Couldn't find “%1”").arg(name),
+                                      "Check the address, or choose a world in Explore.");
+        }
+    });
+    connect(addressManager.data(), &AddressManager::lookupResultIsOffline, this, [](const QString& lookedUp) {
+        const QString name = lookedUp.trimmed();
+        OffscreenUi::asyncWarning((name.isEmpty() ? QString("That world") : name) + " is offline", "Try again later.");
+    });
     connect(this, &QCoreApplication::aboutToQuit, addressManager.data(), &AddressManager::storeCurrentAddress);
 
     connect(this, &Application::activeDisplayPluginChanged, this, &Application::updateThreadPoolCount);
@@ -2725,6 +2742,11 @@ void Application::updateVerboseLogging() {
     QLoggingCategory::setFilterRules(rules);
 }
 
+// The name of the world being joined, for a popup, or "" when it has none to show (an address is not a name).
+static QString worldNameForPopup() {
+    return DependencyManager::get<AddressManager>()->getDomainLabel().trimmed();
+}
+
 void Application::domainConnectionRefused(const QString& reasonMessage, int reasonCodeInt, const QString& extraInfo) {
     DomainHandler::ConnectionRefusedReason reasonCode = static_cast<DomainHandler::ConnectionRefusedReason>(reasonCodeInt);
 
@@ -2737,9 +2759,25 @@ void Application::domainConnectionRefused(const QString& reasonMessage, int reas
         case DomainHandler::ConnectionRefusedReason::ProtocolMismatch:
         case DomainHandler::ConnectionRefusedReason::TooManyUsers:
         case DomainHandler::ConnectionRefusedReason::Unknown: {
-            QString message = "Unable to connect to the location you are visiting.\n";
-            message += reasonMessage;
-            OffscreenUi::asyncWarning("", message);
+            const QString world = worldNameForPopup();
+            QString why = reasonMessage.trimmed();
+            if (reasonCode == DomainHandler::ConnectionRefusedReason::TooManyUsers) {
+                why = "It's full. Try again later.";
+            } else if (reasonCode == DomainHandler::ConnectionRefusedReason::ProtocolMismatch) {
+                why = "It runs a different version of Darkride.";
+            }
+            OffscreenUi::asyncWarning("Couldn't join " + (world.isEmpty() ? QString("this world") : world), why);
+            getMyAvatar()->setWorldVelocity(glm::vec3(0.0f));
+            break;
+        }
+        case DomainHandler::ConnectionRefusedReason::NotAuthorized: {
+            // a ban, or a world its owner keeps to some people; the world says so only once it knows who is asking, and
+            // someone signed out gets the sign-in screen instead (DomainHandler asks for it)
+            if (DependencyManager::get<AccountManager>()->isLoggedIn()) {
+                const QString world = worldNameForPopup();
+                OffscreenUi::asyncWarning("Couldn't join " + (world.isEmpty() ? QString("this world") : world),
+                                          "You don't have permission to enter it.");
+            }
             getMyAvatar()->setWorldVelocity(glm::vec3(0.0f));
             break;
         }
@@ -3679,19 +3717,19 @@ void Application::userKickConfirmation(const QUuid& nodeID) {
     auto avatarHashMap = DependencyManager::get<AvatarHashMap>();
     auto avatar = avatarHashMap->getAvatarBySessionID(nodeID);
 
-    QString userName;
+    QString userName = avatar ? avatar->getSessionDisplayName().trimmed() : QString();
+    const QString world = worldNameForPopup();
 
-    if (avatar) {
-        userName = avatar->getSessionDisplayName();
-    } else {
-        userName = nodeID.toString();
-    }
+    // A ban keeps them out until it is lifted, which is what the People app's Ban button asks for.
+    ModalDialogListener* dlg = OffscreenUi::asyncQuestion(
+        "Ban " + (userName.isEmpty() ? QString("this person") : userName) + " from " +
+            (world.isEmpty() ? QString("this world") : world) + "?",
+        (userName.isEmpty() ? QString("They") : userName) + " can't come back until you lift the ban in the world settings.",
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
 
-    QString kickMessage = "Do you wish to kick " + userName + " from your domain";
-    ModalDialogListener* dlg = OffscreenUi::asyncQuestion("Kick User", kickMessage,
-                                                          QMessageBox::Yes | QMessageBox::No);
-
-    if (dlg->getDialogItem()) {
+    if (QQuickItem* box = dlg->getDialogItem()) {
+        OffscreenUi::setButtonText(box, QMessageBox::Yes, "Ban");
+        box->setProperty("destructiveButton", (int)QMessageBox::Yes);
 
         QObject::connect(dlg, &ModalDialogListener::response, this, [=] (QVariant answer) {
             QObject::disconnect(dlg, &ModalDialogListener::response, this, nullptr);
@@ -3728,6 +3766,7 @@ void Application::setupQmlSurface(QQmlContext* surfaceContext, bool setAdditiona
 
         surfaceContext->setContextProperty("offscreenFlags", flags);
         surfaceContext->setContextProperty("AddressManager", DependencyManager::get<AddressManager>().data());
+        surfaceContext->setContextProperty("Messages", DependencyManager::get<MessagesClient>().data());
 
         surfaceContext->setContextProperty("Settings", new QMLSettingsScriptingInterface(surfaceContext));
         surfaceContext->setContextProperty("MenuInterface", MenuScriptingInterface::getInstance());
@@ -8009,8 +8048,9 @@ void Application::setSessionUUID(const QUuid& sessionUUID) const {
 bool Application::askToSetAvatarUrl(const QString& url) {
     QUrl realUrl(url);
     if (realUrl.isLocalFile()) {
-        OffscreenUi::asyncWarning("", "You can not use local files for avatar components.");
-        return false;
+        // an avatar on this computer goes through the importer, as with File > Import Avatar
+        AvatarImporter::importFile(realUrl.toLocalFile());
+        return true;
     }
 
     // Download the FST file, to attempt to determine its model type
@@ -8020,56 +8060,50 @@ bool Application::askToSetAvatarUrl(const QString& url) {
 
     QString modelName = fstMapping["name"].toString();
     QString modelLicense = fstMapping["license"].toString();
+    // the avatar's own name in the popups, else its file's
+    const QString shownName = modelName.trimmed().isEmpty() ? QFileInfo(realUrl.path()).completeBaseName() : modelName.trimmed();
 
-    bool agreeToLicense = true; // assume true
-    //create set avatar callback
-    auto setAvatar = [=] (QString url, QString modelName) {
-        ModalDialogListener* dlg = OffscreenUi::asyncQuestion("Set Avatar",
-                                                              "Would you like to use '" + modelName + "' for your avatar?",
-                                                              QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Ok);
-        QObject::connect(dlg, &ModalDialogListener::response, this, [=] (QVariant answer) {
-            QObject::disconnect(dlg, &ModalDialogListener::response, this, nullptr);
-
-            bool ok = (QMessageBox::Ok == static_cast<QMessageBox::StandardButton>(answer.toInt()));
-            if (ok) {
-                getMyAvatar()->useFullAvatarURL(url, modelName);
-                emit fullAvatarURLChanged(url, modelName);
-            } else {
-                qCDebug(interfaceapp) << "Declined to use the avatar";
-            }
-        });
+    auto wear = [=] () {
+        getMyAvatar()->useFullAvatarURL(url, modelName);
+        emit fullAvatarURLChanged(url, modelName);
     };
 
     if (!modelLicense.isEmpty()) {
-        // word wrap the license text to fit in a reasonable shaped message box.
-        const int MAX_CHARACTERS_PER_LINE = 90;
-        modelLicense = simpleWordWrap(modelLicense, MAX_CHARACTERS_PER_LINE);
-
-        ModalDialogListener* dlg = OffscreenUi::asyncQuestion("Avatar Usage License",
-                                                              modelLicense + "\nDo you agree to these terms?",
+        ModalDialogListener* dlg = OffscreenUi::asyncQuestion(shownName + " comes with a license",
+                                                              "Read it before you wear this avatar.",
                                                               QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
-        QObject::connect(dlg, &ModalDialogListener::response, this, [=, &agreeToLicense] (QVariant answer) {
+        if (QQuickItem* box = dlg->getDialogItem()) {
+            OffscreenUi::setButtonText(box, QMessageBox::Yes, "Agree and Wear");
+            OffscreenUi::setButtonText(box, QMessageBox::No, "Don't Wear");
+            box->setProperty("detailedText", modelLicense);
+        }
+        QObject::connect(dlg, &ModalDialogListener::response, this, [=] (QVariant answer) {
             QObject::disconnect(dlg, &ModalDialogListener::response, this, nullptr);
 
-            agreeToLicense = (static_cast<QMessageBox::StandardButton>(answer.toInt()) == QMessageBox::Yes);
-            if (agreeToLicense) {
-                switch (modelType) {
-                    case FSTReader::HEAD_AND_BODY_MODEL: {
-                    setAvatar(url, modelName);
-                    break;
-                }
-                default:
-                    OffscreenUi::asyncWarning("", modelName + "Does not support a head and body as required.");
-                    break;
+            if (static_cast<QMessageBox::StandardButton>(answer.toInt()) == QMessageBox::Yes) {
+                if (modelType == FSTReader::HEAD_AND_BODY_MODEL) {
+                    wear();
+                } else {
+                    OffscreenUi::asyncWarning(shownName + " can't be worn", "It needs a head and a body.");
                 }
             } else {
                 qCDebug(interfaceapp) << "Declined to agree to avatar license";
             }
-
-            //auto offscreenUi = getOffscreenUI();
         });
     } else {
-        setAvatar(url, modelName);
+        ModalDialogListener* dlg = OffscreenUi::asyncQuestion("Wear " + shownName + "?",
+                                                              realUrl.host().isEmpty() ? QString() : "From " + realUrl.host() + ".",
+                                                              QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Ok);
+        OffscreenUi::setButtonText(dlg->getDialogItem(), QMessageBox::Ok, "Wear");
+        QObject::connect(dlg, &ModalDialogListener::response, this, [=] (QVariant answer) {
+            QObject::disconnect(dlg, &ModalDialogListener::response, this, nullptr);
+
+            if (static_cast<QMessageBox::StandardButton>(answer.toInt()) == QMessageBox::Ok) {
+                wear();
+            } else {
+                qCDebug(interfaceapp) << "Declined to use the avatar";
+            }
+        });
     }
 
     return true;
@@ -8077,22 +8111,22 @@ bool Application::askToSetAvatarUrl(const QString& url) {
 
 
 bool Application::askToLoadScript(const QString& scriptFilenameOrURL) {
-    QString shortName = scriptFilenameOrURL;
-
     QUrl scriptURL { scriptFilenameOrURL };
-
-    if (scriptURL.host().endsWith(MARKETPLACE_CDN_HOSTNAME)) {
-        int startIndex = shortName.lastIndexOf('/') + 1;
-        int endIndex = shortName.lastIndexOf('?');
-        shortName = shortName.mid(startIndex, endIndex - startIndex);
-    }
 
 #ifdef DISABLE_QML
     DependencyManager::get<ScriptEngines>()->loadScript(scriptFilenameOrURL);
 #else
-    QString message = "Would you like to run this script:\n" + shortName;
-    ModalDialogListener* dlg = OffscreenUi::asyncQuestion(getWindow(), "Run Script", message,
-                                                           QMessageBox::Yes | QMessageBox::No);
+    QString name = QFileInfo(scriptURL.path()).fileName();
+    if (name.isEmpty()) {
+        name = "this script";
+    }
+    QString message = "Only run scripts from people you trust.";
+    if (!scriptURL.isLocalFile() && !scriptURL.host().isEmpty()) {
+        message = "From " + scriptURL.host() + ". " + message;
+    }
+    ModalDialogListener* dlg = OffscreenUi::asyncQuestion(getWindow(), "Run " + name + "?", message,
+                                                           QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    OffscreenUi::setButtonText(dlg->getDialogItem(), QMessageBox::Yes, "Run");
 
     QObject::connect(dlg, &ModalDialogListener::response, this, [=] (QVariant answer) {
         const QString& fileName = scriptFilenameOrURL;
@@ -8135,20 +8169,19 @@ bool Application::askToWearAvatarAttachmentUrl(const QString& url) {
                 auto jsonObject = doc.object();
 
                 // retrieve optional name field from JSON
-                QString name = tr("Unnamed Attachment");
+                QString name;
                 auto nameValue = jsonObject.value("name");
                 if (nameValue.isString()) {
-                    name = nameValue.toString();
+                    name = nameValue.toString().trimmed();
                 }
 
-                auto avatarAttachmentConfirmationTitle = tr("Avatar Attachment Confirmation");
-                auto avatarAttachmentConfirmationMessage = tr("Would you like to wear '%1' on your avatar?").arg(name);
-                ModalDialogListener* dlg = OffscreenUi::asyncQuestion(avatarAttachmentConfirmationTitle,
-                                           avatarAttachmentConfirmationMessage,
-                                           QMessageBox::Ok | QMessageBox::Cancel);
+                ModalDialogListener* dlg = OffscreenUi::asyncQuestion(
+                    tr("Wear %1 on your avatar?").arg(name.isEmpty() ? tr("this attachment") : name), QString(),
+                    QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Ok);
+                OffscreenUi::setButtonText(dlg->getDialogItem(), QMessageBox::Ok, tr("Wear"));
                 QObject::connect(dlg, &ModalDialogListener::response, this, [=] (QVariant answer) {
                     QObject::disconnect(dlg, &ModalDialogListener::response, this, nullptr);
-                    if (static_cast<QMessageBox::StandardButton>(answer.toInt()) == QMessageBox::Yes) {
+                    if (static_cast<QMessageBox::StandardButton>(answer.toInt()) == QMessageBox::Ok) {
                         // add attachment to avatar
                         auto myAvatar = getMyAvatar();
                         assert(myAvatar);
@@ -8163,13 +8196,13 @@ bool Application::askToWearAvatarAttachmentUrl(const QString& url) {
                 });
             } else {
                 // json parse error
-                auto avatarAttachmentParseErrorString = tr("Error parsing attachment JSON from url: \"%1\"");
-                displayAvatarAttachmentWarning(avatarAttachmentParseErrorString.arg(url));
+                qCWarning(interfaceapp) << "Attachment JSON doesn't parse:" << url;
+                displayAvatarAttachmentWarning(tr("The attachment file is damaged."));
             }
         } else {
             // download failure
-            auto avatarAttachmentDownloadErrorString = tr("Error downloading attachment JSON from url: \"%1\"");
-            displayAvatarAttachmentWarning(avatarAttachmentDownloadErrorString.arg(url));
+            qCWarning(interfaceapp) << "Attachment JSON didn't download:" << url << reply->errorString();
+            displayAvatarAttachmentWarning(tr("The attachment file couldn't be downloaded."));
         }
         reply->deleteLater();
     });
@@ -8240,10 +8273,9 @@ bool Application::askToReplaceDomainContent(const QString& url) {
         }
     } else {
             methodDetails = "UserDoesNotHavePermissionToReplaceContent";
-            static const QString warningMessage = simpleWordWrap("The domain owner must enable 'Replace Content' "
-                "permissions for you in this domain's server settings before you can continue.", MAX_CHARACTERS_PER_LINE);
-            OffscreenUi::asyncWarning("You do not have permissions to replace domain content", warningMessage,
-                                 QMessageBox::Ok, QMessageBox::Ok);
+            OffscreenUi::asyncWarning("You can't replace this world's content",
+                                      "Its owner can let you, under Permissions in the world settings.",
+                                      QMessageBox::Ok, QMessageBox::Ok);
 
             QJsonObject messageProperties = {
                 { "status", methodDetails },
@@ -8255,8 +8287,7 @@ bool Application::askToReplaceDomainContent(const QString& url) {
 }
 
 void Application::displayAvatarAttachmentWarning(const QString& message) const {
-    auto avatarAttachmentWarningTitle = tr("Avatar Attachment Failure");
-    OffscreenUi::asyncWarning(avatarAttachmentWarningTitle, message);
+    OffscreenUi::asyncWarning(tr("Couldn't load the attachment"), message);
 }
 
 void Application::showDialog(const QUrl& widgetUrl, const QUrl& tabletUrl, const QString& name) const {
@@ -8378,18 +8409,16 @@ void Application::addAssetToWorldFromURLRequestFinished() {
                 tempFile.close();
                 qApp->getFileDownloadInterface()->runUnzip(downloadPath, url, true, false, isBlocks);
             } else {
-                QString errorInfo = "Couldn't open temporary file for download";
-                qWarning(interfaceapp) << errorInfo;
-                addAssetToWorldError(filename, errorInfo);
+                qWarning(interfaceapp) << "Couldn't open temporary file for download";
+                addAssetToWorldError(filename, "It couldn't be downloaded.");
             }
         } else {
-            QString errorInfo = "Couldn't create temporary directory for download";
-            qWarning(interfaceapp) << errorInfo;
-            addAssetToWorldError(filename, errorInfo);
+            qWarning(interfaceapp) << "Couldn't create temporary directory for download";
+            addAssetToWorldError(filename, "It couldn't be downloaded.");
         }
     } else {
         qWarning(interfaceapp) << "Error downloading" << url << ":" << request->getResultString();
-        addAssetToWorldError(filename, "Error downloading " + filename + " : " + request->getResultString());
+        addAssetToWorldError(filename, "It couldn't be downloaded.");
     }
 
     request->deleteLater();
@@ -8403,7 +8432,7 @@ QString filenameFromPath(QString filePath) {
 void Application::addAssetToWorldUnzipFailure(QString filePath) {
     QString filename = filenameFromPath(QUrl(filePath).toLocalFile());
     qWarning(interfaceapp) << "Couldn't unzip file" << filePath;
-    addAssetToWorldError(filename, "Couldn't unzip file " + filename + ".");
+    addAssetToWorldError(filename, "It couldn't be unzipped.");
 }
 
 void Application::addAssetToWorld(QString path, QString zipFile, bool isZip, bool isBlocks) {
@@ -8453,10 +8482,10 @@ void Application::addAssetToWorldWithNewMapping(QString filePath, QString mappin
             mapping = mapping.insert(mapping.lastIndexOf("."), "-" + QString::number(copy));
             addAssetToWorldWithNewMapping(filePath, mapping, copy, isZip, isBlocks);
         } else {
-            QString errorInfo = "Too many copies of asset name: "
-                + mapping.left(mapping.length() - QString::number(copy).length() - 1);
-            qWarning(interfaceapp) << "Error downloading model: " + errorInfo;
-            addAssetToWorldError(filenameFromPath(filePath), errorInfo);
+            QString original = mapping.left(mapping.length() - QString::number(copy).length() - 1);
+            qWarning(interfaceapp) << "Error downloading model: Too many copies of asset name: " + original;
+            addAssetToWorldError(filenameFromPath(filePath),
+                                 "There are too many files called " + filenameFromPath(original) + ".");
         }
         request->deleteLater();
     });
@@ -8494,9 +8523,8 @@ void Application::addAssetToWorldSetMapping(QString filePath, QString mapping, Q
     auto request = DependencyManager::get<AssetClient>()->createSetMappingRequest(mapping, hash);
     connect(request, &SetMappingRequest::finished, this, [=](SetMappingRequest* request) mutable {
         if (request->getError() != SetMappingRequest::NoError) {
-            QString errorInfo = "Could not set asset mapping.";
-            qWarning(interfaceapp) << "Error downloading model: " + errorInfo;
-            addAssetToWorldError(filenameFromPath(filePath), errorInfo);
+            qWarning(interfaceapp) << "Error downloading model: Could not set asset mapping.";
+            addAssetToWorldError(filenameFromPath(filePath), "The world's assets didn't take it.");
         } else {
             // to prevent files that aren't models or texture files from being loaded into world automatically
             if ((filePath.toLower().endsWith(OBJ_EXTENSION) || filePath.toLower().endsWith(FBX_EXTENSION)) ||
@@ -8540,9 +8568,8 @@ void Application::addAssetToWorldAddEntity(QString filePath, QString mapping) {
     // on. But FBX dimensions may be in cm, so we monitor for the dimension change and rescale again if warranted.
 
     if (entityID == QUuid()) {
-        QString errorInfo = "Could not add model " + mapping + " to world.";
-        qWarning(interfaceapp) << "Could not add model to world: " + errorInfo;
-        addAssetToWorldError(filenameFromPath(filePath), errorInfo);
+        qWarning(interfaceapp) << "Could not add model to world: " + mapping;
+        addAssetToWorldError(filenameFromPath(filePath), "It couldn't be placed.");
     } else {
         // Monitor when asset is rendered in world so that can resize if necessary.
         _addAssetToWorldResizeList.insert(entityID, 0);  // List value is count of checks performed.
@@ -8721,31 +8748,14 @@ void Application::addAssetToWorldInfoTimeout() {
 }
 
 void Application::addAssetToWorldError(QString modelName, QString errorText) {
-    // Displays the most recent error message for a few seconds.
+    // Says what went wrong in an alert of its own, which stays until it is answered.
 
     if (_aboutToQuit) {
         return;
     }
 
-    /*
-    If list has an entry for modelName, delete it.
-    Display errorText in message box.
-    Show message box if not already visible.
-    (Re)start error timer. ... onAddAssetToWorldErrorTimeout()
-    */
-
     addAssetToWorldInfoClear(modelName);
-
-    if (!_addAssetToWorldMessageBox) {
-        _addAssetToWorldMessageBox = getOffscreenUI()->createMessageBox(OffscreenUi::ICON_INFORMATION,
-            "Downloading Model", "", QMessageBox::NoButton, QMessageBox::NoButton);
-        connect(_addAssetToWorldMessageBox, SIGNAL(destroyed()), this, SLOT(onAssetToWorldMessageBoxClosed()));
-    }
-
-    _addAssetToWorldMessageBox->setProperty("text", "\n" + errorText);
-    _addAssetToWorldMessageBox->setVisible(true);
-
-    _addAssetToWorldErrorTimer.start();
+    OffscreenUi::asyncWarning("Couldn't add " + modelName + " to the world", errorText);
 }
 
 void Application::addAssetToWorldErrorTimeout() {
@@ -8872,12 +8882,16 @@ void Application::setPreviousScriptLocation(const QString& location) {
 }
 
 void Application::loadScriptURLDialog() const {
-    ModalDialogListener* dlg = OffscreenUi::getTextAsync(OffscreenUi::ICON_NONE, "Open and Run Script", "Script URL");
+    ModalDialogListener* dlg = OffscreenUi::getTextAsync(OffscreenUi::ICON_NONE, "Run a Script from the Web", QString());
+    if (QQuickItem* box = dlg->getDialogItem()) {
+        OffscreenUi::setButtonText(box, QMessageBox::Ok, "Run");
+        box->setProperty("placeholderText", QString::fromUtf8("https://…/script.js"));
+    }
     connect(dlg, &ModalDialogListener::response, this, [=] (QVariant response) {
         disconnect(dlg, &ModalDialogListener::response, this, nullptr);
         const QString& newScript = response.toString();
         if (QUrl(newScript).scheme() == "atp") {
-            OffscreenUi::asyncWarning("Error Loading Script", "Cannot load client script over ATP");
+            OffscreenUi::asyncWarning("Can't run a script from an atp: address", "Use an https: address.");
         } else if (!newScript.isEmpty()) {
             DependencyManager::get<ScriptEngines>()->loadScript(newScript.trimmed());
         }
@@ -9054,10 +9068,9 @@ void Application::notifyPacketVersionMismatch() {
     if (!_notifiedPacketVersionMismatchThisDomain && !isInterstitialMode()) {
         _notifiedPacketVersionMismatchThisDomain = true;
 
-        QString message = "The location you are visiting is running an incompatible server version.\n";
-        message += "Content may not display properly.";
-
-        OffscreenUi::asyncWarning("", message);
+        const QString world = worldNameForPopup();
+        OffscreenUi::asyncWarning((world.isEmpty() ? QString("This world") : world) + " runs a different version of Darkride",
+                                  "Some things in it may not look right.");
     }
 }
 
@@ -9065,8 +9078,27 @@ void Application::checkSkeleton() const {
     if (getMyAvatar()->getSkeletonModel()->isActive() && !getMyAvatar()->getSkeletonModel()->hasSkeleton()) {
         qCDebug(interfaceapp) << "MyAvatar model has no skeleton";
 
-        QString message = "Your selected avatar body has no skeleton.\n\nThe default body will be loaded...";
-        OffscreenUi::asyncWarning("", message);
+        const QUrl url = getMyAvatar()->getFullAvatarURLFromPreferences();
+        QString name = getMyAvatar()->getFullAvatarModelName().trimmed();
+        if (name.isEmpty()) {
+            name = QFileInfo(url.path()).completeBaseName();
+        }
+        // A model on this computer can be rigged by the importer on the spot; .fst files name a model of their own.
+        const bool canRig = url.isLocalFile() && QFileInfo(url.path()).suffix().toLower() != "fst";
+        ModalDialogListener* dlg = OffscreenUi::asyncWarning((name.isEmpty() ? QString("This avatar") : name) + " has no skeleton",
+                                                             "You're wearing the default avatar for now.",
+                                                             canRig ? QMessageBox::Ok | QMessageBox::Cancel : QMessageBox::Ok,
+                                                             QMessageBox::Ok);
+        if (canRig) {
+            OffscreenUi::setButtonText(dlg->getDialogItem(), QMessageBox::Ok, "Auto Rig");
+            OffscreenUi::setButtonText(dlg->getDialogItem(), QMessageBox::Cancel, "OK");
+            QObject::connect(dlg, &ModalDialogListener::response, qApp, [dlg, url] (QVariant answer) {
+                QObject::disconnect(dlg, &ModalDialogListener::response, qApp, nullptr);
+                if (static_cast<QMessageBox::StandardButton>(answer.toInt()) == QMessageBox::Ok) {
+                    AvatarImporter::importFile(url.toLocalFile());
+                }
+            });
+        }
 
         getMyAvatar()->useFullAvatarURL(AvatarData::defaultFullAvatarModelUrl(), DEFAULT_FULL_AVATAR_MODEL_NAME);
     } else {
@@ -9901,10 +9933,17 @@ void Application::showUrlHandler(const QUrl& url) {
         return;
     }
 
-    ModalDialogListener* dlg = OffscreenUi::asyncQuestion("Confirm openUrl", "Do you recognize this path or code and want to open or execute it: " + url.toDisplayString());
+    const QString path = url.isLocalFile() ? url.toLocalFile() : url.toDisplayString();
+    const QString name = QFileInfo(path).fileName();
+    ModalDialogListener* dlg = OffscreenUi::asyncQuestion(
+        name.isEmpty() ? QString("Open this file?") : QString::fromUtf8("Open “%1”?").arg(name),
+        "A script wants to open this file on your computer.", QMessageBox::Open | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (QQuickItem* box = dlg->getDialogItem()) {
+        box->setProperty("detailedText", path);
+    }
     QObject::connect(dlg, &ModalDialogListener::response, this, [=](QVariant answer) {
         QObject::disconnect(dlg, &ModalDialogListener::response, this, nullptr);
-        if (QMessageBox::Yes == static_cast<QMessageBox::StandardButton>(answer.toInt())) {
+        if (QMessageBox::Open == static_cast<QMessageBox::StandardButton>(answer.toInt())) {
             // Unset the handler, open the URL, and the reset the handler
             QDesktopServices::unsetUrlHandler(url.scheme());
             QDesktopServices::openUrl(url);
