@@ -240,9 +240,10 @@ Item {
             }
 
             Repeater {
+                // Cancel on the left, as on every pair of buttons (Caity, 10-22)
                 model: [
-                    { name: "showNow", label: "Show me now", shown: root.canShowNow },
-                    { name: "cancel", label: "Cancel", shown: root.canCancel }
+                    { name: "cancel", label: "Cancel", shown: root.canCancel },
+                    { name: "showNow", label: "Show me now", shown: root.canShowNow }
                 ]
                 delegate: Rectangle {
                     visible: modelData.shown
