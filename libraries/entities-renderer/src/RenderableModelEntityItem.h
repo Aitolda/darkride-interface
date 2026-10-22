@@ -42,6 +42,7 @@ class ModelEntityWrapper : public ModelEntityItem {
 protected:
     ModelEntityWrapper(const EntityItemID& entityItemID) : Parent(entityItemID) {}
     void setModel(const ModelPointer& model);
+    void clearModel(const ModelPointer& model);
     ModelPointer getModel() const;
     bool isModelLoaded() const;
 
