@@ -599,6 +599,11 @@ public:
      */
     Q_INVOKABLE virtual void unloadAllEntityScripts(bool blockingCall = false);
 
+    // Unloads the client entity scripts whose entities are no longer in the tree, on this engine's thread, after
+    // whatever loads are queued before it: a world left while its scripts were still being loaded (EntityTreeRenderer
+    // asks for it once the world's entities are erased).
+    Q_INVOKABLE void unloadEntityScriptsOfGoneEntities();
+
     /**jsdoc
      * Calls a method in an entity script.
      * @function Script.callEntityScriptMethod

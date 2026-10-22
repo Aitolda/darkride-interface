@@ -227,7 +227,13 @@ void EntityTreeRenderer::stopDomainAndNonOwnedEntities() {
         foreach (const EntityItemID& entityID,  entitiesWithEntityScripts) {
             EntityItemPointer entityItem = getTree()->findEntityByEntityItemID(entityID);
 
-            if (entityItem && !entityItem->getScript().isEmpty()) {
+            // a script whose entity is no longer in the tree is a domain entity's (local and avatar entities stay): it
+            // goes too, or it runs on with no entity (Tivoli Town's hideByDistance.js after a Cancel, 10-22)
+            if (!entityItem) {
+                _entitiesScriptEngine->unloadEntityScript(entityID, true);
+                continue;
+            }
+            if (!entityItem->getScript().isEmpty()) {
                 if (!(entityItem->isLocalEntity() || entityItem->isMyAvatarEntity())) {
                     if (_currentEntitiesInside.contains(entityID)) {
                         _entitiesScriptEngine->callEntityScriptMethod(entityID, "leaveEntity");
@@ -268,6 +274,12 @@ void EntityTreeRenderer::clearDomainAndNonOwnedEntities() {
     }
 
     OctreeProcessor::clearDomainAndNonOwnedEntities();
+
+    // the world's entities are erased now: a script that started on the script thread since the unloads above were
+    // asked for (a load queued before the world was left) is unloaded after them
+    if (_entitiesScriptEngine) {
+        _entitiesScriptEngine->unloadEntityScriptsOfGoneEntities();
+    }
 }
 
 void EntityTreeRenderer::clear() {

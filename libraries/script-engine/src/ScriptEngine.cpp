@@ -2726,6 +2726,28 @@ void ScriptEngine::unloadEntityScript(const EntityItemID& entityID, bool shouldR
     }
 }
 
+void ScriptEngine::unloadEntityScriptsOfGoneEntities() {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "unloadEntityScriptsOfGoneEntities", Qt::QueuedConnection);
+        return;
+    }
+    QList<EntityItemID> entityIDs;
+    {
+        QReadLocker locker { &_entityScriptsLock };
+        entityIDs = _entityScripts.keys();
+    }
+    int unloaded = 0;
+    for (const auto& entityID : entityIDs) {
+        if (entityIsGone(_context, entityID)) {
+            unloadEntityScript(entityID, true);
+            unloaded++;
+        }
+    }
+    if (unloaded > 0) {
+        qCDebug(scriptengine) << "unloaded the scripts of" << unloaded << "entities that are gone";
+    }
+}
+
 QList<EntityItemID> ScriptEngine::getListOfEntityScriptIDs() {
     QReadLocker locker{ &_entityScriptsLock };
     return _entityScripts.keys();
