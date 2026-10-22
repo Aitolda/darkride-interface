@@ -11,6 +11,8 @@
 
 #include "MeshPartPayload.h"
 
+#include "RenderUtilsLogging.h"
+
 #include "ImpostorSwitch.h"
 
 #include <QProcess>
@@ -80,6 +82,7 @@ MeshPartPayload::MeshPartPayload(const std::shared_ptr<const graphics::Mesh>& me
 
 void MeshPartPayload::updateMeshPart(const std::shared_ptr<const graphics::Mesh>& drawMesh, int partIndex) {
     _drawMesh = drawMesh;
+    _partIndex = partIndex;   // was never stored (editor-renderer's find, 10-22): every part of a mesh read as part 0
     if (_drawMesh) {
         auto vertexFormat = _drawMesh->getVertexFormat();
         _hasColorAttrib = vertexFormat->hasAttribute(gpu::Stream::COLOR);
@@ -333,7 +336,42 @@ ModelMeshPartPayload::ModelMeshPartPayload(ModelPointer model,
     _created = created;
 }
 
+std::atomic<int> MeshPartPayload::dumpDrawFrames { 0 };
+std::atomic<bool> MeshPartPayload::_dumpingFrame { false };
+std::atomic<int> MeshPartPayload::_dumpFrame { 0 };
+
+void MeshPartPayload::beginFrame() {
+    int left = dumpDrawFrames.load();
+    if (left > 0) {
+        dumpDrawFrames.store(left - 1);
+        _dumpFrame.fetch_add(1);
+        _dumpingFrame.store(true);
+    } else {
+        _dumpingFrame.store(false);
+    }
+}
+
+namespace {
+    void dumpDraw(const RenderArgs* args, const char* kind, const QString& file, const void* mesh, int part, int lod,
+                  uint32_t numIndices, const render::Transforms& transforms) {
+        if (!MeshPartPayload::dumping() || args->_renderMode != RenderArgs::RenderMode::DEFAULT_RENDER_MODE) {
+            return;
+        }
+        QString at;
+        for (const auto& transform : transforms) {
+            const glm::vec3 t = transform.getTranslation();
+            at += QString(at.isEmpty() ? "%1,%2,%3" : ";%1,%2,%3").arg(t.x, 0, 'f', 2).arg(t.y, 0, 'f', 2).arg(t.z, 0, 'f', 2);
+        }
+        qCDebug(renderutils).noquote() << QString("INSTANCING-DUMP frame=%1 kind=%2 file=%3 mesh=%4 part=%5 lod=%6 indices=%7 n=%8 at=%9")
+            .arg(MeshPartPayload::dumpFrame()).arg(kind).arg(file).arg((quintptr)mesh, 0, 16).arg(part).arg(lod)
+            .arg(numIndices).arg(transforms.size()).arg(at);
+    }
+}
+
 void ModelMeshPartPayload::initCache(const ModelPointer& model) {
+    if (model) {
+        _modelFileForLog = model->getURL().fileName();
+    }
     if (_drawMesh) {
         auto vertexFormat = _drawMesh->getVertexFormat();
         _hasColorAttrib = vertexFormat->hasAttribute(gpu::Stream::COLOR);
@@ -607,6 +645,9 @@ void ModelMeshPartPayload::render(RenderArgs* args) {
         PerformanceTimer perfTimer("batch.drawIndexed()");
         batch.drawIndexed(gpu::TRIANGLES, drawPart._numIndices, drawPart._startIndex);
     }
+    if (MeshPartPayload::dumping()) {
+        dumpDraw(args, "single", _modelFileForLog, _drawMesh.get(), _partIndex, lodLevel, drawPart._numIndices, { _worldFromLocalTransform });
+    }
 
     args->_details._trianglesRendered += drawPart._numIndices / INDICES_PER_TRIANGLE;
 }
@@ -675,7 +716,10 @@ render::Instancing ModelMeshPartPayload::getInstancing(RenderArgs* args) {
     answer.draw = render::Instancing::SHARED;
     answer.key.mesh = _drawMesh.get();
     answer.key.material = _materialContentKey;
-    answer.key.part = ((uint32_t)_partIndex << 8) | (uint32_t)(_settledLodLevel & 0xff);
+    // the range the draw takes at this level, which is what the group's draw binds for every member
+    const graphics::Mesh::Part& drawPart = _settledLodLevel > 0 ? _lodParts[_settledLodLevel - 1] : _drawPart;
+    answer.key.range = ((uint64_t)drawPart._startIndex << 32) | (uint64_t)drawPart._numIndices;
+    answer.key.part = ((uint32_t)(_partIndex & 0xffffff) << 8) | (uint32_t)(_settledLodLevel & 0xff);
     answer.key.shape = (uint32_t)shapeKey._flags.to_ulong();
     return answer;
 }
@@ -705,6 +749,9 @@ void ModelMeshPartPayload::renderInstances(RenderArgs* args, const render::Trans
     {
         PerformanceTimer perfTimer("batch.drawIndexedInstances()");
         batch.drawIndexedInstances(gpu::TRIANGLES, drawPart._numIndices, drawPart._startIndex, transforms);
+    }
+    if (MeshPartPayload::dumping()) {
+        dumpDraw(args, "group", _modelFileForLog, _drawMesh.get(), _partIndex, lodLevel, drawPart._numIndices, transforms);
     }
     args->_details._trianglesRendered += (int)(drawPart._numIndices / INDICES_PER_TRIANGLE) * (int)transforms.size();
     args->_details._instancedDrawcalls++;

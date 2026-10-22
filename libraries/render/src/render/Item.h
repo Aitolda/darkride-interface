@@ -345,16 +345,19 @@ class InstanceKey {
 public:
     const void* mesh { nullptr };   // the mesh whose buffers the draw takes
     uint64_t material { 0 };        // the material, by content (INSTANCING.md 3.2)
+    uint64_t range { 0 };           // the index range the draw takes: its start and its count
     uint32_t part { 0 };            // the part and its level of detail
     uint32_t shape { 0 };           // the ShapeKey's flags
 
     bool operator==(const InstanceKey& other) const {
-        return mesh == other.mesh && material == other.material && part == other.part && shape == other.shape;
+        return mesh == other.mesh && material == other.material && range == other.range && part == other.part &&
+               shape == other.shape;
     }
     struct Hash {
         size_t operator()(const InstanceKey& key) const {
             size_t hash = std::hash<const void*>()(key.mesh);
             hash ^= std::hash<uint64_t>()(key.material) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
+            hash ^= std::hash<uint64_t>()(key.range) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
             hash ^= std::hash<uint64_t>()(((uint64_t)key.part << 32) | key.shape) + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
             return hash;
         }
