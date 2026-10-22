@@ -656,10 +656,18 @@ public slots:
      * left out keeps its last value.
      * @function Window.setLoadingScreen
      * @param {object} state - <code>up</code> (boolean), the strings <code>world</code>, <code>author</code>,
-     *     <code>picture</code> (a URL) and <code>status</code>, and <code>progress</code>: 0 to 1 and the bar fills, or
-     *     negative and it glides.
+     *     <code>picture</code> (a URL) and <code>status</code>, <code>progress</code>: 0 to 1 and the bar fills, or
+     *     negative and it glides, and the buttons it offers, <code>canCancel</code> and <code>canShowNow</code> (booleans).
      */
     void setLoadingScreen(const QVariantMap& state);
+
+    /**jsdoc
+     * Says that a button on the loading screen was pressed; the screen calls it, and scripts hear it as
+     * {@link Window.loadingScreenButtonPressed|loadingScreenButtonPressed}.
+     * @function Window.pressLoadingScreenButton
+     * @param {string} button - <code>"cancel"</code> or <code>"showNow"</code>.
+     */
+    void pressLoadingScreenButton(const QString& button);
 
 
 private slots:
@@ -694,6 +702,15 @@ signals:
     void loadingScreenChanged(const QVariantMap& state);
 
     /**jsdoc
+     * Triggered when a button on the loading screen is pressed.
+     * @function Window.loadingScreenButtonPressed
+     * @param {string} button - <code>"cancel"</code> (go back where you came from) or <code>"showNow"</code> (stop
+     *     waiting for the whole world).
+     * @returns {Signal}
+     */
+    void loadingScreenButtonPressed(const QString& button);
+
+    /**jsdoc
      * Triggered when you try to navigate to a *.json, *.svo, or *.svo.json URL in a Web browser within Interface.
      * @function Window.svoImportRequested
      * @param {string} url - The URL of the file to import.
@@ -710,6 +727,15 @@ signals:
      * @returns {Signal}
      */
     void domainConnectionRefused(const QString& reasonMessage, int reasonCode, const QString& extraInfo);
+
+    /**jsdoc
+     * Triggered when a domain you're visiting or connected to hasn't answered for long enough that Interface gives up
+     * on it for now and shows its connection failure window (or goes to the error domain). The connection keeps being
+     * tried: if the domain answers later, {@link Window.domainChanged} follows.
+     * @function Window.domainConnectionTimedOut
+     * @returns {Signal}
+     */
+    void domainConnectionTimedOut();
 
     /**jsdoc
      * Triggered when you try to visit a domain but are redirected into the error state.

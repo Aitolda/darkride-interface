@@ -19,7 +19,9 @@
 //  The screen lifts once the client has left the old world (its physics or its connection gone), the new world is
 //  connected, its physics is on and the avatar's own model has loaded
 //  (MyAvatar.isSkeletonModelLoaded; at most 10 s more after physics). A cancel, a refused connection, or 90 s without
-//  arriving lifts it anyway. While it is up, the arrival waits for what is near the avatar to be ready for physics and
+//  arriving lifts it anyway; so does the viewer giving up on a world that doesn't answer (its connection failure
+//  window opens), or a hop's place not found. While it is up, the arrival waits for what is near the avatar to be
+//  ready for physics and
 //  drawn, even where the zone would let the avatar move at once (Window.setArrivalWaitsForNearby): no pop-in under the
 //  avatar. At the first arrival, the launch screen (sign-in's navy cover) is released once this one covers the view.
 //
@@ -27,7 +29,7 @@
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
 //
 
-/* global Script, Entities, MyAvatar, Window, Messages, HMD, Account, Settings, location */
+/* global Script, Entities, MyAvatar, Window, Messages, HMD, Account, Settings, location, AddressManager */
 
 (function () {
     var CHANNEL = "Darkride-Hop";
@@ -38,6 +40,9 @@
     var STATUS_WHOLE = "Loading the world…";
     var MIN_SHOWN = 2000;         // ms: the screen stays at least this long, so an arrival never flashes it (Caity, 10-21)
     var TIME_LIMIT = 90;          // s: a way in that never arrives lifts the screen anyway
+    // ms: the screen's buttons (Cancel, and Show me now while a world loads whole) fade in once it has been up this
+    // long, so a quick arrival never shows them (Caity, 10-22: "a cancel loading button to go back and abort a load")
+    var BUTTONS_AFTER = 3000;
     var AVATAR_GRACE = 10;        // s after physics: an avatar that has not loaded by then no longer holds the screen
     var LAUNCH_RELEASE_DELAY = 600;   // ms: the desktop screen's fade-in, after which it covers the launch screen
     var TICK = 50;                // ms
@@ -109,7 +114,9 @@
             physicsOnAt: 0,
             launchReleased: false,
             progress: -1,                   // the whole-world bar, 0 to 1; negative while it glides
-            mostWaiting: 0                  // the most entities the landing waited for once the world was all in
+            mostWaiting: 0,                 // the most entities the landing waited for once the world was all in
+            // where Cancel goes back to: the world this way left (a hop starts while still in it), none for the first
+            from: kind === "hop" ? { world: placeName(), picture: placePicture() } : null
         };
         setArrivalWaitsForNearby(true);
         if (!timer) {
@@ -142,13 +149,15 @@
         }
     }
 
-    function send(up, status, progress) {
+    function send(up, status, progress, canCancel, canShowNow) {
         var message = { type: "screen", up: up, world: way ? way.world : (sent ? sent.world : ""),
             author: way ? way.author : (sent ? sent.author : ""), picture: way ? way.picture : (sent ? sent.picture : ""),
-            status: status, progress: progress === undefined ? -1 : progress };
+            status: status, progress: progress === undefined ? -1 : progress,
+            canCancel: !!(up && canCancel), canShowNow: !!(up && canShowNow) };
         if (sent && sent.up === message.up && sent.world === message.world && sent.author === message.author &&
                 sent.picture === message.picture && sent.status === message.status &&
-                Math.abs(sent.progress - message.progress) < 0.005) {
+                Math.abs(sent.progress - message.progress) < 0.005 && sent.canCancel === message.canCancel &&
+                sent.canShowNow === message.canShowNow) {
             return;
         }
         if (!sent && !up) {
@@ -157,7 +166,8 @@
         sent = message;
         if (Window.setLoadingScreen) {
             Window.setLoadingScreen({ up: message.up, world: message.world, author: message.author,
-                picture: message.picture, status: message.status, progress: message.progress });
+                picture: message.picture, status: message.status, progress: message.progress,
+                canCancel: message.canCancel, canShowNow: message.canShowNow });
         }
         Messages.sendLocalMessage(CHANNEL, JSON.stringify(message));
     }
@@ -188,7 +198,8 @@
             return;
         }
 
-        if (!way.world && location.isConnected) {
+        // (a hop's name only once it has left: before that, the world connected is still the one it is leaving)
+        if (!way.world && way.left && location.isConnected) {
             way.world = placeName();
             way.picture = way.picture || placePicture();
         }
@@ -198,7 +209,9 @@
         } else if (way.progress >= 0) {
             way.progress = 1;   // the whole world is in: the bar stays full until the screen lifts
         }
-        send(true, status, way.progress);
+        // the buttons: Cancel wherever there is somewhere to go back to, Show me now while a world loads whole
+        var offered = now - way.started >= BUTTONS_AFTER;
+        send(true, status, way.progress, offered && canGoBack(), offered && loading.active);
 
         if (HMD.active || CARD_ON_DESKTOP) {
             showCard(status, now);
@@ -402,6 +415,39 @@
         }
     }
 
+    function canGoBack() {
+        if (!way) {
+            return false;
+        }
+        // a hop that has left goes back by the address history, which has the world it left
+        return way.kind === "hop" ? !!way.from && (!way.left || location.canGoBack()) : location.canGoBack();
+    }
+
+    // Cancel: back to the world this way left, under the screen as any hop (an arrival there, with its name and
+    // picture); before the old world was left, the hop just stops. Show me now: stop waiting for the whole world.
+    function onLoadingScreenButtonPressed(button) {
+        if (!way) {
+            return;
+        }
+        if (button === "showNow") {
+            if (loadingState().active && Window.showWorldNow) {
+                Window.showWorldNow();
+            }
+        } else if (button === "cancel" && canGoBack()) {
+            var from = way.from;
+            if (way.kind === "hop" && !way.left) {
+                Messages.sendLocalMessage(CHANNEL, JSON.stringify({ type: "cancel" }));
+                end();
+                return;
+            }
+            var keepLaunch = way.launchReleased;
+            begin("hop", from ? from.world : "", "", from ? from.picture : "");
+            way.from = null;                  // no Cancel on the way back
+            way.launchReleased = keepLaunch;
+            location.goBack();
+        }
+    }
+
     function onDomainChanged() {
         if (way && !way.left) {
             way.left = true;
@@ -411,6 +457,21 @@
 
     function onDomainConnectionRefused() {
         if (way) {
+            end();
+        }
+    }
+
+    // the world doesn't answer: the viewer gives up on it for now and opens its connection failure window, which the
+    // screen would hide until its time limit (avatar-ai, 10-22: "Can't reach" hidden for 80 s), so the screen lifts
+    function onDomainConnectionTimedOut() {
+        if (way) {
+            end();
+        }
+    }
+
+    // a hop to a place that doesn't exist or is offline goes nowhere: the old world stays, so the screen lifts at once
+    function onLookupFailed() {
+        if (way && way.kind === "hop" && !way.left) {
             end();
         }
     }
@@ -425,6 +486,14 @@
     Messages.messageReceived.connect(onMessage);
     Window.domainChanged.connect(onDomainChanged);
     Window.domainConnectionRefused.connect(onDomainConnectionRefused);
+    if (Window.loadingScreenButtonPressed) {
+        Window.loadingScreenButtonPressed.connect(onLoadingScreenButtonPressed);
+    }
+    if (Window.domainConnectionTimedOut) {
+        Window.domainConnectionTimedOut.connect(onDomainConnectionTimedOut);
+    }
+    AddressManager.lookupResultIsNotFound.connect(onLookupFailed);
+    AddressManager.lookupResultIsOffline.connect(onLookupFailed);
     if (Window.worldLoadingChanged) {
         Window.worldLoadingChanged.connect(onWorldLoadingChanged);
     }
@@ -454,6 +523,14 @@
         Messages.unsubscribe(CHANNEL);
         Window.domainChanged.disconnect(onDomainChanged);
         Window.domainConnectionRefused.disconnect(onDomainConnectionRefused);
+        if (Window.loadingScreenButtonPressed) {
+            Window.loadingScreenButtonPressed.disconnect(onLoadingScreenButtonPressed);
+        }
+        if (Window.domainConnectionTimedOut) {
+            Window.domainConnectionTimedOut.disconnect(onDomainConnectionTimedOut);
+        }
+        AddressManager.lookupResultIsNotFound.disconnect(onLookupFailed);
+        AddressManager.lookupResultIsOffline.disconnect(onLookupFailed);
         if (Window.worldLoadingChanged) {
             Window.worldLoadingChanged.disconnect(onWorldLoadingChanged);
         }

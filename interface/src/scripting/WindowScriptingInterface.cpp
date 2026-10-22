@@ -676,3 +676,7 @@ void WindowScriptingInterface::setLoadingScreen(const QVariantMap& state) {
     }
     emit loadingScreenChanged(state);
 }
+
+void WindowScriptingInterface::pressLoadingScreenButton(const QString& button) {
+    emit loadingScreenButtonPressed(button);
+}

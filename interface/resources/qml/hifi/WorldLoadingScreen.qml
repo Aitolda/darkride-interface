@@ -6,7 +6,7 @@
 //  that glides; one short line saying what's happening. It fades in at once and fades out into the world.
 //
 //  It draws only; scripts/system/worldLoading.js decides, calling Window.setLoadingScreen({up: true|false, world,
-//  author, picture: "<url>", status, progress}), any field left out keeping its last value. progress is 0 to 1 while a
+//  author, picture: "<url>", status, progress, canCancel, canShowNow}), any field left out keeping its last value. progress is 0 to 1 while a
 //  world its owner set to load whole first is loading, and the bar fills; negative (the default) and the bar glides. (QML may not listen to the
 //  Messages client, which lives on the network thread; Window lives on the main thread with this.) In a headset
 //  the script shows its own card instead, and this stays hidden.
@@ -33,6 +33,9 @@ Item {
     property string picture: ""
     property string status: ""
     property real progress: -1
+    // the buttons the script offers: Cancel (back where you came from) and Show me now (a world loading whole)
+    property bool canCancel: false
+    property bool canShowNow: false
 
     readonly property bool shown: up && !HMD.active
     opacity: shown ? 1.0 : 0.0
@@ -219,6 +222,56 @@ Item {
             color: "#8cffffff"
             font.pixelSize: 15
         }
+
+        Item {
+            width: 1
+            height: 30
+        }
+
+        // quiet pills that fade in when offered; the script says what each does (Window.loadingScreenButtonPressed)
+        Row {
+            id: buttons
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: 12
+            height: 36
+            opacity: root.canCancel || root.canShowNow ? 1.0 : 0.0
+            Behavior on opacity {
+                NumberAnimation { duration: 300; easing.type: Easing.InOutQuad }
+            }
+
+            Repeater {
+                model: [
+                    { name: "showNow", label: "Show me now", shown: root.canShowNow },
+                    { name: "cancel", label: "Cancel", shown: root.canCancel }
+                ]
+                delegate: Rectangle {
+                    visible: modelData.shown
+                    width: label.implicitWidth + 40
+                    height: 36
+                    radius: height / 2
+                    color: area.pressed ? "#40ffffff" : (area.containsMouse ? "#2effffff" : "#1affffff")
+                    border.color: "#33ffffff"
+                    border.width: 1
+
+                    Text {
+                        id: label
+                        anchors.centerIn: parent
+                        text: modelData.label
+                        color: "#e6ffffff"
+                        font.pixelSize: 15
+                        font.weight: Font.Medium
+                    }
+                    MouseArea {
+                        id: area
+                        anchors.fill: parent
+                        enabled: root.shown && buttons.opacity > 0.5
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Window.pressLoadingScreenButton(modelData.name)
+                    }
+                }
+            }
+        }
     }
 
     // Window.setLoadingScreen() from scripts/system/worldLoading.js: a field left out keeps its last value
@@ -239,6 +292,12 @@ Item {
             }
             if (state.progress !== undefined) {
                 root.progress = state.progress;
+            }
+            if (state.canCancel !== undefined) {
+                root.canCancel = !!state.canCancel;
+            }
+            if (state.canShowNow !== undefined) {
+                root.canShowNow = !!state.canShowNow;
             }
             if (state.up !== undefined) {
                 root.up = !!state.up;
