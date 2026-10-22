@@ -98,6 +98,9 @@ namespace {
                 group.item.render(args);
             }
         }
+        // settled state is the pass's own: a draw of these items later in the frame, outside a grouping pass, must
+        // settle again (its view may differ)
+        args->_instancingPass = 0;
     }
 }
 

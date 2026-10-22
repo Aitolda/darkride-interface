@@ -187,6 +187,7 @@ void GL41Backend::do_drawIndexedInstances(const Batch& batch, size_t paramOffset
     glBindBuffer(GL_ARRAY_BUFFER, _transform._drawCallInfoBuffer);
     glVertexAttribIPointer(gpu::Stream::DRAW_CALL_INFO, 2, GL_UNSIGNED_SHORT, 0,
         reinterpret_cast<GLvoid*>(_transform._instanceDrawCallInfoOffset + listOffset * sizeof(Batch::DrawCallInfo)));
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     if (isStereo()) {
         GLint trueNumInstances = 2 * numInstances;

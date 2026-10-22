@@ -173,7 +173,8 @@ void Batch::drawIndexedInstances(Primitive primitiveType, uint32 numIndices, uin
     if (transforms.empty()) {
         return;
     }
-    const size_t room = std::numeric_limits<uint16_t>::max() - _objects.size();
+    const size_t limit = std::numeric_limits<uint16_t>::max();
+    const size_t room = _objects.size() >= limit ? 0 : limit - _objects.size();
     size_t numInstances = transforms.size();
     if (numInstances > room) {
         static std::once_flag once;
@@ -200,6 +201,9 @@ void Batch::drawIndexedInstances(Primitive primitiveType, uint32 numIndices, uin
         _instanceDrawCallInfos.emplace_back((uint16)_objects.size() - 1, _drawcallUniform);
     }
     _drawcallUniform = _drawcallUniformReset;
+    // the current model's object goes in again before the next plain draw: captureDrawCallInfoImpl points a draw at the
+    // last object pushed, which is now the last instance's (editor-renderer's review, 10-22)
+    _invalidModel = true;
 
     // the draw's own entry in the per-draw list keeps the backend's draw index in step; it is not what the attribute
     // reads for this draw
