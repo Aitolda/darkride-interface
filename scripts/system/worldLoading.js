@@ -165,7 +165,9 @@
         }
         sent = message;
         if (Window.setLoadingScreen) {
-            Window.setLoadingScreen({ up: message.up, world: message.world, author: message.author,
+            // with the headset card on a desktop (worldLoading/cardOnDesktop, to check the card without a headset), the
+            // full-window page stays down: it would cover the card
+            Window.setLoadingScreen({ up: message.up && !CARD_ON_DESKTOP, world: message.world, author: message.author,
                 picture: message.picture, status: message.status, progress: message.progress,
                 canCancel: message.canCancel, canShowNow: message.canShowNow });
         }
