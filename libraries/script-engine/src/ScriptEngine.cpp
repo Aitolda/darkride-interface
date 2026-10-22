@@ -1551,6 +1551,8 @@ void ScriptEngine::updateMemoryCost(const qint64& deltaSize) {
     }
 }
 
+static bool entityIsGone(ScriptEngine::Context context, const EntityItemID& entityID);   // below, by loadEntityScript
+
 void ScriptEngine::timerFired() {
     {
         QSharedPointer<ScriptEngines> scriptEngines(_scriptEngines);
@@ -1567,6 +1569,26 @@ void ScriptEngine::timerFired() {
         // this timer is done, we can kill it
         _timerFunctionMap.remove(callingTimer);
         delete callingTimer;
+    }
+
+    // an entity script's timer whose entity has left the tree: that script was never unloaded (a world left while it
+    // loaded), so its timers stop here instead of calling it for an entity that's gone, once a second each, forever
+    // (Caity's client, 10-22: Tivoli Town's hideByDistance.js after two Cancels). At a leave this catches the timers
+    // that fire between the erasing of the world's entities and their scripts' queued unloads. Logged at most once a
+    // second, with a count and one example.
+    if (entityIsGone(_context, timerData.definingEntityIdentifier)) {
+        const EntityItemID entityID = timerData.definingEntityIdentifier;
+        _goneEntityTimersStopped++;
+        const quint64 now = usecTimestampNow();
+        if (now - _goneEntityTimersLoggedAt > USECS_PER_SECOND) {
+            qCDebug(scriptengine) << "stopping the timers of entity scripts whose entities are gone ("
+                                  << _goneEntityTimersStopped << "since the last such line ), such as" << entityID.toString()
+                                  << "(its script" << (hasEntityScriptDetails(entityID) ? "still listed)" : "not listed)");
+            _goneEntityTimersLoggedAt = now;
+            _goneEntityTimersStopped = 0;
+        }
+        stopAllTimersForEntityScript(entityID);
+        return;
     }
 
     // call the associated JS function, if it exists
@@ -2358,12 +2380,19 @@ bool ScriptEngine::hasEntityScriptDetails(const EntityItemID& entityID) const {
 // gone, and its script ran on with no entity (Tivoli Town's hideByDistance.js on 1,300 plants, a timer each, after a
 // hop away during the world's load; 10-22). Client entity scripts only; the renderer checks the same before asking.
 static bool entityIsGone(ScriptEngine::Context context, const EntityItemID& entityID) {
-    if (context != ScriptEngine::ENTITY_CLIENT_SCRIPT) {
+    if (context != ScriptEngine::ENTITY_CLIENT_SCRIPT || entityID.isInvalidID()) {
         return false;
     }
     auto entities = DependencyManager::get<EntityScriptingInterface>();
     auto tree = entities ? entities->getEntityTree() : nullptr;
-    return tree && !tree->findEntityByEntityItemID(entityID);
+    if (!tree) {
+        return false;
+    }
+    // under the tree's read lock, so an entity between two octree elements (being moved) isn't taken for gone; with
+    // the lock busy, it isn't gone this time
+    bool gone = false;
+    tree->withTryReadLock([&] { gone = !tree->findEntityByEntityItemID(entityID); });
+    return gone;
 }
 
 void ScriptEngine::loadEntityScript(const EntityItemID& entityID, const QString& entityScript, bool forceRedownload) {
@@ -2743,9 +2772,8 @@ void ScriptEngine::unloadEntityScriptsOfGoneEntities() {
             unloaded++;
         }
     }
-    if (unloaded > 0) {
-        qCDebug(scriptengine) << "unloaded the scripts of" << unloaded << "entities that are gone";
-    }
+    qCDebug(scriptengine) << "after a world was left: of" << entityIDs.size() << "entity scripts listed," << unloaded
+                         << "were of entities that are gone, and are unloaded";
 }
 
 QList<EntityItemID> ScriptEngine::getListOfEntityScriptIDs() {

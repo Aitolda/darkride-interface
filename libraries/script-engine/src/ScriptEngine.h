@@ -966,6 +966,8 @@ protected:
     QHash<QTimer*, CallbackData> _timerFunctionMap;
     QSet<QUrl> _includedURLs;
     mutable QReadWriteLock _entityScriptsLock { QReadWriteLock::Recursive };
+    int _goneEntityTimersStopped { 0 };         // entity scripts whose timers were stopped as their entities were gone,
+    quint64 _goneEntityTimersLoggedAt { 0 };    // since this was last logged
     QHash<EntityItemID, EntityScriptDetails> _entityScripts;
     EntityScriptContentAvailableMap _contentAvailableQueue;
 

@@ -223,6 +223,7 @@ void EntityTreeRenderer::stopDomainAndNonOwnedEntities() {
     // unload and stop the engine
     if (_entitiesScriptEngine) {
         QList<EntityItemID> entitiesWithEntityScripts = _entitiesScriptEngine->getListOfEntityScriptIDs();
+        int unloaded = 0, unloadedGone = 0, kept = 0;
 
         foreach (const EntityItemID& entityID,  entitiesWithEntityScripts) {
             EntityItemPointer entityItem = getTree()->findEntityByEntityItemID(entityID);
@@ -231,6 +232,7 @@ void EntityTreeRenderer::stopDomainAndNonOwnedEntities() {
             // goes too, or it runs on with no entity (Tivoli Town's hideByDistance.js after a Cancel, 10-22)
             if (!entityItem) {
                 _entitiesScriptEngine->unloadEntityScript(entityID, true);
+                unloadedGone++;
                 continue;
             }
             if (!entityItem->getScript().isEmpty()) {
@@ -239,9 +241,15 @@ void EntityTreeRenderer::stopDomainAndNonOwnedEntities() {
                         _entitiesScriptEngine->callEntityScriptMethod(entityID, "leaveEntity");
                     }
                     _entitiesScriptEngine->unloadEntityScript(entityID, true);
+                    unloaded++;
+                } else {
+                    kept++;
                 }
             }
         }
+        qCDebug(entitiesrenderer) << "leaving the world's entities: of" << entitiesWithEntityScripts.size()
+                                 << "entity scripts listed," << unloaded << "unloaded," << unloadedGone
+                                 << "unloaded whose entities were already gone," << kept << "kept (local or avatar)";
     }
 }
 
