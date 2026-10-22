@@ -1,11 +1,4 @@
 # add the tool directories
-find_npm()
-
-if (NPM_EXECUTABLE)
-  add_subdirectory(jsdoc)
-  set_target_properties(jsdoc PROPERTIES FOLDER "Tools")
-endif()
-
 function(check_test name)
     set(RESULT TRUE)
     if (BUILD_TOOLS_INCLUDE)

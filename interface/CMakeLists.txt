@@ -15,10 +15,6 @@ set(CUSTOM_INTERFACE_QRC_PATHS "")
 
 find_npm()
 
-if (BUILD_TOOLS AND NPM_EXECUTABLE)
-  add_custom_qrc_path(CUSTOM_INTERFACE_QRC_PATHS "${CMAKE_SOURCE_DIR}/tools/jsdoc/out/doclets.json" "auto-complete/doclets.json")
-endif ()
-
 set(RESOURCES_QRC ${CMAKE_CURRENT_BINARY_DIR}/resources.qrc)
 set(RESOURCES_RCC ${CMAKE_CURRENT_SOURCE_DIR}/compiledResources/resources.rcc)
 generate_qrc(OUTPUT ${RESOURCES_QRC} PATH ${CMAKE_CURRENT_SOURCE_DIR}/resources CUSTOM_PATHS ${CUSTOM_INTERFACE_QRC_PATHS} GLOBS *)
@@ -193,8 +189,7 @@ endif ()
 
 
 if (BUILD_TOOLS AND NPM_EXECUTABLE)
-  # require JSDoc and Tivoli scripts to be build before interface is deployed
-  add_dependencies(resources jsdoc)
+  # require the Tivoli scripts to be built before interface is deployed
   add_dependencies(resources tivoli-scripts)
 endif()
 
@@ -333,13 +328,6 @@ if (APPLE)
 
     # # copy JSDoc files beside the executable
     # COMMAND "${CMAKE_COMMAND}" -E copy_directory
-    #   "${CMAKE_SOURCE_DIR}/tools/jsdoc/out"
-    #   "${RESOURCES_DEV_DIR}/jsdoc"
-    # copy JSDoc files beside the executable
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-      "${CMAKE_SOURCE_DIR}/tools/jsdoc/out/doclets.json"
-      "${RESOURCES_DEV_DIR}/jsdoc/doclets.json"
-
     # copy Tivoli scripts into scripts folder
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
       "${CMAKE_SOURCE_DIR}/tivoli-scripts/dist"
@@ -399,12 +387,6 @@ else()
 
     # copy JSDoc files beside the executable
     # COMMAND "${CMAKE_COMMAND}" -E copy_directory
-    #   "${CMAKE_SOURCE_DIR}/tools/jsdoc/out"
-    #   "${INTERFACE_EXEC_DIR}/jsdoc"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-      "${CMAKE_SOURCE_DIR}/tools/jsdoc/out/doclets.json"
-      "${INTERFACE_EXEC_DIR}/jsdoc/doclets.json"
-
     # copy Tivoli scripts into scripts folder
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
       "${CMAKE_SOURCE_DIR}/tivoli-scripts/dist"
