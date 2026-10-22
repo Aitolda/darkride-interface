@@ -298,6 +298,27 @@ static const QString DISABLE_WATCHDOG_FLAG{ "HIFI_DISABLE_WATCHDOG" };
 static bool DISABLE_WATCHDOG = nsightActive() || QProcessEnvironment::systemEnvironment().contains(DISABLE_WATCHDOG_FLAG);
 #endif
 
+// The window title's client label, first in the title when there is one: --clientLabel "<text>" on the command line,
+// else the DARKRIDE_CLIENT_LABEL environment variable, else the build's (cmake -DCLIENT_LABEL=...). With several
+// sessions' clients on one machine, a label set per launch names the session and the run ("Darkride - Physics - Card
+// Run Test") without a rebuild, release builds included, so Caity doesn't close one for her own (2026-10-22).
+static const QString& clientLabel() {
+    static const QString label = []() -> QString {
+        const QStringList args = QCoreApplication::arguments();
+        const int i = args.indexOf("--clientLabel");
+        if (i != -1 && i + 1 < args.size()) {
+            return args.at(i + 1).trimmed();
+        }
+        const QString fromEnvironment = QProcessEnvironment::systemEnvironment().value("DARKRIDE_CLIENT_LABEL").trimmed();
+        return fromEnvironment.isEmpty() ? BuildInfo::CLIENT_LABEL : fromEnvironment;
+    }();
+    return label;
+}
+
+static QString labelledTitle(const QString& title) {
+    return clientLabel().isEmpty() ? title : clientLabel() + " | " + title;
+}
+
 #if !defined(Q_OS_ANDROID)
 static const uint32_t MAX_CONCURRENT_RESOURCE_DOWNLOADS = 16;
 #else
@@ -1213,7 +1234,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     QFontDatabase::addApplicationFont(PathUtils::resourcesPath() + "styles/Inconsolata.otf");
     
-    _window->setWindowTitle("Darkride");
+    _window->setWindowTitle(labelledTitle("Darkride"));
 
     Model::setAbstractViewStateInterface(this); // The model class will sometimes need to know view state details from us
 
@@ -3382,7 +3403,7 @@ void Application::showLoginScreen() {
     QJsonObject loginData = {};
     loginData["action"] = "login dialog popped up";
     UserActivityLogger::getInstance().logAction("encourageLoginDialog", loginData);
-    _window->setWindowTitle("Darkride");
+    _window->setWindowTitle(labelledTitle("Darkride"));
 #else
     resumeAfterLoginDialogActionTaken();
 #endif
@@ -7704,11 +7725,9 @@ void Application::updateWindowTitle() const {
             title = worldName;
         }
     }
-    // a build's client label first, when the build has one (cmake -DCLIENT_LABEL=...): with several sessions' clients
-    // on one machine, it tells them apart at a glance (Caity, 2026-10-19)
-    if (!BuildInfo::CLIENT_LABEL.isEmpty()) {
-        title = BuildInfo::CLIENT_LABEL + " | " + title;
-    }
+    // the client label first, when there is one (see clientLabel): with several sessions' clients on one machine, it
+    // tells them apart at a glance (Caity, 2026-10-19)
+    title = labelledTitle(title);
     // With several branches built on this machine, one per session, the title says which build this client is
     // ("Darkride - physics-net"), so the right window gets closed. Dev builds only; a release shows no branch.
     if (BuildInfo::BUILD_TYPE == BuildInfo::Dev && !BuildInfo::BUILD_BRANCH.isEmpty() && BuildInfo::BUILD_BRANCH != "HEAD") {
