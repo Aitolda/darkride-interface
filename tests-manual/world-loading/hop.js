@@ -25,13 +25,22 @@
     }
     // the screen is local entities, which Entities' searches skip: it says when it comes up and goes
     var screenIsUp = false;
+    var lastScreen = null;
     Messages.subscribe("Darkride-Hop");
     Messages.messageReceived.connect(function (channel, message) {
         var data = channel === "Darkride-Hop" ? JSON.parse(message) : {};
         if (data.type === "screen") {
+            var buttonsChanged = !lastScreen || lastScreen.canCancel !== data.canCancel ||
+                lastScreen.canShowNow !== data.canShowNow;
+            if (!lastScreen || lastScreen.up !== data.up || lastScreen.status !== data.status ||
+                    lastScreen.world !== data.world || buttonsChanged) {
+                print("WORLD-LOADING-HOP screen " + (data.up ? "up" : "down") + " \"" + data.status + "\" world \"" +
+                      data.world + "\" by \"" + data.author + "\" picture \"" + data.picture + "\" buttons " +
+                      (data.canCancel ? "[Cancel]" : "") + (data.canShowNow ? "[Show me now]" : "") + " in \"" +
+                      location.hostname + "\" at " + (start ? t().toFixed(2) + " s" : "start-up"));
+            }
             screenIsUp = data.up;
-            print("WORLD-LOADING-HOP screen " + (data.up ? "up" : "down") + " \"" + data.status + "\" world \"" + data.world +
-                  "\" by \"" + data.author + "\" picture \"" + data.picture + "\" at " + (start ? t().toFixed(2) + " s" : "start-up"));
+            lastScreen = data;
         }
     });
     function screenUp() {
@@ -124,6 +133,17 @@
                     print("WORLD-LOADING-HOP snapshot at " + (ms / 1000) + " s after the hop");
                 }, delay + ms);
             });
+        }
+        // HOP_PRESS="<button>@<s>" (run.sh): press a loading screen button that long after the hop, as a click would
+        // (Window.pressLoadingScreenButton: "cancel" goes back where the hop came from, "showNow" stops waiting for the
+        // whole world); what the screen offered then is printed, and where the client is when the screen lifts
+        if (typeof HOP_PRESS !== "undefined") {
+            var press = HOP_PRESS.split("@");
+            Script.setTimeout(function () {
+                print("WORLD-LOADING-HOP pressing " + press[0] + " at " + t().toFixed(2) + " s; the screen offers " +
+                    JSON.stringify(lastScreen && { canCancel: lastScreen.canCancel, canShowNow: lastScreen.canShowNow }));
+                Window.pressLoadingScreenButton(press[0]);
+            }, delay + Number(press[1]) * 1000);
         }
         sample();
     }, 10000);
