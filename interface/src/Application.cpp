@@ -4261,7 +4261,9 @@ bool Application::isServerlessMode() const {
 }
 
 void Application::setIsInterstitialMode(bool interstitialMode) {
-    bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled();
+    // whole-world loading uses interstitial mode for its loading screen whatever the user's own setting says
+    bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
+        _worldLoading.active;
     if (enableInterstitial) {
         if (_interstitialMode != interstitialMode) {
             _interstitialMode = interstitialMode;
@@ -6278,6 +6280,8 @@ void Application::resetPhysicsReadyInformation() {
     _gpuTextureMemSizeAtLastCheck = 0;
     _physicsEnabled = false;
     _octreeProcessor.stopSafeLanding();
+    endWorldLoading();
+    _worldLoading = WorldLoading();
 }
 
 void Application::reloadResourceCaches() {
@@ -6538,13 +6542,16 @@ static bool domainLoadingInProgress = false;
 
 void Application::setArrivalWaitsForNearby(bool wait) {
     _arrivalWaitsForNearby = wait;
-    _octreeProcessor.setSafeLandingWaitsForVisuals(wait);
+    // whole-world loading sets SafeLanding's wait itself, with its radius
+    if (!_worldLoading.active) {
+        _octreeProcessor.setSafeLandingWaitsForVisuals(wait);
+    }
 }
 
-void Application::tryToEnablePhysics() {
+void Application::tryToEnablePhysics(bool skipTextureCheck) {
     bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
-        _arrivalWaitsForNearby;
-    if (gpuTextureMemSizeStable() || !enableInterstitial) {
+        _worldLoading.active || _arrivalWaitsForNearby;
+    if (skipTextureCheck || !enableInterstitial || gpuTextureMemSizeStable()) {
         _fullSceneCounterAtLastPhysicsCheck = _fullSceneReceivedCounter;
         _lastQueriedViews.clear();  // Force new view.
         // process octree stats packets are sent in between full sends of a scene (this isn't currently true).
@@ -6569,6 +6576,103 @@ void Application::tryToEnablePhysics() {
             // the real views goes out from the update loop as before
             DependencyManager::get<EntityTreeRenderer>()->forceRecheckEntities();
         }
+    }
+}
+
+// Whole-world loading. A domain's owner may ask (its settings' "loading" group) that visitors see a loading screen
+// until the whole world has arrived and its models and textures have loaded, instead of watching it stream in. The
+// settings come from the domain-server when the client connects; until they are here (a moment) the client sends no
+// entity query and does not start physics, and a domain that sends none within a few seconds loads as we go.
+void Application::updateWorldLoading() {
+    if (_worldLoading.settingsKnown) {
+        return;
+    }
+    auto& domainHandler = DependencyManager::get<NodeList>()->getDomainHandler();
+    quint64 now = usecTimestampNow();
+    if (!domainHandler.isConnected() || _worldLoading.waitStart == 0) {
+        _worldLoading.waitStart = now;
+        return;
+    }
+    const QJsonObject& settings = domainHandler.getSettingsObject();
+    if (settings.isEmpty()) {
+        static const quint64 SETTINGS_WAIT = 3 * USECS_PER_SECOND;
+        if (now - _worldLoading.waitStart > SETTINGS_WAIT) {
+            qCDebug(interfaceapp) << "World loading: no settings from the domain, loading as we go";
+            _worldLoading.settingsKnown = true;
+        }
+        return;
+    }
+    _worldLoading.settingsKnown = true;
+    QJsonObject loading = settings["loading"].toObject();
+    if (loading["whole_world"].toVariant().toBool()) {
+        static const int DEFAULT_TIME_LIMIT = 60;
+        static const int MIN_TIME_LIMIT = 10;
+        static const int MAX_TIME_LIMIT = 600;
+        int timeLimit = loading["time_limit"].toVariant().toInt();
+        if (timeLimit <= 0) {
+            timeLimit = DEFAULT_TIME_LIMIT;
+        }
+        // the whole world always arrives; the screen waits for the models and textures within this distance of
+        // the avatar (0: all of them)
+        static const float DEFAULT_RADIUS = 100.0f;
+        static const float MAX_RADIUS = 10000.0f;
+        bool hasRadius = false;
+        float radius = loading["radius"].toVariant().toFloat(&hasRadius);
+        if (!hasRadius || radius < 0.0f) {
+            radius = DEFAULT_RADIUS;
+        }
+        startWorldLoading(glm::clamp(timeLimit, MIN_TIME_LIMIT, MAX_TIME_LIMIT), glm::min(radius, MAX_RADIUS));
+    }
+}
+
+void Application::startWorldLoading(int timeLimitSeconds, float radius) {
+    _worldLoading.active = true;
+    _worldLoading.skipRequested = false;
+    _worldLoading.timeLimit = timeLimitSeconds;
+    _worldLoading.radius = radius;
+    _worldLoading.started = usecTimestampNow();
+    _worldLoading.deadline = _worldLoading.started + (quint64)timeLimitSeconds * USECS_PER_SECOND;
+    _worldLoading.lastQuery = 0;
+    _octreeProcessor.setSafeLandingWaitsForVisuals(true, radius);
+    setIsInterstitialMode(true);
+    // a new connection id: the entity server drops what it knows of this client and starts a first traversal, of
+    // the whole world now that the query has no view
+    _octreeQuery.incrementConnectionID();
+    qCDebug(interfaceapp) << "World loading: the whole world first, for at most" << timeLimitSeconds << "s, waiting for the models" <<
+        (radius > 0.0f ? QString("within %1 m").arg(radius) : QString("everywhere"));
+    emit worldLoadingChanged(true);
+}
+
+void Application::endWorldLoading() {
+    if (!_worldLoading.active) {
+        return;
+    }
+    setIsInterstitialMode(false);  // while still active, so it ends whatever the user's interstitial setting says
+    _worldLoading.active = false;
+    _octreeProcessor.setSafeLandingWaitsForVisuals(false);
+    emit worldLoadingChanged(false);
+}
+
+QVariantMap Application::getWorldLoadingState() {
+    QVariantMap state;
+    state["active"] = _worldLoading.active;
+    if (_worldLoading.active) {
+        auto progress = _octreeProcessor.safeLandingProgress();
+        quint64 now = usecTimestampNow();
+        state["received"] = progress.received;
+        state["ready"] = progress.received - progress.waiting;
+        state["serverDone"] = progress.serverDone;
+        state["seconds"] = (double)(now - _worldLoading.started) / USECS_PER_SECOND;
+        state["secondsLeft"] = _worldLoading.deadline > now ? (double)(_worldLoading.deadline - now) / USECS_PER_SECOND : 0.0;
+        state["timeLimit"] = _worldLoading.timeLimit;
+        state["radius"] = _worldLoading.radius;
+    }
+    return state;
+}
+
+void Application::showWorldNow() {
+    if (_worldLoading.active) {
+        _worldLoading.skipRequested = true;
     }
 }
 
@@ -6597,10 +6701,26 @@ void Application::update(float deltaTime) {
             }
         } else {
             _octreeProcessor.updateSafeLanding();
-            
-            // ghosting lets the avatar move before the world near it is in, unless a loading screen waits for that
-            bool ghosting = DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed() && !_arrivalWaitsForNearby;
-            if (ghosting || _octreeProcessor.safeLandingIsComplete()) {
+            updateWorldLoading();
+
+            if (_worldLoading.active) {
+                // the whole world first: until it has all arrived and loaded, "Show me now", or the time limit
+                bool timedOut = usecTimestampNow() > _worldLoading.deadline;
+                if (_worldLoading.skipRequested || timedOut) {
+                    tryToEnablePhysics(true);
+                } else if (_octreeProcessor.safeLandingIsComplete()) {
+                    tryToEnablePhysics();
+                }
+                if (_physicsEnabled) {
+                    qCDebug(interfaceapp) << "World loading:" << (_worldLoading.skipRequested ? "shown on request" :
+                        timedOut ? "time limit reached" : "the whole world is in") << "after" <<
+                        (usecTimestampNow() - _worldLoading.started) / USECS_PER_MSEC << "ms";
+                    endWorldLoading();
+                }
+            } else if (_worldLoading.settingsKnown &&
+                       // ghosting lets the avatar move before the world near it is in, unless a loading screen waits
+                       ((DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed() && !_arrivalWaitsForNearby) ||
+                        _octreeProcessor.safeLandingIsComplete())) {
                 tryToEnablePhysics();
             }
         }
@@ -7026,7 +7146,15 @@ void Application::update(float deltaTime) {
         // from that fix stays periodic. requeryOctree, with its new connection id, remains for the explicit
         // refreshes: Redraw (Ctrl+Shift+T), a reload of the caches, physics coming up.
         bool enoughTimePassed = now > _queryExpiry;
-        if (enoughTimePassed) {
+        if (_worldLoading.active) {
+            // the same whole-world query again now and then (it travels unreliably), never a new one: a new
+            // connection id would start the entity server's traversal of the world over
+            quint64 usecNow = usecTimestampNow();
+            if (usecNow - _worldLoading.lastQuery > USECS_PER_SECOND) {
+                queryOctree(NodeType::EntityServer, PacketType::EntityQuery, QJsonObject());
+                _worldLoading.lastQuery = usecNow;
+            }
+        } else if (enoughTimePassed) {
             DependencyManager::get<EntityTreeRenderer>()->forceRecheckEntities();
         }
 
@@ -7344,6 +7472,19 @@ void Application::queryOctree(
             // don't send the octreeQuery until SafeLanding knows it has started
             return;
         }
+        if (!_worldLoading.settingsKnown) {
+            // the domain's settings say how to arrive (whole world or as we go): wait the moment they take
+            return;
+        }
+    }
+    if (isModifiedQuery && _worldLoading.active) {
+        // no view at all: the entity server's traversal then takes in the whole world, and its "initial results
+        // complete" means all of it has been sent
+        _octreeQuery.clearConicalViews();
+        _octreeQuery.setOctreeSizeScale(DEFAULT_OCTREE_SIZE_SCALE);
+        static constexpr float MIN_LOD_ADJUST = -20.0f;
+        _octreeQuery.setBoundaryLevelAdjust(MIN_LOD_ADJUST);
+    } else if (isModifiedQuery) {
         // Create modified view that is a simple sphere.
         // bool interstitialModeEnabled = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled();
 

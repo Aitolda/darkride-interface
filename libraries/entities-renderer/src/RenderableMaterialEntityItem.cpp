@@ -340,6 +340,19 @@ void MaterialEntityRenderer::setCurrentMaterialName(const std::string& currentMa
     }
 }
 
+bool MaterialEntityRenderer::isMaterialReady() const {
+    return resultWithReadLock<bool>([&] {
+        auto material = getMaterial();
+        if (!material) {
+            return _texturesLoaded;   // none to draw, or the request for it failed (which sets it loaded)
+        }
+        if (material->isMissingTexture()) {
+            return false;
+        }
+        return !material->isProcedural() || material->isReady();
+    });
+}
+
 std::shared_ptr<NetworkMaterial> MaterialEntityRenderer::getMaterial() const {
     auto material = _parsedMaterials.networkMaterials.find(_currentMaterialName);
     if (material != _parsedMaterials.networkMaterials.end()) {

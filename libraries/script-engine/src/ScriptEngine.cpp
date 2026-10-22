@@ -2352,6 +2352,20 @@ bool ScriptEngine::hasEntityScriptDetails(const EntityItemID& entityID) const {
     return _entityScripts.contains(entityID);
 }
 
+// Whether an entity script's entity has left the tree since its script was asked for. A world's scripts are asked for
+// on the main thread and wait in this thread's queue, while leaving the world unloads the scripts this engine already
+// lists, read on the main thread: a load still queued as the world was left started after it, for an entity that was
+// gone, and its script ran on with no entity (Tivoli Town's hideByDistance.js on 1,300 plants, a timer each, after a
+// hop away during the world's load; 10-22). Client entity scripts only; the renderer checks the same before asking.
+static bool entityIsGone(ScriptEngine::Context context, const EntityItemID& entityID) {
+    if (context != ScriptEngine::ENTITY_CLIENT_SCRIPT) {
+        return false;
+    }
+    auto entities = DependencyManager::get<EntityScriptingInterface>();
+    auto tree = entities ? entities->getEntityTree() : nullptr;
+    return tree && !tree->findEntityByEntityItemID(entityID);
+}
+
 void ScriptEngine::loadEntityScript(const EntityItemID& entityID, const QString& entityScript, bool forceRedownload) {
     if (QThread::currentThread() != thread()) {
         QMetaObject::invokeMethod(this, "loadEntityScript",
@@ -2368,6 +2382,11 @@ void ScriptEngine::loadEntityScript(const EntityItemID& entityID, const QString&
         qCDebug(scriptengine) << "loadEntityScript.start " << entityID.toString()
                                      << " but isStopping==" << isStopping()
                                      << " || engines->isStopped==" << scriptEngines->isStopped();
+        return;
+    }
+    if (entityIsGone(_context, entityID)) {
+        qCDebug(scriptengine) << "loadEntityScript: not starting the script of" << entityID.toString()
+                              << ", whose entity is gone since it was asked for";
         return;
     }
 
@@ -2481,6 +2500,18 @@ void ScriptEngine::entityScriptContentAvailable(const EntityItemID& entityID, co
 
 #ifdef THREAD_DEBUGGING
     qCDebug(scriptengine) << "ScriptEngine::entityScriptContentAvailable() thread [" << QThread::currentThread() << "] expected thread [" << thread() << "]";
+
+    // the script arrived after its entity left (its world left while it downloaded): it doesn't run
+    if (entityIsGone(_context, entityID)) {
+        qCDebug(scriptengine) << "entityScriptContentAvailable: not running the script of" << entityID.toString()
+                              << ", whose entity is gone";
+        {
+            QWriteLocker locker { &_entityScriptsLock };
+            _entityScripts.remove(entityID);
+        }
+        emit entityScriptDetailsUpdated();
+        return;
+    }
 #endif
 
     auto scriptCache = DependencyManager::get<ScriptCache>();
@@ -2692,6 +2723,28 @@ void ScriptEngine::unloadEntityScript(const EntityItemID& entityID, bool shouldR
         }
 
         stopAllTimersForEntityScript(entityID);
+    }
+}
+
+void ScriptEngine::unloadEntityScriptsOfGoneEntities() {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "unloadEntityScriptsOfGoneEntities", Qt::QueuedConnection);
+        return;
+    }
+    QList<EntityItemID> entityIDs;
+    {
+        QReadLocker locker { &_entityScriptsLock };
+        entityIDs = _entityScripts.keys();
+    }
+    int unloaded = 0;
+    for (const auto& entityID : entityIDs) {
+        if (entityIsGone(_context, entityID)) {
+            unloadEntityScript(entityID, true);
+            unloaded++;
+        }
+    }
+    if (unloaded > 0) {
+        qCDebug(scriptengine) << "unloaded the scripts of" << unloaded << "entities that are gone";
     }
 }
 
