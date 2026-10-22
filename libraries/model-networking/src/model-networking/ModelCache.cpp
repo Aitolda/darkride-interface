@@ -349,6 +349,16 @@ void ModelResource::setGeometryDefinition(HFMModel::Pointer hfmModel, const Mate
 }
 
 void ModelResource::deleter() {
+    // The last reference can go on another thread: a GeometryReader on the thread pool holds one while it parses and
+    // bakes the model (seconds, with its automatic LODs), and when the world it loaded for is left meanwhile (a hop
+    // away, Cancel on the loading screen) the cache lets go of the rest, so the reader's was the last. The materials
+    // are the resource thread's, which may be setting them from that same reader's setGeometryDefinition right then:
+    // cleared from the pool thread, they crashed the client (Caity's Cancel 4 s into Tivoli Town, 10-22). So the
+    // whole teardown happens on the resource's thread, as Resource::allReferencesCleared already does.
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, [this] { deleter(); }, Qt::QueuedConnection);
+        return;
+    }
     resetTextures();
     Resource::deleter();
 }
