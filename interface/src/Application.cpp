@@ -85,7 +85,6 @@
 #include <EntityScriptClient.h>
 #include <EntityScriptServerLogClient.h>
 #include <EntityScriptingInterface.h>
-#include "ui/overlays/ContextOverlayInterface.h"
 #include <ErrorDialog.h>
 #include <FileScriptingInterface.h>
 #include <Finally.h>
@@ -143,6 +142,7 @@
 #include <ui/TabletScriptingInterface.h>
 #include <ui/ToolbarScriptingInterface.h>
 #include <ui/types/ContextAwareProfile.h>
+#include <FileDialogHelper.h>
 #include <Tooltip.h>
 #include <udt/PacketHeaders.h>
 #include <UserActivityLogger.h>
@@ -170,7 +170,6 @@
 #include "avatar/AvatarManager.h"
 #include "avatar/MyHead.h"
 #include "avatar/AvatarImporter.h"
-#include "avatar/AvatarPackager.h"
 #include "avatar/MyCharacterController.h"
 #include "CrashRecoveryHandler.h"
 #include "CrashHandler.h"
@@ -199,7 +198,6 @@
 #include "editor/Editor.h"
 #include "editor/ImpostorBaker.h"
 #include "editor/ui/ViewportContainer.h"
-#include "scripting/WalletScriptingInterface.h"
 #include "scripting/TTSScriptingInterface.h"
 #include "scripting/KeyboardScriptingInterface.h"
 #include "scripting/PerformanceScriptingInterface.h"
@@ -247,10 +245,6 @@
 
 #include <FadeEffect.h>
 
-#include "commerce/Ledger.h"
-#include "commerce/Wallet.h"
-#include "commerce/QmlCommerce.h"
-#include "commerce/QmlMarketplace.h"
 #include "ResourceRequestObserver.h"
 
 #include "webbrowser/WebBrowserSuggestionsEngine.h"
@@ -334,7 +328,6 @@ static const QString JPG_EXTENSION = ".jpg";
 static const QString PNG_EXTENSION = ".png";
 static const QString SVO_EXTENSION = ".svo";
 static const QString SVO_JSON_EXTENSION = ".svo.json";
-static const QString JSON_GZ_EXTENSION = ".json.gz";
 static const QString JSON_EXTENSION = ".json";
 static const QString JS_EXTENSION = ".js";
 static const QString FST_EXTENSION = ".fst";
@@ -343,7 +336,6 @@ static const QString OBJ_EXTENSION = ".obj";
 static const QString AVA_JSON_EXTENSION = ".ava.json";
 static const QString WEB_VIEW_TAG = "noDownload=true";
 static const QString ZIP_EXTENSION = ".zip";
-static const QString CONTENT_ZIP_EXTENSION = ".content.zip";
 
 static const float MIRROR_FULLSCREEN_DISTANCE = 0.789f;
 
@@ -373,7 +365,6 @@ static const QString STANDARD_TO_ACTION_MAPPING_NAME = "Standard to Action";
 static const QString NO_MOVEMENT_MAPPING_NAME = "Standard to Action (No Movement)";
 static const QString NO_MOVEMENT_MAPPING_JSON = PathUtils::resourcesPath() + "/controllers/standard_nomovement.json";
 
-static const QString MARKETPLACE_CDN_HOSTNAME = "mpassets.highfidelity.com";
 static const int INTERVAL_TO_CHECK_HMD_WORN_STATUS = 500; // milliseconds
 static const QString DESKTOP_DISPLAY_PLUGIN_NAME = "Desktop";
 static const QString ACTIVE_DISPLAY_PLUGIN_SETTING_NAME = "activeDisplayPlugin";
@@ -392,8 +383,6 @@ const std::vector<std::pair<QString, Application::AcceptURLMethod>> Application:
     { JSON_EXTENSION, &Application::importJSONFromURL },
     { JS_EXTENSION, &Application::askToLoadScript },
     { FST_EXTENSION, &Application::askToSetAvatarUrl },
-    { JSON_GZ_EXTENSION, &Application::askToReplaceDomainContent },
-    { CONTENT_ZIP_EXTENSION, &Application::askToReplaceDomainContent },
     { ZIP_EXTENSION, &Application::importFromZIP },
     { JPG_EXTENSION, &Application::importImage },
     { PNG_EXTENSION, &Application::importImage }
@@ -964,11 +953,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     DependencyManager::set<SelectionScriptingInterface>();
     DependencyManager::set<Editor>();
     DependencyManager::set<ImpostorBaker>();
-    DependencyManager::set<Ledger>();
-    DependencyManager::set<Wallet>();
-    DependencyManager::set<WalletScriptingInterface>();
     DependencyManager::set<TTSScriptingInterface>();
-    DependencyManager::set<QmlCommerce>();
     DependencyManager::set<ChatScriptingInterface>();
     DependencyManager::set<DiskCacheScriptingInterface>();
 
@@ -977,7 +962,6 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     DependencyManager::set<Keyboard>();
     DependencyManager::set<KeyboardScriptingInterface>();
     DependencyManager::set<GrabManager>();
-    DependencyManager::set<AvatarPackager>();
     PlatformHelper::setup();
     
     QObject::connect(PlatformHelper::instance(), &PlatformHelper::systemWillWake, [] {
@@ -1276,10 +1260,6 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     qCDebug(interfaceapp) << "[VERSION] We will use DEVELOPMENT global services.";
 #endif
 
-    bool isStore = property(hifi::properties::OCULUS_STORE).toBool();
-    // Or we could make it a separate arg, or if either arg is set, etc. And should this instead by a hifi::properties?
-    DependencyManager::get<WalletScriptingInterface>()->setLimitedCommerce(isStore || property(hifi::properties::STEAM).toBool());
-
     updateHeartbeat();
 
     // setup a timer for domain-server check ins
@@ -1526,7 +1506,6 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     // connect to the packet sent signal of the _entityEditSender
     connect(&_entityEditSender, &EntityEditPacketSender::packetSent, this, &Application::packetSent);
-    connect(&_entityEditSender, &EntityEditPacketSender::addingEntityWithCertificate, this, &Application::addingEntityWithCertificate);
 
     QString concurrentDownloadsStr = getCmdOption(argc, constArgv, "--concurrent-downloads");
     bool success;
@@ -1621,9 +1600,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     initializeRenderEngine();
     qCDebug(interfaceapp, "Initialized Render Engine.");
 
-    // Overlays need to exist before we set the ContextOverlayInterface dependency
     _overlays.init(); // do this before scripts load
-    DependencyManager::set<ContextOverlayInterface>();
 
     auto offscreenUi = getOffscreenUI();
     connect(offscreenUi.data(), &OffscreenUi::desktopReady, []() {
@@ -2970,11 +2947,7 @@ void Application::cleanupBeforeQuit() {
 
     _window->saveGeometry();
 
-    // Destroy third party processes after scripts have finished using them.
-    DependencyManager::destroy<ContextOverlayInterface>(); // Must be destroyed before TabletScriptingInterface
-
     // stop QML
-    DependencyManager::destroy<QmlCommerce>();
     DependencyManager::destroy<TabletScriptingInterface>();
     DependencyManager::destroy<ToolbarScriptingInterface>();
     DependencyManager::destroy<OffscreenUi>();
@@ -2995,7 +2968,6 @@ void Application::cleanupBeforeQuit() {
     DependencyManager::destroy<PickManager>();
     DependencyManager::destroy<KeyboardScriptingInterface>();
     DependencyManager::destroy<Keyboard>();
-    DependencyManager::destroy<AvatarPackager>();
 
     qCDebug(interfaceapp) << "Application::cleanupBeforeQuit() complete";
 }
@@ -3182,7 +3154,7 @@ void Application::initializeGL() {
     // chromiumFlags << "--use-fake-device-for-media-stream";
 
     // Disable signed distance field font rendering on ATI/AMD GPUs, due to
-    // https://highfidelity.manuscript.com/f/cases/13677/Text-showing-up-white-on-Marketplace-app
+    // a High Fidelity bug report: text drawn white in the web views on those GPUs
     std::string vendor{ (const char*)glGetString(GL_VENDOR) };
     if ((vendor.find("AMD") != std::string::npos) || (vendor.find("ATI") != std::string::npos)) {
         chromiumFlags << "--disable-distance-field-text";
@@ -3356,52 +3328,10 @@ void Application::initializeUi() {
     LoginDialog::registerType();
     Tooltip::registerType();
     UpdateDialog::registerType();
-    QmlContextCallback commerceCallback = [](QQmlContext* context) {
-        context->setContextProperty("Commerce", DependencyManager::get<QmlCommerce>().data());
-    };
-
-    OffscreenQmlSurface::addWhitelistContextHandler({
-        QUrl{ "hifi/commerce/checkout/Checkout.qml" },
-        QUrl{ "hifi/commerce/common/CommerceLightbox.qml" },
-        QUrl{ "hifi/commerce/common/EmulatedMarketplaceHeader.qml" },
-        QUrl{ "hifi/commerce/common/FirstUseTutorial.qml" },
-        QUrl{ "hifi/commerce/common/sendAsset/SendAsset.qml" },
-        QUrl{ "hifi/commerce/common/SortableListModel.qml" },
-        QUrl{ "hifi/commerce/inspectionCertificate/InspectionCertificate.qml" },
-        QUrl{ "hifi/commerce/marketplaceItemTester/MarketplaceItemTester.qml"},
-        QUrl{ "hifi/commerce/purchases/PurchasedItem.qml" },
-        QUrl{ "hifi/commerce/purchases/Purchases.qml" },
-        QUrl{ "hifi/commerce/wallet/Help.qml" },
-        QUrl{ "hifi/commerce/wallet/NeedsLogIn.qml" },
-        QUrl{ "hifi/commerce/wallet/PassphraseChange.qml" },
-        QUrl{ "hifi/commerce/wallet/PassphraseModal.qml" },
-        QUrl{ "hifi/commerce/wallet/PassphraseSelection.qml" },
-        QUrl{ "hifi/commerce/wallet/Wallet.qml" },
-        QUrl{ "hifi/commerce/wallet/WalletHome.qml" },
-        QUrl{ "hifi/commerce/wallet/WalletSetup.qml" },
-        QUrl{ "hifi/dialogs/security/Security.qml" },
-        QUrl{ "hifi/dialogs/security/SecurityImageChange.qml" },
-        QUrl{ "hifi/dialogs/security/SecurityImageModel.qml" },
-        QUrl{ "hifi/dialogs/security/SecurityImageSelection.qml" },
-        QUrl{ "hifi/tablet/TabletMenu.qml" },
-        QUrl{ "hifi/commerce/marketplace/Marketplace.qml" },
-    }, commerceCallback);
-/*
-    QmlContextCallback marketplaceCallback = [](QQmlContext* context) {
-        context->setContextProperty("MarketplaceScriptingInterface", new QmlMarketplace());
-    };
-    OffscreenQmlSurface::addWhitelistContextHandler({
-        QUrl{ "hifi/commerce/marketplace/Marketplace.qml" },
-        }, marketplaceCallback);*/
-
     QmlContextCallback platformInfoCallback = [](QQmlContext* context) {
         context->setContextProperty("PlatformInfo", new PlatformInfoScriptingInterface());
     };
     OffscreenQmlSurface::addWhitelistContextHandler({
-        //QUrl{ "hifi/commerce/marketplace/Marketplace.qml" },
-        // QUrl{ "hifi/commerce/purchases/Purchases.qml" },
-        // QUrl{ "hifi/commerce/wallet/Wallet.qml" },
-        // QUrl{ "hifi/commerce/wallet/WalletHome.qml" },
         QUrl{ "hifi/tablet/TabletAddressDialog.qml" },
         QUrl{ "hifi/Card.qml" },
         QUrl{ "hifi/Pal.qml" },
@@ -3630,8 +3560,6 @@ void Application::onDesktopRootContextCreated(QQmlContext* surfaceContext) {
 
     surfaceContext->setContextProperty("AvatarInputs", AvatarInputs::getInstance());
     surfaceContext->setContextProperty("Selection", DependencyManager::get<SelectionScriptingInterface>().data());
-    surfaceContext->setContextProperty("ContextOverlay", DependencyManager::get<ContextOverlayInterface>().data());
-    surfaceContext->setContextProperty("WalletScriptingInterface", DependencyManager::get<WalletScriptingInterface>().data());
     surfaceContext->setContextProperty("About", AboutUtil::getInstance());
     surfaceContext->setContextProperty("ResourceRequestObserver", DependencyManager::get<ResourceRequestObserver>().data());
 
@@ -3747,7 +3675,6 @@ void Application::setupQmlSurface(QQmlContext* surfaceContext, bool setAdditiona
         surfaceContext->setContextProperty("Window", DependencyManager::get<WindowScriptingInterface>().data());
         surfaceContext->setContextProperty("Reticle", qApp->getApplicationCompositor().getReticleInterface());
         surfaceContext->setContextProperty("About", AboutUtil::getInstance());
-        surfaceContext->setContextProperty("WalletScriptingInterface", DependencyManager::get<WalletScriptingInterface>().data());
         surfaceContext->setContextProperty("ResourceRequestObserver", DependencyManager::get<ResourceRequestObserver>().data());
         surfaceContext->setContextProperty("PlatformInfo", PlatformInfoScriptingInterface::getInstance());
         // This `module` context property is blank for the QML scripting interface so that we don't get log errors when importing
@@ -7742,11 +7669,6 @@ int Application::processOctreeStats(ReceivedMessage& message, SharedNodePointer 
 void Application::packetSent(quint64 length) {
 }
 
-void Application::addingEntityWithCertificate(const QString& certificateID, const QString& placeName) {
-    auto ledger = DependencyManager::get<Ledger>();
-    ledger->updateLocation(certificateID, placeName);
-}
-
 void Application::registerScriptEngineWithApplicationServices(const ScriptEnginePointer& scriptEngine) {
 
     scriptEngine->setEmitScriptUpdatesFunction([this]() {
@@ -7907,8 +7829,6 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
     scriptEngine->registerGlobalObject("EntityScriptServerLog", entityScriptServerLog.data());
     scriptEngine->registerGlobalObject("AvatarInputs", AvatarInputs::getInstance());
     scriptEngine->registerGlobalObject("Selection", DependencyManager::get<SelectionScriptingInterface>().data());
-    scriptEngine->registerGlobalObject("ContextOverlay", DependencyManager::get<ContextOverlayInterface>().data());
-    scriptEngine->registerGlobalObject("WalletScriptingInterface", DependencyManager::get<WalletScriptingInterface>().data());
     scriptEngine->registerGlobalObject("AddressManager", DependencyManager::get<AddressManager>().data());
     scriptEngine->registerGlobalObject("About", AboutUtil::getInstance());
     scriptEngine->registerGlobalObject("ResourceRequestObserver", DependencyManager::get<ResourceRequestObserver>().data());
@@ -8135,83 +8055,6 @@ bool Application::askToWearAvatarAttachmentUrl(const QString& url) {
         }
         reply->deleteLater();
     });
-    return true;
-}
-
-static const QString CONTENT_SET_NAME_QUERY_PARAM = "name";
-
-void Application::replaceDomainContent(const QString& url, const QString& itemName) {
-    qCDebug(interfaceapp) << "Attempting to replace domain content";
-    QUrl msgUrl(url);
-    QUrlQuery urlQuery(msgUrl.query());
-    urlQuery.addQueryItem(CONTENT_SET_NAME_QUERY_PARAM, itemName);
-    msgUrl.setQuery(urlQuery.query(QUrl::QUrl::FullyEncoded));
-    QByteArray urlData(msgUrl.toString(QUrl::QUrl::FullyEncoded).toUtf8());
-    auto limitedNodeList = DependencyManager::get<NodeList>();
-    const auto& domainHandler = limitedNodeList->getDomainHandler();
-
-    auto octreeFilePacket = NLPacket::create(PacketType::DomainContentReplacementFromUrl, urlData.size(), true);
-    octreeFilePacket->write(urlData);
-    limitedNodeList->sendPacket(std::move(octreeFilePacket), domainHandler.getSockAddr());
-
-    auto addressManager = DependencyManager::get<AddressManager>();
-    addressManager->handleLookupString(DOMAIN_SPAWNING_POINT);
-    QString newHomeAddress = addressManager->getHost() + DOMAIN_SPAWNING_POINT;
-    qCDebug(interfaceapp) << "Setting new home bookmark to: " << newHomeAddress;
-    DependencyManager::get<LocationBookmarks>()->setHomeLocationToAddress(newHomeAddress);
-}
-
-bool Application::askToReplaceDomainContent(const QString& url) {
-    QString methodDetails;
-    const int MAX_CHARACTERS_PER_LINE = 90;
-    if (DependencyManager::get<NodeList>()->getThisNodeCanReplaceContent()) {
-        QUrl originURL { url };
-        if (originURL.host().endsWith(MARKETPLACE_CDN_HOSTNAME)) {
-            // Create a confirmation dialog when this call is made
-            static const QString infoText = simpleWordWrap("Your domain's content will be replaced with a new content set. "
-                "If you want to save what you have now, create a backup before proceeding. For more information about backing up "
-                "and restoring content, visit the documentation page at: ", MAX_CHARACTERS_PER_LINE) +
-                "\nhttps://legacydocs.tivolicloud.com/create-and-explore/start-working-in-your-sandbox/restoring-sandbox-content";
-
-            ModalDialogListener* dig = OffscreenUi::asyncQuestion("Are you sure you want to replace this domain's content set?",
-                                                                  infoText, QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-
-            QObject::connect(dig, &ModalDialogListener::response, this, [=] (QVariant answer) {
-                QString details;
-                if (static_cast<QMessageBox::StandardButton>(answer.toInt()) == QMessageBox::Yes) {
-                    // Given confirmation, send request to domain server to replace content
-                    replaceDomainContent(url, QString());
-                    details = "SuccessfulRequestToReplaceContent";
-                } else {
-                    details = "UserDeclinedToReplaceContent";
-                }
-                QJsonObject messageProperties = {
-                    { "status", details },
-                    { "content_set_url", url }
-                };
-                UserActivityLogger::getInstance().logAction("replace_domain_content", messageProperties);
-                QObject::disconnect(dig, &ModalDialogListener::response, this, nullptr);
-            });
-        } else {
-            methodDetails = "ContentSetDidNotOriginateFromMarketplace";
-            QJsonObject messageProperties = {
-                { "status", methodDetails },
-                { "content_set_url", url }
-            };
-            UserActivityLogger::getInstance().logAction("replace_domain_content", messageProperties);
-        }
-    } else {
-            methodDetails = "UserDoesNotHavePermissionToReplaceContent";
-            OffscreenUi::asyncWarning("You can't replace this world's content",
-                                      "Its owner can let you, under Permissions in the world settings.",
-                                      QMessageBox::Ok, QMessageBox::Ok);
-
-            QJsonObject messageProperties = {
-                { "status", methodDetails },
-                { "content_set_url", url }
-            };
-            UserActivityLogger::getInstance().logAction("replace_domain_content", messageProperties);
-    }
     return true;
 }
 
@@ -8921,16 +8764,6 @@ void Application::toggleEntityScriptServerLogDialog() {
 
 void Application::loadAddAvatarBookmarkDialog() const {
     auto avatarBookmarks = DependencyManager::get<AvatarBookmarks>();
-}
-
-void Application::loadAvatarBrowser() const {
-    auto tablet = dynamic_cast<TabletProxy*>(DependencyManager::get<TabletScriptingInterface>()->getTablet("com.highfidelity.interface.tablet.system"));
-    // construct the url to the marketplace item
-    QString url = NetworkingConstants::METAVERSE_SERVER_URL().toString() + "/marketplace?category=avatars";
-
-    QString MARKETPLACES_INJECT_SCRIPT_PATH = "file:///" + qApp->applicationDirPath() + "/scripts/system/html/js/marketplacesInject.js";
-    tablet->gotoWebScreen(url, MARKETPLACES_INJECT_SCRIPT_PATH);
-    DependencyManager::get<HMDScriptingInterface>()->openTablet();
 }
 
 void Application::addSnapshotOperator(const SnapshotOperator& snapshotOperator) {

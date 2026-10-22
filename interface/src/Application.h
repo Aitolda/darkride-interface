@@ -356,8 +356,6 @@ public:
     bool isInterstitialMode() const { return _interstitialMode; }
     bool failedToConnectToEntityServer() const { return _failedToConnectToEntityServer; }
 
-    void replaceDomainContent(const QString& url, const QString& itemName);
-
     void loadAvatarScripts(const QVector<QString>& urls);
     void unloadAvatarScripts();
 
@@ -437,7 +435,6 @@ public slots:
     void toggleEntityScriptServerLogDialog();
     Q_INVOKABLE void showAssetServerWidget(QString filePath = "");
     Q_INVOKABLE void loadAddAvatarBookmarkDialog() const;
-    Q_INVOKABLE void loadAvatarBrowser() const;
     Q_INVOKABLE SharedSoundPointer getSampleSound() const;
 
     void showDialog(const QUrl& widgetUrl, const QUrl& tabletUrl, const QString& name) const;
@@ -557,8 +554,6 @@ private slots:
     bool askToWearAvatarAttachmentUrl(const QString& url);
     void displayAvatarAttachmentWarning(const QString& message) const;
 
-    bool askToReplaceDomainContent(const QString& url);
-
     void setSessionUUID(const QUuid& sessionUUID) const;
 
     void domainURLChanged(QUrl domainURL);
@@ -567,7 +562,6 @@ private slots:
     void nodeActivated(SharedNodePointer node);
     void nodeKilled(SharedNodePointer node);
     static void packetSent(quint64 length);
-    static void addingEntityWithCertificate(const QString& certificateID, const QString& placeName);
     void updateDisplayMode();
     void setDisplayPlugin(DisplayPluginPointer newPlugin);
     void domainConnectionRefused(const QString& reasonMessage, int reason, const QString& extraInfo);

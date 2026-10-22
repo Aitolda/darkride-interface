@@ -47,7 +47,6 @@
 #include "assets/ATPAssetMigrator.h"
 #include "audio/AudioScope.h"
 #include "avatar/AvatarManager.h"
-#include "avatar/AvatarPackager.h"
 #include "AvatarBookmarks.h"
 #include "editor/Editor.h"
 #include "editor/EditorCreate.h"
@@ -189,15 +188,6 @@ Menu::Menu() {
         QObject::connect(nodeList.data(), &NodeList::canWriteAssetsChanged, assetServerAction, &QAction::setEnabled);
         assetServerAction->setEnabled(nodeList->getThisNodeCanWriteAssets());
     }
-    /*
-    // Edit > Avatar Packager
-#ifndef Q_OS_ANDROID
-    action = addActionToQMenuAndActionHash(editMenu, MenuOption::AvatarPackager);
-    connect(action, &QAction::triggered, [] {
-        DependencyManager::get<AvatarPackager>()->open();
-    });
-#endif
-*/
     // Edit > Reload All Content and clear caches
     addActionToQMenuAndActionHash(editMenu, MenuOption::ReloadContent, 0, qApp, SLOT(reloadResourceCaches()));    
 

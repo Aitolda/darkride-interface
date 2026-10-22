@@ -1116,10 +1116,6 @@ void AccountManager::handleKeypairGenerationError() {
     _isWaitingForKeypairResponse = false;
 }
 
-void AccountManager::setLimitedCommerce(bool isLimited) {
-    _limitedCommerce = isLimited;
-}
-
 void AccountManager::saveLoginStatus(bool isLoggedIn) {
     if (!_configFileURL.isEmpty()) {
         QFile configFile(_configFileURL);

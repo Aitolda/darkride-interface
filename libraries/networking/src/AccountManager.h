@@ -103,9 +103,6 @@ public:
 
     void removeAccountFromFile();
 
-    bool getLimitedCommerce() { return _limitedCommerce; }
-    void setLimitedCommerce(bool isLimited);
-
     void setAccessTokens(const QString& response);
     void setConfigFileURL(const QString& fileURL) { _configFileURL = fileURL; }
     void saveLoginStatus(bool isLoggedIn);
@@ -142,7 +139,6 @@ signals:
     void loginFailed();
     void logoutComplete();
     void newKeypair();
-    void limitedCommerceChanged();
     void accountSettingsLoaded();
 
 private slots:
@@ -184,7 +180,6 @@ private:
 
     QUuid _sessionID { QUuid::createUuid() };
 
-    bool _limitedCommerce { false };
     QString _configFileURL;
 
     bool _accountSettingsEnabled { false };

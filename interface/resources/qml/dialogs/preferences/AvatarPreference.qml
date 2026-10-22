@@ -87,19 +87,5 @@ Preference {
             onClickedQueued: ApplicationInterface.loadAddAvatarBookmarkDialog()
         }
 
-        Button {
-            id: browseAvatarsButton
-            text: "Browse Avatars"
-            width: 140
-            anchors {
-                left: dataTextField.acceptableInput ? bookmarkAvatarButton.right : parent.left
-                bottom: parent.bottom
-                leftMargin: dataTextField.acceptableInput ? hifi.dimensions.contentSpacing.x : 0
-            }
-            onClicked: {
-                ApplicationInterface.loadAvatarBrowser();
-            }
-        }
-
     }
 }
