@@ -87,10 +87,20 @@ public:
     static bool enableMaterialProceduralShaders; // set from menu/settings
     static bool sceneIsReady; // set from entity tree renderer
 
+    // A diagnostic (Test.dumpDraws(frames)): for that many frames, every main-view draw of a model part logs what it
+    // drew and where (INSTANCING-DUMP lines), so a frame with GPU instancing on can be diffed against one with it off
+    // (tests-manual/instancing/diff-dump.py). beginFrame is called once a frame on the render thread, before the frame.
+    static std::atomic<int> dumpDrawFrames;
+    static void beginFrame();
+    static bool dumping() { return _dumpingFrame.load(std::memory_order_relaxed); }
+    static int dumpFrame() { return _dumpFrame.load(std::memory_order_relaxed); }
+
 protected:
     render::ItemKey _itemKey{ render::ItemKey::Builder::opaqueShape().build() };
     bool _cullWithParent{ false };
     uint64_t _created;
+    static std::atomic<bool> _dumpingFrame;
+    static std::atomic<int> _dumpFrame;
 };
 
 namespace render {
@@ -203,6 +213,7 @@ private:
     // the drawn material by content (INSTANCING.md 3.2), recomputed after the materials change; 0 until computed
     uint64_t _materialContentKey { 0 };
     bool _materialContentKeyDirty { true };
+    QString _modelFileForLog;   // the model file's name, for the draw dump
 };
 
 namespace render {

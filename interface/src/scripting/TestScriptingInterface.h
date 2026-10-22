@@ -307,6 +307,15 @@ public slots:
     Q_INVOKABLE bool traceRenderedEntity(const QUuid& entityID);
 
     /**jsdoc
+     * Logs every main-view draw of a model part for the next frames (INSTANCING-DUMP lines: the model file, mesh, part,
+     * level of detail, indices and each instance's position), to diff a frame with GPU instancing on against one with
+     * it off (tests-manual/instancing/diff-dump.py).
+     * @function Test.dumpDraws
+     * @param {number} frames - How many frames to log.
+     */
+    Q_INVOKABLE void dumpDraws(int frames);
+
+    /**jsdoc
      * Takes the samples traced so far: each is [time in ms, camera x, y, z, item x, y, z].
      * @function Test.takeRenderTrace
      * @returns {Array<Array<number>>} The samples, oldest first.
