@@ -51,6 +51,15 @@ void ModelEntityWrapper::setModel(const ModelPointer& model) {
     });
 }
 
+// a renderer leaving the scene clears its own model only, never the one a newer renderer of the entity has set
+void ModelEntityWrapper::clearModel(const ModelPointer& model) {
+    withWriteLock([&] {
+        if (_model == model) {
+            _model.reset();
+        }
+    });
+}
+
 ModelPointer ModelEntityWrapper::getModel() const {
     return resultWithReadLock<ModelPointer>([&] {
         return _model;
@@ -1096,7 +1105,9 @@ void ModelEntityRenderer::removeFromScene(const ScenePointer& scene, Transaction
 }
 
 void ModelEntityRenderer::onRemoveFromSceneTyped(const TypedEntityPointer& entity) {
-    entity->setModel({});
+    ModelPointer model;
+    withReadLock([&] { model = _model; });
+    entity->clearModel(model);
     auto entityTreeRenderer = DependencyManager::get<EntityTreeRenderer>();
     if (entityTreeRenderer) {
         entityTreeRenderer->undeferModelMesh(entity->getID());

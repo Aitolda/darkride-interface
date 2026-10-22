@@ -409,6 +409,17 @@ void EntityTreeRenderer::addPendingEntities(const render::ScenePointer& scene, r
             }
 
             auto entityID = entity->getEntityItemID();
+            // One renderer per entity: an entity can be asked for again after its renderer was made (SafeLanding asks
+            // for a renderer for a nearby entity that has none yet, and then the tree's own queued addingEntity comes
+            // in). A second renderer was not kept in _entitiesInScene, yet its first update gave the entity its own
+            // model, so the kept renderer's model was never readied or added and neither drew: Tivoli Town's ground,
+            // cliffs and grass, one arrival in three (2026-10-22)
+            auto existing = _entitiesInScene.find(entityID);
+            if (existing != _entitiesInScene.end() && existing->second && existing->second->getEntity() == entity) {
+                qCDebug(entitiesrenderer) << "not making a second renderer for" << entity->getName() << entityID;
+                processedIds.insert(entityID);
+                continue;
+            }
             auto renderable = EntityRenderer::addToScene(*this, entity, scene, transaction);
             if (renderable) {
                 _entitiesInScene.insert({ entityID, renderable });
