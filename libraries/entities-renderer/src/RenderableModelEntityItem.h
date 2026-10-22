@@ -228,6 +228,7 @@ private:
     // the mesh waiting behind the impostor card (ENTITY-STREAMING.md 3.1)
     bool shouldDeferMesh(const TypedEntityPointer& entity, ImpostorStandIn& standIn);
     void reportImpostorStandIn(const TypedEntityPointer& entity);
+    void updateVisuallyReady(const TypedEntityPointer& entity, bool deferMesh, bool atlasesLoaded);
     bool _meshDeferred { false };
     int _reportedStandIn { -1 };   // what the card's owner was last told: -1 nothing yet
     bool _meshFetched { false };   // setURL was called: the mesh never waits again

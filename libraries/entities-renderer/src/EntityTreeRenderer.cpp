@@ -15,6 +15,7 @@
 #include <queue>
 
 #include <QEventLoop>
+#include <QProcessEnvironment>
 #include <QScriptSyntaxCheckResult>
 #include <QThreadPool>
 #include <QSet>
@@ -465,7 +466,9 @@ void EntityTreeRenderer::updateChangedEntities(const render::ScenePointer& scene
     });
     // bool selectionPriority = false;
 
-    _renderablesToUpdate.clear();
+    // the renderables the last frame's time budget left over stay for this one, as High Fidelity had it (the sort below
+    // ages them up): cleared here from 2020 on, they were lost, and a far model put off while its textures loaded was
+    // never updated again (Tivoli Town's far trees on arrival, 2026-10-21)
     _priorityRenderablesToUpdate.clear();
 
     {   // build list of renderables and priority renderables. 
@@ -604,6 +607,15 @@ void EntityTreeRenderer::updateChangedEntities(const render::ScenePointer& scene
                         renderable->updateInScene(scene, transaction);
                     }
                     _renderablesToUpdate.erase(renderable);
+                }
+
+                // TIVOLI_UPDATE_DIAG in the environment: a log line a second while the budget leaves renderables over
+                static const bool UPDATE_DIAG = QProcessEnvironment::systemEnvironment().contains("TIVOLI_UPDATE_DIAG");
+                static uint64_t lastUpdateDiag = 0;
+                if (UPDATE_DIAG && !_renderablesToUpdate.empty() && updateStart - lastUpdateDiag > USECS_PER_SECOND) {
+                    lastUpdateDiag = updateStart;
+                    qCDebug(entitiesrenderer) << "renderable updates:" << _renderablesToUpdate.size() << "of"
+                        << sortedRenderables.size() << "left for the next frame (budget" << timeBudget << "us)";
                 }
 
                 // compute average per-renderable update cost
