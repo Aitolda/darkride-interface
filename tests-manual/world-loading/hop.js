@@ -79,6 +79,22 @@
             if (events.landed === undefined && typeof HOP_RENDER_METHOD !== "undefined") {
                 Render.renderMethod = HOP_RENDER_METHOD;
             }
+            // HOP_CHECK_SCRIPTS (run.sh): 15 s after landing, whether the world's entity scripts run: Tivoli Town's
+            // hideByDistance.js hides its far plants (locallyVisible false) once it runs
+            if (events.landed === undefined && typeof HOP_CHECK_SCRIPTS !== "undefined") {
+                Script.setTimeout(function () {
+                    var withScript = 0, hidden = 0;
+                    Entities.findEntities(MyAvatar.position, 2000).forEach(function (id) {
+                        var p = Entities.getEntityProperties(id, ["script", "locallyVisible"]);
+                        if (p.script && p.script.indexOf("hidebyDistance") >= 0) {
+                            withScript++;
+                            hidden += p.locallyVisible === false ? 1 : 0;
+                        }
+                    });
+                    print("WORLD-LOADING-HOP world scripts: " + withScript + " entities run hideByDistance, " + hidden +
+                          " of them hidden by it");
+                }, 15000);
+            }
             // HOP_AGAIN=<s> (run.sh): that long after landing, the same hop again, to the world it is already in (as
             // Explore picking the world you're in): the screen must lift after its minimum, not at its time limit
             if (events.landed === undefined && typeof HOP_AGAIN !== "undefined") {
@@ -109,7 +125,8 @@
             mark("wholeWorldLoading");
         }
         // (with pictures, long enough for the overview 10 s after landing)
-        var linger = typeof HOP_AGAIN !== "undefined" ? HOP_AGAIN + 8 : (typeof HOP_PICTURES !== "undefined" ? 14 : 5);
+        var linger = typeof HOP_AGAIN !== "undefined" ? HOP_AGAIN + 8 :
+            (typeof HOP_PICTURES !== "undefined" || typeof HOP_CHECK_SCRIPTS !== "undefined" ? 17 : 5);
         if ((events.screenDown !== undefined && t() > events.screenDown + linger) || t() > 120) {
             finished = true;
             var summary = { events: events, gaps: gaps, host: location.hostname };
