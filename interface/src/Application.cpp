@@ -7518,24 +7518,23 @@ void Application::queryOctree(
         sphericalView.setPositionAndSimpleRadius(getMyAvatar()->getWorldPosition(), radius);
 
         //if (interstitialModeEnabled) {
+        // (the else below belonged to `if (menu)`: with the menu up and the option off, no view was set at all and the
+        // query kept the last frame's, so the 10 m sphere never went out; avatar-ai's survey, 10-22)
         auto menu = Menu::getInstance(); 
-        if (menu) {
-            if (menu->isOptionChecked(MenuOption::LoadCompleteEntityTree)) {            // if Dev > Tivoli Options >>> LoadCompleteEntityTree truee
+        if (menu && menu->isOptionChecked(MenuOption::LoadCompleteEntityTree)) {   // Dev > Tivoli Options > LoadCompleteEntityTree
+            ConicalViewFrustum farView;
+            farView.set(_viewFrustum);
 
-                ConicalViewFrustum farView;
-                farView.set(_viewFrustum);
+            QJsonObject queryFlags;
+            queryFlags["includeDescendants"] = true; // forces entire tree
+            queryFlags["includeAncestors"] = true; // forces entire tree
+            queryFlags["serverScripts"] = true;
 
-                QJsonObject queryFlags;
-                queryFlags["includeDescendants"] = true; // forces entire tree
-                queryFlags["includeAncestors"] = true; // forces entire tree
-                queryFlags["serverScripts"] = true;
-
-                queryJSONParameters["flags"] = queryFlags;
-               // _octreeQuery->static_cast<EntityNodeData*>(node->getLinkedData()); //setShouldForceFullScene(true);
-                _octreeQuery.clearConicalViews();                     // TIVOLI go frustumless
-                _octreeQuery.setJSONParameters(queryJSONParameters);  // TIVOLI force ancestors and descendents
-                _octreeQuery.setConicalViews({ sphericalView, farView });
-            }
+            queryJSONParameters["flags"] = queryFlags;
+           // _octreeQuery->static_cast<EntityNodeData*>(node->getLinkedData()); //setShouldForceFullScene(true);
+            _octreeQuery.clearConicalViews();                     // TIVOLI go frustumless
+            _octreeQuery.setJSONParameters(queryJSONParameters);  // TIVOLI force ancestors and descendents
+            _octreeQuery.setConicalViews({ sphericalView, farView });
         } else {
             _octreeQuery.setConicalViews({ sphericalView });
         }
