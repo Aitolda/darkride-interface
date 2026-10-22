@@ -73,6 +73,9 @@ if (DEFINED QT_CMAKE_PREFIX_PATH)
 endif()
 
 set(EXTRA_PREBUILD_ARGS "")
+if (SERVER_ONLY)
+  list(APPEND EXTRA_PREBUILD_ARGS --server-only)
+endif()
 
 if(VCPKG_BUILD_TYPE)
   list(APPEND EXTRA_PREBUILD_ARGS --vcpkg-build-type ${VCPKG_BUILD_TYPE})

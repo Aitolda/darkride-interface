@@ -562,11 +562,12 @@ endif()
         # otherwise detect the host as x64-osx and build host tools for the wrong architecture.
         self.run(['install', '--triplet', hostTriplet, '--host-triplet', hostTriplet, 'hifi-host-tools'])
 
-        # install the hifi-client-deps libraries
+        # The servers need hifi-deps only; the client's SDKs (VR, gamepads, crash reporting) are hifi-client-deps.
         print("Installing build dependencies")
         if (self.vcpkgBuildType):
             self.copyTripletForBuildType(self.triplet)
-        self.run(['install', '--triplet', self.getTripletWithBuildType(self.triplet), '--host-triplet', hostTriplet, 'hifi-client-deps'])
+        deps = 'hifi-deps' if getattr(self.args, 'server_only', False) else 'hifi-client-deps'
+        self.run(['install', '--triplet', self.getTripletWithBuildType(self.triplet), '--host-triplet', hostTriplet, deps])
 
     def cleanBuilds(self):
         if self.noClean:

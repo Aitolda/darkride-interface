@@ -38,7 +38,6 @@
     {
       "name": "sranipal",
       "platform": "windows"
-    },
-    "vulkan-memory-allocator"
+    }
   ]
 }

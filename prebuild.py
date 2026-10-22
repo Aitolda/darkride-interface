@@ -92,6 +92,7 @@ def parse_args():
     parser.add_argument('--force-bootstrap', action='store_true')
     parser.add_argument('--force-build', action='store_true')
     parser.add_argument('--release-type', type=str, default="DEV", help="DEV, PR, or PRODUCTION")
+    parser.add_argument('--server-only', action='store_true', help='A server build: the client dependencies (VR SDKs, gamepads, crash reporting) are not installed')
     parser.add_argument('--vcpkg-root', type=str, help='The location of the vcpkg distribution')
     parser.add_argument('--vcpkg-build-type', type=str, help='Could be `release` or `debug`. By default it doesn`t set the build-type')
     parser.add_argument('--vcpkg-skip-clean', action='store_true', help='Skip the cleanup of vcpkg downloads and packages folders after vcpkg build completition.')
