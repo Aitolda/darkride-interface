@@ -588,6 +588,9 @@ Menu::Menu() {
     addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::Shadows, 0, RenderScriptingInterface::getInstance()->getShadowsEnabled(),
         RenderScriptingInterface::getInstance(), SLOT(setShadowsEnabled(bool)));
 
+    // Developer > Render > GPU Instancing (INSTANCING.md 3.6): copies of a model drawn in one draw call; off to compare
+    addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::GpuInstancing, 0, true);
+
     addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::AmbientOcclusion, 0, RenderScriptingInterface::getInstance()->getAmbientOcclusionEnabled(),
         RenderScriptingInterface::getInstance(), SLOT(setAmbientOcclusionEnabled(bool)));
 

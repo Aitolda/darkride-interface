@@ -7,6 +7,8 @@
 //
 #include "TestScriptingInterface.h"
 
+#include <MeshPartPayload.h>
+
 #include <SpringBones.h>
 
 #include <QtCore/QCoreApplication>
@@ -300,6 +302,10 @@ bool TestScriptingInterface::saveWindowPicture(const QString& path) {
     }
     QPixmap picture = window->grab();
     return !picture.isNull() && picture.save(path);
+}
+
+void TestScriptingInterface::dumpDraws(int frames) {
+    MeshPartPayload::dumpDrawFrames.store(std::max(0, frames));
 }
 
 bool TestScriptingInterface::traceRenderedEntity(const QUuid& entityID) {

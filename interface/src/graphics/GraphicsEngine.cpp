@@ -9,6 +9,8 @@
 //
 #include "GraphicsEngine.h"
 
+#include <MeshPartPayload.h>
+
 #include <shared/GlobalAppProperties.h>
 
 #include "WorldBox.h"
@@ -184,6 +186,7 @@ void GraphicsEngine::render_runRenderFrame(RenderArgs* renderArgs) {
     }
 
     {
+        MeshPartPayload::beginFrame();   // the draw dump's frame count (Test.dumpDraws), on the thread that draws
         _renderEngine->getRenderContext()->args = renderArgs;
         _renderEngine->run();
     }
