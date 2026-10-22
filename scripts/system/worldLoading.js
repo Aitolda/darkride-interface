@@ -412,6 +412,9 @@
             var keepLaunch = way && way.launchReleased;
             begin("hop", String(data.world || ""), String(data.author || ""), String(data.picture || ""));
             way.launchReleased = keepLaunch || way.launchReleased;
+            if (Date.now() - lastViewpointAt < VIEWPOINT_BEFORE_START) {
+                moveWithinWorld("its viewpoint came " + (Date.now() - lastViewpointAt) + " ms before the start");
+            }
         } else if (data.type === "cancel" && way && way.kind === "hop" && !way.left) {
             end();
         }
@@ -432,11 +435,14 @@
             return;
         }
         if (button === "showNow") {
+            print("World loading: Show me now pressed");
             if (loadingState().active && Window.showWorldNow) {
                 Window.showWorldNow();
             }
         } else if (button === "cancel" && canGoBack()) {
             var from = way.from;
+            print("World loading: Cancel pressed, " + (way.kind === "hop" && !way.left ? "the hop stops" :
+                "going back to \"" + (from ? from.world : "") + "\""));
             if (way.kind === "hop" && !way.left) {
                 Messages.sendLocalMessage(CHANNEL, JSON.stringify({ type: "cancel" }));
                 end();
@@ -448,6 +454,26 @@
             way.launchReleased = keepLaunch;
             location.goBack();
         }
+    }
+
+    // a hop to the world you're already in (Explore, picking it again): no world change follows, the address only
+    // moves you to its viewpoint; a hop to another world gets its viewpoint after the world change. So a viewpoint
+    // before any world change is a move within this world: it has arrived (the screen lifts after MIN_SHOWN), instead
+    // of waiting out the time limit for a world change that never comes (Caity's hand test, 10-22: "about a minute")
+    // The viewpoint and the hop's start reach this script by different ways (the address manager, the messages
+    // client), in either order, so a viewpoint shortly before the start counts too.
+    var VIEWPOINT_BEFORE_START = 1500;    // ms
+    var lastViewpointAt = 0;
+    function moveWithinWorld(why) {
+        if (way && way.kind === "hop" && !way.left && location.isConnected) {
+            print("World loading: the hop is a move within this world (" + why + ")");
+            way.left = true;
+            way.lostOld = true;
+        }
+    }
+    function onLocationChangeRequired() {
+        lastViewpointAt = Date.now();
+        moveWithinWorld("its viewpoint came after the start");
     }
 
     function onDomainChanged() {
@@ -496,6 +522,7 @@
     }
     AddressManager.lookupResultIsNotFound.connect(onLookupFailed);
     AddressManager.lookupResultIsOffline.connect(onLookupFailed);
+    AddressManager.locationChangeRequired.connect(onLocationChangeRequired);
     if (Window.worldLoadingChanged) {
         Window.worldLoadingChanged.connect(onWorldLoadingChanged);
     }
@@ -533,6 +560,7 @@
         }
         AddressManager.lookupResultIsNotFound.disconnect(onLookupFailed);
         AddressManager.lookupResultIsOffline.disconnect(onLookupFailed);
+        AddressManager.locationChangeRequired.disconnect(onLocationChangeRequired);
         if (Window.worldLoadingChanged) {
             Window.worldLoadingChanged.disconnect(onWorldLoadingChanged);
         }

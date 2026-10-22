@@ -10,6 +10,9 @@
 # forward at start-up, so the hop script sets it once it has landed.
 # HOP_PRESS=<button>@<s> (with HOP=1): press the loading screen's "cancel" or "showNow" that long after the hop.
 # KEEP_CACHE=<dir>: keep the client's resource caches there between runs (the second run arrives warm).
+# HOP_AGAIN=<s> (with HOP=1): that long after landing, hop again to the same world (it must lift after its minimum).
+# CLIENT_ARGS="<args>": more arguments for the client, e.g. --scripts <repo>/scripts
+# to run the system scripts from the source tree (a script change tested without a build).
 # HOP_TO=<address> (with HOP=1): hop there instead, and leave the sandbox alone (not started, copied or stopped): a
 # world that doesn't answer (hifi://localhost:<a port nothing listens on>) or a place that doesn't exist, whose
 # screen must lift as the viewer gives up (its connection failure window, or the place not found), not at its 90 s.
@@ -95,14 +98,14 @@ fi
 URL="hifi://localhost:$PORT"
 TEST_SCRIPT="$RUN/arrival.js"
 if [ -n "$HOP" ]; then
-    { echo "var HOP_URL = \"${HOP_TO:-hifi://localhost:$PORT}\";"; [ -n "$HOP_DELAY" ] && echo "var HOP_DELAY = $HOP_DELAY;"; [ -n "$PICTURES" ] && echo "var HOP_PICTURES = \"$RUN\";"; [ -n "$RENDER_METHOD" ] && echo "var HOP_RENDER_METHOD = $RENDER_METHOD;"; [ -n "$HOP_PRESS" ] && echo "var HOP_PRESS = \"$HOP_PRESS\";"; cat "$D/hop.js"; } > "$RUN/hop.js"
+    { echo "var HOP_URL = \"${HOP_TO:-hifi://localhost:$PORT}\";"; [ -n "$HOP_DELAY" ] && echo "var HOP_DELAY = $HOP_DELAY;"; [ -n "$PICTURES" ] && echo "var HOP_PICTURES = \"$RUN\";"; [ -n "$RENDER_METHOD" ] && echo "var HOP_RENDER_METHOD = $RENDER_METHOD;"; [ -n "$HOP_PRESS" ] && echo "var HOP_PRESS = \"$HOP_PRESS\";"; [ -n "$HOP_AGAIN" ] && echo "var HOP_AGAIN = $HOP_AGAIN;"; cat "$D/hop.js"; } > "$RUN/hop.js"
     URL="file://$D/../physics-baseline/world.json"
     TEST_SCRIPT="$RUN/hop.js"
 fi
 echo "client: $BIN  mode: $MODE  world: $WORLD  results: $RUN"
 XDG_CONFIG_HOME="$RUN/config" XDG_CACHE_HOME="$RUN/cache" TIVOLI_APP_DATA_DIR="$DATA" HIFI_METAVERSE_URL=https://vr.darkride.ai \
     ${=CLIENT_WRAPPER} "$BIN" --allowMultipleInstances --url "$URL" --tokens "{}" --testScript "$TEST_SCRIPT" \
-    --testResultsLocation "$RUN" > "$RUN/client.log" 2>&1 || true
+    --testResultsLocation "$RUN" ${=CLIENT_ARGS} > "$RUN/client.log" 2>&1 || true
 
 # the sandbox off again, by its pids
 if [ -z "$HOP_TO" ]; then

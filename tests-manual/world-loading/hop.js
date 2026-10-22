@@ -79,6 +79,16 @@
             if (events.landed === undefined && typeof HOP_RENDER_METHOD !== "undefined") {
                 Render.renderMethod = HOP_RENDER_METHOD;
             }
+            // HOP_AGAIN=<s> (run.sh): that long after landing, the same hop again, to the world it is already in (as
+            // Explore picking the world you're in): the screen must lift after its minimum, not at its time limit
+            if (events.landed === undefined && typeof HOP_AGAIN !== "undefined") {
+                Script.setTimeout(function () {
+                    print("WORLD-LOADING-HOP hop again to the same world at " + t().toFixed(2) + " s");
+                    Messages.sendLocalMessage("Darkride-Hop", JSON.stringify({ type: "start", world: "Tivoli Town",
+                        author: "Caitlyn", picture: "https://vr.darkride.ai/api/domain/test/image" }));
+                    location.handleLookupString(URL);
+                }, HOP_AGAIN * 1000);
+            }
             mark("landed");
         }
         var up = screenUp();
@@ -99,7 +109,7 @@
             mark("wholeWorldLoading");
         }
         // (with pictures, long enough for the overview 10 s after landing)
-        var linger = typeof HOP_PICTURES !== "undefined" ? 14 : 5;
+        var linger = typeof HOP_AGAIN !== "undefined" ? HOP_AGAIN + 8 : (typeof HOP_PICTURES !== "undefined" ? 14 : 5);
         if ((events.screenDown !== undefined && t() > events.screenDown + linger) || t() > 120) {
             finished = true;
             var summary = { events: events, gaps: gaps, host: location.hostname };
