@@ -89,6 +89,8 @@ int main(int argc, const char* argv[]) {
     QCommandLineOption displayNameOption("displayName", "set user display name <string>", "string");
     QCommandLineOption setBookmarkOption("setBookmark", "set bookmark key=value pair", "string");
     QCommandLineOption defaultScriptOverrideOption("defaultScriptsOverride", "override defaultsScripts.js", "string");
+    // read by Application (clientLabel): listed here so --help shows it and the parser doesn't call it unknown
+    QCommandLineOption clientLabelOption("clientLabel", "set the window title's client label <text>", "text");
 
     parser.addOption(urlOption);
     // parser.addOption(noLauncherOption);
@@ -103,6 +105,7 @@ int main(int argc, const char* argv[]) {
     parser.addOption(displayNameOption);
     parser.addOption(setBookmarkOption);
     parser.addOption(defaultScriptOverrideOption);
+    parser.addOption(clientLabelOption);
 
     if (!parser.parse(arguments)) {
         std::cout << parser.errorText().toStdString() << std::endl; // Avoid Qt log spam
