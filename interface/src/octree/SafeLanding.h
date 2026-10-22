@@ -63,6 +63,8 @@ private slots:
 
 private:
     void trackEntity(const EntityItemID& entityID, const EntityTreePointer& entityTree);
+    // tracks what the tree already holds near the avatar at a landing's start (the tree's lock, then this object's)
+    void seedNearby(const QSharedPointer<EntityTreeRenderer>& entityTreeRenderer);
     bool isNearby(const EntityItemPointer& entity, const glm::vec3& avatarPosition) const;
     bool isEntityPhysicsReady(const EntityItemPointer& entity);
     void debugDumpSequenceIDs() const;

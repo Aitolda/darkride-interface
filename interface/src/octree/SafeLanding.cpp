@@ -89,10 +89,13 @@ bool SafeLanding::SequenceLessThan::operator()(const OCTREE_PACKET_SEQUENCE& a, 
 }
 
 void SafeLanding::startTracking(QSharedPointer<EntityTreeRenderer> entityTreeRenderer) {
+    bool started = false;
     if (!entityTreeRenderer.isNull()) {
         auto entityTree = entityTreeRenderer->getTree();
         if (entityTree && !_trackingEntities) {
+            started = true;
             Locker lock(_lock);
+            // (this lock is released before the seed below takes the tree's)
             _entityTreeRenderer = entityTreeRenderer;
             _trackedEntities.clear();
             _maxTrackedEntityCount = 0;
@@ -126,29 +129,52 @@ void SafeLanding::startTracking(QSharedPointer<EntityTreeRenderer> entityTreeRen
                 EntityTreeRenderer::setEntityLoadingPriorityFunction([this](const EntityItem& item) { return loadingPriority(item); });
                 _priorityInstalled = true;
             }
-
-            // What is already near the avatar is tracked again: a landing restarted by a teleport (the arrival's own
-            // path lookup, a hop within the world) lands among entities the tree already holds, which only an earlier
-            // landing checked, at another place
-            float seedRadius = effectiveRadius();
-            if (seedRadius >= 0.0f) {
-                // (0 is whole-world loading's "every entity": all the tree holds)
-                const float EVERYWHERE = 100000.0f;
-                seedRadius = seedRadius > 0.0f ? seedRadius : EVERYWHERE;
-                glm::vec3 center = DependencyManager::get<AvatarManager>()->getMyAvatar()->getWorldPosition();
-                PickFilter::Flags flags;
-                flags.set(PickFilter::DOMAIN_ENTITIES); flags.set(PickFilter::VISIBLE); flags.set(PickFilter::INVISIBLE);
-                flags.set(PickFilter::COLLIDABLE); flags.set(PickFilter::NONCOLLIDABLE);
-                QVector<QUuid> nearby;
-                auto tree = std::const_pointer_cast<EntityTree>(entityTree);
-                tree->withReadLock([&] { tree->evalEntitiesInSphere(center, seedRadius, PickFilter(flags), nearby); });
-                for (const QUuid& id : nearby) {
-                    trackEntity(id, tree);
-                }
-                _seededCount = (int)nearby.size();
-            }
         }
     }
+    if (started) {
+        seedNearby(entityTreeRenderer);
+    }
+}
+
+// What is already near the avatar is tracked again: a landing restarted by a teleport (the arrival's own path lookup,
+// a hop within the world) lands among entities the tree already holds, which only an earlier landing checked, at
+// another place. The tree's read lock is taken with this object's lock NOT held: the entity stream adds entities under
+// the tree's write lock (OctreeProcessor::processDatagram) and signals addingEntity from there, a direct connection
+// into addTrackedEntity, which takes this object's lock; with the sphere read under this lock, the two orders crossed,
+// and a landing restarted while the stream arrived could deadlock the client with the octree thread (avatar-ai's
+// survey, ARCHITECTURE.md 3.12, 10-22). The signals are connected before the sphere is read, so an entity added
+// meanwhile is tracked either way; trackEntity takes an entity once.
+void SafeLanding::seedNearby(const QSharedPointer<EntityTreeRenderer>& entityTreeRenderer) {
+    if (entityTreeRenderer.isNull() || !_trackingEntities) {
+        return;
+    }
+    auto entityTree = entityTreeRenderer->getTree();
+    if (!entityTree) {
+        return;
+    }
+    float seedRadius = effectiveRadius();
+    if (seedRadius < 0.0f) {
+        return;
+    }
+    // (0 is whole-world loading's "every entity": all the tree holds)
+    const float EVERYWHERE = 100000.0f;
+    seedRadius = seedRadius > 0.0f ? seedRadius : EVERYWHERE;
+    glm::vec3 center = DependencyManager::get<AvatarManager>()->getMyAvatar()->getWorldPosition();
+    PickFilter::Flags flags;
+    flags.set(PickFilter::DOMAIN_ENTITIES); flags.set(PickFilter::VISIBLE); flags.set(PickFilter::INVISIBLE);
+    flags.set(PickFilter::COLLIDABLE); flags.set(PickFilter::NONCOLLIDABLE);
+    QVector<QUuid> nearby;
+    auto tree = std::const_pointer_cast<EntityTree>(entityTree);
+    tree->withReadLock([&] { tree->evalEntitiesInSphere(center, seedRadius, PickFilter(flags), nearby); });
+
+    Locker lock(_lock);
+    if (!_trackingEntities) {
+        return;   // the landing ended while the sphere was read
+    }
+    for (const QUuid& id : nearby) {
+        trackEntity(id, tree);
+    }
+    _seededCount = (int)nearby.size();
 }
 
 void SafeLanding::addTrackedEntity(const EntityItemID& entityID) {
