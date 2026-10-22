@@ -1401,6 +1401,23 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     });
 
     connect(addressManager.data(), &AddressManager::hostChanged, this, &Application::updateWindowTitle);
+
+    // a hop to a place or a person the metaverse doesn't find goes nowhere: say why. It finds a world by its address (a
+    // world's name is no address), and for a person it answers the same whether they are offline, out of sight or unknown
+    connect(addressManager.data(), &AddressManager::lookupResultIsNotFound, this, [](const QString& lookedUp, bool isUser) {
+        const QString name = lookedUp.trimmed();
+        if (isUser) {
+            OffscreenUi::asyncWarning(QString("Couldn't join %1").arg(name).trimmed(), "They're offline, or somewhere you can't join.");
+        } else {
+            OffscreenUi::asyncWarning(name.isEmpty() ? QString("Couldn't find that world")
+                                                     : QString::fromUtf8("Couldn't find “%1”").arg(name),
+                                      "Check the address, or choose a world in Explore.");
+        }
+    });
+    connect(addressManager.data(), &AddressManager::lookupResultIsOffline, this, [](const QString& lookedUp) {
+        const QString name = lookedUp.trimmed();
+        OffscreenUi::asyncWarning((name.isEmpty() ? QString("That world") : name) + " is offline", "Try again later.");
+    });
     connect(this, &QCoreApplication::aboutToQuit, addressManager.data(), &AddressManager::storeCurrentAddress);
 
     connect(this, &Application::activeDisplayPluginChanged, this, &Application::updateThreadPoolCount);
@@ -2706,6 +2723,17 @@ void Application::domainConnectionRefused(const QString& reasonMessage, int reas
                 why = "It runs a different version of Darkride.";
             }
             OffscreenUi::asyncWarning("Couldn't join " + (world.isEmpty() ? QString("this world") : world), why);
+            getMyAvatar()->setWorldVelocity(glm::vec3(0.0f));
+            break;
+        }
+        case DomainHandler::ConnectionRefusedReason::NotAuthorized: {
+            // a ban, or a world its owner keeps to some people; the world says so only once it knows who is asking, and
+            // someone signed out gets the sign-in screen instead (DomainHandler asks for it)
+            if (DependencyManager::get<AccountManager>()->isLoggedIn()) {
+                const QString world = worldNameForPopup();
+                OffscreenUi::asyncWarning("Couldn't join " + (world.isEmpty() ? QString("this world") : world),
+                                          "You don't have permission to enter it.");
+            }
             getMyAvatar()->setWorldVelocity(glm::vec3(0.0f));
             break;
         }
