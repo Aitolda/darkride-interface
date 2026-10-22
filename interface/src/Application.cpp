@@ -7064,6 +7064,8 @@ void Application::updateRenderArgs(float deltaTime) {
             appRenderArgs._renderArgs._impostorCrossfade = lodManager->getImpostorCrossfade();
             appRenderArgs._renderArgs._meshLodErrorPixels = lodManager->getMeshLodErrorPixelsInEffect();
             appRenderArgs._renderArgs._meshLodForceLevel = lodManager->getMeshLodForceLevel();
+            // GPU instancing (INSTANCING.md 3.6): Developer > Render > GPU Instancing, for comparing on and off
+            appRenderArgs._renderArgs._enableInstancing = Menu::getInstance()->isOptionChecked(MenuOption::GpuInstancing);
 
             {
                 QMutexLocker viewLocker(&_viewMutex);

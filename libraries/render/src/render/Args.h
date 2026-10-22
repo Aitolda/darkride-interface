@@ -42,6 +42,9 @@ namespace render {
 
         int _materialSwitches = 0;
         int _trianglesRendered = 0;
+        // GPU instancing (INSTANCING.md): the draws that took an instance list, and the instances they drew
+        int _instancedDrawcalls = 0;
+        int _instancesDrawn = 0;
         // shadow maps given to spot and point lights this frame (one for a spot light, six for a point light), how
         // many of those maps were drawn again rather than kept, and how many of those had their static casters'
         // map drawn again too (the rest copied it and drew only the dynamic casters)
@@ -154,6 +157,11 @@ namespace render {
         bool _enableSkinning { true };
 
         bool _enableFade { false };
+
+        // GPU instancing (INSTANCING.md 3): the draw jobs group the items that can share a draw (Developer > Render >
+        // GPU Instancing); each grouping pass is numbered, so an item knows the state it settled for it is still current
+        bool _enableInstancing { true };
+        uint32_t _instancingPass { 0 };
 
         RenderDetails _details;
         render::ScenePointer _scene;

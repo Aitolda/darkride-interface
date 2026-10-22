@@ -260,6 +260,19 @@ template <>
 void payloadRender(const ModelMeshPartPayload::Pointer& payload, RenderArgs* args) {
     return payload->render(args);
 }
+template <>
+Instancing payloadGetInstancing(const ModelMeshPartPayload::Pointer& payload, RenderArgs* args) {
+    if (payload) {
+        return payload->getInstancing(args);
+    }
+    return Instancing(Instancing::NONE);
+}
+template <>
+void payloadRenderInstances(const ModelMeshPartPayload::Pointer& payload, RenderArgs* args, const Transforms& transforms) {
+    if (payload) {
+        payload->renderInstances(args, transforms);
+    }
+}
 
 }  // namespace render
 
@@ -430,6 +443,7 @@ void ModelMeshPartPayload::updateKey(const render::ItemKey& key) {
 
     if (_drawMaterials.shouldUpdate()) {
         RenderPipelines::updateMultiMaterial(_drawMaterials);
+        _materialContentKeyDirty = true;
     }
 
     auto matKey = _drawMaterials.getMaterialKey();
@@ -452,6 +466,7 @@ void ModelMeshPartPayload::setShapeKey(bool invalidateShapeKey, PrimitiveMode pr
 
     if (_drawMaterials.shouldUpdate()) {
         RenderPipelines::updateMultiMaterial(_drawMaterials);
+        _materialContentKeyDirty = true;
     }
 
     ShapeKey::Builder builder;
@@ -535,8 +550,10 @@ void ModelMeshPartPayload::render(RenderArgs* args) {
     if (!args || (args->_renderMode == RenderArgs::RenderMode::DEFAULT_RENDER_MODE && _cauterized)) {
         return;
     }
+    // settled by getInstancing for this pass (GPU instancing): the impostor choice and the level were made then
+    const bool settled = _settledPass != 0 && _settledPass == args->_instancingPass;
     // the model's impostor card stands in for it in this view, or the two dissolve into each other (IMPOSTORS.md 2.4)
-    if (_impostorSwitch && !_impostorSwitch->evaluate(args).model) {
+    if (!settled && _impostorSwitch && !_impostorSwitch->evaluate(args).model) {
         return;
     }
 
@@ -548,7 +565,7 @@ void ModelMeshPartPayload::render(RenderArgs* args) {
     bindMesh(batch);
     // the automatic LOD this view draws (AUTOMATIC-LODS.md 3.3): a range of the mesh's LOD index buffer over the same
     // vertices
-    const int lodLevel = chooseLodLevel(args);
+    const int lodLevel = settled ? _settledLodLevel : chooseLodLevel(args);
     const graphics::Mesh::Part& drawPart = lodLevel > 0 ? _lodParts[lodLevel - 1] : _drawPart;
     if (lodLevel > 0) {
         batch.setIndexBuffer(gpu::UINT32, _drawMesh->getLodIndexBuffer()._buffer, 0);
@@ -598,6 +615,100 @@ namespace {
     // the main view's hysteresis band on the error test, as the impostor switch's: a part steps down to a coarser
     // level where that level's error is a fifth under the tolerance, and back up where it is a fifth over
     const float LOD_BAND = 0.2f;
+
+    // the drawn material by content (INSTANCING.md 3.2): its schema's bytes, its textures and its cull mode, hashed
+    // (FNV-1a); two parts with equal keys bind the same uniform block and texture table, so one may draw for both
+    uint64_t materialContentKey(graphics::MultiMaterial& materials) {
+        uint64_t hash = 1469598103934665603ULL;
+        auto mix = [&hash](const void* data, size_t size) {
+            const uint8_t* bytes = (const uint8_t*)data;
+            for (size_t i = 0; i < size; i++) {
+                hash ^= bytes[i];
+                hash *= 1099511628211ULL;
+            }
+        };
+        const auto& schema = materials.getSchemaBuffer();
+        if (schema._buffer) {
+            mix(schema._buffer->getData() + schema._offset, schema._size);
+        }
+        if (materials.getTextureTable()) {
+            for (const auto& texture : materials.getTextureTable()->getTextures()) {
+                const void* pointer = texture.get();
+                mix(&pointer, sizeof(pointer));
+            }
+        }
+        auto cullFaceMode = materials.getCullFaceMode();
+        mix(&cullFaceMode, sizeof(cullFaceMode));
+        return hash == 0 ? 1 : hash;
+    }
+}
+
+render::Instancing ModelMeshPartPayload::getInstancing(RenderArgs* args) {
+    render::Instancing answer(render::Instancing::NONE);
+    if (!args || (args->_renderMode == RenderArgs::RenderMode::DEFAULT_RENDER_MODE && _cauterized)) {
+        return answer;
+    }
+    if (_impostorSwitch && !_impostorSwitch->evaluate(args).model) {
+        return answer;
+    }
+    // settled for this pass: the level this view draws, chosen once (the main view's hysteresis moves once a frame)
+    _settledLodLevel = chooseLodLevel(args);
+    _settledPass = args->_instancingPass;
+    answer.draw = render::Instancing::ALONE;
+    answer.transform = _worldFromLocalTransform;
+
+    // what draws on its own (INSTANCING.md 3.1): translucent (its order), deformed (its skinning buffer), fading (its
+    // dissolve), procedural (its pipeline), lightmapped (its texture transform, until 3.5)
+    const auto shapeKey = getShapeKey();
+    if (!shapeKey.isValid() || shapeKey.hasOwnPipeline() || shapeKey.isTranslucent() || shapeKey.isDeformed() ||
+        shapeKey.isFaded() || shapeKey.hasLightMap() || !_drawMesh || _drawMaterials.empty()) {
+        return answer;
+    }
+    if (_drawMaterials.shouldUpdate()) {
+        RenderPipelines::updateMultiMaterial(_drawMaterials);
+        _materialContentKeyDirty = true;
+    }
+    if (_materialContentKeyDirty) {
+        _materialContentKey = materialContentKey(_drawMaterials);
+        _materialContentKeyDirty = false;
+    }
+    answer.draw = render::Instancing::SHARED;
+    answer.key.mesh = _drawMesh.get();
+    answer.key.material = _materialContentKey;
+    answer.key.part = ((uint32_t)_partIndex << 8) | (uint32_t)(_settledLodLevel & 0xff);
+    answer.key.shape = (uint32_t)shapeKey._flags.to_ulong();
+    return answer;
+}
+
+void ModelMeshPartPayload::renderInstances(RenderArgs* args, const render::Transforms& transforms) {
+    PerformanceTimer perfTimer("ModelMeshPartPayload::renderInstances");
+    if (!args || !args->_batch || transforms.empty()) {
+        return;
+    }
+    gpu::Batch& batch = *(args->_batch);
+    // settled by getInstancing for this pass: every member of the group answered the same key, so the mesh, the part
+    // and level, the material and the pipeline are this part's; only the transforms differ
+    const bool settled = _settledPass != 0 && _settledPass == args->_instancingPass;
+    const int lodLevel = settled ? _settledLodLevel : chooseLodLevel(args);
+
+    bindMesh(batch);
+    const graphics::Mesh::Part& drawPart = lodLevel > 0 ? _lodParts[lodLevel - 1] : _drawPart;
+    if (lodLevel > 0) {
+        batch.setIndexBuffer(gpu::UINT32, _drawMesh->getLodIndexBuffer()._buffer, 0);
+    }
+    if (RenderPipelines::bindMaterials(_drawMaterials, batch, args->_renderMode, args->_enableTexturing)) {
+        args->_details._materialSwitches++;
+    }
+    if (_impostorSwitch) {
+        batch.setUniformBuffer(render_utils::slot::buffer::FadeObjectParameters, _impostorSwitch->fadeParams(args));
+    }
+    {
+        PerformanceTimer perfTimer("batch.drawIndexedInstances()");
+        batch.drawIndexedInstances(gpu::TRIANGLES, drawPart._numIndices, drawPart._startIndex, transforms);
+    }
+    args->_details._trianglesRendered += (int)(drawPart._numIndices / INDICES_PER_TRIANGLE) * (int)transforms.size();
+    args->_details._instancedDrawcalls++;
+    args->_details._instancesDrawn += (int)transforms.size();
 }
 
 int ModelMeshPartPayload::chooseLodLevel(const RenderArgs* args) {
