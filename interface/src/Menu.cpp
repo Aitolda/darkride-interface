@@ -274,9 +274,13 @@ Menu::Menu() {
     MenuWrapper* buildMenu = addMenu("Build");
 
     // Build > Build Mode
-    addCheckableActionToQMenuAndActionHash(buildMenu, MenuOption::BuildMode,
+    QAction* buildModeAction = addCheckableActionToQMenuAndActionHash(buildMenu, MenuOption::BuildMode,
         [](bool checked) { DependencyManager::get<Editor>()->setActive(checked); },
         Qt::CTRL | Qt::Key_B, false);
+    // scripts hear it as Menu.menuItemEvent("Build Mode") whichever way build mode changes (this item, Ctrl+B, the bar's
+    // Create button, or the editor leaving by itself: Editor::setActive unchecks the item through setIsOptionChecked,
+    // which triggers it); only items scripts add were forwarded before
+    connect(buildModeAction, SIGNAL(triggered()), MenuScriptingInterface::getInstance(), SLOT(menuItemTriggered()));
 
     // Build > Show Grid
     addCheckableActionToQMenuAndActionHash(buildMenu, MenuOption::BuildGrid,
