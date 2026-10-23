@@ -24,6 +24,7 @@
 #include "StencilMaskPass.h"
 #include "DeferredLightingEffect.h"
 #include "TextureCache.h"
+#include "TransmissionSource.h"
 
 using namespace render;
 using namespace std::placeholders;
@@ -492,6 +493,21 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
                         wasSet = true;
                     }
                     break;
+                case graphics::MaterialKey::TRANSMISSION_VAL_BIT:
+                    if (materialKey.isTransmission()) {
+                        schema._transmission = material->getTransmission();
+                        schemaKey.setTransmission(true);
+                        wasSet = true;
+                    }
+                    break;
+                case graphics::MaterialKey::CLEARCOAT_VAL_BIT:
+                    if (materialKey.isClearcoat()) {
+                        schema._clearcoat = material->getClearcoat();
+                        schema._clearcoatRoughness = material->getClearcoatRoughness();
+                        schemaKey.setClearcoat(true);
+                        wasSet = true;
+                    }
+                    break;
                 case graphics::MaterialKey::ALBEDO_MAP_BIT:
                     if (materialKey.isAlbedoMap()) {
                         auto itr = textureMaps.find(graphics::MaterialKey::ALBEDO_MAP);
@@ -562,6 +578,7 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
                             forceDefault = true;
                         }
                         schemaKey.setNormalMap(true);
+                        schema._normalScale = material->getNormalScale();
                     }
                     break;
                 case graphics::MaterialKey::OCCLUSION_MAP_BIT:
@@ -718,6 +735,8 @@ void RenderPipelines::updateMultiMaterial(graphics::MultiMaterial& multiMaterial
             case graphics::MaterialKey::OPACITY_VAL_BIT:
             case graphics::MaterialKey::OPACITY_CUTOFF_VAL_BIT:
             case graphics::MaterialKey::SCATTERING_VAL_BIT:
+            case graphics::MaterialKey::TRANSMISSION_VAL_BIT:
+            case graphics::MaterialKey::CLEARCOAT_VAL_BIT:
             case graphics::Material::TEXCOORDTRANSFORM0:
             case graphics::Material::TEXCOORDTRANSFORM1:
             case graphics::Material::LIGHTMAP_PARAMS:
@@ -808,9 +827,10 @@ bool RenderPipelines::bindMaterials(graphics::MultiMaterial& multiMaterial, gpu:
         defaultMaterialTextures->setTexture(gr::Texture::MaterialLightmapDirection, textureCache->getGrayTexture());
     });
 
-    // For shadows, we only need opacity mask information
+    // For shadows, we only need opacity mask information, and whether light passes through (model.slf)
     auto key = multiMaterial.getMaterialKey();
-    if (renderMode != render::Args::RenderMode::SHADOW_RENDER_MODE || (key.isOpacityMaskMap() || key.isTranslucentMap())) {
+    if (renderMode != render::Args::RenderMode::SHADOW_RENDER_MODE ||
+            (key.isOpacityMaskMap() || key.isTranslucentMap() || key.isTransmission())) {
         auto& schemaBuffer = multiMaterial.getSchemaBuffer();
         batch.setUniformBuffer(gr::Buffer::Material, schemaBuffer);
         if (enableTextures) {
@@ -824,6 +844,14 @@ bool RenderPipelines::bindMaterials(graphics::MultiMaterial& multiMaterial, gpu:
         // deferred opaque programs of a material with a scattering map read that unit as the map, so those keep it.
         if (renderMode != render::Args::RenderMode::SHADOW_RENDER_MODE && !key.isScatteringMap()) {
             batch.setResourceTexture(ru::Texture::ProbeVolume, DeferredLightingEffect::getFrameProbeVolume());
+        }
+        // A transmissive surface reads the scene behind it from the lightmap direction map's unit, which its programs
+        // do not otherwise declare (a lightmapped surface does not transmit). Without a copy this frame the 1 x 1
+        // stand-in tells the shader to blend instead; either way the views copy their scenes from the next frame.
+        if (renderMode != render::Args::RenderMode::SHADOW_RENDER_MODE && key.isTransmission() && !key.isLightMap()) {
+            CopyTransmissionSource::request();
+            const auto& source = CopyTransmissionSource::getFrameSource();
+            batch.setResourceTexture(ru::Texture::TransmissionSource, source ? source : textureCache->getBlackTexture());
         }
         return true;
     } else {

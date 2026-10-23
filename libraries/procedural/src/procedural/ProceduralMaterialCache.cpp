@@ -181,6 +181,20 @@ NetworkMaterialResource::ParsedMaterials NetworkMaterialResource::parseJSONMater
  *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
  * @property {number} occlusionStrength=1.0 - How much the occlusion map darkens, range <code>0.0</code> (not at all)
  *     &ndash; <code>1.0</code> (fully). <code>"hifi_pbr"</code> model only.
+ * @property {number} normalScale=1.0 - How far the normal map tilts the surface's normal: <code>0.0</code> not at all,
+ *     <code>1.0</code> as drawn, more for steeper bumps (glTF's normal scale). <code>"hifi_pbr"</code> model only.
+ * @property {number|string} transmission=0.0 - How much light passes through the surface, range <code>0.0</code> (none)
+ *     &ndash; <code>1.0</code> (all), as glass: the scene behind shows through, tinted by the albedo and blurred by the
+ *     roughness (glTF's <code>KHR_materials_transmission</code>). Unlike <code>opacity</code>, the surface keeps its
+ *     reflections at full strength. A transmissive surface casts no shadow when <code>transmission</code> is at least
+ *     <code>0.5</code>, and metal transmits nothing.
+ *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
+ * @property {number|string} clearcoat=0.0 - The strength of a clear coat over the surface, range <code>0.0</code>
+ *     &ndash; <code>1.0</code>, as on car paint or varnished wood: a second, clear reflection with a roughness of its own
+ *     (glTF's <code>KHR_materials_clearcoat</code>). Not drawn on the deferred renderer's opaque surfaces.
+ *     Set to <code>"fallthrough"</code> to fall through to the material below. <code>"hifi_pbr"</code> model only.
+ * @property {number} clearcoatRoughness=0.0 - The clear coat's roughness, range <code>0.0</code> &ndash;
+ *     <code>1.0</code>. <code>"hifi_pbr"</code> model only.
  * @property {string} roughnessMapChannel - With a <code>"custom"</code> packing, the channel of <code>roughnessMap</code>'s
  *     picture to read: <code>"r"</code>, <code>"g"</code>, <code>"b"</code> or <code>"a"</code>. So are 
  *     <code>glossMapChannel</code>, <code>metallicMapChannel</code>, <code>specularMapChannel</code> and
@@ -372,6 +386,30 @@ std::pair<std::string, std::shared_ptr<NetworkMaterial>> NetworkMaterialResource
                 auto value = materialJSON.value(key);
                 if (value.isDouble()) {
                     material->setOcclusionStrength(value.toDouble());
+                }
+            } else if (key == "normalScale") {
+                auto value = materialJSON.value(key);
+                if (value.isDouble()) {
+                    material->setNormalScale(value.toDouble());
+                }
+            } else if (key == "transmission") {
+                auto value = materialJSON.value(key);
+                if (value.isString() && value.toString() == FALLTHROUGH) {
+                    material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::TRANSMISSION_VAL_BIT);
+                } else if (value.isDouble()) {
+                    material->setTransmission(value.toDouble());
+                }
+            } else if (key == "clearcoat") {
+                auto value = materialJSON.value(key);
+                if (value.isString() && value.toString() == FALLTHROUGH) {
+                    material->setPropertyDoesFallthrough(graphics::MaterialKey::FlagBit::CLEARCOAT_VAL_BIT);
+                } else if (value.isDouble()) {
+                    material->setClearcoat(value.toDouble());
+                }
+            } else if (key == "clearcoatRoughness") {
+                auto value = materialJSON.value(key);
+                if (value.isDouble()) {
+                    material->setClearcoatRoughness(value.toDouble());
                 }
             } else if (key == "opacityMapMode") {
                 auto value = materialJSON.value(key);

@@ -53,6 +53,7 @@
 #include "ToneMapAndResampleTask.h"
 #include "SubsurfaceScattering.h"
 #include "DrawHaze.h"
+#include "TransmissionSource.h"
 #include "BloomEffect.h"
 #include "HighlightEffect.h"
 
@@ -215,6 +216,9 @@ void RenderDeferredTask::build(JobModel& task, const render::Varying& input, ren
     const auto drawHazeInputs = render::Varying(DrawHaze::Inputs(hazeFrame, lightingFramebuffer, linearDepthTarget, deferredFrameTransform, lightingModel, lightFrame));
     task.addJob<DrawHaze>("DrawHazeDeferred", drawHazeInputs);
 
+    // the lit scene so far, for the transmissive surfaces among the translucent ones to show through (when there are any)
+    task.addJob<CopyTransmissionSource>("CopyTransmissionSource", lightingFramebuffer);
+
     // Render transparent objects forward in LightingBuffer
     const auto transparentsInputs = RenderTransparentDeferred::Inputs(transparents, hazeFrame, lightFrame, lightingModel, lightClusters, shadowFrame, jitter).asVarying();
     task.addJob<RenderTransparentDeferred>("DrawTransparentDeferred", transparentsInputs, shapePlumber);
@@ -228,6 +232,7 @@ void RenderDeferredTask::build(JobModel& task, const render::Varying& input, ren
     const auto inFrontTransparentsInputs = DrawLayered3D::Inputs(inFrontTransparent, lightingModel, hazeFrame, jitter).asVarying();
     task.addJob<DrawLayered3D>("DrawInFrontOpaque", inFrontOpaquesInputs, true);
     task.addJob<DrawLayered3D>("DrawInFrontTransparent", inFrontTransparentsInputs, false);
+    task.addJob<EndTransmissionSource>("EndTransmissionSource");
 
     // AA job before bloom to limit flickering
     const auto antialiasingInputs = Antialiasing::Inputs(deferredFrameTransform, lightingFramebuffer, linearDepthTarget, velocityBuffer).asVarying();

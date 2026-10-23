@@ -76,6 +76,10 @@
 // buffer's, which that pass does not read
 #define RENDER_UTILS_TEXTURE_PROBE_VOLUME 6
 #define RENDER_UTILS_TEXTURE_PROBE_VOLUME_DEFERRED 10
+// the scene behind the translucent surfaces, for the transmissive ones (TransmissionSource.h): the lightmap direction
+// map's slot, which only the lightmapped programs declare (a lightmapped surface does not transmit); every other unit
+// of the translucent programs is taken, and macOS's OpenGL 4.1 has 16
+#define RENDER_UTILS_TEXTURE_TRANSMISSION_SOURCE 8
 
 // the frame's light culling (LightClusterGrid.slh): its parameters and light list, the screen tiles' bits, the depth bins'
 #define RENDER_UTILS_BUFFER_LIGHT_CLUSTER_PARAMS 10
@@ -223,6 +227,7 @@ enum Texture {
     ToneMappingColor = RENDER_UTILS_TEXTURE_TM_COLOR,
     TextFont = RENDER_UTILS_TEXTURE_TEXT_FONT,
     AmbientFresnel = RENDER_UTILS_TEXTURE_AMBIENT_FRESNEL,
+    TransmissionSource = RENDER_UTILS_TEXTURE_TRANSMISSION_SOURCE,
     DebugTexture0 = RENDER_UTILS_DEBUG_TEXTURE0,
 };
 } // namespace texture

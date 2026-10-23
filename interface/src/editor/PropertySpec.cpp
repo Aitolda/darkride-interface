@@ -835,6 +835,7 @@ namespace {
             { "roughnessMap", Entry::Text, "", false },
             { "roughness", Entry::Number, graphics::Material::DEFAULT_ROUGHNESS, false },
             { "normalMap", Entry::Text, "", false },
+            { "normalScale", Entry::Number, graphics::Material::DEFAULT_NORMAL_SCALE, false },
             { "occlusionMap", Entry::Text, "", false },
             { "occlusionStrength", Entry::Number, graphics::Material::DEFAULT_OCCLUSION_STRENGTH, false },
             { "emissiveMap", Entry::Text, "", false },
@@ -843,6 +844,9 @@ namespace {
             { "lightMap", Entry::Text, "", false },
             { "lightMapDirection", Entry::Text, "", false },
             { "lightmapMode", Entry::Text, "indirect", false },
+            { "transmission", Entry::Number, graphics::Material::DEFAULT_TRANSMISSION, false },
+            { "clearcoat", Entry::Number, graphics::Material::DEFAULT_CLEARCOAT, false },
+            { "clearcoatRoughness", Entry::Number, graphics::Material::DEFAULT_CLEARCOAT_ROUGHNESS, false },
             { "opacity", Entry::Number, graphics::Material::DEFAULT_OPACITY, false },
             { "opacityCutoff", Entry::Number, graphics::Material::DEFAULT_OPACITY_CUTOFF, false }
         };
@@ -1233,6 +1237,9 @@ namespace {
             OWN_DATA " and " PACKING_KEY "=custom or "
             OWN_DATA " and " PACKING_KEY "=orm and materialData:ormMap=");
         input("materialData:normalMap", "Normal Map", K::Image, OWN_DATA);
+        // URP/Lit's Normal Map strength: 1 as drawn, up to 2 for steeper bumps
+        with(range(add(spec("materialData:normalScale", "Normal Strength", K::Slider, "material_inputs")), 0, 2, 0.01, 2),
+            OWN_DATA " and materialData:normalMap!=");
         input("materialData:occlusionMap", "Occlusion Map", K::Image, OWN_DATA " and " PACKING_KEY " in unity,custom");
         input("materialData:occlusionStrength", "Occlusion Strength", K::Slider,
             OWN_DATA " and " PACKING_KEY " in unity,custom and materialData:occlusionMap!= or "
@@ -1240,6 +1247,12 @@ namespace {
         input("materialData:emissiveMap", "Emission Map", K::Image, OWN_DATA);
         input("materialData:emissive", "Emission Color", K::Color, OWN_DATA);
         input("materialData:opacity", "Opacity", K::Slider, OWN_DATA);
+        // glass and the like (KHR_materials_transmission): the scene behind shows through, blurred by the roughness,
+        // and the surface keeps its reflections, which Opacity fades with the rest
+        input("materialData:transmission", "Transmission", K::Slider, OWN_DATA);
+        // a clear coat with a reflection of its own, as on car paint (KHR_materials_clearcoat)
+        input("materialData:clearcoat", "Clear Coat", K::Slider, OWN_DATA);
+        input("materialData:clearcoatRoughness", "Clear Coat Roughness", K::Slider, OWN_DATA);
         // a baked lightmap over the second texture coordinates (LIGHTMAPS.md): Indirect is Unity's Baked Indirect (the
         // baked light in place of the ambient, the lights as usual), Full Bake High Fidelity's (the whole lighting)
         input("materialData:lightMap", "Lightmap", K::Image, OWN_DATA);

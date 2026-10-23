@@ -354,6 +354,34 @@ void AssimpSerializer::processMaterials() {
             modelMaterial->setOpacityMapMode(graphics::MaterialKey::OPACITY_MAP_OPAQUE);
         }
 
+        // glTF's strengths and extensions: how far the normal map tilts the normal and how much the occlusion map
+        // darkens, light through the surface (KHR_materials_transmission: glass) and a clear coat over it
+        // (KHR_materials_clearcoat). Their textures (a transmission map, the coat's own maps) are not read: the
+        // factors apply across the surface.
+        if (isGltf) {
+            float normalScale;
+            if (mMaterial->Get(AI_MATKEY_GLTF_TEXTURE_SCALE(aiTextureType_NORMALS, 0), normalScale) == AI_SUCCESS) {
+                modelMaterial->setNormalScale(normalScale);
+            }
+            float occlusionStrength;
+            if (mMaterial->Get(AI_MATKEY_GLTF_TEXTURE_STRENGTH(aiTextureType_LIGHTMAP, 0), occlusionStrength) == AI_SUCCESS) {
+                modelMaterial->setOcclusionStrength(occlusionStrength);
+            }
+
+            float transmission;
+            if (mMaterial->Get(AI_MATKEY_GLTF_MATERIAL_TRANSMISSION_FACTOR, transmission) == AI_SUCCESS) {
+                modelMaterial->setTransmission(transmission);
+            }
+
+            float clearcoat;
+            if (mMaterial->Get(AI_MATKEY_GLTF_MATERIAL_CLEARCOAT_FACTOR, clearcoat) == AI_SUCCESS) {
+                modelMaterial->setClearcoat(clearcoat);
+                float clearcoatRoughness;
+                if (mMaterial->Get(AI_MATKEY_GLTF_MATERIAL_CLEARCOAT_ROUGHNESS_FACTOR, clearcoatRoughness) == AI_SUCCESS) {
+                    modelMaterial->setClearcoatRoughness(clearcoatRoughness);
+                }
+            }
+        }
     }
 }
 

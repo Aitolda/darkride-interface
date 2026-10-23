@@ -26,6 +26,10 @@ const float Material::DEFAULT_METALLIC { 0.0f };
 const float Material::DEFAULT_ROUGHNESS { 1.0f };
 const float Material::DEFAULT_SCATTERING{ 0.0f };
 const float Material::DEFAULT_OCCLUSION_STRENGTH { 1.0f };
+const float Material::DEFAULT_NORMAL_SCALE { 1.0f };
+const float Material::DEFAULT_TRANSMISSION { 0.0f };
+const float Material::DEFAULT_CLEARCOAT { 0.0f };
+const float Material::DEFAULT_CLEARCOAT_ROUGHNESS { 0.0f };
 const MaterialKey::OpacityMapMode Material::DEFAULT_OPACITY_MAP_MODE{ MaterialKey::OPACITY_MAP_OPAQUE };
 const float Material::DEFAULT_OPACITY_CUTOFF { 0.5f };
 const MaterialKey::CullFaceMode Material::DEFAULT_CULL_FACE_MODE { MaterialKey::CULL_BACK };
@@ -81,6 +85,10 @@ Material::Material(const Material& material) :
     _scattering(material._scattering),
     _opacityCutoff(material._opacityCutoff),
     _occlusionStrength(material._occlusionStrength),
+    _normalScale(material._normalScale),
+    _transmission(material._transmission),
+    _clearcoat(material._clearcoat),
+    _clearcoatRoughness(material._clearcoatRoughness),
     _texcoordTransforms(material._texcoordTransforms),
     _lightmapParams(material._lightmapParams),
     _materialParams(material._materialParams),
@@ -105,6 +113,10 @@ Material& Material::operator=(const Material& material) {
     _scattering = material._scattering;
     _opacityCutoff = material._opacityCutoff;
     _occlusionStrength = material._occlusionStrength;
+    _normalScale = material._normalScale;
+    _transmission = material._transmission;
+    _clearcoat = material._clearcoat;
+    _clearcoatRoughness = material._clearcoatRoughness;
     _texcoordTransforms = material._texcoordTransforms;
     _lightmapParams = material._lightmapParams;
     _materialParams = material._materialParams;
@@ -185,6 +197,24 @@ void Material::setScattering(float scattering) {
 
 void Material::setOcclusionStrength(float occlusionStrength) {
     _occlusionStrength = glm::clamp(occlusionStrength, 0.0f, 1.0f);
+}
+
+void Material::setNormalScale(float normalScale) {
+    _normalScale = glm::max(normalScale, 0.0f);
+}
+
+void Material::setTransmission(float transmission) {
+    _transmission = glm::clamp(transmission, 0.0f, 1.0f);
+    _key.setTransmission(_transmission > 0.0f);
+}
+
+void Material::setClearcoat(float clearcoat) {
+    _clearcoat = glm::clamp(clearcoat, 0.0f, 1.0f);
+    _key.setClearcoat(_clearcoat > 0.0f);
+}
+
+void Material::setClearcoatRoughness(float clearcoatRoughness) {
+    _clearcoatRoughness = glm::clamp(clearcoatRoughness, 0.0f, 1.0f);
 }
 
 void Material::setOpacityCutoff(float opacityCutoff) {

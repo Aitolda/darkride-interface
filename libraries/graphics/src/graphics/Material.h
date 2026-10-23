@@ -70,6 +70,12 @@ public:
                                         // only and replaces the ambient diffuse term, the sun and the local lights
                                         // running as usual (Unity's Baked Indirect; LIGHTMAPS.md). Goes with the map
 
+        TRANSMISSION_VAL_BIT,           // light passes through the surface (glTF's KHR_materials_transmission): the scene
+                                        // behind shows through it, tinted by the albedo and blurred by the roughness.
+                                        // A transmissive material draws with the translucent ones
+        CLEARCOAT_VAL_BIT,              // a clear coat over the surface with a reflection of its own (glTF's
+                                        // KHR_materials_clearcoat); its roughness goes with it
+
         NUM_FLAGS,
     };
     typedef std::bitset<NUM_FLAGS> Flags;
@@ -250,6 +256,12 @@ public:
     void setLightmapFull(bool value) { _flags.set(LIGHTMAP_FULL_BIT, value); }
     bool isLightmapFull() const { return _flags[LIGHTMAP_FULL_BIT]; }
 
+    void setTransmission(bool value) { _flags.set(TRANSMISSION_VAL_BIT, value); }
+    bool isTransmission() const { return _flags[TRANSMISSION_VAL_BIT]; }
+
+    void setClearcoat(bool value) { _flags.set(CLEARCOAT_VAL_BIT, value); }
+    bool isClearcoat() const { return _flags[CLEARCOAT_VAL_BIT]; }
+
     void setMapChannel(MapChannel channel, bool value) { _flags.set(EMISSIVE_MAP_BIT + channel, value); }
     bool isMapChannel(MapChannel channel) const { return _flags[EMISSIVE_MAP_BIT + channel]; }
 
@@ -284,7 +296,8 @@ public:
         return isTranslucentMap() ? OPACITY_MAP_BLEND : OPACITY_MAP_OPAQUE;
     }
 
-    bool isTranslucent() const { return isTranslucentFactor() || isTranslucentMap(); }
+    // a transmissive surface draws after the opaque ones too: what it shows through is the scene drawn before it
+    bool isTranslucent() const { return isTranslucentFactor() || isTranslucentMap() || isTransmission(); }
     bool isOpaque() const { return !isTranslucent(); }
     bool isSurfaceOpaque() const { return isOpaque() && !isOpacityMaskMap(); }
     bool isTexelOpaque() const { return isOpaque() && isOpacityMaskMap(); }
@@ -448,6 +461,25 @@ public:
     void setOcclusionStrength(float occlusionStrength);
     float getOcclusionStrength() const { return _occlusionStrength; }
 
+    // how far the normal map tilts the normal: 0 not at all, 1 as drawn, more steeper (glTF's normal scale, URP/Lit's
+    // Normal Map strength)
+    static const float DEFAULT_NORMAL_SCALE;
+    void setNormalScale(float normalScale);
+    float getNormalScale() const { return _normalScale; }
+
+    // how much light passes through the surface, 0 none to 1 all (glTF's KHR_materials_transmission, thin-walled)
+    static const float DEFAULT_TRANSMISSION;
+    void setTransmission(float transmission);
+    float getTransmission() const { return _transmission; }
+
+    // the strength of a clear coat over the surface, 0 none to 1 full, and its roughness (KHR_materials_clearcoat)
+    static const float DEFAULT_CLEARCOAT;
+    void setClearcoat(float clearcoat);
+    float getClearcoat() const { return _clearcoat; }
+    static const float DEFAULT_CLEARCOAT_ROUGHNESS;
+    void setClearcoatRoughness(float clearcoatRoughness);
+    float getClearcoatRoughness() const { return _clearcoatRoughness; }
+
     // see MaterialKey::ROUGHNESS_FROM_SMOOTHNESS_BIT and OCCLUSION_TEXCOORD0_BIT
     void setRoughnessFromSmoothness(bool value) { _key.setRoughnessFromSmoothness(value); }
     void setOcclusionTexcoord0(bool value) { _key.setOcclusionTexcoord0(value); }
@@ -519,6 +551,10 @@ private:
     float _scattering { DEFAULT_SCATTERING };
     float _opacityCutoff { DEFAULT_OPACITY_CUTOFF };
     float _occlusionStrength { DEFAULT_OCCLUSION_STRENGTH };
+    float _normalScale { DEFAULT_NORMAL_SCALE };
+    float _transmission { DEFAULT_TRANSMISSION };
+    float _clearcoat { DEFAULT_CLEARCOAT };
+    float _clearcoatRoughness { DEFAULT_CLEARCOAT_ROUGHNESS };
     std::array<glm::mat4, NUM_TEXCOORD_TRANSFORMS> _texcoordTransforms;
     glm::vec2 _lightmapParams { 0.0, 1.0 };
     glm::vec2 _materialParams { 0.0, 1.0 };
@@ -601,6 +637,11 @@ public:
         glm::vec2 _materialParams { 0.0, 1.0 };
 
         float _occlusionStrength { Material::DEFAULT_OCCLUSION_STRENGTH };
+        float _transmission { Material::DEFAULT_TRANSMISSION };
+        float _clearcoat { Material::DEFAULT_CLEARCOAT };
+        float _clearcoatRoughness { Material::DEFAULT_CLEARCOAT_ROUGHNESS };
+
+        float _normalScale { Material::DEFAULT_NORMAL_SCALE };
         glm::vec3 _spare { 0.0f };
 
         Schema() {

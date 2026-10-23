@@ -36,6 +36,7 @@
 #include "DeferredLightingEffect.h"
 #include "HighlightEffect.h"
 #include "BloomEffect.h"
+#include "TransmissionSource.h"
 #include <gpu/Context.h>
 #include <FrameDiag.h>
 
@@ -150,6 +151,9 @@ void RenderForwardTask::build(JobModel& task, const render::Varying& input, rend
     const auto backgroundInputs = DrawBackgroundStage::Inputs(lightingModel, backgroundFrame, hazeFrame).asVarying();
     task.addJob<DrawBackgroundStage>("DrawBackgroundForward", backgroundInputs);
 
+    // the scene so far, for the transmissive surfaces among the translucent ones to show through (when there are any)
+    task.addJob<CopyTransmissionSource>("CopyTransmissionSource", scaledPrimaryFramebuffer);
+
     // Draw transparent objects forward
     const auto transparentInputs = DrawForward::Inputs(transparents, lightingModel, hazeFrame).asVarying();
     task.addJob<DrawForward>("DrawTransparents", transparentInputs, shapePlumber, false);
@@ -165,6 +169,7 @@ void RenderForwardTask::build(JobModel& task, const render::Varying& input, rend
     const auto inFrontTransparentsInputs = DrawLayered3D::Inputs(inFrontTransparent, lightingModel, hazeFrame, nullJitter).asVarying();
     task.addJob<DrawLayered3D>("DrawInFrontOpaque", inFrontOpaquesInputs, true);
     task.addJob<DrawLayered3D>("DrawInFrontTransparent", inFrontTransparentsInputs, false);
+    task.addJob<EndTransmissionSource>("EndTransmissionSource");
 
     {  // Debug the bounds of the rendered items, still look at the zbuffer
 

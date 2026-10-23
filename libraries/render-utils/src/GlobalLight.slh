@@ -390,6 +390,45 @@ vec3 evalLightmappedColor(mat4 invViewMat, float shadowAttenuation, float obscur
 }
 <@endfunc@>
 
+// A clear coat over the surface (glTF's KHR_materials_clearcoat): a clear dielectric layer with a roughness of its own
+// and the mesh's normal (not the normal map's). The light under it goes through the layer's Fresnel term, and the
+// layer adds its reflection of the ambient light and the sun:
+//   color = color * (1 - clearcoat * Fc) + clearcoat * evalClearcoatSpecular(...)
+// Declared after declareEvalSkyboxGlobalColor or declareEvalGlobalLightingAlphaBlended, whose ambient and directional
+// functions it calls.
+<@func declareEvalClearcoat()@>
+
+const float CLEARCOAT_F0 = 0.04;   // the layer's index of refraction, 1.5
+
+float evalClearcoatFresnel(mat4 invViewMat, vec3 positionES, vec3 normalWS) {
+    vec3 fragPositionWS = vec3(invViewMat * vec4(positionES, 1.0));
+    float ndotv = clamp(dot(normalWS, normalize(invViewMat[3].xyz - fragPositionWS)), 0.0, 1.0);
+    return CLEARCOAT_F0 + (1.0 - CLEARCOAT_F0) * pow(1.0 - ndotv, 5.0);
+}
+
+vec3 evalClearcoatSpecular(mat4 invViewMat, float shadowAttenuation, float obscurance, vec3 positionES, vec3 normalWS,
+    float roughness)
+{
+    <$prepareGlobalLight(positionES, normalWS)$>
+
+    SurfaceData surfaceWS = initSurfaceData(roughness, fragNormalWS, fragEyeDirWS);
+
+    // a clear dielectric: no diffuse term, and no colour of its own
+    vec3 ambientDiffuse;
+    vec3 ambientSpecular;
+    evalLightingAmbient(ambientDiffuse, ambientSpecular, lightAmbient, surfaceWS, 0.0, vec3(CLEARCOAT_F0), vec3(0.0),
+                        obscurance, fragPositionWS);
+
+    vec3 directionalDiffuse;
+    vec3 directionalSpecular;
+    evalLightingDirectional(directionalDiffuse, directionalSpecular, lightDirection, lightIrradiance, surfaceWS, 0.0,
+                            vec3(CLEARCOAT_F0), vec3(0.0), shadowAttenuation);
+
+    return ambientSpecular + directionalSpecular;
+}
+
+<@endfunc@>
+
 <@func declareEvalGlobalLightingAlphaBlended()@>
 
 <$declareLightingAmbient(1, 1, 1, _SCRIBE_NULL, 1)$>

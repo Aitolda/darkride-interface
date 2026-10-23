@@ -54,7 +54,9 @@ struct Material {
 LAYOUT_STD140(binding=GRAPHICS_BUFFER_MATERIAL) uniform materialBuffer {
     Material _mat;
     TexMapArray _texMapArray;
-    vec4 _occlusionStrengthSpare3;      // x: how much the occlusion map darkens, 0 not at all to 1 fully
+    vec4 _occlusionStrengthTransmissionClearcoat;   // x: how much the occlusion map darkens, 0 not at all to 1 fully;
+                                                    // y: transmission; z: clear coat; w: the clear coat's roughness
+    vec4 _normalScaleSpare3;            // x: how far the normal map tilts the normal
 };
 
 Material getMaterial() {
@@ -64,7 +66,19 @@ TexMapArray getTexMapArray() {
     return _texMapArray;
 }
 float getMaterialOcclusionStrength() {
-    return _occlusionStrengthSpare3.x;
+    return _occlusionStrengthTransmissionClearcoat.x;
+}
+float getMaterialTransmission() {
+    return _occlusionStrengthTransmissionClearcoat.y;
+}
+float getMaterialClearcoat() {
+    return _occlusionStrengthTransmissionClearcoat.z;
+}
+float getMaterialClearcoatRoughness() {
+    return _occlusionStrengthTransmissionClearcoat.w;
+}
+float getMaterialNormalScale() {
+    return _normalScaleSpare3.x;
 }
 
 vec3 getMaterialEmissive(Material m) { return m._emissiveOpacity.rgb; }
@@ -106,5 +120,7 @@ const BITFIELD LIGHTMAP_DIRECTION_MAP_BIT    = 0x00080000;
 const BITFIELD ROUGHNESS_FROM_SMOOTHNESS_BIT = 0x00100000;
 const BITFIELD OCCLUSION_TEXCOORD0_BIT       = 0x00200000;
 const BITFIELD LIGHTMAP_FULL_BIT             = 0x00400000;
+const BITFIELD TRANSMISSION_VAL_BIT          = 0x00800000;
+const BITFIELD CLEARCOAT_VAL_BIT             = 0x01000000;
 
 <@endif@>
