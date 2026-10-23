@@ -75,6 +75,7 @@
 #include "scripting/RenderScriptingInterface.h"
 #include "scripting/ChatScriptingInterface.h"
 #include "scripting/DiskCacheScriptingInterface.h"
+#include "ui/MetaverseRequests.h"
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
 #include "SpeechRecognizer.h"
 #endif
@@ -122,6 +123,9 @@ void Application::onDesktopRootContextCreated(QQmlContext* surfaceContext) {
     surfaceContext->setContextProperty("Controller", DependencyManager::get<controller::ScriptingInterface>().data());
     surfaceContext->setContextProperty("Entities", DependencyManager::get<EntityScriptingInterface>().data());
     surfaceContext->setContextProperty("Performance", new PerformanceScriptingInterface());
+    // Darkride's own panels (the Settings panel first): the disk cache's size and place, and the metaverse's API
+    surfaceContext->setContextProperty("DiskCache", DependencyManager::get<DiskCacheScriptingInterface>().data());
+    surfaceContext->setContextProperty("MetaverseRequests", DependencyManager::get<MetaverseRequests>().data());
     _fileDownload = new FileScriptingInterface(engine);
     surfaceContext->setContextProperty("File", _fileDownload);
     connect(_fileDownload, &FileScriptingInterface::unzipResult, &_assetImport, &AssetImport::handleUnzip);
@@ -233,6 +237,8 @@ void Application::setupQmlSurface(QQmlContext* surfaceContext, bool setAdditiona
         surfaceContext->setContextProperty("Settings", new QMLSettingsScriptingInterface(surfaceContext));
         surfaceContext->setContextProperty("MenuInterface", MenuScriptingInterface::getInstance());
         surfaceContext->setContextProperty("Performance", new PerformanceScriptingInterface());
+        surfaceContext->setContextProperty("DiskCache", DependencyManager::get<DiskCacheScriptingInterface>().data());
+        surfaceContext->setContextProperty("MetaverseRequests", DependencyManager::get<MetaverseRequests>().data());
 
         surfaceContext->setContextProperty("Account", AccountServicesScriptingInterface::getInstance()); // DEPRECATED - TO BE REMOVED
         surfaceContext->setContextProperty("GlobalServices", AccountServicesScriptingInterface::getInstance()); // DEPRECATED - TO BE REMOVED

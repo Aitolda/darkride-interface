@@ -36,11 +36,6 @@ const routes: Routes = [
 		loadChildren: () =>
 			import("./overview/overview.module").then(m => m.OverviewModule),
 	},
-	{
-		path: "settings",
-		loadChildren: () =>
-			import("./settings/settings.module").then(m => m.SettingsModule),
-	},
 ];
 
 @NgModule({
