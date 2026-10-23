@@ -180,10 +180,10 @@ void SignInGate::resumeAfterLoginDialogActionTaken() {
         DependencyManager::get<ScriptEngines>()->loadScript(testScript, false, false, false, false, ClientOptions::get().testQuitWhenFinished);
         // This is done so we don't get a "connection time-out" message when we haven't passed in a URL.
         if (ClientOptions::get().hasUrl) {
-            QMetaObject::invokeMethod(qApp, &Application::goToStartingLocation, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(&qApp->getDomainSession(), &DomainSession::goToStartingLocation, Qt::QueuedConnection);
         }
     } else {
-        QMetaObject::invokeMethod(qApp, &Application::goToStartingLocation, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(&qApp->getDomainSession(), &DomainSession::goToStartingLocation, Qt::QueuedConnection);
     }
 
     auto menu = Menu::getInstance();

@@ -5,8 +5,8 @@
 //  Application's frame loop: idle() (the tick at the display's rate: the timers, the simulation step, the
 //  keyboard-focus highlight, the game-loop counter; on Windows the CPU monitor it starts), update() (the simulation
 //  step: input, the avatars, physics and its gate, the entities, the audio and octree housekeeping, the post-update
-//  work), the physics gate (setArrivalWaitsForNearby, tryToEnablePhysics) and the render arguments handed to the
-//  graphics engine (updateRenderArgs; the camera's placement and the view frustums are the ViewState's, ViewState.h),
+//  work) and the render arguments handed to the graphics engine (updateRenderArgs; the camera's placement and the view
+//  frustums are the ViewState's, the physics gate and the queries the DomainSession's),
 //  with the small per-frame helpers (updateLOD, pushPostUpdateLambda, updateMyAvatarLookAtPosition, updateThreads,
 //  updateDialogs). The members as they stood in Application.cpp, in their order; a home of their own until an
 //  owner takes them (ARCHITECTURE.md §5.4 step 4).
@@ -26,7 +26,6 @@
 #include <gl/Config.h>
 #include <QtQuick/QQuickWindow>
 #include <StatTracker.h>
-#include <StartupProfiler.h>
 #include <AnimDebugDraw.h>
 #include <DebugDraw.h>
 #include <EntityScriptingInterface.h>
@@ -35,7 +34,6 @@
 #include <PhysicsEngine.h>
 #include <plugins/PluginManager.h>
 #include <ResourceCache.h>
-#include <SceneScriptingInterface.h>
 #include <display-plugins/hmd/HmdDisplayPlugin.h>
 #include "AudioClient.h"
 #include "avatar/AvatarManager.h"
@@ -433,7 +431,7 @@ void Application::updateThreads(float deltaTime) {
 
     // parse voxel packets
     if (!_enableProcessOctreeThread) {
-        _octreeProcessor.threadRoutine();
+        _domainSession.octreeProcessor().threadRoutine();
         _entityEditSender.threadRoutine();
     }
 }
@@ -450,45 +448,6 @@ void Application::updateDialogs(float deltaTime) const {
     }
 }
 
-static bool domainLoadingInProgress = false;
-
-void Application::setArrivalWaitsForNearby(bool wait) {
-    _arrivalWaitsForNearby = wait;
-    _octreeProcessor.setSafeLandingWaitsForVisuals(wait);
-}
-
-void Application::tryToEnablePhysics() {
-    bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
-        _arrivalWaitsForNearby;
-    if (gpuTextureMemSizeStable() || !enableInterstitial) {
-        _fullSceneCounterAtLastPhysicsCheck = _fullSceneReceivedCounter;
-        _lastQueriedViews.clear();  // Force new view.
-        // process octree stats packets are sent in between full sends of a scene (this isn't currently true).
-        // We keep physics disabled until we've received a full scene and everything near the avatar in that
-        // scene is ready to compute its collision shape.
-        auto myAvatar = getMyAvatar();
-        if (myAvatar->isReadyForPhysics()) {
-            bool safeLandingComplete = _octreeProcessor.safeLandingIsComplete();   // read before the reset below clears it
-            myAvatar->getCharacterController()->setPhysicsEngine(_physicsEngine);
-            _octreeProcessor.resetSafeLanding();
-            _physicsEnabled = true;
-            StartupProfiler::instant("physics enabled: in the world");
-            setIsInterstitialMode(false);
-            myAvatar->updateMotionBehaviorFromMenu();
-            qDebug() << "Physics enabled" << "(ghosting" << DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed()
-                << "arrival waits for nearby" << _arrivalWaitsForNearby << "interstitial"
-                << DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled()
-                << "safe landing complete" << safeLandingComplete << "full scenes" << _fullSceneReceivedCounter << ")";
-            DependencyManager::get<EntityTreeRenderer>()->setSceneIsReady(true);
-            // the renderer rechecks zone culling now that the scene is ready. Until 2026-10-19 this was
-            // requeryOctree, whose new connection id made the entity server resend the whole view it had just sent
-            // (Tivoli's 14f41d044a: "hit it with a quick refresh to make sure everything is drawn"); the query with
-            // the real views goes out from the update loop as before
-            DependencyManager::get<EntityTreeRenderer>()->forceRecheckEntities();
-        }
-    }
-}
-
 void Application::update(float deltaTime) {
     PROFILE_RANGE_EX(app, __FUNCTION__, 0xffff0000, (uint64_t)_graphicsEngine._renderFrameCount + 1);
 
@@ -496,35 +455,7 @@ void Application::update(float deltaTime) {
         return;
     }
 
-    if (!_physicsEnabled) {
-        if (!domainLoadingInProgress) {
-            PROFILE_ASYNC_BEGIN(app, "Scene Loading", "");
-            domainLoadingInProgress = true;
-            qDebug() << "SCENE LOADING";
-        }
-
-        // we haven't yet enabled physics.  we wait until we think we have all the collision information
-        // for nearby entities before starting bullet up.
-        if (isServerlessMode()) {
-            tryToEnablePhysics();
-        } else if (_failedToConnectToEntityServer) {
-            if (_octreeProcessor.safeLandingIsActive()) {
-                _octreeProcessor.stopSafeLanding();
-                qDebug() << "FAILED TO CONNECT TO ENTITY SERVER";
-            }
-        } else {
-            _octreeProcessor.updateSafeLanding();
-            
-            // ghosting lets the avatar move before the world near it is in, unless a loading screen waits for that
-            bool ghosting = DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed() && !_arrivalWaitsForNearby;
-            if (ghosting || _octreeProcessor.safeLandingIsComplete()) {
-                tryToEnablePhysics();
-            }
-        }
-    } else if (domainLoadingInProgress) {
-        domainLoadingInProgress = false;
-        PROFILE_ASYNC_END(app, "Scene Loading", "");
-    }
+    _domainSession.enablePhysicsWhenReady();   // the physics gate: physics stays off until the scene near the avatar is in
 
     auto myAvatar = getMyAvatar();
     {
@@ -756,7 +687,7 @@ void Application::update(float deltaTime) {
             }
         }
 
-        if (_physicsEnabled) {
+        if (isPhysicsEnabled()) {
             {
                 PROFILE_RANGE(simulation_physics, "PrepareActions");
                 _entitySimulation->applyDynamicChanges();
@@ -878,72 +809,9 @@ void Application::update(float deltaTime) {
 
     quint64 now = usecTimestampNow();
 
-    // Update my voxel servers with my current voxel query...
-    {
-        PROFILE_RANGE_EX(app, "QueryOctree", 0xffff0000, (uint64_t)getActiveDisplayPlugin()->presentCount());
-        PerformanceTimer perfTimer("queryOctree");
-        QMutexLocker viewLocker(&_viewState.mutex());
+    _domainSession.queryServers();   // the entity and avatar queries, when the views changed enough or the period passed
 
-        bool viewIsDifferentEnough = false;
-        if (_viewState.conicalViews().size() == _lastQueriedViews.size()) {
-            for (size_t i = 0; i < _viewState.conicalViews().size(); ++i) {
-                if (!_viewState.conicalViews()[i].isVerySimilar(_lastQueriedViews[i])) {
-                    viewIsDifferentEnough = true;
-                    break;
-                }
-            }
-        } else {
-            viewIsDifferentEnough = true;
-        }
-
-
-        // if it's been a while since our last query or the view has significantly changed then send a query, otherwise suppress it
-        static const std::chrono::seconds MIN_PERIOD_BETWEEN_QUERIES { 2 };
-        auto now = SteadyClock::now();
-
-        // The periodic query keeps its connection. Until 2026-10-19 it went through requeryOctree, whose new connection
-        // id makes the entity server forget what this client holds and resend its whole view: every 3 s, for as long
-        // as the client ran (Tivoli's 14f41d044a of 2020, "Fix entities intermittently not rendering"; measured 26
-        // full sends, 2.6 MB, in 97 s over a still field of 200 entities). The renderer's recheck of zone culling
-        // from that fix stays periodic. requeryOctree, with its new connection id, remains for the explicit
-        // refreshes: Redraw (Ctrl+Shift+T), a reload of the caches, physics coming up.
-        bool enoughTimePassed = now > _queryExpiry;
-        if (enoughTimePassed) {
-            DependencyManager::get<EntityTreeRenderer>()->forceRecheckEntities();
-        }
-
-        if (enoughTimePassed || viewIsDifferentEnough) {            
-            if (DependencyManager::get<SceneScriptingInterface>()
-            ->shouldRenderEntities()
-            ) {
-                QJsonObject queryJSONParameters;
-                QJsonObject queryFlags;
-                queryFlags["includeDescendants"] = true;
-                queryFlags["includeAncestors"] = true;
-                queryFlags["serverScripts"] = true; 
-                queryJSONParameters["flags"] = queryFlags;
-                queryOctree(
-                    NodeType::EntityServer,
-                    PacketType::EntityQuery,
-                    queryJSONParameters
-                );
-            }
-            queryAvatars();
-
-            _lastQueriedViews = _viewState.conicalViews();
-            _queryExpiry = now + MIN_PERIOD_BETWEEN_QUERIES;
-        }
-    }
-
-    // sent nack packets containing missing sequence numbers of received packets from nodes
-    {
-        quint64 sinceLastNack = now - _lastNackTime;
-        const quint64 TOO_LONG_SINCE_LAST_NACK = 1 * USECS_PER_SECOND;
-        if (sinceLastNack > TOO_LONG_SINCE_LAST_NACK) {
-            _lastNackTime = now;
-            sendNackPackets();
-        }
-    }
+    _domainSession.sendNacksWhenDue(now);
 
     // send packet containing downstream audio stats to the AudioMixer
     {

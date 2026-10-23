@@ -251,7 +251,7 @@ Application::~Application() {
 
     _entityClipboard.shutdown();
 
-    _octreeProcessor.terminate();
+    _domainSession.shutdown();
     _entityEditSender.terminate();
 
     DependencyManager::destroy<PluginManager>();

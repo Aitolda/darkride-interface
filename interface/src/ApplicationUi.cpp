@@ -246,7 +246,7 @@ void Application::initializeUi() {
         setFullscreen(nullptr, true);
     }
 
-    setIsInterstitialMode(true);
+    _domainSession.setIsInterstitialMode(true);
 }
 
 void Application::showHelp() {

@@ -132,7 +132,10 @@ QSharedPointer<OffscreenUi> getOffscreenUI() {
 
 // The constructor is in ApplicationStartup.cpp.
 
-// setFailedToConnectToEntityServer is in ApplicationDomain.cpp.
+// The session with a domain (the connection's events, the queries, the octree accounting, the serverless and interstitial
+// modes, the physics gate, where the client goes first, the content reload, the hand-off URL) is a DomainSession
+// (DomainSession.h), the member _domainSession, reached by getDomainSession(); isServerlessMode, isInterstitialMode,
+// isPhysicsEnabled, the octree accessors and the refreshes the menu and the Test API reach by name forward to it.
 
 void Application::updateVerboseLogging() {
     auto menu = Menu::getInstance();
@@ -148,8 +151,6 @@ void Application::updateVerboseLogging() {
     rules = rules.arg(enable ? "true" : "false");
     QLoggingCategory::setFilterRules(rules);
 }
-
-// domainConnectionRefused (the popup when a domain turns the client away) is in ApplicationDomain.cpp.
 
 QString Application::getUserAgent() {
     if (QThread::currentThread() != thread()) {
@@ -222,8 +223,6 @@ void Application::runTests() {
 
 // The window's resize (resizeEvent, resizeGL, with verticalFieldOfView) is in ApplicationDisplay.cpp.
 
-// goToStartingLocation (where the client goes first) is in ApplicationDomain.cpp.
-
 // The import wrappers for a dropped or opened file, the URL dispatch's targets (with the asks in ApplicationDialogs.cpp).
 bool Application::importJSONFromURL(const QString& urlString) {
     // we only load files that terminate in just .json (not .svo.json and not .ava.json)
@@ -244,9 +243,6 @@ bool Application::importFromZIP(const QString& filePath) {
     qApp->getFileDownloadInterface()->runUnzip(filePath, empty, true, true, false);
     return true;
 }
-
-// The serverless domains and the interstitial mode (isServerlessMode, setIsInterstitialMode, setIsServerlessMode,
-// prepareServerlessDomainContents, loadServerlessDomain, loadErrorDomain) are in ApplicationDomain.cpp.
 
 bool Application::importImage(const QString& urlString) {
     qCDebug(interfaceapp) << "An image file has been dropped in";
@@ -302,17 +298,11 @@ bool Application::acceptSnapshot(const QString& urlString) {
 // The camera and the view frustums are a ViewState (ViewState.h), the member _viewState, reached by getViewState();
 // getCamera(), the view-state overrides and the two View menu slots forward to it.
 
-// requeryOctree and resetPhysicsReadyInformation are in ApplicationDomain.cpp.
-
-// reloadResourceCaches (the domain's content reloaded) is in ApplicationDomain.cpp.
-
 // The keyboard focus and its highlight are a KeyboardFocus (KeyboardFocus.h), the member _keyboardFocus, reached by
 // getKeyboardFocus().
 
 // The simulation step and what frames it (updateDialogs, the physics gate setArrivalWaitsForNearby/tryToEnablePhysics,
 // update, updateRenderArgs) is in ApplicationFrame.cpp.
-
-// The per-frame queries to the servers (queryAvatars, sendNackPackets, queryOctree) are in ApplicationDomain.cpp.
 
 // isHMDMode is in ApplicationDisplay.cpp.
 
@@ -336,10 +326,6 @@ void Application::resetSensors(bool andReload) {
 }
 
 // updateWindowTitle is in ApplicationDisplay.cpp.
-
-// The connection's events and the octree accounting (clearDomainOctreeDetails, domainURLChanged, goToErrorDomainURL,
-// resettingDomain, nodeAdded, nodeActivated, nodeKilled, trackIncomingOctreePacket, gpuTextureMemSizeStable,
-// processOctreeStats) are in ApplicationDomain.cpp.
 
 // The script API's globals (registerScriptEngineWithApplicationServices) are in ApplicationScripting.cpp.
 
@@ -383,8 +369,6 @@ bool Application::acceptURL(const QString& urlString, bool defaultUpload) {
     return defaultUpload;
 }
 
-// setSessionUUID is in ApplicationDomain.cpp.
-
 // The asks for a dropped or opened URL (askToSetAvatarUrl, askToLoadScript, askToWearAvatarAttachmentUrl,
 // displayAvatarAttachmentWarning), showDialog, showScriptLogs and showAssetServerWidget are in ApplicationDialogs.cpp.
 
@@ -399,8 +383,6 @@ bool Application::acceptURL(const QString& urlString, bool defaultUpload) {
 // by getSnapshotRequests().
 
 // getRenderResolutionScale is in ApplicationDisplay.cpp.
-
-// notifyPacketVersionMismatch is in ApplicationDomain.cpp.
 
 // checkSkeleton is in ApplicationAvatar.cpp.
 
@@ -484,8 +466,6 @@ void Application::unresponsiveApplication() {
 
 // raiseWindow is in ApplicationDisplay.cpp.
 
-// goToHandedOffUrl (a later launch's URL, handed off by SingleInstance) is in ApplicationDomain.cpp.
-
 CompositorHelper& Application::getApplicationCompositor() const {
     return *DependencyManager::get<CompositorHelper>();
 }
@@ -548,7 +528,7 @@ void Application::crashOnShutdown() {
 }
 
 void Application::overrideEntry(){
-    _overrideEntry = true;
+    _domainSession.setOverrideEntry();
 }
 void Application::forceDisplayName(const QString& displayName) {
     getMyAvatar()->setDisplayName(displayName);

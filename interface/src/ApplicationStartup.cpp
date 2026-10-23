@@ -114,7 +114,6 @@ using namespace std;
 
 QSharedPointer<OffscreenUi> getOffscreenUI();            // Application.cpp's
 QString labelledTitle(const QString& title);             // ApplicationDisplay.cpp's: a window title with the client label
-extern Setting::Handle<int> maxOctreePacketsPerSecond;   // ApplicationDomain.cpp's
 
 QTimer locationUpdateTimer;   // started by the constructor, stopped in ApplicationShutdown.cpp
 
@@ -124,7 +123,6 @@ static const uint32_t MAX_CONCURRENT_RESOURCE_DOWNLOADS = 16;
 #else
 static const uint32_t MAX_CONCURRENT_RESOURCE_DOWNLOADS = 4;
 #endif
-static const int ENTITY_SERVER_ADDED_TIMEOUT = 5000;
 static const QString DESKTOP_LOCATION = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
 static const QUrl BUBBLE_ICON_QML = PathUtils::qmlUrl("BubbleIcon.qml");
 
@@ -393,10 +391,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     _bypassPrioritySortingSetting("bypassPrioritySorting", DEFAULT_BYPASS_PRIORITY_SORTING), 
     _bypassScriptThrottling("bypassScriptThrottling", DEFAULT_BYPASS_SCRIPT_THROTTLING), 
     _enableProcessOctreeThread(true),
-    _lastNackTime(usecTimestampNow()),
     _lastSendDownstreamAudioStats(usecTimestampNow()),
-    _notifiedPacketVersionMismatchThisDomain(false),
-    _maxOctreePPS(maxOctreePacketsPerSecond.get()),
     _snapshotSound(nullptr),
     _sampleSound(nullptr)
 {
@@ -631,12 +626,13 @@ void Application::connectServices() {
 
     const DomainHandler& domainHandler = nodeList->getDomainHandler();
 
-    connect(&domainHandler, &DomainHandler::domainURLChanged, this, &Application::domainURLChanged);
-    connect(&domainHandler, &DomainHandler::redirectToErrorDomainURL, this, &Application::goToErrorDomainURL);
+    connect(&domainHandler, &DomainHandler::domainURLChanged, &_domainSession, &DomainSession::domainURLChanged);
+    connect(&domainHandler, &DomainHandler::redirectToErrorDomainURL, &_domainSession, &DomainSession::goToErrorDomainURL);
     connect(&domainHandler, &DomainHandler::domainURLChanged, [](QUrl domainURL){
         setCrashAnnotation("domain", domainURL.toString().toStdString());
     });
-    connect(&domainHandler, &DomainHandler::resetting, this, &Application::resettingDomain);
+    connect(&domainHandler, &DomainHandler::resetting, &_domainSession, &DomainSession::resettingDomain);
+    connect(&_domainSession, &DomainSession::interstitialModeChanged, this, &Application::interstitialModeChanged);   // relayed: the Window scripting interface connects to Application in the essentials stage, before the session exists
     connect(&domainHandler, &DomainHandler::connectedToDomain, this, &Application::updateWindowTitle);
     connect(&domainHandler, &DomainHandler::connectedToDomain, this, [] { StartupProfiler::instant("connected to a domain"); });
     connect(&domainHandler, &DomainHandler::disconnectedFromDomain, this, &Application::updateWindowTitle);
@@ -645,20 +641,11 @@ void Application::connectServices() {
         entityScriptingInterface->deleteEntity(getTabletScreenID());
         entityScriptingInterface->deleteEntity(getTabletHomeButtonID());
         entityScriptingInterface->deleteEntity(getTabletFrameID());
-        _failedToConnectToEntityServer = false;
+        _domainSession.disconnectedFromDomain();
     });
 
-    _entityServerConnectionTimer.setSingleShot(true);
-    connect(&_entityServerConnectionTimer, &QTimer::timeout, this, &Application::setFailedToConnectToEntityServer);
-
-    connect(&domainHandler, &DomainHandler::connectedToDomain, this, [this]() {
-        if (!isServerlessMode()) {
-            _entityServerConnectionTimer.setInterval(ENTITY_SERVER_ADDED_TIMEOUT);
-            _entityServerConnectionTimer.start();
-            _failedToConnectToEntityServer = false;
-        }
-    });
-    connect(&domainHandler, &DomainHandler::domainConnectionRefused, this, &Application::domainConnectionRefused);
+    connect(&domainHandler, &DomainHandler::connectedToDomain, &_domainSession, &DomainSession::connectedToDomain);
+    connect(&domainHandler, &DomainHandler::domainConnectionRefused, &_domainSession, &DomainSession::domainConnectionRefused);
 
     nodeList->getDomainHandler().setErrorDomainURL(QUrl(REDIRECT_HIFI_ADDRESS));
 
@@ -688,12 +675,12 @@ void Application::connectServices() {
     // send a location update immediately
     discoverabilityManager->updateLocation();
 
-    connect(nodeList.data(), &NodeList::nodeAdded, this, &Application::nodeAdded);
-    connect(nodeList.data(), &NodeList::nodeKilled, this, &Application::nodeKilled);
-    connect(nodeList.data(), &NodeList::nodeActivated, this, &Application::nodeActivated);
+    connect(nodeList.data(), &NodeList::nodeAdded, &_domainSession, &DomainSession::nodeAdded);
+    connect(nodeList.data(), &NodeList::nodeKilled, &_domainSession, &DomainSession::nodeKilled);
+    connect(nodeList.data(), &NodeList::nodeActivated, &_domainSession, &DomainSession::nodeActivated);
     connect(nodeList.data(), &NodeList::uuidChanged, myAvatar.get(), &MyAvatar::setSessionUUID);
-    connect(nodeList.data(), &NodeList::uuidChanged, this, &Application::setSessionUUID);
-    connect(nodeList.data(), &NodeList::packetVersionMismatch, this, &Application::notifyPacketVersionMismatch);
+    connect(nodeList.data(), &NodeList::uuidChanged, &_domainSession, &DomainSession::setSessionUUID);
+    connect(nodeList.data(), &NodeList::packetVersionMismatch, &_domainSession, &DomainSession::notifyPacketVersionMismatch);
 
     // you might think we could just do this in NodeList but we only want this connection for Interface
     connect(&nodeList->getDomainHandler(), &DomainHandler::limitOfSilentDomainCheckInsReached,
@@ -764,16 +751,7 @@ void Application::connectServices() {
     connect(myAvatar.get(), &MyAvatar::positionGoneTo,
         DependencyManager::get<AddressManager>().data(), &AddressManager::storeCurrentAddress);
 
-    connect(myAvatar.get(), &MyAvatar::positionGoneTo, this, [this] {
-        if (!_physicsEnabled) {
-            // when we arrive somewhere without physics enabled --> startSafeLanding
-            _octreeProcessor.startSafeLanding();
-            // and query the entity server at once: the restarted landing completes on the server's next report of the
-            // initial scene, which it makes on the next query that asks for it; left to the periodic query that was
-            // up to 3 s of waiting for nothing (WORLD-LOADING.md, the arrival gate)
-            _queryExpiry = SteadyClock::now();
-        }
-    }, Qt::QueuedConnection);
+    connect(myAvatar.get(), &MyAvatar::positionGoneTo, &_domainSession, &DomainSession::arrivedWithoutPhysics, Qt::QueuedConnection);
 
     connect(myAvatar.get(), &MyAvatar::skeletonModelURLChanged, [](){
         QUrl avatarURL = qApp->getMyAvatar()->getSkeletonModelURL();
@@ -985,8 +963,7 @@ void Application::startEntityProcessing() {
 
     StartupProfiler::phase("constructor: octree processor and edit sender threads, first update");
     // create thread for parsing of octree data independent of the main network and rendering threads
-    _octreeProcessor.initialize(_enableProcessOctreeThread);
-    connect(&_octreeProcessor, &OctreePacketProcessor::packetVersionMismatch, this, &Application::notifyPacketVersionMismatch);
+    _domainSession.octreeProcessor().initialize(_enableProcessOctreeThread);
     _entityEditSender.initialize(_enableProcessOctreeThread);
 
     _idleLoopStdev.reset();

@@ -33,7 +33,6 @@
 #include <input-plugins/KeyboardMouseDevice.h>
 #include <input-plugins/TouchscreenDevice.h>
 #include <input-plugins/TouchscreenVirtualPadDevice.h>
-#include <OctreeQuery.h>
 #include <PhysicalEntitySimulation.h>
 #include <PhysicsEngine.h>
 #include <plugins/Forward.h>
@@ -58,7 +57,7 @@ class ClientOptions;
 #include "EntityClipboard.h"
 #include "AssetImport.h"
 #include "SignInGate.h"
-#include "ConnectionMonitor.h"
+#include "DomainSession.h"
 #include "CursorManager.h"
 #include "WindowCursor.h"
 #include "SnapshotRequests.h"
@@ -67,7 +66,6 @@ class ClientOptions;
 #include "Menu.h"
 #include "PerformanceManager.h"
 #include "RefreshRateManager.h"
-#include "octree/OctreePacketProcessor.h"
 #include "render/Engine.h"
 #include "scripting/ControllerScriptingInterface.h"
 #include "scripting/DialogsManagerScriptingInterface.h"
@@ -114,9 +112,6 @@ class Application : public QApplication,
                     public AbstractUriHandler,
                     public PluginContainer {
     Q_OBJECT
-
-    // TODO? Get rid of those
-    friend class OctreePacketProcessor;
 
 public:
     // virtual functions required for PluginContainer
@@ -176,11 +171,12 @@ public:
     Camera& getCamera() { return _viewState.camera(); }
     const Camera& getCamera() const { return _viewState.camera(); }
 
-    bool isMissingSequenceNumbers() { return _isMissingSequenceNumbers; }
+    bool isMissingSequenceNumbers() { return _domainSession.isMissingSequenceNumbers(); }
 
     const ConicalViewFrustums& getConicalViews() const override { return _viewState.conicalViews(); }
 
-    const OctreePacketProcessor& getOctreePacketProcessor() const { return _octreeProcessor; }
+    DomainSession& getDomainSession() { return _domainSession; }   // the session with a domain: the queries, the octree accounting, the modes, the physics gate (DomainSession.h)
+    const OctreePacketProcessor& getOctreePacketProcessor() const { return _domainSession.octreeProcessor(); }
     QSharedPointer<EntityTreeRenderer> getEntities() const { return DependencyManager::get<EntityTreeRenderer>(); }
     GraphicsEngine& getGraphicsEngine() { return _graphicsEngine; }
     MainWindow* getWindow() const { return _window; }
@@ -260,11 +256,9 @@ public:
     float getAwayStateWhenFocusLostInVREnabled() { return _awayStateWhenFocusLostInVREnabled.get(); }
     void setAwayStateWhenFocusLostInVREnabled(bool setting);
 
-    Q_INVOKABLE void setMinimumGPUTextureMemStabilityCount(int stabilityCount) {
-        _minimumGPUTextureMemSizeStabilityCount = stabilityCount;
-    }
+    Q_INVOKABLE void setMinimumGPUTextureMemStabilityCount(int stabilityCount) { _domainSession.setMinimumGPUTextureMemStabilityCount(stabilityCount); }   // the Test API's, by name
 
-    NodeToOctreeSceneStats* getOcteeSceneStats() { return &_octreeServerSceneStats; }
+    NodeToOctreeSceneStats* getOcteeSceneStats() { return _domainSession.octreeSceneStats(); }
 
 
     virtual controller::ScriptingInterface* getControllerScriptingInterface() { return _controllerScriptingInterface; }
@@ -287,11 +281,13 @@ public:
     qint64 getCurrentSessionRuntime() const { return _sessionRunTimer.elapsed(); }
 
     bool isAboutToQuit() const { return _aboutToQuit; }
-    bool isPhysicsEnabled() const { return _physicsEnabled; }
+    bool isPhysicsEnabled() const { return _domainSession.isPhysicsEnabled(); }
+    bool settingsLoaded() const { return _settingsLoaded; }
+    Setting::Handle<bool>& firstRun() { return _firstRun; }   // the first run's setting, read and cleared where the client goes first
 
     // While a loading screen is up, the arrival in a world waits for what is near the avatar to be ready for physics
     // and drawn (as interstitial mode does), even where the zone allows moving at once (ghosting).
-    void setArrivalWaitsForNearby(bool wait);
+    void setArrivalWaitsForNearby(bool wait) { _domainSession.setArrivalWaitsForNearby(wait); }
     PhysicsEnginePointer getPhysicsEngine() { return _physicsEngine; }
 
     // the isHMDMode is true whenever we use the interface from an HMD and not a standard flat display
@@ -307,8 +303,8 @@ public:
     virtual bool canAcceptURL(const QString& url) const override;
     virtual bool acceptURL(const QString& url, bool defaultUpload = false) override;
 
-    void setMaxOctreePacketsPerSecond(int maxOctreePPS);
-    int getMaxOctreePacketsPerSecond() const;
+    void setMaxOctreePacketsPerSecond(int maxOctreePPS) { _domainSession.setMaxOctreePacketsPerSecond(maxOctreePPS); }
+    int getMaxOctreePacketsPerSecond() const { return _domainSession.getMaxOctreePacketsPerSecond(); }
 
     render::ScenePointer getMain3DScene() override { return _graphicsEngine.getRenderScene(); }
     render::EnginePointer getRenderEngine() override { return _graphicsEngine.getRenderEngine(); }
@@ -339,9 +335,8 @@ public:
     bool getSaveAvatarOverrideUrl() { return _saveAvatarOverrideUrl; }
     void saveNextPhysicsStats(QString filename);
 
-    bool isServerlessMode() const;
-    bool isInterstitialMode() const { return _interstitialMode; }
-    bool failedToConnectToEntityServer() const { return _failedToConnectToEntityServer; }
+    bool isServerlessMode() const { return _domainSession.isServerlessMode(); }
+    bool isInterstitialMode() const { return _domainSession.isInterstitialMode(); }
 
     void loadAvatarScripts(const QVector<QString>& urls);
     void unloadAvatarScripts();
@@ -388,7 +383,7 @@ signals:
 
     void uploadRequest(QString path);
 
-    void interstitialModeChanged(bool isInInterstitialMode);
+    void interstitialModeChanged(bool isInInterstitialMode);   // the domain session's, relayed: the Window scripting interface connects here before the session exists
 
     void miniTabletEnabledChanged(bool enabled);
     void awayStateWhenFocusLostInVRChanged(bool enabled);
@@ -396,8 +391,7 @@ signals:
 public slots:
     void updateThreadPoolCount() const;
     void updateSystemTabletMode();
-    void goToErrorDomainURL(QUrl errorDomainURL);
-    void goToStartingLocation();   // where the client goes first; the sign-in gate queues it when the viewer goes in
+    void updateWindowTitle() const;   // the domain session calls it when the domain changes
 
     Q_INVOKABLE void loadDialog();
     void importAvatarDialog();
@@ -415,9 +409,8 @@ public slots:
 
     FileScriptingInterface* getFileDownloadInterface() { return _fileDownload; }
 
-    // the hand-offs of later launches (SingleInstance): raise this window, go to the address handed over
+    // the hand-offs of later launches (SingleInstance): raise this window (the domain session goes to the address handed over)
     void raiseWindow() const;
-    void goToHandedOffUrl(const QString& url) const;
 
     static void packageModel();
 
@@ -435,11 +428,9 @@ public slots:
     void setOverlaysVisible(bool visible);
     Q_INVOKABLE void centerUI();
 
-    void resetPhysicsReadyInformation();
+    Q_INVOKABLE void requeryOctree() { _domainSession.requeryOctree(); }   // Redraw: the menu's, by name; MyAvatar's
 
-    Q_INVOKABLE void requeryOctree();
-
-    void reloadResourceCaches();
+    void reloadResourceCaches() { _domainSession.reloadResourceCaches(); }   // Reload Content: the menu's, by name; the Test API's
 
     void updateHeartbeat() const;
 
@@ -461,18 +452,11 @@ public slots:
     const QString getPreferredCursor() const { return _preferredCursor.get(); }
     void setPreferredCursor(const QString& cursor);
 
-    void setIsServerlessMode(bool serverlessDomain);
-    std::map<QString, QString> prepareServerlessDomainContents(QUrl domainURL, QByteArray data);
-
-    void loadServerlessDomain(QUrl domainURL);
-    void loadErrorDomain(QUrl domainURL);
-    void setIsInterstitialMode(bool interstitialMode);
-
     void updateVerboseLogging();
 
     QString getGraphicsCardType();
 
-    bool gpuTextureMemSizeStable();
+    bool gpuTextureMemSizeStable() { return _domainSession.gpuTextureMemSizeStable(); }   // the Test API's, by name
     void showUrlHandler(const QUrl& url);
 
     // used to test "shutdown" crash annotation.
@@ -481,20 +465,14 @@ public slots:
 private slots:
     void onDesktopRootItemCreated(QQuickItem* qmlContext);
     void onDesktopRootContextCreated(QQmlContext* qmlContext);
-    void clearDomainOctreeDetails(bool clearAll = true);
     void onAboutToQuit();
     void onPresent(quint32 frameCount);
-
-    void resettingDomain();
 
     void activeChanged(Qt::ApplicationState state);
     void windowMinimizedChanged(bool minimized);
 
-    void notifyPacketVersionMismatch();
-
     void loadSettings();
     void saveSettings() const;
-    void setFailedToConnectToEntityServer();
 
     bool acceptSnapshot(const QString& urlString);
     bool askToSetAvatarUrl(const QString& url);
@@ -503,16 +481,8 @@ private slots:
     bool askToWearAvatarAttachmentUrl(const QString& url);
     void displayAvatarAttachmentWarning(const QString& message) const;
 
-    void setSessionUUID(const QUuid& sessionUUID) const;
-
-    void domainURLChanged(QUrl domainURL);
-    void updateWindowTitle() const;
-    void nodeAdded(SharedNodePointer node);
-    void nodeActivated(SharedNodePointer node);
-    void nodeKilled(SharedNodePointer node);
     void updateDisplayMode();
     void setDisplayPlugin(DisplayPluginPointer newPlugin);
-    void domainConnectionRefused(const QString& reasonMessage, int reason, const QString& extraInfo);
 
     void switchDisplayMode();
 
@@ -541,18 +511,12 @@ private:
     void cleanupBeforeQuit();
 
     void idle();
-    void tryToEnablePhysics();
     void update(float deltaTime);
 
     // Various helper functions called during update()
     void updateLOD(float deltaTime) const;
     void updateThreads(float deltaTime);
     void updateDialogs(float deltaTime) const;
-
-    void queryOctree(NodeType_t serverType, PacketType packetType, QJsonObject jsonParameters);
-    void queryAvatars();
-
-    int sendNackPackets();
 
     std::shared_ptr<MyAvatar> getMyAvatar() const;
 
@@ -563,9 +527,6 @@ private:
     bool importSVOFromURL(const QString& urlString);
     bool importFromZIP(const QString& filePath);
     bool importImage(const QString& urlString);
-
-    int processOctreeStats(ReceivedMessage& message, SharedNodePointer sendingNode);
-    void trackIncomingOctreePacket(ReceivedMessage& message, SharedNodePointer sendingNode, bool wasStatsPacket);
 
     void resizeEvent(QResizeEvent* size);
 
@@ -615,8 +576,6 @@ private:
     QTimer _minimizedWindowTimer;
     QElapsedTimer _lastTimeUpdated;
 
-    int _minimumGPUTextureMemSizeStabilityCount{ 30 };
-
     ShapeManager _shapeManager;
     PhysicalEntitySimulationPointer _entitySimulation;
     PhysicsEnginePointer _physicsEngine;
@@ -624,13 +583,7 @@ private:
     EntityClipboard _entityClipboard;   // the entities' clipboard (EntityClipboard.h)
 
     ViewState _viewState;   // the camera, the view frustums and the conical views (ViewState.h)
-    ConicalViewFrustums _lastQueriedViews;  // last views used to query servers
-
-    using SteadyClock = std::chrono::steady_clock;
-    using TimePoint = SteadyClock::time_point;
-    TimePoint _queryExpiry;
-
-    OctreeQuery _octreeQuery{ true };  // NodeData derived class for querying octee cells from octree servers
+    DomainSession _domainSession;   // the session with a domain (DomainSession.h)
 
     std::shared_ptr<controller::StateController>
         _applicationStateDevice;  // Default ApplicationDevice reflecting the state of different properties of the session
@@ -663,14 +616,10 @@ private:
     QHash<int, QKeyEvent> _keysPressed;
 
     bool _enableProcessOctreeThread;
-    bool _interstitialMode{ false };
-
-    OctreePacketProcessor _octreeProcessor;
     EntityEditPacketSender _entityEditSender;
 
     StDev _idleLoopStdev;
 
-    NodeToOctreeSceneStats _octreeServerSceneStats;
     ControllerScriptingInterface* _controllerScriptingInterface{ nullptr };
     QPointer<LogDialog> _logDialog;
     QPointer<EntityScriptServerLogDialog> _entityScriptServerLogDialog;
@@ -678,10 +627,7 @@ private:
 
     TouchEvent _lastTouchEvent;
 
-    quint64 _lastNackTime;
     quint64 _lastSendDownstreamAudioStats;
-
-    bool _notifiedPacketVersionMismatchThisDomain;
 
     ConditionalGuard _settingsGuard;
 
@@ -692,7 +638,6 @@ private:
 
     glm::uvec2 _renderResolution;
 
-    int _maxOctreePPS = DEFAULT_MAX_OCTREE_PPS;
     SignInGate _signInGate;   // the sign-in screen and the pause and resume around it (SignInGate.h)
     PerformanceManager _performanceManager;
     RefreshRateManager _refreshRateManager;
@@ -711,9 +656,6 @@ private:
     KeyboardFocus _keyboardFocus;
     bool _isForeground = true;  // starts out assumed to be in foreground
     bool _isGLInitialized{ false };
-    bool _physicsEnabled{ false };
-    std::atomic<bool> _arrivalWaitsForNearby { false };
-    bool _failedToConnectToEntityServer{ false };
 
     bool _reticleClickPressed{ false };
 
@@ -721,26 +663,14 @@ private:
 
     bool _settingsLoaded{ false };
 
-
-    bool _isMissingSequenceNumbers{ false };
-
     WindowCursor _windowCursor;
 
     std::map<void*, std::function<void()>> _postUpdateLambdas;
     std::mutex _postUpdateLambdasLock;
 
-    std::atomic<uint32_t> _fullSceneReceivedCounter{ 0 };  // how many times have we received a full-scene octree stats packet
-    uint32_t _fullSceneCounterAtLastPhysicsCheck{ 0 };     // _fullSceneReceivedCounter last time we checked physics ready
-
-    qint64 _gpuTextureMemSizeStabilityCount{ 0 };
-    qint64 _gpuTextureMemSizeAtLastCheck{ 0 };
-
     bool _keyboardDeviceHasFocus{ true };
 
-    ConnectionMonitor _connectionMonitor;
-
     AssetImport _assetImport;   // a file from a URL or a drop becomes an asset and an entity (AssetImport.h)
-    mutable QTimer _entityServerConnectionTimer;
 
     FileScriptingInterface* _fileDownload;
     SharedSoundPointer _snapshotSound;
@@ -760,8 +690,6 @@ private:
 
     bool _showTrackedObjects{ false };
     bool _prevShowTrackedObjects{ false };
-
-    bool _overrideEntry{ false };
 
     VisionSqueeze _visionSqueeze;
 

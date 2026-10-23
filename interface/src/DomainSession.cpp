@@ -1,22 +1,19 @@
 //
-//  ApplicationDomain.cpp
+//  DomainSession.cpp
 //  interface/src
 //
-//  Application's side of the domain session: the connection's events (a node added, activated or killed; the domain
-//  URL changed, the domain resetting, a connection refused, a packet version mismatch, the session id), the queries
-//  the client sends the entity and avatar servers each frame (queryOctree with its NACKs, queryAvatars), the octree
-//  stats and the packet accounting, the physics-ready bookkeeping (requeryOctree, resetPhysicsReadyInformation),
-//  the serverless domains (a world from a file) and the interstitial mode, the octree packet rate; and where the
-//  client goes first (goToStartingLocation), a later launch's URL handed off (goToHandedOffUrl) and the domain's
-//  content reloaded (reloadResourceCaches). The members as they stood in Application.cpp, in their order; a home of
-//  their own until an owner takes them (ARCHITECTURE.md §5.4 step 4).
+//  The client's session with a domain (see DomainSession.h). The code of the members of ApplicationDomain.cpp, of the
+//  frame loop's physics gate, query decision and NACK step, and of the start-up's connection handlers, with
+//  Application reached through qApp for the entities, the view, the window title, the display plug-in, the physics
+//  engine, the edit packet sender, the settings' state and the first-run setting.
 //
 //  Copyright 2026 Darkride.
 //
 //  Distributed under the MIT License.
 //
 
-#include "Application.h"
+#include "DomainSession.h"
+
 #include <chrono>
 #include <thread>
 #include <glm/glm.hpp>
@@ -25,44 +22,59 @@
 #include <AddressManager.h>
 #include <AssetClient.h>
 #include <EntityNodeData.h>
-#include "LocationBookmarks.h"
 #include <OctreeSceneStats.h>
 #include <OffscreenUi.h>
+#include <PhysicsHelpers.h>
 #include <plugins/PluginManager.h>
 #include <plugins/PluginUtils.h>
 #include <render/EngineStats.h>
 #include <ResourceRequest.h>
+#include <SceneScriptingInterface.h>
 #include <ScriptEngines.h>
 #include <ScriptCache.h>
+#include <SharedUtil.h>
 #include <SoundCacheScriptingInterface.h>
 #include <recording/ClipCache.h>
 #include <display-plugins/hmd/HmdDisplayPlugin.h>
-#include "recording/ClipCache.h"
+
+#include "Application.h"
 #include "AudioClient.h"
 #include "avatar/AvatarManager.h"
+#include "LocationBookmarks.h"
 #include "LODManager.h"
 #include "ui/Stats.h"
 #include "ui/Keyboard.h"
-#if defined(Q_OS_ANDROID)
-#include <android/log.h>
-#include "AndroidHelper.h"
-#endif
 
 using namespace std;
 
 QSharedPointer<OffscreenUi> getOffscreenUI();   // Application.cpp's
 QString worldNameForPopup();                     // ApplicationDialogs.cpp's: the world's name for a popup's text
 
-// constants and the one setting only the domain session reads (the constructor's initializer list reads the setting too)
+// the entity server's two time-outs (the domain connected; the server's node added) and the first query's radius
+static const int ENTITY_SERVER_ADDED_TIMEOUT = 5000;
 static const int ENTITY_SERVER_CONNECTION_TIMEOUT = 5000;
 static const float INITIAL_QUERY_RADIUS = 10.0f;  // priority radius for entities before physics enabled
-Setting::Handle<int> maxOctreePacketsPerSecond{"maxOctreePPS", DEFAULT_MAX_OCTREE_PPS};
 
-void Application::setFailedToConnectToEntityServer() {
+// Application's getMyAvatar is private; this is the same call
+static std::shared_ptr<MyAvatar> getMyAvatar() {
+    return DependencyManager::get<AvatarManager>()->getMyAvatar();
+}
+
+DomainSession::DomainSession() : _maxOctreePPS(_maxOctreePPSSetting.get()), _lastNackTime(usecTimestampNow()) {
+    _entityServerConnectionTimer.setSingleShot(true);
+    connect(&_entityServerConnectionTimer, &QTimer::timeout, this, &DomainSession::setFailedToConnectToEntityServer);
+    connect(&_octreeProcessor, &OctreePacketProcessor::packetVersionMismatch, this, &DomainSession::notifyPacketVersionMismatch);
+}
+
+void DomainSession::shutdown() {
+    _octreeProcessor.terminate();
+}
+
+void DomainSession::setFailedToConnectToEntityServer() {
     _failedToConnectToEntityServer = true;
 }
 
-void Application::domainConnectionRefused(const QString& reasonMessage, int reasonCodeInt, const QString& extraInfo) {
+void DomainSession::domainConnectionRefused(const QString& reasonMessage, int reasonCodeInt, const QString& extraInfo) {
     DomainHandler::ConnectionRefusedReason reasonCode = static_cast<DomainHandler::ConnectionRefusedReason>(reasonCodeInt);
 
     if (reasonCode == DomainHandler::ConnectionRefusedReason::TooManyUsers && !extraInfo.isEmpty()) {
@@ -91,15 +103,15 @@ void Application::domainConnectionRefused(const QString& reasonMessage, int reas
     }
 }
 
-bool Application::isServerlessMode() const {
-    auto tree = getEntities()->getTree();
+bool DomainSession::isServerlessMode() const {
+    auto tree = qApp->getEntities()->getTree();
     if (tree) {
         return tree->isServerlessMode();
     }
     return false;
 }
 
-void Application::setIsInterstitialMode(bool interstitialMode) {
+void DomainSession::setIsInterstitialMode(bool interstitialMode) {
     bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled();
     if (enableInterstitial) {
         if (_interstitialMode != interstitialMode) {
@@ -112,15 +124,15 @@ void Application::setIsInterstitialMode(bool interstitialMode) {
     }
 }
 
-void Application::setIsServerlessMode(bool serverlessDomain) {
+void DomainSession::setIsServerlessMode(bool serverlessDomain) {
     DependencyManager::get<NodeList>()->setSendDomainServerCheckInEnabled(!serverlessDomain);
-    auto tree = getEntities()->getTree();
+    auto tree = qApp->getEntities()->getTree();
     if (tree) {
         tree->setIsServerlessMode(serverlessDomain);
     }
 }
 
-std::map<QString, QString> Application::prepareServerlessDomainContents(QUrl domainURL, QByteArray data) {
+std::map<QString, QString> DomainSession::prepareServerlessDomainContents(QUrl domainURL, QByteArray data) {
     QUuid serverlessSessionID = QUuid::createUuid();
     getMyAvatar()->setSessionUUID(serverlessSessionID);
     auto nodeList = DependencyManager::get<NodeList>();
@@ -140,7 +152,7 @@ std::map<QString, QString> Application::prepareServerlessDomainContents(QUrl dom
     bool success = tmpTree->readFromByteArray(domainURL.toString(), data);
     if (success) {
         tmpTree->reaverageOctreeElements();
-        tmpTree->sendEntities(&_entityEditSender, getEntities()->getTree(), "domain", 0, 0, 0);
+        tmpTree->sendEntities(qApp->getEntityEditPacketSender(), qApp->getEntities()->getTree(), "domain", 0, 0, 0);
     }
     std::map<QString, QString> namedPaths = tmpTree->getNamedPaths();
 
@@ -150,9 +162,9 @@ std::map<QString, QString> Application::prepareServerlessDomainContents(QUrl dom
     return namedPaths;
 }
 
-void Application::loadServerlessDomain(QUrl domainURL) {
+void DomainSession::loadServerlessDomain(QUrl domainURL) {
     if (QThread::currentThread() != thread()) {
-        QMetaObject::invokeMethod(this, "loadServerlessDomain", Q_ARG(QUrl, domainURL));
+        QMetaObject::invokeMethod(this, [this, domainURL] { loadServerlessDomain(domainURL); });
         return;
     }
 
@@ -164,7 +176,7 @@ void Application::loadServerlessDomain(QUrl domainURL) {
     bool DEFAULT_IS_OBSERVABLE = true;
     const qint64 DEFAULT_CALLER_ID = -1;
     auto request = DependencyManager::get<ResourceManager>()->createResourceRequest(
-        this, trimmedUrl, DEFAULT_IS_OBSERVABLE, DEFAULT_CALLER_ID, "Application::loadServerlessDomain");
+        this, trimmedUrl, DEFAULT_IS_OBSERVABLE, DEFAULT_CALLER_ID, "DomainSession::loadServerlessDomain");
 
     if (!request) {
         return;
@@ -182,16 +194,16 @@ void Application::loadServerlessDomain(QUrl domainURL) {
     request->send();
 }
 
-void Application::loadErrorDomain(QUrl domainURL) {
+void DomainSession::loadErrorDomain(QUrl domainURL) {
     if (QThread::currentThread() != thread()) {
-        QMetaObject::invokeMethod(this, "loadErrorDomain", Q_ARG(QUrl, domainURL));
+        QMetaObject::invokeMethod(this, [this, domainURL] { loadErrorDomain(domainURL); });
         return;
     }
 
     loadServerlessDomain(domainURL);
 }
 
-void Application::requeryOctree() {      
+void DomainSession::requeryOctree() {      
     DependencyManager::get<EntityTreeRenderer>()->forceRecheckEntities();
     auto now = SteadyClock::now();
     static const std::chrono::seconds MIN_PERIOD_BETWEEN_QUERIES { 3 };
@@ -210,7 +222,7 @@ void Application::requeryOctree() {
     _queryExpiry = now + MIN_PERIOD_BETWEEN_QUERIES;
 }
 
-void Application::resetPhysicsReadyInformation() {
+void DomainSession::resetPhysicsReadyInformation() {
     // we've changed domains or cleared out caches or something.  we no longer know enough about the
     // collision information of nearby entities to make running bullet be safe.
     _fullSceneReceivedCounter = 0;
@@ -221,17 +233,17 @@ void Application::resetPhysicsReadyInformation() {
     _octreeProcessor.stopSafeLanding();
 }
 
-void Application::queryAvatars() {
+void DomainSession::queryAvatars() {
     if (!isInterstitialMode()) {
         auto avatarPacket = NLPacket::create(PacketType::AvatarQuery);
         auto destinationBuffer = reinterpret_cast<unsigned char*>(avatarPacket->getPayload());
         unsigned char* bufferStart = destinationBuffer;
 
-        uint8_t numFrustums = (uint8_t)_viewState.conicalViews().size();
+        uint8_t numFrustums = (uint8_t)qApp->getViewState().conicalViews().size();
         memcpy(destinationBuffer, &numFrustums, sizeof(numFrustums));
         destinationBuffer += sizeof(numFrustums);
 
-        for (const auto& view : _viewState.conicalViews()) {
+        for (const auto& view : qApp->getViewState().conicalViews()) {
             destinationBuffer += view.serialize(destinationBuffer);
         }
 
@@ -241,8 +253,7 @@ void Application::queryAvatars() {
     }
 }
 
-
-int Application::sendNackPackets() {
+int DomainSession::sendNackPackets() {
 
     // iterates through all nodes in NodeList
     auto nodeList = DependencyManager::get<NodeList>();
@@ -294,14 +305,13 @@ int Application::sendNackPackets() {
     return packetsSent;
 }
 
-
-void Application::queryOctree(
+void DomainSession::queryOctree(
     NodeType_t serverType,
     PacketType packetType,
     QJsonObject queryJSONParameters
 ) {
 
-    if (!_settingsLoaded) {
+    if (!qApp->settingsLoaded()) {
         return; // bail early if settings are not loaded
     }
 
@@ -327,7 +337,7 @@ void Application::queryOctree(
         if (menu && menu->isOptionChecked(MenuOption::LoadCompleteEntityTree)) {            // if Dev > Tivoli Options >>> LoadCompleteEntityTree truee
 
             ConicalViewFrustum farView;
-            farView.set(_viewState.viewFrustum());
+            farView.set(qApp->getViewState().viewFrustum());
 
             QJsonObject queryFlags;
             queryFlags["includeDescendants"] = true; // forces entire tree
@@ -347,7 +357,7 @@ void Application::queryOctree(
         static constexpr float MIN_LOD_ADJUST = -20.0f;
         _octreeQuery.setBoundaryLevelAdjust(MIN_LOD_ADJUST);
     } else {
-        _octreeQuery.setConicalViews(_viewState.conicalViews());
+        _octreeQuery.setConicalViews(qApp->getViewState().conicalViews());
         auto lodManager = DependencyManager::get<LODManager>();
         _octreeQuery.setOctreeSizeScale(lodManager->getOctreeSizeScale());
         _octreeQuery.setBoundaryLevelAdjust(lodManager->getBoundaryLevelAdjust());
@@ -389,7 +399,7 @@ void Application::queryOctree(
         static const bool QUERY_DIAG = QProcessEnvironment::systemEnvironment().contains("TIVOLI_QUERY_DIAG");
         if (QUERY_DIAG && serverType == NodeType::EntityServer) {
             QString views;
-            for (const auto& view : _viewState.conicalViews()) {
+            for (const auto& view : qApp->getViewState().conicalViews()) {
                 const auto& p = view.getPosition();
                 const auto& d = view.getDirection();
                 views += QString(" [pos %1 %2 %3 dir %4 %5 %6 angle %7 far %8 radius %9]")
@@ -398,7 +408,7 @@ void Application::queryOctree(
                     .arg(glm::degrees(view.getAngle()), 0, 'f', 1).arg(view.getFarClip(), 0, 'f', 0).arg(view.getRadius(), 0, 'f', 2);
             }
             qCDebug(interfaceapp).noquote() << "entity query:" << (isModifiedQuery ? "initial-sphere" : "views")
-                << "views" << _viewState.conicalViews().size() << views
+                << "views" << qApp->getViewState().conicalViews().size() << views
                 << "lodAdjust" << _octreeQuery.getBoundaryLevelAdjust() << "sizeScale" << _octreeQuery.getOctreeSizeScale()
                 << "pps" << _octreeQuery.getMaxQueryPacketsPerSecond() << "bytes" << packetSize;
         }
@@ -408,9 +418,9 @@ void Application::queryOctree(
     }
 }
 
-void Application::clearDomainOctreeDetails(bool clearAll) {
+void DomainSession::clearDomainOctreeDetails(bool clearAll) {
     // if we're about to quit, we really don't need to do the rest of these things...
-    if (_aboutToQuit) {
+    if (qApp->isAboutToQuit()) {
         return;
     }
 
@@ -424,7 +434,7 @@ void Application::clearDomainOctreeDetails(bool clearAll) {
     });
 
     // reset the model renderer
-    clearAll ? getEntities()->clear() : getEntities()->clearDomainAndNonOwnedEntities();
+    clearAll ? qApp->getEntities()->clear() : qApp->getEntities()->clearDomainAndNonOwnedEntities();
 
     DependencyManager::get<AnimationCache>()->clearUnusedResources();
     DependencyManager::get<SoundCache>()->clearUnusedResources();
@@ -435,31 +445,31 @@ void Application::clearDomainOctreeDetails(bool clearAll) {
     DependencyManager::get<recording::ClipCache>()->clearUnusedResources();
 }
 
-void Application::domainURLChanged(QUrl domainURL) {
+void DomainSession::domainURLChanged(QUrl domainURL) {
     // disable physics until we have enough information about our new location to not cause craziness.
     setIsServerlessMode(domainURL.scheme() != URL_SCHEME_HIFI);
     if (isServerlessMode()) {
         loadServerlessDomain(domainURL);
     }
-    updateWindowTitle();
+    qApp->updateWindowTitle();
 }
 
-void Application::goToErrorDomainURL(QUrl errorDomainURL) {
+void DomainSession::goToErrorDomainURL(QUrl errorDomainURL) {
     // disable physics until we have enough information about our new location to not cause craziness.
     setIsServerlessMode(errorDomainURL.scheme() != URL_SCHEME_HIFI);
     if (isServerlessMode()) {
         loadErrorDomain(errorDomainURL);
     }
-    updateWindowTitle();
+    qApp->updateWindowTitle();
 }
 
-void Application::resettingDomain() {
+void DomainSession::resettingDomain() {
     _notifiedPacketVersionMismatchThisDomain = false;
 
     clearDomainOctreeDetails(false);
 }
 
-void Application::nodeAdded(SharedNodePointer node) {
+void DomainSession::nodeAdded(SharedNodePointer node) {
     if (node->getType() == NodeType::EntityServer) {
         if (_failedToConnectToEntityServer && !_entityServerConnectionTimer.isActive()) {
             _octreeProcessor.stopSafeLanding();
@@ -473,7 +483,7 @@ void Application::nodeAdded(SharedNodePointer node) {
     }
 }
 
-void Application::nodeActivated(SharedNodePointer node) {
+void DomainSession::nodeActivated(SharedNodePointer node) {
     if (node->getType() == NodeType::AssetServer) {
         // asset server just connected - check if we have the asset browser showing
 
@@ -515,8 +525,8 @@ void Application::nodeActivated(SharedNodePointer node) {
         // new avatar mixer, send off our identity packet on next update loop
         // Reset skeletonModelUrl if the last server modified our choice.
         // Override the avatar url (but not model name) here too.
-        if (_avatarOverrideUrl.isValid()) {
-            getMyAvatar()->useFullAvatarURL(_avatarOverrideUrl);
+        if (qApp->getAvatarOverrideUrl().isValid()) {
+            getMyAvatar()->useFullAvatarURL(qApp->getAvatarOverrideUrl());
         }
 
         if (getMyAvatar()->getFullAvatarURLFromPreferences() != getMyAvatar()->getSkeletonModelURL()) {
@@ -532,14 +542,14 @@ void Application::nodeActivated(SharedNodePointer node) {
     }
 }
 
-void Application::nodeKilled(SharedNodePointer node) {
+void DomainSession::nodeKilled(SharedNodePointer node) {
     // These are here because connecting NodeList::nodeKilled to OctreePacketProcessor::nodeKilled doesn't work:
     // OctreePacketProcessor::nodeKilled is not being called when NodeList::nodeKilled is emitted.
     // This may have to do with GenericThread::threadRoutine() blocking the QThread event loop
 
     _octreeProcessor.nodeKilled(node);
 
-    _entityEditSender.nodeKilled(node);
+    qApp->getEntityEditPacketSender()->nodeKilled(node);
 
     // Let's somehow compute a network reliability value here depending on 
     // the frequency of things getting lost and use that to determine when
@@ -569,7 +579,7 @@ void Application::nodeKilled(SharedNodePointer node) {
     }
 }
 
-void Application::trackIncomingOctreePacket(ReceivedMessage& message, SharedNodePointer sendingNode, bool wasStatsPacket) {
+void DomainSession::trackIncomingOctreePacket(ReceivedMessage& message, SharedNodePointer sendingNode, bool wasStatsPacket) {
     // Attempt to identify the sender from its address.
     if (sendingNode) {
         const QUuid& nodeUUID = sendingNode->getUUID();
@@ -584,7 +594,7 @@ void Application::trackIncomingOctreePacket(ReceivedMessage& message, SharedNode
     }
 }
 
-bool Application::gpuTextureMemSizeStable() {
+bool DomainSession::gpuTextureMemSizeStable() {
     auto renderConfig = qApp->getRenderEngine()->getConfiguration();
     auto renderStats = renderConfig->getConfig<render::EngineStats>("Stats");
 
@@ -605,7 +615,7 @@ bool Application::gpuTextureMemSizeStable() {
     return false;
 }
 
-int Application::processOctreeStats(ReceivedMessage& message, SharedNodePointer sendingNode) {
+int DomainSession::processOctreeStats(ReceivedMessage& message, SharedNodePointer sendingNode) {
     // parse the incoming stats datas stick it in a temporary object for now, while we
     // determine which server it belongs to
     int statsMessageLength = 0;
@@ -625,11 +635,11 @@ int Application::processOctreeStats(ReceivedMessage& message, SharedNodePointer 
     return statsMessageLength;
 }
 
-void Application::setSessionUUID(const QUuid& sessionUUID) const {
+void DomainSession::setSessionUUID(const QUuid& sessionUUID) const {
     Physics::setSessionUUID(sessionUUID);
 }
 
-void Application::notifyPacketVersionMismatch() {
+void DomainSession::notifyPacketVersionMismatch() {
     if (!_notifiedPacketVersionMismatchThisDomain && !isInterstitialMode()) {
         _notifiedPacketVersionMismatchThisDomain = true;
 
@@ -639,20 +649,175 @@ void Application::notifyPacketVersionMismatch() {
     }
 }
 
-void Application::setMaxOctreePacketsPerSecond(int maxOctreePPS) {
+void DomainSession::setMaxOctreePacketsPerSecond(int maxOctreePPS) {
     if (maxOctreePPS != _maxOctreePPS) {
         _maxOctreePPS = maxOctreePPS;
-        maxOctreePacketsPerSecond.set(_maxOctreePPS);
+        _maxOctreePPSSetting.set(_maxOctreePPS);
     }
 }
 
-int Application::getMaxOctreePacketsPerSecond() const {
+int DomainSession::getMaxOctreePacketsPerSecond() const {
     return _maxOctreePPS;
 }
 
-// Where the client goes first, the domain's content reloaded, and a later launch's URL handed off, in Application.cpp's
-// order.
-void Application::goToStartingLocation() {
+void DomainSession::setArrivalWaitsForNearby(bool wait) {
+    _arrivalWaitsForNearby = wait;
+    _octreeProcessor.setSafeLandingWaitsForVisuals(wait);
+}
+
+void DomainSession::tryToEnablePhysics() {
+    bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
+        _arrivalWaitsForNearby;
+    if (gpuTextureMemSizeStable() || !enableInterstitial) {
+        _fullSceneCounterAtLastPhysicsCheck = _fullSceneReceivedCounter;
+        _lastQueriedViews.clear();  // Force new view.
+        // process octree stats packets are sent in between full sends of a scene (this isn't currently true).
+        // We keep physics disabled until we've received a full scene and everything near the avatar in that
+        // scene is ready to compute its collision shape.
+        auto myAvatar = getMyAvatar();
+        if (myAvatar->isReadyForPhysics()) {
+            bool safeLandingComplete = _octreeProcessor.safeLandingIsComplete();   // read before the reset below clears it
+            myAvatar->getCharacterController()->setPhysicsEngine(qApp->getPhysicsEngine());
+            _octreeProcessor.resetSafeLanding();
+            _physicsEnabled = true;
+            StartupProfiler::instant("physics enabled: in the world");
+            setIsInterstitialMode(false);
+            myAvatar->updateMotionBehaviorFromMenu();
+            qDebug() << "Physics enabled" << "(ghosting" << DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed()
+                << "arrival waits for nearby" << _arrivalWaitsForNearby << "interstitial"
+                << DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled()
+                << "safe landing complete" << safeLandingComplete << "full scenes" << _fullSceneReceivedCounter << ")";
+            DependencyManager::get<EntityTreeRenderer>()->setSceneIsReady(true);
+            // the renderer rechecks zone culling now that the scene is ready. Until 2026-10-19 this was
+            // requeryOctree, whose new connection id made the entity server resend the whole view it had just sent
+            // (Tivoli's 14f41d044a: "hit it with a quick refresh to make sure everything is drawn"); the query with
+            // the real views goes out from the update loop as before
+            DependencyManager::get<EntityTreeRenderer>()->forceRecheckEntities();
+        }
+    }
+}
+
+void DomainSession::enablePhysicsWhenReady() {
+    if (!_physicsEnabled) {
+        if (!_domainLoadingInProgress) {
+            PROFILE_ASYNC_BEGIN(app, "Scene Loading", "");
+            _domainLoadingInProgress = true;
+            qDebug() << "SCENE LOADING";
+        }
+
+        // we haven't yet enabled physics.  we wait until we think we have all the collision information
+        // for nearby entities before starting bullet up.
+        if (isServerlessMode()) {
+            tryToEnablePhysics();
+        } else if (_failedToConnectToEntityServer) {
+            if (_octreeProcessor.safeLandingIsActive()) {
+                _octreeProcessor.stopSafeLanding();
+                qDebug() << "FAILED TO CONNECT TO ENTITY SERVER";
+            }
+        } else {
+            _octreeProcessor.updateSafeLanding();
+            
+            // ghosting lets the avatar move before the world near it is in, unless a loading screen waits for that
+            bool ghosting = DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed() && !_arrivalWaitsForNearby;
+            if (ghosting || _octreeProcessor.safeLandingIsComplete()) {
+                tryToEnablePhysics();
+            }
+        }
+    } else if (_domainLoadingInProgress) {
+        _domainLoadingInProgress = false;
+        PROFILE_ASYNC_END(app, "Scene Loading", "");
+    }
+}
+
+void DomainSession::queryServers() {
+    PROFILE_RANGE_EX(app, "QueryOctree", 0xffff0000, (uint64_t)qApp->getActiveDisplayPlugin()->presentCount());
+    PerformanceTimer perfTimer("queryOctree");
+    QMutexLocker viewLocker(&qApp->getViewState().mutex());
+
+    bool viewIsDifferentEnough = false;
+    if (qApp->getViewState().conicalViews().size() == _lastQueriedViews.size()) {
+        for (size_t i = 0; i < qApp->getViewState().conicalViews().size(); ++i) {
+            if (!qApp->getViewState().conicalViews()[i].isVerySimilar(_lastQueriedViews[i])) {
+                viewIsDifferentEnough = true;
+                break;
+            }
+        }
+    } else {
+        viewIsDifferentEnough = true;
+    }
+
+
+    // if it's been a while since our last query or the view has significantly changed then send a query, otherwise suppress it
+    static const std::chrono::seconds MIN_PERIOD_BETWEEN_QUERIES { 2 };
+    auto now = SteadyClock::now();
+
+    // The periodic query keeps its connection. Until 2026-10-19 it went through requeryOctree, whose new connection
+    // id makes the entity server forget what this client holds and resend its whole view: every 3 s, for as long
+    // as the client ran (Tivoli's 14f41d044a of 2020, "Fix entities intermittently not rendering"; measured 26
+    // full sends, 2.6 MB, in 97 s over a still field of 200 entities). The renderer's recheck of zone culling
+    // from that fix stays periodic. requeryOctree, with its new connection id, remains for the explicit
+    // refreshes: Redraw (Ctrl+Shift+T), a reload of the caches, physics coming up.
+    bool enoughTimePassed = now > _queryExpiry;
+    if (enoughTimePassed) {
+        DependencyManager::get<EntityTreeRenderer>()->forceRecheckEntities();
+    }
+
+    if (enoughTimePassed || viewIsDifferentEnough) {            
+        if (DependencyManager::get<SceneScriptingInterface>()
+        ->shouldRenderEntities()
+        ) {
+            QJsonObject queryJSONParameters;
+            QJsonObject queryFlags;
+            queryFlags["includeDescendants"] = true;
+            queryFlags["includeAncestors"] = true;
+            queryFlags["serverScripts"] = true; 
+            queryJSONParameters["flags"] = queryFlags;
+            queryOctree(
+                NodeType::EntityServer,
+                PacketType::EntityQuery,
+                queryJSONParameters
+            );
+        }
+        queryAvatars();
+
+        _lastQueriedViews = qApp->getViewState().conicalViews();
+        _queryExpiry = now + MIN_PERIOD_BETWEEN_QUERIES;
+    }
+}
+
+void DomainSession::sendNacksWhenDue(quint64 now) {
+    quint64 sinceLastNack = now - _lastNackTime;
+    const quint64 TOO_LONG_SINCE_LAST_NACK = 1 * USECS_PER_SECOND;
+    if (sinceLastNack > TOO_LONG_SINCE_LAST_NACK) {
+        _lastNackTime = now;
+        sendNackPackets();
+    }
+}
+
+void DomainSession::connectedToDomain() {
+    if (!isServerlessMode()) {
+        _entityServerConnectionTimer.setInterval(ENTITY_SERVER_ADDED_TIMEOUT);
+        _entityServerConnectionTimer.start();
+        _failedToConnectToEntityServer = false;
+    }
+}
+
+void DomainSession::disconnectedFromDomain() {
+    _failedToConnectToEntityServer = false;
+}
+
+void DomainSession::arrivedWithoutPhysics() {
+    if (!_physicsEnabled) {
+        // when we arrive somewhere without physics enabled --> startSafeLanding
+        _octreeProcessor.startSafeLanding();
+        // and query the entity server at once: the restarted landing completes on the server's next report of the
+        // initial scene, which it makes on the next query that asks for it; left to the periodic query that was
+        // up to 3 s of waiting for nothing (WORLD-LOADING.md, the arrival gate)
+        _queryExpiry = SteadyClock::now();
+    }
+}
+
+void DomainSession::goToStartingLocation() {
     PROFILE_RANGE(render, __FUNCTION__);
 
     // Get controller availability
@@ -667,7 +832,7 @@ void Application::goToStartingLocation() {
 
     // Check HMD use (may be technically available without being in use)
     bool hasHMD = PluginUtils::isHMDAvailable();
-    bool isUsingHMD = _displayPlugin->isHmd();
+    bool isUsingHMD = qApp->getActiveDisplayPlugin()->isHmd();
     bool isUsingHMDAndHandControllers = hasHMD && hasHandControllers && isUsingHMD;
 
     qCDebug(interfaceapp) << "HMD:" << hasHMD << ", Hand Controllers: " << hasHandControllers << ", Using HMD: " << isUsingHMDAndHandControllers;
@@ -678,7 +843,7 @@ void Application::goToStartingLocation() {
     QCommandLineParser parser;
     QCommandLineOption urlOption("url", "", "value");
     parser.addOption(urlOption);
-    parser.parse(arguments());
+    parser.parse(QCoreApplication::arguments());
     if (parser.isSet(urlOption)) {
         QUrl url = QUrl(parser.value(urlOption));
         if (url.scheme() == URL_SCHEME_HIFIAPP) {
@@ -689,13 +854,13 @@ void Application::goToStartingLocation() {
     }
 
     // If this is a first run we short-circuit the address passed in
-    if (_firstRun.get()) {
+    if (qApp->firstRun().get()) {
         if (!_overrideEntry) {
             DependencyManager::get<AddressManager>()->goToEntry();
         } else {
             DependencyManager::get<AddressManager>()->loadSettings(addressLookupString);
         }
-       _firstRun.set(false);
+       qApp->firstRun().set(false);
     } else {
         QString goingTo = "";
         if (addressLookupString.isEmpty()) {
@@ -714,7 +879,7 @@ void Application::goToStartingLocation() {
     _connectionMonitor.init();
 }
 
-void Application::reloadResourceCaches() {
+void DomainSession::reloadResourceCaches() {
     resetPhysicsReadyInformation();
 
     // Query the octree to refresh everything in view
@@ -734,7 +899,7 @@ void Application::reloadResourceCaches() {
 
     getMyAvatar()->prepareAvatarEntityDataForReload();
     // Clear the entities and their renderables
-    getEntities()->clear();
+    qApp->getEntities()->clear();
 
     DependencyManager::get<AssetClient>()->clearCache();
     DependencyManager::get<ScriptCache>()->clearCache();
@@ -759,9 +924,9 @@ void Application::reloadResourceCaches() {
     getMyAvatar()->resetFullAvatarURL();
 }
 
-void Application::goToHandedOffUrl(const QString& url) const {
+void DomainSession::goToHandedOffUrl(const QString& url) const {
     // a later launch's --url, handed over by SingleInstance: go there, as that launch would have
     if (DependencyManager::get<AddressManager>()->handleLookupString(url)) {
-        raiseWindow();
+        qApp->raiseWindow();
     }
 }

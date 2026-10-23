@@ -512,8 +512,6 @@ void Application::raise() {
     qApp->getWindow()->raise();
 }
 
-// The octree packet rate (setMaxOctreePacketsPerSecond, getMaxOctreePacketsPerSecond) is in ApplicationDomain.cpp.
-
 qreal Application::getDevicePixelRatio() {
     return (_window && _window->windowHandle()) ? _window->windowHandle()->devicePixelRatio() : 1.0;
 }

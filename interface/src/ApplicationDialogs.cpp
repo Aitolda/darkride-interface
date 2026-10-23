@@ -56,7 +56,7 @@ QSharedPointer<OffscreenUi> getOffscreenUI();   // Application.cpp's
 const QString SYSTEM_TABLET = "com.highfidelity.interface.tablet.system";   // declared in ApplicationConstants.h; ApplicationUi.cpp reads it too
 
 // The name of the world being joined, for a popup, or "" when it has none to show (an address is not a name).
-QString worldNameForPopup() {   // ApplicationDomain.cpp reads it too
+QString worldNameForPopup() {   // DomainSession.cpp reads it too
     return DependencyManager::get<AddressManager>()->getDomainLabel().trimmed();
 }
 

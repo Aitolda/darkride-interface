@@ -844,7 +844,7 @@ void Application::beforeEnterBackground() {
     auto nodeList = DependencyManager::get<NodeList>();
     nodeList->setSendDomainServerCheckInEnabled(false);
     nodeList->reset("Entering background", true);
-    clearDomainOctreeDetails();
+    _domainSession.clearDomainOctreeDetails();
 }
 
 
