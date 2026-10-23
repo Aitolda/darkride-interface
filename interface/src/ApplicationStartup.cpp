@@ -740,7 +740,7 @@ void Application::startServices() {
             return myAvatar ? myAvatar->getOrientationForAudio() : Quaternions::IDENTITY;
         });
 
-        recording::Frame::registerFrameHandler(AudioConstants::getAudioFrameName(), [&audioIO](recording::Frame::ConstPointer frame) {
+        recording::Frame::registerFrameHandler(AudioConstants::getAudioFrameName(), [audioIO](recording::Frame::ConstPointer frame) {
             audioIO->handleRecordedAudioInput(frame->data);
         });
 
