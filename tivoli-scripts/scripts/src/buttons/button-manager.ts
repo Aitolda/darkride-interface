@@ -424,7 +424,7 @@ export class ButtonManager {
 		let window: OverlayWindow = null;
 		const makeWindow = () => {
 			window = new OverlayWindow({
-				title: name,
+				title: "", // the page carries its own large title; the frame keeps only its close box
 				source: qmlUrl,
 				width: 560,
 				height: 640,
