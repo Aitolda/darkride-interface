@@ -152,7 +152,7 @@ public:
     // and an entity script's sandbox URL bounds what a local file may include.
     /// The script itself: {"fileName", "source"}.
     Q_INVOKABLE QVariantMap scriptSource() const;
-    /// The plain-value objects the hosts put on the global object (DriveKeys, PickType): name to map.
+    /// The plain values the hosts register (registerGlobalValue: TREE_SCALE, DriveKeys, PickType): name to value.
     Q_INVOKABLE QVariantMap scriptGlobalValues() const;
     /// Script.resolvePath with the parent given.
     Q_INVOKABLE QString resolvePathFrom(const QString& path, const QString& parentUrl) const;
@@ -177,7 +177,6 @@ public:
     void postCallback(const ModuleInstancePointer& instance, int32_t callback, const QVariantList& arguments);
 
 private:
-    void adoptScriptGlobals();
     bool fetchModuleBytes();
     ModuleInstancePointer makeInstance(const QString& name, const std::shared_ptr<WasmModule>& module,
                                        const WasmInstance::Limits& limits, QString& error);

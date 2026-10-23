@@ -26,7 +26,6 @@
 #include <QtCore/QUrl>
 #include <QtScript/QScriptEngine>
 #include <QtScript/QScriptValue>
-#include <QtScript/QScriptValueIterator>
 
 #include <AddressManager.h>
 #include <AudioEffectOptions.h>
@@ -436,7 +435,6 @@ void WasmScriptEngine::run() {
         // registerGlobalObject) and the QtScript conversions on the carried engine, which the serializer uses
         init();
     }
-    adoptScriptGlobals();
     // the network objects XMLHttpRequest and WebSocket are built on in the guest
     registerGlobalObject("Http", _http);
     registerGlobalObject("Sockets", _sockets);
@@ -461,27 +459,6 @@ void WasmScriptEngine::run() {
     _isRunning = false;
     emit runningStateChanged();
     emit doneRunning();
-}
-
-// A few hosts put an object on the QtScript global object directly (MyAvatar: globalObject().setProperty with
-// newQObject) rather than through registerGlobalObject. The carried engine received those; the module gets
-// them too, under the same names, so it sees the globals a JavaScript script sees.
-void WasmScriptEngine::adoptScriptGlobals() {
-    QScriptValueIterator it(globalObject());
-    int adopted = 0;
-    while (it.hasNext()) {
-        it.next();
-        QScriptValue value = it.value();
-        if (!value.isQObject()) {
-            continue;
-        }
-        QObject* object = value.toQObject();
-        if (object && _objects->global(it.name()) == ObjectTable::NULL_HANDLE) {
-            _objects->registerGlobal(it.name(), object);
-            ++adopted;
-        }
-    }
-    qCDebug(scriptengine) << "WasmScriptEngine:" << _objects->globalNames().size() << "globals for the module," << adopted << "adopted from the QtScript global object";
 }
 
 // An instance of a module in this engine: its codec (with this engine's table, the serializer and the
@@ -1288,37 +1265,10 @@ QVariantMap WasmScriptEngine::scriptSource() const {
     return program;
 }
 
-// The hosts put a few plain objects of numbers on the QtScript global object (DriveKeys, PickType); the carried
-// engine has them, and a guest gets them as values. Objects with functions or objects inside are not values.
+// The plain values the hosts register (registerGlobalValue: TREE_SCALE, DriveKeys, PickType); a guest puts them on
+// its global object under their names.
 QVariantMap WasmScriptEngine::scriptGlobalValues() const {
-    // registerGlobalValue's, then the plain objects hosts put on the QtScript global object themselves
-    QVariantMap values = _globalValues;
-    QScriptValueIterator it(globalObject());
-    while (it.hasNext()) {
-        it.next();
-        QScriptValue value = it.value();
-        if (!value.isObject() || value.isFunction() || value.isQObject() || value.isArray() || value.isError() ||
-            value.isRegExp() || value.isDate()) {
-            continue;
-        }
-        QVariantMap members;
-        bool plain = true;
-        QScriptValueIterator member(value);
-        while (member.hasNext()) {
-            member.next();
-            QScriptValue v = member.value();
-            if (v.isNumber() || v.isString() || v.isBool()) {
-                members[member.name()] = v.toVariant();
-            } else {
-                plain = false;
-                break;
-            }
-        }
-        if (plain && !members.isEmpty() && !values.contains(it.name())) {
-            values[it.name()] = members;
-        }
-    }
-    return values;
+    return _globalValues;
 }
 
 QString WasmScriptEngine::resolvePathFrom(const QString& path, const QString& parentUrl) const {

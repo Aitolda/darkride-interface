@@ -419,15 +419,16 @@ void MyAvatar::enableHandTouchForID(const QUuid& entityID) {
 }
 
 void MyAvatar::registerMetaTypes(ScriptEnginePointer engine) {
-    QScriptValue value = engine->newQObject(this, QScriptEngine::QtOwnership, QScriptEngine::ExcludeDeleteLater | QScriptEngine::ExcludeChildObjects);
-    engine->globalObject().setProperty("MyAvatar", value);
+    // through the engine's registrations, so that every script engine sees both (on QtScript the same as before:
+    // QtOwnership, no deleteLater, no child objects; DriveKeys a plain object of the keys' values)
+    engine->registerGlobalObject("MyAvatar", this);
 
-    QScriptValue driveKeys = engine->newObject();
+    QVariantMap driveKeys;
     auto metaEnum = QMetaEnum::fromType<DriveKeys>();
     for (int i = 0; i < MAX_DRIVE_KEYS; ++i) {
-        driveKeys.setProperty(metaEnum.key(i), metaEnum.value(i));
+        driveKeys[metaEnum.key(i)] = metaEnum.value(i);
     }
-    engine->globalObject().setProperty("DriveKeys", driveKeys);
+    engine->registerGlobalValue("DriveKeys", driveKeys);
 
     qScriptRegisterMetaType(engine.data(), audioListenModeToScriptValue, audioListenModeFromScriptValue);
     qScriptRegisterMetaType(engine.data(), driveKeysToScriptValue, driveKeysFromScriptValue);
