@@ -77,7 +77,6 @@
 #include "AudioClient.h"
 #include "avatar/AvatarManager.h"
 #include "CrashRecoveryHandler.h"
-#include "CrashHandler.h"
 #include "DiscoverabilityManager.h"
 #include "GLCanvas.h"
 #include "scripting/Audio.h"
@@ -445,13 +444,7 @@ void Application::setupProcess() {
     StartupProfiler::phase("constructor: GPU identification (GPUIdent)");
     {
         // identify gpu as early as possible to help identify OpenGL initialization errors.
-        auto gpuIdent = GPUIdent::getInstance();
-        // setCrashAnnotation("sentry[contexts][gpu][name]", gpuIdent->getName().toStdString());
-        // setCrashAnnotation("sentry[contexts][gpu][version]", gpuIdent->getDriver().toStdString());
-        // setCrashAnnotation("sentry[contexts][gpu][memory_size]", std::to_string(gpuIdent->getMemory()));
-        setCrashAnnotation("gpu_name", gpuIdent->getName().toStdString());
-        setCrashAnnotation("gpu_driver", gpuIdent->getDriver().toStdString());
-        setCrashAnnotation("gpu_memory", std::to_string(gpuIdent->getMemory()));
+        GPUIdent::getInstance();
     }
 
     StartupProfiler::phase("constructor: debug draw, plug-in container, thread pool, controller interface, clipboard");
@@ -554,9 +547,6 @@ void Application::startServices() {
     _logger->setSessionID(accountManager->getSessionID());
 #endif
 
-    setCrashAnnotation("metaverse_session_id", accountManager->getSessionID().toString().toStdString());
-    setCrashAnnotation("main_thread_id", std::to_string((size_t)QThread::currentThreadId()));
-
     qCDebug(interfaceapp) << "[VERSION] Build sequence:" << qPrintable(applicationVersion());
     qCDebug(interfaceapp) << "[VERSION] MODIFIED_ORGANIZATION:" << BuildInfo::MODIFIED_ORGANIZATION;
     qCDebug(interfaceapp) << "[VERSION] VERSION:" << BuildInfo::VERSION;
@@ -630,9 +620,6 @@ void Application::connectServices() {
 
     connect(&domainHandler, &DomainHandler::domainURLChanged, &_domainSession, &DomainSession::domainURLChanged);
     connect(&domainHandler, &DomainHandler::redirectToErrorDomainURL, &_domainSession, &DomainSession::goToErrorDomainURL);
-    connect(&domainHandler, &DomainHandler::domainURLChanged, [](QUrl domainURL){
-        setCrashAnnotation("domain", domainURL.toString().toStdString());
-    });
     connect(&domainHandler, &DomainHandler::resetting, &_domainSession, &DomainSession::resettingDomain);
     connect(&_domainSession, &DomainSession::worldLoadingChanged, this, &Application::worldLoadingChanged);   // relayed likewise
     connect(&_domainSession, &DomainSession::interstitialModeChanged, this, &Application::interstitialModeChanged);   // relayed: the Window scripting interface connects to Application in the essentials stage, before the session exists
@@ -752,9 +739,6 @@ void Application::connectServices() {
         else {
             setPreferredCursor(Cursor::Manager::getIconName(Cursor::Icon::SYSTEM));
         }
-
-        setCrashAnnotation("display_plugin", displayPlugin->getName().toStdString());
-        setCrashAnnotation("hmd", displayPlugin->isHmd() ? "1" : "0");
     });
     connect(this, &Application::activeDisplayPluginChanged, this, &Application::updateSystemTabletMode);
     connect(this, &Application::activeDisplayPluginChanged, this, [&](){
@@ -772,11 +756,6 @@ void Application::connectServices() {
         DependencyManager::get<AddressManager>().data(), &AddressManager::storeCurrentAddress);
 
     connect(myAvatar.get(), &MyAvatar::positionGoneTo, &_domainSession, &DomainSession::arrivedWithoutPhysics, Qt::QueuedConnection);
-
-    connect(myAvatar.get(), &MyAvatar::skeletonModelURLChanged, [](){
-        QUrl avatarURL = qApp->getMyAvatar()->getSkeletonModelURL();
-        setCrashAnnotation("avatar", avatarURL.toString().toStdString());
-    });
 
     StartupProfiler::phase("constructor: sample sound, script engine initializer, node interest set, options");
     // Inititalize sample before registering

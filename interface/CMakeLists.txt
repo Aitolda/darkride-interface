@@ -218,8 +218,6 @@ target_include_directories(${TARGET_NAME} PRIVATE "${CMAKE_BINARY_DIR}/libraries
 target_openssl()
 
 target_opengl()
-add_crashpad()
-target_breakpad()
 target_json()
 target_gifh()
 

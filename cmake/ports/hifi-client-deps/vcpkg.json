@@ -7,10 +7,6 @@
       "name": "aristo",
       "platform": "windows"
     },
-    {
-      "name": "crashpad",
-      "platform": "x64 & (osx | windows)"
-    },
     "gif-h",
     "glslang",
     "hifi-deps",

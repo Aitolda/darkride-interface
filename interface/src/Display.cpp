@@ -37,7 +37,6 @@
 #include "ApplicationConstants.h"   // declares ACTIVE_DISPLAY_PLUGIN_SETTING_NAME extern, so the definition below has external linkage
 #include "avatar/AvatarManager.h"
 #include "ClientOptions.h"
-#include "CrashHandler.h"
 #include "editor/Editor.h"
 #include "graphics/RenderEventHandler.h"
 #include "InterfaceLogging.h"
@@ -404,8 +403,6 @@ void Display::updateWindowTitle() const {
     const auto nodeList = DependencyManager::get<NodeList>();
     const auto accountManager = DependencyManager::get<AccountManager>();
     const auto addressManager = DependencyManager::get<AddressManager>();
-
-    setCrashAnnotation("sentry[user][username]", accountManager->getAccountInfo().getUsername().toStdString());
 
     // Like a Mac document window, the title names what you're looking at: the world you're in, by its name, or
     // Darkride when you're in none or it has no name to show (an address is not a name). The account is in its

@@ -25,7 +25,6 @@
 #include <shared/NsightHelpers.h>
 #include <shared/PlatformHelper.h>
 
-#include "CrashHandler.h"
 #include "InterfaceLogging.h"
 
 std::atomic<bool> DeadlockWatchdogThread::_paused;
@@ -85,8 +84,6 @@ DeadlockWatchdogThread::DeadlockWatchdogThread() {
 }
 
 void DeadlockWatchdogThread::deadlockDetectionCrash() {
-    setCrashAnnotation("_mod_faulting_tid", std::to_string((uint64_t)_mainThreadID));
-    setCrashAnnotation("deadlock", "1");
     uint32_t* crashTrigger = nullptr;
     *crashTrigger = 0xDEAD10CC;
 }
