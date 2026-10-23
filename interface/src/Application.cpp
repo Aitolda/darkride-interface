@@ -12,6 +12,7 @@
 
 #include "Application.h"
 #include "ClientOptions.h"
+#include "DeadlockWatchdog.h"
 
 #include <chrono>
 #include <thread>
@@ -274,13 +275,6 @@ static QTimer locationUpdateTimer;
 static QTimer identityPacketTimer;
 static QTimer pingTimer;
 
-#if defined(Q_OS_ANDROID)
-static bool DISABLE_WATCHDOG = true;
-#else
-static const QString DISABLE_WATCHDOG_FLAG{ "HIFI_DISABLE_WATCHDOG" };
-static bool DISABLE_WATCHDOG = nsightActive() || QProcessEnvironment::systemEnvironment().contains(DISABLE_WATCHDOG_FLAG);
-#endif
-
 // The window title's client label, first in the title when there is one: --clientLabel "<text>" on the command line,
 // else the DARKRIDE_CLIENT_LABEL environment variable, else the build's (cmake -DCLIENT_LABEL=...). With several
 // sessions' clients on one machine, a label set per launch names the session and the run ("Darkride - Physics - Card
@@ -337,7 +331,6 @@ static const unsigned int THROTTLED_SIM_FRAMERATE = 15;
 static const int THROTTLED_SIM_FRAME_PERIOD_MS = MSECS_PER_SECOND / THROTTLED_SIM_FRAMERATE;
 static const int ENTITY_SERVER_ADDED_TIMEOUT = 5000;
 static const int ENTITY_SERVER_CONNECTION_TIMEOUT = 5000;
-static const int WATCHDOG_TIMER_TIMEOUT = 100;
 
 static const float INITIAL_QUERY_RADIUS = 10.0f;  // priority radius for entities before physics enabled
 
@@ -375,146 +368,6 @@ const std::vector<std::pair<QString, Application::AcceptURLMethod>> Application:
     { JPG_EXTENSION, &Application::importImage },
     { PNG_EXTENSION, &Application::importImage }
 };
-
-class DeadlockWatchdogThread : public QThread {
-public:
-    static const unsigned long HEARTBEAT_UPDATE_INTERVAL_SECS = 1;
-    // TODO: go back to 2 min across the board, after figuring out the issues with mac
-#if defined(Q_OS_MACOS)
-    static const unsigned long MAX_HEARTBEAT_AGE_USECS = 600 * USECS_PER_SECOND; // 10 mins with no checkin probably a deadlock, right now, on MAC
-#else
-    static const unsigned long MAX_HEARTBEAT_AGE_USECS = 120 * USECS_PER_SECOND; // 2 mins with no checkin probably a deadlock
-#endif
-    static const int WARNING_ELAPSED_HEARTBEAT = 500 * USECS_PER_MSEC; // warn if elapsed heartbeat average is large
-    static const int HEARTBEAT_SAMPLES = 100000; // ~5 seconds worth of samples
-
-    // Set the heartbeat on launch
-    DeadlockWatchdogThread() {
-        setObjectName("Deadlock Watchdog");
-        // Give the heartbeat an initial value
-        _heartbeat = usecTimestampNow();
-        _paused = false;
-        connect(qApp, &QCoreApplication::aboutToQuit, [this] {
-            _quit = true;
-        });
-    }
-
-    void setMainThreadID(Qt::HANDLE threadID) {
-        _mainThreadID = threadID;
-    }
-
-    static void updateHeartbeat() {
-        auto now = usecTimestampNow();
-        auto elapsed = now - _heartbeat;
-        _movingAverage.addSample(elapsed);
-        _heartbeat = now;
-    }
-
-    void deadlockDetectionCrash() {
-        setCrashAnnotation("_mod_faulting_tid", std::to_string((uint64_t)_mainThreadID));
-        setCrashAnnotation("deadlock", "1");
-        uint32_t* crashTrigger = nullptr;
-        *crashTrigger = 0xDEAD10CC;
-    }
-
-    static void withPause(const std::function<void()>& lambda) {
-        pause();
-        lambda();
-        resume();
-    }
-    static void pause() {
-        _paused = true;
-    }
-
-    static void resume() {
-        // Update the heartbeat BEFORE resuming the checks
-        updateHeartbeat();
-        _paused = false;
-    }
-
-    void run() override {
-        while (!_quit) {
-            QThread::sleep(HEARTBEAT_UPDATE_INTERVAL_SECS);
-            // Don't do heartbeat detection under nsight
-            if (_paused) {
-                continue;
-            }
-            uint64_t lastHeartbeat = _heartbeat; // sample atomic _heartbeat, because we could context switch away and have it updated on us
-            uint64_t now = usecTimestampNow();
-            auto lastHeartbeatAge = (now > lastHeartbeat) ? now - lastHeartbeat : 0;
-            auto elapsedMovingAverage = _movingAverage.getAverage();
-
-            if (elapsedMovingAverage > _maxElapsedAverage) {
-#if !defined(NDEBUG)
-                qCDebug(interfaceapp_deadlock) << "DEADLOCK WATCHDOG WARNING:"
-                    << "lastHeartbeatAge:" << lastHeartbeatAge
-                    << "elapsedMovingAverage:" << elapsedMovingAverage
-                    << "maxElapsed:" << _maxElapsed
-                    << "PREVIOUS maxElapsedAverage:" << _maxElapsedAverage
-                    << "NEW maxElapsedAverage:" << elapsedMovingAverage << "** NEW MAX ELAPSED AVERAGE **"
-                    << "samples:" << _movingAverage.getSamples();
-#endif
-                _maxElapsedAverage = elapsedMovingAverage;
-            }
-            if (lastHeartbeatAge > _maxElapsed) {
-#if !defined(NDEBUG)
-                qCDebug(interfaceapp_deadlock) << "DEADLOCK WATCHDOG WARNING:"
-                    << "lastHeartbeatAge:" << lastHeartbeatAge
-                    << "elapsedMovingAverage:" << elapsedMovingAverage
-                    << "PREVIOUS maxElapsed:" << _maxElapsed
-                    << "NEW maxElapsed:" << lastHeartbeatAge << "** NEW MAX ELAPSED **"
-                    << "maxElapsedAverage:" << _maxElapsedAverage
-                    << "samples:" << _movingAverage.getSamples();
-#endif
-                _maxElapsed = lastHeartbeatAge;
-            }
-
-#if !defined(NDEBUG)
-            if (elapsedMovingAverage > WARNING_ELAPSED_HEARTBEAT) {
-                qCDebug(interfaceapp_deadlock) << "DEADLOCK WATCHDOG WARNING:"
-                    << "lastHeartbeatAge:" << lastHeartbeatAge
-                    << "elapsedMovingAverage:" << elapsedMovingAverage << "** OVER EXPECTED VALUE **"
-                    << "maxElapsed:" << _maxElapsed
-                    << "maxElapsedAverage:" << _maxElapsedAverage
-                    << "samples:" << _movingAverage.getSamples();
-            }
-#endif
-
-            if (lastHeartbeatAge > MAX_HEARTBEAT_AGE_USECS) {
-                qCDebug(interfaceapp_deadlock) << "DEADLOCK DETECTED -- "
-                         << "lastHeartbeatAge:" << lastHeartbeatAge
-                         << "[ lastHeartbeat :" << lastHeartbeat
-                         << "now:" << now << " ]"
-                         << "elapsedMovingAverage:" << elapsedMovingAverage
-                         << "maxElapsed:" << _maxElapsed
-                         << "maxElapsedAverage:" << _maxElapsedAverage
-                         << "samples:" << _movingAverage.getSamples();
-
-                // Don't actually crash in debug builds, in case this apparent deadlock is simply from
-                // the developer actively debugging code
-                #ifdef NDEBUG
-                deadlockDetectionCrash();
-                #endif
-            }
-        }
-    }
-
-    static std::atomic<bool> _paused;
-    static std::atomic<uint64_t> _heartbeat;
-    static std::atomic<uint64_t> _maxElapsed;
-    static std::atomic<int> _maxElapsedAverage;
-    static ThreadSafeMovingAverage<int, HEARTBEAT_SAMPLES> _movingAverage;
-
-    bool _quit { false };
-
-    Qt::HANDLE _mainThreadID = nullptr;
-};
-
-std::atomic<bool> DeadlockWatchdogThread::_paused;
-std::atomic<uint64_t> DeadlockWatchdogThread::_heartbeat;
-std::atomic<uint64_t> DeadlockWatchdogThread::_maxElapsed;
-std::atomic<int> DeadlockWatchdogThread::_maxElapsedAverage;
-ThreadSafeMovingAverage<int, DeadlockWatchdogThread::HEARTBEAT_SAMPLES> DeadlockWatchdogThread::_movingAverage;
 
 #ifdef Q_OS_WIN
 static const UINT UWM_IDENTIFY_INSTANCES =
@@ -1105,38 +958,9 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     auto addressManager = DependencyManager::get<AddressManager>();
     addressManager->moveToThread(nodeList->thread());
 
-    if (options.disableWatchdog) {
-        DISABLE_WATCHDOG = true;
-    }
     StartupProfiler::phase("constructor: deadlock watchdog");
-    // Set up a watchdog thread to intentionally crash the application on deadlocks
-    if (!DISABLE_WATCHDOG) {
-        auto deadlockWatchdogThread = new DeadlockWatchdogThread();
-        deadlockWatchdogThread->setMainThreadID(QThread::currentThreadId());
-        deadlockWatchdogThread->start();
-
-        // Pause the deadlock watchdog when we sleep, or it might 
-        // trigger a false positive when we wake back up
-        auto platformHelper = PlatformHelper::instance();
-
-        connect(platformHelper, &PlatformHelper::systemWillSleep, [] {
-            DeadlockWatchdogThread::pause();
-        });
-
-        connect(platformHelper, &PlatformHelper::systemWillWake, [] {
-            DeadlockWatchdogThread::resume();
-        });
-
-        // Main thread timer to keep the watchdog updated
-        QTimer* watchdogUpdateTimer = new QTimer(this);
-        connect(watchdogUpdateTimer, &QTimer::timeout, [this] { updateHeartbeat(); });
-        connect(this, &QCoreApplication::aboutToQuit, [watchdogUpdateTimer] {
-            watchdogUpdateTimer->stop();
-            watchdogUpdateTimer->deleteLater();
-        });
-        watchdogUpdateTimer->setSingleShot(false);
-        watchdogUpdateTimer->setInterval(WATCHDOG_TIMER_TIMEOUT); // 100ms, Qt::CoarseTimer acceptable
-        watchdogUpdateTimer->start();
+    if (!options.disableWatchdog && !DeadlockWatchdogThread::disabledByEnvironment()) {
+        DeadlockWatchdogThread::startWatching(this);
     }
 
     StartupProfiler::phase("constructor: avatar manager space, account manager and keypair, version log");
