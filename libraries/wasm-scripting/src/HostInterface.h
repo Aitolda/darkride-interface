@@ -121,6 +121,9 @@ public:
     /// freed through the guest's free and decoded into `result` (invalid when there is none; an i32 result
     /// is given as an int). Failures reach the failure handler.
     bool callWithPayload(const QString& name, const QVariant& payload, QVariant& result, QString& error);
+    /// The same call with the result as the CBOR item the guest wrote (undefined for none; an i32 result as an
+    /// integer): for a caller that keeps the order of a map's keys or reads nulls as the guest sent them.
+    bool callWithPayload(const QString& name, const QVariant& payload, QCborValue& result, QString& error);
 
     // --- the operations behind the imports, also usable from C++ ------------------------------------------
     /// The registered globals: name to handle.
@@ -159,6 +162,8 @@ private:
     /// Encodes and places the bytes in the guest's memory through its alloc; 0 with the error when it cannot.
     int64_t writeToGuest(const QVariant& value, QString& error);
     int64_t writeResult(const QVariant& value);
+    bool callForResultBytes(const QString& name, const QVariant& payload, QByteArray& bytes, bool& hasBytes,
+                            int32_t& small, bool& isSmall, QString& error);
     void log(int level, const QString& text) const;
     void fail(const QString& entry, const QString& error);
 

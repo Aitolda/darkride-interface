@@ -376,6 +376,16 @@ QCborValue ValueCodec::encodeVariantMap(const QVariantMap& items) const {
 
 QCborValue ValueCodec::toCbor(const QVariant& value) const {
     const int type = value.userType();
+    // a CBOR item made by the caller (an ordered map, say) crosses as it is
+    if (type == QMetaType::QCborValue) {
+        return value.value<QCborValue>();
+    }
+    if (type == QMetaType::QCborMap) {
+        return QCborValue(value.value<QCborMap>());
+    }
+    if (type == QMetaType::QCborArray) {
+        return QCborValue(value.value<QCborArray>());
+    }
     switch (type) {
         case QMetaType::UnknownType:
             return QCborValue(QCborValue::Undefined);

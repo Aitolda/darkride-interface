@@ -339,6 +339,56 @@ bool HostInterface::callGuest(const QString& name, int32_t id, const QVariant& p
 
 bool HostInterface::callWithPayload(const QString& name, const QVariant& payload, QVariant& result, QString& error) {
     result = QVariant();
+    QByteArray bytes;
+    bool hasBytes = false;
+    int32_t small = 0;
+    bool isSmall = false;
+    if (!callForResultBytes(name, payload, bytes, hasBytes, small, isSmall, error)) {
+        return false;
+    }
+    if (isSmall) {
+        result = QVariant(small);
+        return true;
+    }
+    if (!hasBytes) {
+        return true;
+    }
+    return _codec.decode(bytes, result, error);
+}
+
+bool HostInterface::callWithPayload(const QString& name, const QVariant& payload, QCborValue& result, QString& error) {
+    result = QCborValue(QCborValue::Undefined);
+    QByteArray bytes;
+    bool hasBytes = false;
+    int32_t small = 0;
+    bool isSmall = false;
+    if (!callForResultBytes(name, payload, bytes, hasBytes, small, isSmall, error)) {
+        return false;
+    }
+    if (isSmall) {
+        result = QCborValue(qint64(small));
+        return true;
+    }
+    if (!hasBytes) {
+        return true;
+    }
+    QCborParserError parseError;
+    result = QCborValue::fromCbor(bytes, &parseError);
+    if (parseError.error != QCborError::NoError) {
+        error = "the result of " + name + " is not CBOR: " + parseError.errorString();
+        return false;
+    }
+    return true;
+}
+
+// The call behind both: the payload placed through alloc, the export called, a packed result read back and freed
+// through the guest's free. `hasBytes` says a result was read (an empty one included); `isSmall` that the export
+// returned an i32 instead.
+bool HostInterface::callForResultBytes(const QString& name, const QVariant& payload, QByteArray& bytes, bool& hasBytes,
+                                       int32_t& small, bool& isSmall, QString& error) {
+    bytes = QByteArray();
+    hasBytes = false;
+    isSmall = false;
     int64_t packed = writeToGuest(payload, error);
     if (packed == 0 && !error.isEmpty()) {
         fail(name, error);
@@ -355,7 +405,8 @@ bool HostInterface::callWithPayload(const QString& name, const QVariant& payload
         return true;
     }
     if (std::holds_alternative<int32_t>(results[0])) {
-        result = QVariant(std::get<int32_t>(results[0]));
+        small = std::get<int32_t>(results[0]);
+        isSmall = true;
         return true;
     }
     if (!std::holds_alternative<int64_t>(results[0])) {
@@ -367,15 +418,16 @@ bool HostInterface::callWithPayload(const QString& name, const QVariant& payload
     }
     int32_t resultPointer = int32_t(uint32_t(uint64_t(resultPacked) >> 32));
     int32_t resultLength = int32_t(uint32_t(uint64_t(resultPacked) & 0xffffffffu));
-    QByteArray bytes = readBytes(resultPointer, resultLength, error);
+    bytes = readBytes(resultPointer, resultLength, error);
     std::vector<WasmValue> ignored;
     QString freeError;
     _instance.call(FREE_EXPORT, { resultPointer, resultLength }, ignored, freeError);
     if (!error.isEmpty()) {
         return false;
     }
+    hasBytes = true;
     _statistics.bytesFromGuest += uint64_t(bytes.size());
-    return _codec.decode(bytes, result, error);
+    return true;
 }
 
 bool HostInterface::deliverSignal(int connection, const QVariantList& arguments, QString& error) {

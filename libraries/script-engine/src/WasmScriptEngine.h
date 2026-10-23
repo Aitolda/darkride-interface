@@ -97,6 +97,8 @@ public:
     /// Whether the JavaScript guest module is there (a build can be made without one). Without it JavaScript stays
     /// on the QtScript engine whatever the setting says, with one warning in the log.
     static bool hasJavaScriptGuest();
+    /// The JavaScript guest module, compiled once per process (the edit-filter engine instantiates it too).
+    static std::shared_ptr<WasmModule> javascriptGuestModule(QString& error);
 
     bool runsJavaScript() const { return _runsJavaScript; }
 
@@ -188,7 +190,6 @@ private:
     int addTimer(const ScriptCallback& callback, int intervalMS, bool singleShot);
     void removeTimer(int id);
     void stopTimers();
-    static std::shared_ptr<WasmModule> javascriptGuestModule(QString& error);
 
     // entity scripts
     void entityScriptReady(const EntityItemID& entityID, const QString& url, const QVariant& sourceOrBytes, bool success,
