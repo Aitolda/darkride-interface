@@ -277,25 +277,7 @@ Q_LOGGING_CATEGORY(trace_app_input_mouse, "trace.app.input.mouse")
 using namespace std;
 
 
-// The window title's client label, first in the title when there is one: --clientLabel "<text>" on the command line,
-// else the DARKRIDE_CLIENT_LABEL environment variable, else the build's (cmake -DCLIENT_LABEL=...). With several
-// sessions' clients on one machine, a label set per launch names the session and the run ("Darkride - Physics - Card
-// Run Test") without a rebuild, release builds included, so Caity doesn't close one for her own (2026-10-22).
-static const QString& clientLabel() {
-    static const QString label = []() -> QString {
-        const QString& fromCommandLine = ClientOptions::get().clientLabel;
-        if (!fromCommandLine.isEmpty()) {
-            return fromCommandLine;
-        }
-        const QString fromEnvironment = QProcessEnvironment::systemEnvironment().value("DARKRIDE_CLIENT_LABEL").trimmed();
-        return fromEnvironment.isEmpty() ? BuildInfo::CLIENT_LABEL : fromEnvironment;
-    }();
-    return label;
-}
-
-QString labelledTitle(const QString& title) {   // ApplicationStartup.cpp reads it too
-    return clientLabel().isEmpty() ? title : clientLabel() + " | " + title;
-}
+// The window title's client label (clientLabel, labelledTitle) is in ApplicationDisplay.cpp, with updateWindowTitle.
 
 
 // For processing on QThreadPool, we target a number of threads after reserving some
@@ -424,67 +406,7 @@ void Application::runTests() {
 
 // The window's resize (resizeEvent, resizeGL, with verticalFieldOfView) is in ApplicationDisplay.cpp.
 
-void Application::goToStartingLocation() {
-    PROFILE_RANGE(render, __FUNCTION__);
-
-    // Get controller availability
-#ifdef ANDROID_APP_QUEST_INTERFACE
-    bool hasHandControllers = true;
-#else
-    bool hasHandControllers = false;
-    if (PluginUtils::isViveControllerAvailable() || PluginUtils::isOculusTouchControllerAvailable()) {
-        hasHandControllers = true;
-    }
-#endif
-
-    // Check HMD use (may be technically available without being in use)
-    bool hasHMD = PluginUtils::isHMDAvailable();
-    bool isUsingHMD = _displayPlugin->isHmd();
-    bool isUsingHMDAndHandControllers = hasHMD && hasHandControllers && isUsingHMD;
-
-    qCDebug(interfaceapp) << "HMD:" << hasHMD << ", Hand Controllers: " << hasHandControllers << ", Using HMD: " << isUsingHMDAndHandControllers;
-
-    QString addressLookupString;
-
-    // when --url in command line, teleport to location
-    QCommandLineParser parser;
-    QCommandLineOption urlOption("url", "", "value");
-    parser.addOption(urlOption);
-    parser.parse(arguments());
-    if (parser.isSet(urlOption)) {
-        QUrl url = QUrl(parser.value(urlOption));
-        if (url.scheme() == URL_SCHEME_HIFIAPP) {
-            Setting::Handle<QVariant>("startUpApp").set(url.path());
-        } else {
-            addressLookupString = url.toString();
-        }
-    }
-
-    // If this is a first run we short-circuit the address passed in
-    if (_firstRun.get()) {
-        if (!_overrideEntry) {
-            DependencyManager::get<AddressManager>()->goToEntry();
-        } else {
-            DependencyManager::get<AddressManager>()->loadSettings(addressLookupString);
-        }
-       _firstRun.set(false);
-    } else {
-        QString goingTo = "";
-        if (addressLookupString.isEmpty()) {
-            if (Menu::getInstance()->isOptionChecked(MenuOption::HomeLocation)) {
-                auto locationBookmarks = DependencyManager::get<LocationBookmarks>();
-                addressLookupString = locationBookmarks->addressForBookmark(LocationBookmarks::HOME_BOOKMARK);
-                goingTo = "home location";
-            } else {
-                goingTo = "previous location";
-            }
-        }
-        qCDebug(interfaceapp) << "Not first run... going to" << qPrintable(!goingTo.isEmpty() ? goingTo : addressLookupString);
-        DependencyManager::get<AddressManager>()->loadSettings(addressLookupString);
-    }
-    
-    _connectionMonitor.init();
-}
+// goToStartingLocation (where the client goes first) is in ApplicationDomain.cpp.
 
 // The import wrappers for a dropped or opened file (importJSONFromURL, importSVOFromURL, importFromZIP) are in ApplicationImport.cpp.
 
@@ -516,30 +438,7 @@ void Application::goToStartingLocation() {
 
 // The sign-in gate (pauseUntilLoginDetermined, resumeAfterLoginDialogActionTaken) is in ApplicationUi.cpp.
 
-void Application::loadAvatarScripts(const QVector<QString>& urls) {
-    auto scriptEngines = DependencyManager::get<ScriptEngines>();
-    auto runningScripts = scriptEngines->getRunningScripts();
-    for (auto url : urls) {
-        int index = runningScripts.indexOf(url);
-        if (index < 0) {
-            auto scriptEnginePointer = scriptEngines->loadScript(url, false);
-            if (scriptEnginePointer) {
-                scriptEnginePointer->setType(ScriptEngine::Type::AVATAR);
-            }
-        }
-    }
-}
-
-void Application::unloadAvatarScripts() {
-    auto scriptEngines = DependencyManager::get<ScriptEngines>();
-    auto urls = scriptEngines->getRunningScripts();
-    for (auto url : urls) {
-        auto scriptEngine = scriptEngines->getScriptEngine(url);
-        if (scriptEngine->getType() == ScriptEngine::Type::AVATAR) {
-            scriptEngines->stopScript(url, false);
-        }
-    }
-}
+// The avatar's scripts (loadAvatarScripts, unloadAvatarScripts) are in ApplicationAvatar.cpp.
 
 // The per-frame helpers (updateLOD, pushPostUpdateLambda, updateMyAvatarLookAtPosition, updateThreads) are in ApplicationFrame.cpp.
 
@@ -549,50 +448,7 @@ void Application::unloadAvatarScripts() {
 
 // requeryOctree and resetPhysicsReadyInformation are in ApplicationDomain.cpp.
 
-void Application::reloadResourceCaches() {
-    resetPhysicsReadyInformation();
-
-    // Query the octree to refresh everything in view
-    _queryExpiry = SteadyClock::now();
-    _octreeQuery.incrementConnectionID();
-
-    QJsonObject queryJSONParameters;
-    QJsonObject queryFlags;
-    queryFlags["includeDescendants"] = true;
-    queryFlags["includeAncestors"] = true;
-    queryJSONParameters["flags"] = queryFlags;
-    queryOctree(
-        NodeType::EntityServer,
-        PacketType::EntityQuery,
-        queryJSONParameters
-    );
-
-    getMyAvatar()->prepareAvatarEntityDataForReload();
-    // Clear the entities and their renderables
-    getEntities()->clear();
-
-    DependencyManager::get<AssetClient>()->clearCache();
-    DependencyManager::get<ScriptCache>()->clearCache();
-
-    // Clear all the resource caches
-    DependencyManager::get<ResourceCacheSharedItems>()->clear();
-    DependencyManager::get<AnimationCache>()->refreshAll();
-    DependencyManager::get<SoundCache>()->refreshAll();
-    DependencyManager::get<MaterialCache>()->refreshAll();
-    DependencyManager::get<ModelCache>()->refreshAll();
-    ShaderCache::instance().refreshAll();
-    DependencyManager::get<TextureCache>()->refreshAll();
-    DependencyManager::get<recording::ClipCache>()->refreshAll();
-
-    DependencyManager::get<NodeList>()->reset("Reloading resources");  // Force redownload of .fst models
-
-    DependencyManager::get<ScriptEngines>()->reloadAllScripts();
-    getOffscreenUI()->clearCache();
-
-    DependencyManager::get<Keyboard>()->createKeyboard();
-
-    getMyAvatar()->resetFullAvatarURL();
-}
+// reloadResourceCaches (the domain's content reloaded) is in ApplicationDomain.cpp.
 
 // rotationModeChanged is in ApplicationCamera.cpp.
 
@@ -614,60 +470,13 @@ float Application::getNumCollisionObjects() const {
 
 // computePickRay is in ApplicationCamera.cpp.
 
-std::shared_ptr<MyAvatar> Application::getMyAvatar() const {
-    return DependencyManager::get<AvatarManager>()->getMyAvatar();
-}
-
-glm::vec3 Application::getAvatarPosition() const {
-    return getMyAvatar()->getWorldPosition();
-}
+// getMyAvatar and getAvatarPosition are in ApplicationAvatar.cpp.
 
 // copyViewFrustum and copyDisplayViewFrustum are in ApplicationCamera.cpp.
 
 // resetSensors is in ApplicationCamera.cpp.
 
-void Application::updateWindowTitle() const {
-
-    const auto nodeList = DependencyManager::get<NodeList>();
-    const auto accountManager = DependencyManager::get<AccountManager>();
-    const auto addressManager = DependencyManager::get<AddressManager>();
-
-    setCrashAnnotation("sentry[user][username]", accountManager->getAccountInfo().getUsername().toStdString());
-
-    // Like a Mac document window, the title names what you're looking at: the world you're in, by its name, or
-    // Darkride when you're in none or it has no name to show (an address is not a name). The account is in its
-    // menu, the build in About and in the log line below, and a connection problem is shown in the window itself.
-    QString title = "Darkride";
-    auto& domainHandler = nodeList->getDomainHandler();
-    if (!isServerlessMode() && domainHandler.isConnected() && !domainHandler.isInErrorState()) {
-        const QString worldName = addressManager->getDomainLabel().trimmed();
-        if (!worldName.isEmpty()) {
-            title = worldName;
-        }
-    }
-    // the client label first, when there is one (see clientLabel): with several sessions' clients on one machine, it
-    // tells them apart at a glance (Caity, 2026-10-19)
-    title = labelledTitle(title);
-    // With several branches built on this machine, one per session, the title says which build this client is
-    // ("Darkride - physics-net"), so the right window gets closed. Dev builds only; a release shows no branch.
-    if (BuildInfo::BUILD_TYPE == BuildInfo::Dev && !BuildInfo::BUILD_BRANCH.isEmpty() && BuildInfo::BUILD_BRANCH != "HEAD") {
-        title += " - " + BuildInfo::BUILD_BRANCH;
-    }
-
-#ifndef WIN32
-    // crashes with vs2013/win32
-    qCDebug(interfaceapp, "Application title set to: %s (build %s %s %s)", title.toStdString().c_str(),
-            applicationVersion().toStdString().c_str(), BuildInfo::BUILD_BRANCH.toStdString().c_str(),
-            BuildInfo::BUILD_COMMIT.toStdString().c_str());
-#endif
-    _window->setWindowTitle(title);
-
-    // updateTitleWindow gets called whenever there's a change regarding the domain, so rather
-    // than placing this within domainURLChanged, it's placed here to cover the other potential cases.
-    DependencyManager::get< MessagesClient >()->sendLocalMessage("Toolbar-DomainChanged", "");
-
-
-}
+// updateWindowTitle is in ApplicationDisplay.cpp.
 
 // The connection's events and the octree accounting (clearDomainOctreeDetails, domainURLChanged, goToErrorDomainURL,
 // resettingDomain, nodeAdded, nodeActivated, nodeKilled, trackIncomingOctreePacket, gpuTextureMemSizeStable,
@@ -695,37 +504,7 @@ void Application::updateWindowTitle() const {
 
 // notifyPacketVersionMismatch is in ApplicationDomain.cpp.
 
-void Application::checkSkeleton() const {
-    if (getMyAvatar()->getSkeletonModel()->isActive() && !getMyAvatar()->getSkeletonModel()->hasSkeleton()) {
-        qCDebug(interfaceapp) << "MyAvatar model has no skeleton";
-
-        const QUrl url = getMyAvatar()->getFullAvatarURLFromPreferences();
-        QString name = getMyAvatar()->getFullAvatarModelName().trimmed();
-        if (name.isEmpty()) {
-            name = QFileInfo(url.path()).completeBaseName();
-        }
-        // A model on this computer can be rigged by the importer on the spot; .fst files name a model of their own.
-        const bool canRig = url.isLocalFile() && QFileInfo(url.path()).suffix().toLower() != "fst";
-        ModalDialogListener* dlg = OffscreenUi::asyncWarning((name.isEmpty() ? QString("This avatar") : name) + " has no skeleton",
-                                                             "You're wearing the default avatar for now.",
-                                                             canRig ? QMessageBox::Ok | QMessageBox::Cancel : QMessageBox::Ok,
-                                                             QMessageBox::Ok);
-        if (canRig) {
-            OffscreenUi::setButtonText(dlg->getDialogItem(), QMessageBox::Ok, "Auto Rig");
-            OffscreenUi::setButtonText(dlg->getDialogItem(), QMessageBox::Cancel, "OK");
-            QObject::connect(dlg, &ModalDialogListener::response, qApp, [dlg, url] (QVariant answer) {
-                QObject::disconnect(dlg, &ModalDialogListener::response, qApp, nullptr);
-                if (static_cast<QMessageBox::StandardButton>(answer.toInt()) == QMessageBox::Ok) {
-                    AvatarImporter::importFile(url.toLocalFile());
-                }
-            });
-        }
-
-        getMyAvatar()->useFullAvatarURL(AvatarData::defaultFullAvatarModelUrl(), DEFAULT_FULL_AVATAR_MODEL_NAME);
-    } else {
-        _physicsEngine->setCharacterController(getMyAvatar()->getCharacterController());
-    }
-}
+// checkSkeleton is in ApplicationAvatar.cpp.
 
 // The window's state changes (activeChanged, windowMinimizedChanged) are in ApplicationDisplay.cpp.
 
@@ -812,12 +591,7 @@ void Application::unresponsiveApplication() {
 
 // raiseWindow is in ApplicationDisplay.cpp.
 
-void Application::goToHandedOffUrl(const QString& url) const {
-    // a later launch's --url, handed over by SingleInstance: go there, as that launch would have
-    if (DependencyManager::get<AddressManager>()->handleLookupString(url)) {
-        raiseWindow();
-    }
-}
+// goToHandedOffUrl (a later launch's URL, handed off by SingleInstance) is in ApplicationDomain.cpp.
 
 CompositorHelper& Application::getApplicationCompositor() const {
     return *DependencyManager::get<CompositorHelper>();
@@ -851,10 +625,7 @@ void Application::updateThreadPoolCount() const {
 // The system tablet's mode and ids (updateSystemTabletMode, getTabletScreenID, getTabletHomeButtonID, getTabletFrameID,
 // getTabletIDs) are in ApplicationUi.cpp.
 
-void Application::setAvatarOverrideUrl(const QUrl& url, bool save) {
-    _avatarOverrideUrl = url;
-    _saveAvatarOverrideUrl = save;
-}
+// setAvatarOverrideUrl is in ApplicationAvatar.cpp.
 
 void Application::saveNextPhysicsStats(QString filename) {
     _physicsEngine->saveNextPhysicsStats(filename);
@@ -894,45 +665,4 @@ void Application::forceLoginWithTokens(const QString& tokens) {
     Setting::Handle<bool>(KEEP_ME_LOGGED_IN_SETTING_NAME, true).set(true);
 }
 
-#if defined(Q_OS_ANDROID)
-void Application::beforeEnterBackground() {
-    auto nodeList = DependencyManager::get<NodeList>();
-    nodeList->setSendDomainServerCheckInEnabled(false);
-    nodeList->reset("Entering background", true);
-    clearDomainOctreeDetails();
-}
-
-
-
-void Application::enterBackground() {
-    QMetaObject::invokeMethod(DependencyManager::get<AudioClient>().data(),
-                              "stop", Qt::BlockingQueuedConnection);
-// Quest only supports one plugin which can't be deactivated currently
-#if !defined(ANDROID_APP_QUEST_INTERFACE)
-    if (getActiveDisplayPlugin()->isActive()) {
-        getActiveDisplayPlugin()->deactivate();
-    }
-#endif
-}
-
-void Application::enterForeground() {
-    QMetaObject::invokeMethod(DependencyManager::get<AudioClient>().data(),
-                                  "start", Qt::BlockingQueuedConnection);
-// Quest only supports one plugin which can't be deactivated currently
-#if !defined(ANDROID_APP_QUEST_INTERFACE)
-    if (!getActiveDisplayPlugin() || getActiveDisplayPlugin()->isActive() || !getActiveDisplayPlugin()->activate()) {
-        qWarning() << "Could not re-activate display plugin";
-    }
-#endif
-    auto nodeList = DependencyManager::get<NodeList>();
-    nodeList->setSendDomainServerCheckInEnabled(true);
-}
-
-
-void Application::toggleAwayMode(){
-    QKeyEvent event = QKeyEvent (QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-    QCoreApplication::sendEvent (this, &event);
-}
-
-
-#endif
+// The Android lifecycle (beforeEnterBackground, enterBackground, enterForeground, toggleAwayMode) is in ApplicationEvents.cpp.

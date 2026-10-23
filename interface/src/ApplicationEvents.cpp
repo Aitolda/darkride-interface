@@ -4,8 +4,9 @@
 //
 //  Application's event routing: notify() and event() (the main thread's view-change guard, the file-open and
 //  lambda events, the keyboard focus of entities), eventFilter() (the offscreen UI's shortcuts and the tablet's
-//  focus) and the key, mouse, touch, wheel and drop handlers. The members as they stood in Application.cpp, in
-//  their order; a home of their own until an owner takes them (ARCHITECTURE.md §5.4 step 4).
+//  focus), the key, mouse, touch, wheel and drop handlers and, on Android, the lifecycle events (the background
+//  entered and left, the away mode toggled). The members as they stood in Application.cpp, in their order; a home
+//  of their own until an owner takes them (ARCHITECTURE.md §5.4 step 4).
 //
 //  Copyright 2026 Darkride.
 //
@@ -1055,3 +1056,47 @@ void Application::dropEvent(QDropEvent *event) {
 void Application::dragEnterEvent(QDragEnterEvent* event) {
     event->acceptProposedAction();
 }
+
+// The Android lifecycle: AndroidHelper's signals, connected at the end of the start-up (ApplicationStartup.cpp).
+#if defined(Q_OS_ANDROID)
+void Application::beforeEnterBackground() {
+    auto nodeList = DependencyManager::get<NodeList>();
+    nodeList->setSendDomainServerCheckInEnabled(false);
+    nodeList->reset("Entering background", true);
+    clearDomainOctreeDetails();
+}
+
+
+
+void Application::enterBackground() {
+    QMetaObject::invokeMethod(DependencyManager::get<AudioClient>().data(),
+                              "stop", Qt::BlockingQueuedConnection);
+// Quest only supports one plugin which can't be deactivated currently
+#if !defined(ANDROID_APP_QUEST_INTERFACE)
+    if (getActiveDisplayPlugin()->isActive()) {
+        getActiveDisplayPlugin()->deactivate();
+    }
+#endif
+}
+
+void Application::enterForeground() {
+    QMetaObject::invokeMethod(DependencyManager::get<AudioClient>().data(),
+                                  "start", Qt::BlockingQueuedConnection);
+// Quest only supports one plugin which can't be deactivated currently
+#if !defined(ANDROID_APP_QUEST_INTERFACE)
+    if (!getActiveDisplayPlugin() || getActiveDisplayPlugin()->isActive() || !getActiveDisplayPlugin()->activate()) {
+        qWarning() << "Could not re-activate display plugin";
+    }
+#endif
+    auto nodeList = DependencyManager::get<NodeList>();
+    nodeList->setSendDomainServerCheckInEnabled(true);
+}
+
+
+void Application::toggleAwayMode(){
+    QKeyEvent event = QKeyEvent (QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent (this, &event);
+}
+
+
+#endif

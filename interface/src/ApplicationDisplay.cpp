@@ -6,8 +6,9 @@
 //  Chromium (initializeGL), the display plug-ins found, chosen, switched and listed in the menu
 //  (initializeDisplayPlugins, setDisplayPlugin, updateDisplayMode, switchDisplayMode, setActiveDisplayPlugin,
 //  getActiveDisplayPlugin; initPlugins reads the enable lists), the render engine's start (initializeRenderEngine),
-//  the window and its geometry (resizeEvent, resizeGL, getDesirableApplicationGeometry, the canvas, UI and device
-//  sizes, focus, raise, foreground, active and minimized), the HMD's session and queries (the eye projections and
+//  the window, its geometry and its title (resizeEvent, resizeGL, getDesirableApplicationGeometry, the canvas, UI and
+//  device sizes, focus, raise, foreground, active and minimized; updateWindowTitle with the client label), the HMD's
+//  session and queries (the eye projections and
 //  offsets, the sensor pose, the controllers present) and the display's present callback and frame-rate regime
 //  (onPresent, getTargetRenderFrameRate, isThrottleRendering, getRenderResolutionScale). The members as they stood in
 //  Application.cpp, in their order; a home of their own until an owner takes them (ARCHITECTURE.md §5.4 step 4).
@@ -991,4 +992,69 @@ bool Application::makeRenderingContextCurrent() {
 
 bool Application::isForeground() const {
     return _isForeground && !_window->isMinimized();
+}
+
+// The window's title: the client label's helpers (ApplicationStartup.cpp and ApplicationUi.cpp read labelledTitle) and
+// updateWindowTitle, in Application.cpp's order.
+// The window title's client label, first in the title when there is one: --clientLabel "<text>" on the command line,
+// else the DARKRIDE_CLIENT_LABEL environment variable, else the build's (cmake -DCLIENT_LABEL=...). With several
+// sessions' clients on one machine, a label set per launch names the session and the run ("Darkride - Physics - Card
+// Run Test") without a rebuild, release builds included, so Caity doesn't close one for her own (2026-10-22).
+static const QString& clientLabel() {
+    static const QString label = []() -> QString {
+        const QString& fromCommandLine = ClientOptions::get().clientLabel;
+        if (!fromCommandLine.isEmpty()) {
+            return fromCommandLine;
+        }
+        const QString fromEnvironment = QProcessEnvironment::systemEnvironment().value("DARKRIDE_CLIENT_LABEL").trimmed();
+        return fromEnvironment.isEmpty() ? BuildInfo::CLIENT_LABEL : fromEnvironment;
+    }();
+    return label;
+}
+
+QString labelledTitle(const QString& title) {   // ApplicationStartup.cpp and ApplicationUi.cpp read it too
+    return clientLabel().isEmpty() ? title : clientLabel() + " | " + title;
+}
+
+void Application::updateWindowTitle() const {
+
+    const auto nodeList = DependencyManager::get<NodeList>();
+    const auto accountManager = DependencyManager::get<AccountManager>();
+    const auto addressManager = DependencyManager::get<AddressManager>();
+
+    setCrashAnnotation("sentry[user][username]", accountManager->getAccountInfo().getUsername().toStdString());
+
+    // Like a Mac document window, the title names what you're looking at: the world you're in, by its name, or
+    // Darkride when you're in none or it has no name to show (an address is not a name). The account is in its
+    // menu, the build in About and in the log line below, and a connection problem is shown in the window itself.
+    QString title = "Darkride";
+    auto& domainHandler = nodeList->getDomainHandler();
+    if (!isServerlessMode() && domainHandler.isConnected() && !domainHandler.isInErrorState()) {
+        const QString worldName = addressManager->getDomainLabel().trimmed();
+        if (!worldName.isEmpty()) {
+            title = worldName;
+        }
+    }
+    // the client label first, when there is one (see clientLabel): with several sessions' clients on one machine, it
+    // tells them apart at a glance (Caity, 2026-10-19)
+    title = labelledTitle(title);
+    // With several branches built on this machine, one per session, the title says which build this client is
+    // ("Darkride - physics-net"), so the right window gets closed. Dev builds only; a release shows no branch.
+    if (BuildInfo::BUILD_TYPE == BuildInfo::Dev && !BuildInfo::BUILD_BRANCH.isEmpty() && BuildInfo::BUILD_BRANCH != "HEAD") {
+        title += " - " + BuildInfo::BUILD_BRANCH;
+    }
+
+#ifndef WIN32
+    // crashes with vs2013/win32
+    qCDebug(interfaceapp, "Application title set to: %s (build %s %s %s)", title.toStdString().c_str(),
+            applicationVersion().toStdString().c_str(), BuildInfo::BUILD_BRANCH.toStdString().c_str(),
+            BuildInfo::BUILD_COMMIT.toStdString().c_str());
+#endif
+    _window->setWindowTitle(title);
+
+    // updateTitleWindow gets called whenever there's a change regarding the domain, so rather
+    // than placing this within domainURLChanged, it's placed here to cover the other potential cases.
+    DependencyManager::get< MessagesClient >()->sendLocalMessage("Toolbar-DomainChanged", "");
+
+
 }

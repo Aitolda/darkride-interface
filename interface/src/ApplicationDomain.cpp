@@ -6,9 +6,10 @@
 //  URL changed, the domain resetting, a connection refused, a packet version mismatch, the session id), the queries
 //  the client sends the entity and avatar servers each frame (queryOctree with its NACKs, queryAvatars), the octree
 //  stats and the packet accounting, the physics-ready bookkeeping (requeryOctree, resetPhysicsReadyInformation),
-//  the serverless domains (a world from a file) and the interstitial mode, and the octree packet rate. The members
-//  as they stood in Application.cpp, in their order; a home of their own until an owner takes them
-//  (ARCHITECTURE.md §5.4 step 4).
+//  the serverless domains (a world from a file) and the interstitial mode, the octree packet rate; and where the
+//  client goes first (goToStartingLocation), a later launch's URL handed off (goToHandedOffUrl) and the domain's
+//  content reloaded (reloadResourceCaches). The members as they stood in Application.cpp, in their order; a home of
+//  their own until an owner takes them (ARCHITECTURE.md §5.4 step 4).
 //
 //  Copyright 2026 Darkride.
 //
@@ -844,4 +845,120 @@ void Application::setMaxOctreePacketsPerSecond(int maxOctreePPS) {
 
 int Application::getMaxOctreePacketsPerSecond() const {
     return _maxOctreePPS;
+}
+
+// Where the client goes first, the domain's content reloaded, and a later launch's URL handed off, in Application.cpp's
+// order.
+void Application::goToStartingLocation() {
+    PROFILE_RANGE(render, __FUNCTION__);
+
+    // Get controller availability
+#ifdef ANDROID_APP_QUEST_INTERFACE
+    bool hasHandControllers = true;
+#else
+    bool hasHandControllers = false;
+    if (PluginUtils::isViveControllerAvailable() || PluginUtils::isOculusTouchControllerAvailable()) {
+        hasHandControllers = true;
+    }
+#endif
+
+    // Check HMD use (may be technically available without being in use)
+    bool hasHMD = PluginUtils::isHMDAvailable();
+    bool isUsingHMD = _displayPlugin->isHmd();
+    bool isUsingHMDAndHandControllers = hasHMD && hasHandControllers && isUsingHMD;
+
+    qCDebug(interfaceapp) << "HMD:" << hasHMD << ", Hand Controllers: " << hasHandControllers << ", Using HMD: " << isUsingHMDAndHandControllers;
+
+    QString addressLookupString;
+
+    // when --url in command line, teleport to location
+    QCommandLineParser parser;
+    QCommandLineOption urlOption("url", "", "value");
+    parser.addOption(urlOption);
+    parser.parse(arguments());
+    if (parser.isSet(urlOption)) {
+        QUrl url = QUrl(parser.value(urlOption));
+        if (url.scheme() == URL_SCHEME_HIFIAPP) {
+            Setting::Handle<QVariant>("startUpApp").set(url.path());
+        } else {
+            addressLookupString = url.toString();
+        }
+    }
+
+    // If this is a first run we short-circuit the address passed in
+    if (_firstRun.get()) {
+        if (!_overrideEntry) {
+            DependencyManager::get<AddressManager>()->goToEntry();
+        } else {
+            DependencyManager::get<AddressManager>()->loadSettings(addressLookupString);
+        }
+       _firstRun.set(false);
+    } else {
+        QString goingTo = "";
+        if (addressLookupString.isEmpty()) {
+            if (Menu::getInstance()->isOptionChecked(MenuOption::HomeLocation)) {
+                auto locationBookmarks = DependencyManager::get<LocationBookmarks>();
+                addressLookupString = locationBookmarks->addressForBookmark(LocationBookmarks::HOME_BOOKMARK);
+                goingTo = "home location";
+            } else {
+                goingTo = "previous location";
+            }
+        }
+        qCDebug(interfaceapp) << "Not first run... going to" << qPrintable(!goingTo.isEmpty() ? goingTo : addressLookupString);
+        DependencyManager::get<AddressManager>()->loadSettings(addressLookupString);
+    }
+    
+    _connectionMonitor.init();
+}
+
+void Application::reloadResourceCaches() {
+    resetPhysicsReadyInformation();
+
+    // Query the octree to refresh everything in view
+    _queryExpiry = SteadyClock::now();
+    _octreeQuery.incrementConnectionID();
+
+    QJsonObject queryJSONParameters;
+    QJsonObject queryFlags;
+    queryFlags["includeDescendants"] = true;
+    queryFlags["includeAncestors"] = true;
+    queryJSONParameters["flags"] = queryFlags;
+    queryOctree(
+        NodeType::EntityServer,
+        PacketType::EntityQuery,
+        queryJSONParameters
+    );
+
+    getMyAvatar()->prepareAvatarEntityDataForReload();
+    // Clear the entities and their renderables
+    getEntities()->clear();
+
+    DependencyManager::get<AssetClient>()->clearCache();
+    DependencyManager::get<ScriptCache>()->clearCache();
+
+    // Clear all the resource caches
+    DependencyManager::get<ResourceCacheSharedItems>()->clear();
+    DependencyManager::get<AnimationCache>()->refreshAll();
+    DependencyManager::get<SoundCache>()->refreshAll();
+    DependencyManager::get<MaterialCache>()->refreshAll();
+    DependencyManager::get<ModelCache>()->refreshAll();
+    ShaderCache::instance().refreshAll();
+    DependencyManager::get<TextureCache>()->refreshAll();
+    DependencyManager::get<recording::ClipCache>()->refreshAll();
+
+    DependencyManager::get<NodeList>()->reset("Reloading resources");  // Force redownload of .fst models
+
+    DependencyManager::get<ScriptEngines>()->reloadAllScripts();
+    getOffscreenUI()->clearCache();
+
+    DependencyManager::get<Keyboard>()->createKeyboard();
+
+    getMyAvatar()->resetFullAvatarURL();
+}
+
+void Application::goToHandedOffUrl(const QString& url) const {
+    // a later launch's --url, handed over by SingleInstance: go there, as that launch would have
+    if (DependencyManager::get<AddressManager>()->handleLookupString(url)) {
+        raiseWindow();
+    }
 }

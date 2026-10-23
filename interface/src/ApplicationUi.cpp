@@ -251,7 +251,7 @@
 using namespace std;
 
 QSharedPointer<OffscreenUi> getOffscreenUI();   // Application.cpp's
-QString labelledTitle(const QString& title);     // Application.cpp's: a window title with the client label
+QString labelledTitle(const QString& title);     // ApplicationDisplay.cpp's: a window title with the client label
 extern void setupPreferences();                  // ui/PreferencesDialog.cpp's
 void addDisplayPluginToMenu(const DisplayPluginPointer& displayPlugin, int index, bool active = false);   // ApplicationDisplay.cpp's; initializeUi reads it
 
