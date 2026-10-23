@@ -11,6 +11,7 @@
 
 
 #include "Application.h"
+#include "ApplicationServices.h"
 #include "ClientOptions.h"
 #include "DeadlockWatchdog.h"
 
@@ -448,51 +449,6 @@ void messageHandler(QtMsgType type, const QMessageLogContext& context, const QSt
 }
 
 
-class ApplicationMeshProvider : public scriptable::ModelProviderFactory  {
-public:
-    virtual scriptable::ModelProviderPointer lookupModelProvider(const QUuid& uuid) override {
-        bool success;
-        if (auto nestable = DependencyManager::get<SpatialParentFinder>()->find(uuid, success).lock()) {
-            auto type = nestable->getNestableType();
-#ifdef SCRIPTABLE_MESH_DEBUG
-            qCDebug(interfaceapp) << "ApplicationMeshProvider::lookupModelProvider" << uuid << SpatiallyNestable::nestableTypeToString(type);
-#endif
-            switch (type) {
-            case NestableType::Entity:
-                return getEntityModelProvider(static_cast<EntityItemID>(uuid));
-            case NestableType::Avatar:
-                return getAvatarModelProvider(uuid);
-            }
-        }
-        return nullptr;
-    }
-
-private:
-    scriptable::ModelProviderPointer getEntityModelProvider(EntityItemID entityID) {
-        scriptable::ModelProviderPointer provider;
-        auto entityTreeRenderer = qApp->getEntities();
-        auto entityTree = entityTreeRenderer->getTree();
-        if (auto entity = entityTree->findEntityByID(entityID)) {
-            if (auto renderer = entityTreeRenderer->renderableForEntityId(entityID)) {
-                provider = std::dynamic_pointer_cast<scriptable::ModelProvider>(renderer);
-                provider->modelProviderType = NestableType::Entity;
-            } else {
-                qCWarning(interfaceapp) << "no renderer for entity ID" << entityID.toString();
-            }
-        }
-        return provider;
-    }
-
-    scriptable::ModelProviderPointer getAvatarModelProvider(QUuid sessionUUID) {
-        scriptable::ModelProviderPointer provider;
-        auto avatarManager = DependencyManager::get<AvatarManager>();
-        if (auto avatar = avatarManager->getAvatarBySessionID(sessionUUID)) {
-            provider = std::dynamic_pointer_cast<scriptable::ModelProvider>(avatar);
-            provider->modelProviderType = NestableType::Avatar;
-        }
-        return provider;
-    }
-};
 
 /**jsdoc
  * <p>The <code>Controller.Hardware.Application</code> object has properties representing Interface's state. The property
@@ -536,25 +492,6 @@ private:
  * @typedef {object} Controller.Hardware-Application
  */
 
-static const QString STATE_IN_HMD = "InHMD";
-static const QString STATE_CAMERA_FULL_SCREEN_MIRROR = "CameraFSM";
-static const QString STATE_CAMERA_FIRST_PERSON = "CameraFirstPerson";
-static const QString STATE_CAMERA_FIRST_PERSON_LOOK_AT = "CameraFirstPersonLookat";
-static const QString STATE_CAMERA_THIRD_PERSON = "CameraThirdPerson";
-static const QString STATE_CAMERA_ENTITY = "CameraEntity";
-static const QString STATE_CAMERA_INDEPENDENT = "CameraIndependent";
-static const QString STATE_CAMERA_LOOK_AT = "CameraLookAt";
-static const QString STATE_CAMERA_SELFIE = "CameraSelfie";
-static const QString STATE_SNAP_TURN = "SnapTurn";
-static const QString STATE_ADVANCED_MOVEMENT_CONTROLS = "AdvancedMovement";
-static const QString STATE_GROUNDED = "Grounded";
-static const QString STATE_NAV_FOCUSED = "NavigationFocused";
-static const QString STATE_PLATFORM_WINDOWS = "PlatformWindows";
-static const QString STATE_PLATFORM_MAC = "PlatformMac";
-static const QString STATE_PLATFORM_ANDROID = "PlatformAndroid";
-static const QString STATE_LEFT_HAND_DOMINANT = "LeftHandDominant";
-static const QString STATE_RIGHT_HAND_DOMINANT = "RightHandDominant";
-static const QString STATE_STRAFE_ENABLED = "StrafeEnabled";
 
 // Statically provided display and input plugins
 extern DisplayPluginList getDisplayPlugins();
@@ -643,114 +580,8 @@ bool setupEssentials(bool runningMarkerExisted) {
 
     QString defaultScriptsOverrideOption = options.defaultScriptsOverride;
 
-    DependencyManager::registerInheritance<LimitedNodeList, NodeList>();
-    DependencyManager::registerInheritance<AvatarHashMap, AvatarManager>();
-    DependencyManager::registerInheritance<EntityDynamicFactoryInterface, InterfaceDynamicFactory>();
-    DependencyManager::registerInheritance<SpatialParentFinder, InterfaceParentFinder>();
-
     StartupProfiler::phase("setupEssentials: the registrations (each row a service's constructor)");
-    // Set dependencies
-    DependencyManager::set<PickManager>();
-    DependencyManager::set<PointerManager>();
-    DependencyManager::set<LaserPointerScriptingInterface>();
-    DependencyManager::set<RayPickScriptingInterface>();
-    DependencyManager::set<PointerScriptingInterface>();
-    DependencyManager::set<PickScriptingInterface>();
-    DependencyManager::set<Cursor::Manager>();
-    DependencyManager::set<VirtualPad::Manager>();
-    DependencyManager::set<DesktopPreviewProvider>();
-#if defined(Q_OS_ANDROID)
-    DependencyManager::set<AccountManager>(true); // use the default user agent getter
-#else
-    DependencyManager::set<AccountManager>(true, std::bind(&Application::getUserAgent, qApp));
-#endif
-    DependencyManager::set<StatTracker>();
-    DependencyManager::set<ScriptEngines>(ScriptEngine::CLIENT_SCRIPT, defaultScriptsOverrideOption);
-    DependencyManager::set<Preferences>();
-    DependencyManager::set<recording::Deck>();
-    DependencyManager::set<recording::Recorder>();
-    DependencyManager::set<AddressManager>();
-    DependencyManager::set<NodeList>(NodeType::Agent, listenPort);
-    DependencyManager::set<recording::ClipCache>();
-    DependencyManager::set<GeometryCache>();
-    DependencyManager::set<ModelFormatRegistry>(); // ModelFormatRegistry must be defined before ModelCache. See the ModelCache constructor.
-    DependencyManager::set<ModelCache>();
-    DependencyManager::set<ModelCacheScriptingInterface>();
-    DependencyManager::set<ScriptCache>();
-    DependencyManager::set<SoundCache>();
-    DependencyManager::set<SoundCacheScriptingInterface>();
-    DependencyManager::set<AudioClient>();
-    DependencyManager::set<AudioScope>();
-    DependencyManager::set<DeferredLightingEffect>();
-    DependencyManager::set<TextureCache>();
-    DependencyManager::set<MaterialCache>();
-    DependencyManager::set<TextureCacheScriptingInterface>();
-    DependencyManager::set<MaterialCacheScriptingInterface>();
-    DependencyManager::set<FramebufferCache>();
-    DependencyManager::set<AnimationCache>();
-    DependencyManager::set<AnimationCacheScriptingInterface>();
-    DependencyManager::set<ModelBlender>();
-    DependencyManager::set<UsersScriptingInterface>();
-    DependencyManager::set<AvatarManager>();
-    DependencyManager::set<LODManager>();
-    DependencyManager::set<StandAloneJSConsole>();
-    DependencyManager::set<DialogsManager>();
-    DependencyManager::set<ResourceCacheSharedItems>();
-    DependencyManager::set<DesktopScriptingInterface>();
-    DependencyManager::set<EntityScriptingInterface>(true);
-    DependencyManager::set<GraphicsScriptingInterface>();
-    DependencyManager::registerInheritance<scriptable::ModelProviderFactory, ApplicationMeshProvider>();
-    DependencyManager::set<ApplicationMeshProvider>();
-    DependencyManager::set<RecordingScriptingInterface>();
-    DependencyManager::set<WindowScriptingInterface>();
-    DependencyManager::set<HMDScriptingInterface>();
-    DependencyManager::set<ResourceScriptingInterface>();
-    DependencyManager::set<TabletScriptingInterface>();
-    DependencyManager::set<InputConfiguration>();
-    DependencyManager::set<ToolbarScriptingInterface>();
-    DependencyManager::set<AssetMappingsScriptingInterface>();
-    DependencyManager::set<DomainConnectionModel>();
-
-#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-    DependencyManager::set<SpeechRecognizer>();
-#endif
-    DependencyManager::set<DiscoverabilityManager>();
-    DependencyManager::set<SceneScriptingInterface>();
-    DependencyManager::set<OffscreenUi>();
-    DependencyManager::set<PathUtils>();
-    DependencyManager::set<InterfaceDynamicFactory>();
-    DependencyManager::set<AudioInjectorManager>();
-    DependencyManager::set<MessagesClient>();
-    controller::StateController::setStateVariables({ { STATE_IN_HMD, STATE_CAMERA_FULL_SCREEN_MIRROR,
-                    STATE_CAMERA_FIRST_PERSON, STATE_CAMERA_FIRST_PERSON_LOOK_AT, STATE_CAMERA_THIRD_PERSON,
-                    STATE_CAMERA_ENTITY, STATE_CAMERA_INDEPENDENT, STATE_CAMERA_LOOK_AT, STATE_CAMERA_SELFIE,
-                    STATE_SNAP_TURN, STATE_ADVANCED_MOVEMENT_CONTROLS, STATE_GROUNDED, STATE_NAV_FOCUSED,
-                    STATE_PLATFORM_WINDOWS, STATE_PLATFORM_MAC, STATE_PLATFORM_ANDROID, STATE_LEFT_HAND_DOMINANT, STATE_RIGHT_HAND_DOMINANT, STATE_STRAFE_ENABLED } });
-    DependencyManager::set<UserInputMapper>();
-    DependencyManager::set<controller::ScriptingInterface, ControllerScriptingInterface>();
-    DependencyManager::set<InterfaceParentFinder>();
-    DependencyManager::set<EntityTreeRenderer>(true, qApp, qApp);
-    DependencyManager::set<CompositorHelper>();
-    DependencyManager::set<OffscreenQmlSurfaceCache>();
-    DependencyManager::set<EntityScriptClient>();
-    DependencyManager::set<EntityScriptServerLogClient>();
-    DependencyManager::set<OctreeStatsProvider>(nullptr, qApp->getOcteeSceneStats());
-    DependencyManager::set<AvatarBookmarks>();
-    DependencyManager::set<LocationBookmarks>();
-    DependencyManager::set<Snapshot>();
-    DependencyManager::set<ResourceManager>();
-    DependencyManager::set<SelectionScriptingInterface>();
-    DependencyManager::set<Editor>();
-    DependencyManager::set<ImpostorBaker>();
-    DependencyManager::set<TTSScriptingInterface>();
-    DependencyManager::set<ChatScriptingInterface>();
-    DependencyManager::set<DiskCacheScriptingInterface>();
-
-    DependencyManager::set<FadeEffect>();
-    DependencyManager::set<ResourceRequestObserver>();
-    DependencyManager::set<Keyboard>();
-    DependencyManager::set<KeyboardScriptingInterface>();
-    DependencyManager::set<GrabManager>();
+    registerApplicationServices(listenPort, defaultScriptsOverrideOption);
     StartupProfiler::phase("setupEssentials: platform helper, bookmarks; then the members (physics engine, clipboard tree, settings)");
     PlatformHelper::setup();
     
