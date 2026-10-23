@@ -1460,24 +1460,9 @@ void Application::installOperators() {
 
     _snapshotSound = DependencyManager::get<SoundCache>()->getSound(PathUtils::resourcesUrl("sounds/snapshot/snap.wav"));
 
-    // Monitor model assets (e.g., from Clara.io) added to the world that may need resizing.
-    static const int ADD_ASSET_TO_WORLD_TIMER_INTERVAL_MS = 1000;
-    _addAssetToWorldResizeTimer.setInterval(ADD_ASSET_TO_WORLD_TIMER_INTERVAL_MS); // 1s, Qt::CoarseTimer acceptable
-    connect(&_addAssetToWorldResizeTimer, &QTimer::timeout, this, &Application::addAssetToWorldCheckModelSize);
-
-    // Auto-update and close adding asset to world info message box.
-    static const int ADD_ASSET_TO_WORLD_INFO_TIMEOUT_MS = 5000;
-    _addAssetToWorldInfoTimer.setInterval(ADD_ASSET_TO_WORLD_INFO_TIMEOUT_MS); // 5s, Qt::CoarseTimer acceptable
-    _addAssetToWorldInfoTimer.setSingleShot(true);
-    connect(&_addAssetToWorldInfoTimer, &QTimer::timeout, this, &Application::addAssetToWorldInfoTimeout);
-    static const int ADD_ASSET_TO_WORLD_ERROR_TIMEOUT_MS = 8000;
-    _addAssetToWorldErrorTimer.setInterval(ADD_ASSET_TO_WORLD_ERROR_TIMEOUT_MS); // 8s, Qt::CoarseTimer acceptable
-    _addAssetToWorldErrorTimer.setSingleShot(true);
-    connect(&_addAssetToWorldErrorTimer, &QTimer::timeout, this, &Application::addAssetToWorldErrorTimeout);
-
-    connect(this, &QCoreApplication::aboutToQuit, this, &Application::addAssetToWorldMessageClose);
-    connect(&domainHandler, &DomainHandler::domainURLChanged, this, &Application::addAssetToWorldMessageClose);
-    connect(&domainHandler, &DomainHandler::redirectToErrorDomainURL, this, &Application::addAssetToWorldMessageClose);
+    connect(this, &QCoreApplication::aboutToQuit, &_assetImport, &AssetImport::addAssetToWorldMessageClose);
+    connect(&domainHandler, &DomainHandler::domainURLChanged, &_assetImport, &AssetImport::addAssetToWorldMessageClose);
+    connect(&domainHandler, &DomainHandler::redirectToErrorDomainURL, &_assetImport, &AssetImport::addAssetToWorldMessageClose);
 
     updateSystemTabletMode();
 

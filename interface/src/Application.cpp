@@ -31,6 +31,9 @@
 #include <plugins/PluginManager.h>
 #include <display-plugins/CompositorHelper.h>
 #include "AudioClient.h"
+#include <AddressManager.h>
+#include <NetworkingConstants.h>
+#include "ui/Snapshot.h"
 
 #include "InterfaceLogging.h"
 
@@ -73,7 +76,33 @@ using namespace std;
 // we will never drop below the 'min' value
 const int MIN_PROCESSING_THREAD_POOL_SIZE = 2;   // declared in ApplicationConstants.h
 
-// The import extensions (ImportExtensions.h declares them) and the table of importers by extension are in ApplicationImport.cpp.
+// The import extensions (ImportExtensions.h declares them) and the table of importers by extension, for the URL dispatch
+// (canAcceptURL, acceptURL) below.
+const QString SNAPSHOT_EXTENSION = ".jpg";
+const QString JPG_EXTENSION = ".jpg";
+const QString PNG_EXTENSION = ".png";
+const QString SVO_EXTENSION = ".svo";
+const QString SVO_JSON_EXTENSION = ".svo.json";
+const QString JSON_EXTENSION = ".json";
+const QString JS_EXTENSION = ".js";
+const QString FST_EXTENSION = ".fst";
+const QString FBX_EXTENSION = ".fbx";
+const QString OBJ_EXTENSION = ".obj";
+const QString AVA_JSON_EXTENSION = ".ava.json";
+static const QString WEB_VIEW_TAG = "noDownload=true";
+const QString ZIP_EXTENSION = ".zip";
+
+const std::vector<std::pair<QString, Application::AcceptURLMethod>> Application::_acceptedExtensions {
+    { SVO_EXTENSION, &Application::importSVOFromURL },
+    { SVO_JSON_EXTENSION, &Application::importSVOFromURL },
+    { AVA_JSON_EXTENSION, &Application::askToWearAvatarAttachmentUrl },
+    { JSON_EXTENSION, &Application::importJSONFromURL },
+    { JS_EXTENSION, &Application::askToLoadScript },
+    { FST_EXTENSION, &Application::askToSetAvatarUrl },
+    { ZIP_EXTENSION, &Application::importFromZIP },
+    { JPG_EXTENSION, &Application::importImage },
+    { PNG_EXTENSION, &Application::importImage }
+};
 
 
 const QString KEEP_ME_LOGGED_IN_SETTING_NAME = "keepMeLoggedIn";   // declared in ApplicationConstants.h
@@ -193,12 +222,37 @@ void Application::runTests() {
 
 // goToStartingLocation (where the client goes first) is in ApplicationDomain.cpp.
 
-// The import wrappers for a dropped or opened file (importJSONFromURL, importSVOFromURL, importFromZIP) are in ApplicationImport.cpp.
+// The import wrappers for a dropped or opened file, the URL dispatch's targets (with the asks in ApplicationDialogs.cpp).
+bool Application::importJSONFromURL(const QString& urlString) {
+    // we only load files that terminate in just .json (not .svo.json and not .ava.json)
+    QUrl jsonURL { urlString };
+
+    emit svoImportRequested(urlString);
+    return true;
+}
+
+bool Application::importSVOFromURL(const QString& urlString) {
+    emit svoImportRequested(urlString);
+    return true;
+}
+
+bool Application::importFromZIP(const QString& filePath) {
+    qDebug() << "A zip file has been dropped in: " << filePath;
+    QUrl empty;
+    qApp->getFileDownloadInterface()->runUnzip(filePath, empty, true, true, false);
+    return true;
+}
 
 // The serverless domains and the interstitial mode (isServerlessMode, setIsInterstitialMode, setIsServerlessMode,
 // prepareServerlessDomainContents, loadServerlessDomain, loadErrorDomain) are in ApplicationDomain.cpp.
 
-// importImage is in ApplicationImport.cpp.
+bool Application::importImage(const QString& urlString) {
+    qCDebug(interfaceapp) << "An image file has been dropped in";
+    QString filepath(urlString);
+    filepath.remove("file:///");
+    _assetImport.addAssetToWorld(filepath, "", false, false);
+    return true;
+}
 
 // thread-safe
 // onPresent (the display plug-in's present callback) is in ApplicationDisplay.cpp.
@@ -206,7 +260,23 @@ void Application::runTests() {
 // The event routing (notify, event, eventFilter, the key, mouse, touch, wheel and drop handlers) is in
 // ApplicationEvents.cpp.
 
-// acceptSnapshot is in ApplicationImport.cpp.
+// This is currently not used, but could be invoked if the user wants to go to the place embedded in an
+// Interface-taken snapshot. (It was developed for drag and drop, before we had asset-server loading or in-world browsers.)
+bool Application::acceptSnapshot(const QString& urlString) {
+    QUrl url(urlString);
+    QString snapshotPath = url.toLocalFile();
+
+    SnapshotMetaData* snapshotData = DependencyManager::get<Snapshot>()->parseSnapshotData(snapshotPath);
+    if (snapshotData) {
+        if (!snapshotData->getURL().toString().isEmpty()) {
+            DependencyManager::get<AddressManager>()->handleLookupString(snapshotData->getURL().toString());
+        }
+    } else {
+        OffscreenUi::asyncWarning("", "No location details were found in the file\n" +
+                             snapshotPath + "\nTry dragging in a Darkride Snap saved on this computer.");
+    }
+    return true;
+}
 
 // The frame loop's tick (idle, with the Windows CPU monitor it starts) is in ApplicationFrame.cpp.
 
@@ -270,14 +340,53 @@ void Application::resetSensors(bool andReload) {
 
 // The script API's globals (registerScriptEngineWithApplicationServices) are in ApplicationScripting.cpp.
 
-// The URL dispatch (canAcceptURL, acceptURL, with the table of importers by extension) is in ApplicationImport.cpp.
+// The URL dispatch (AbstractUriHandler): a dropped or opened URL goes to the address manager (a hifi: URL) or to the
+// importer for its extension, from the table at the top of this file.
+bool Application::canAcceptURL(const QString& urlString) const {
+    QUrl url(urlString);
+    if (url.query().contains(WEB_VIEW_TAG)) {
+        return false;
+    } else if (urlString.startsWith(URL_SCHEME_HIFI)) {
+        return true;
+    }
+    QString lowerPath = url.path().toLower();
+    for (auto& pair : _acceptedExtensions) {
+        if (lowerPath.endsWith(pair.first, Qt::CaseInsensitive)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Application::acceptURL(const QString& urlString, bool defaultUpload) {
+    QUrl url(urlString);
+
+    if (url.scheme() == URL_SCHEME_HIFI) {
+        // this is a hifi URL - have the AddressManager handle it
+        QMetaObject::invokeMethod(DependencyManager::get<AddressManager>().data(), "handleLookupString",
+                                  Qt::AutoConnection, Q_ARG(const QString&, urlString));
+        return true;
+    }
+
+    QString lowerPath = url.path().toLower();
+    for (auto& pair : _acceptedExtensions) {
+        if (lowerPath.endsWith(pair.first, Qt::CaseInsensitive)) {
+            AcceptURLMethod method = pair.second;
+            return (this->*method)(urlString);
+        }
+    }
+
+    
+    return defaultUpload;
+}
 
 // setSessionUUID is in ApplicationDomain.cpp.
 
 // The asks for a dropped or opened URL (askToSetAvatarUrl, askToLoadScript, askToWearAvatarAttachmentUrl,
 // displayAvatarAttachmentWarning), showDialog, showScriptLogs and showAssetServerWidget are in ApplicationDialogs.cpp.
 
-// The import of content into the world (addAssetToWorld and its steps, handleUnzip) is in ApplicationImport.cpp.
+// A file from a URL or a drop becoming an asset and an entity is an AssetImport (AssetImport.h), the member _assetImport,
+// reached by getAssetImport(); addAssetToWorldFromURL forwards to it for QML.
 
 // The dialogs and windows (packageModel, loadDialog, importAvatarDialog, putAvatarInMyFiles, the previous script location,
 // loadScriptURLDialog, getSampleSound, the LOD tools, entity statistics and domain connection dialogs, the log windows) are

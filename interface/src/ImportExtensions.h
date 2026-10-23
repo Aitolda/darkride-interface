@@ -2,8 +2,8 @@
 //  ImportExtensions.h
 //  interface/src
 //
-//  The file extensions the client accepts for import, by drop, URL or dialog (ApplicationImport.cpp defines them and
-//  keys the table of importers by them).
+//  The file extensions the client accepts for import, by drop, URL or dialog (Application.cpp defines them and keys
+//  the table of importers by them; AssetImport.cpp reads them).
 //
 //  Copyright 2026 Darkride.
 //

@@ -1,42 +1,58 @@
 //
-//  ApplicationImport.cpp
+//  AssetImport.cpp
 //  interface/src
 //
-//  Application's content in: a model, image or zip from a URL or a drop becomes an asset on the domain's asset server
-//  (the download, the unzip, the upload, the mapping) and then an entity, with the size check and the info and error
-//  boxes along the way (addAssetToWorld and its steps); the URL dispatch (canAcceptURL, acceptURL and the table of
-//  importers by extension, with the extensions ImportExtensions.h declares); and the import wrappers for a dropped or
-//  opened file (importJSONFromURL, importSVOFromURL, importFromZIP, importImage, acceptSnapshot). The members as they
-//  stood in Application.cpp, in their order, with the one helper they share; a home of their own until an owner takes
-//  them (ARCHITECTURE.md §5.4 step 4). The entities' clipboard is an EntityClipboard (EntityClipboard.h).
+//  A file from a URL or a drop becomes an asset and an entity (see AssetImport.h). The code of Application's
+//  addAssetToWorld members and handleUnzip, and of the start-up's set-up of their timers, with Application reached
+//  through qApp for the unzipper, the asset server widget and the quit flag.
 //
 //  Copyright 2026 Darkride.
 //
 //  Distributed under the MIT License.
 //
 
-#include "Application.h"
-#include <glm/glm.hpp>
+#include "AssetImport.h"
+
+#include <QtCore/QTemporaryDir>
 #include <QtWidgets/QMessageBox>
-#include <QTemporaryDir>
-#include <AddressManager.h>
+
 #include <AssetClient.h>
 #include <AssetUpload.h>
 #include <EntityScriptingInterface.h>
 #include <MappingRequest.h>
 #include <OffscreenUi.h>
 #include <ResourceRequest.h>
-#include "InterfaceLogging.h"
-#include "scripting/AssetMappingsScriptingInterface.h"
-#include "ui/Snapshot.h"
 
+#include "Application.h"
+#include "avatar/AvatarManager.h"
 #include "ImportExtensions.h"
-
-using namespace std;
+#include "InterfaceLogging.h"
 
 QSharedPointer<OffscreenUi> getOffscreenUI();   // Application.cpp's
 
-void Application::addAssetToWorldFromURL(QString url) {
+// Application's getMyAvatar is private; this is the same call
+static std::shared_ptr<MyAvatar> getMyAvatar() {
+    return DependencyManager::get<AvatarManager>()->getMyAvatar();
+}
+
+AssetImport::AssetImport() {
+    // Monitor model assets (e.g., from Clara.io) added to the world that may need resizing.
+    static const int ADD_ASSET_TO_WORLD_TIMER_INTERVAL_MS = 1000;
+    _addAssetToWorldResizeTimer.setInterval(ADD_ASSET_TO_WORLD_TIMER_INTERVAL_MS); // 1s, Qt::CoarseTimer acceptable
+    connect(&_addAssetToWorldResizeTimer, &QTimer::timeout, this, &AssetImport::addAssetToWorldCheckModelSize);
+
+    // Auto-update and close adding asset to world info message box.
+    static const int ADD_ASSET_TO_WORLD_INFO_TIMEOUT_MS = 5000;
+    _addAssetToWorldInfoTimer.setInterval(ADD_ASSET_TO_WORLD_INFO_TIMEOUT_MS); // 5s, Qt::CoarseTimer acceptable
+    _addAssetToWorldInfoTimer.setSingleShot(true);
+    connect(&_addAssetToWorldInfoTimer, &QTimer::timeout, this, &AssetImport::addAssetToWorldInfoTimeout);
+    static const int ADD_ASSET_TO_WORLD_ERROR_TIMEOUT_MS = 8000;
+    _addAssetToWorldErrorTimer.setInterval(ADD_ASSET_TO_WORLD_ERROR_TIMEOUT_MS); // 8s, Qt::CoarseTimer acceptable
+    _addAssetToWorldErrorTimer.setSingleShot(true);
+    connect(&_addAssetToWorldErrorTimer, &QTimer::timeout, this, &AssetImport::addAssetToWorldErrorTimeout);
+}
+
+void AssetImport::addAssetToWorldFromURL(QString url) {
 
     QString filename;
     if (url.contains("filename")) {
@@ -62,12 +78,12 @@ void Application::addAssetToWorldFromURL(QString url) {
     addAssetToWorldInfo(filename, "Downloading model file " + filename + ".");
 
     auto request = DependencyManager::get<ResourceManager>()->createResourceRequest(
-        nullptr, QUrl(url), true, -1, "Application::addAssetToWorldFromURL");
-    connect(request, &ResourceRequest::finished, this, &Application::addAssetToWorldFromURLRequestFinished);
+        nullptr, QUrl(url), true, -1, "AssetImport::addAssetToWorldFromURL");
+    connect(request, &ResourceRequest::finished, this, &AssetImport::addAssetToWorldFromURLRequestFinished);
     request->send();
 }
 
-void Application::addAssetToWorldFromURLRequestFinished() {
+void AssetImport::addAssetToWorldFromURLRequestFinished() {
     auto request = qobject_cast<ResourceRequest*>(sender());
     auto url = request->getUrl().toString();
     auto result = request->getResult();
@@ -117,18 +133,17 @@ void Application::addAssetToWorldFromURLRequestFinished() {
     request->deleteLater();
 }
 
-
-QString filenameFromPath(QString filePath) {
+static QString filenameFromPath(QString filePath) {
     return filePath.right(filePath.length() - filePath.lastIndexOf("/") - 1);
 }
 
-void Application::addAssetToWorldUnzipFailure(QString filePath) {
+void AssetImport::addAssetToWorldUnzipFailure(QString filePath) {
     QString filename = filenameFromPath(QUrl(filePath).toLocalFile());
     qWarning(interfaceapp) << "Couldn't unzip file" << filePath;
     addAssetToWorldError(filename, "It couldn't be unzipped.");
 }
 
-void Application::addAssetToWorld(QString path, QString zipFile, bool isZip, bool isBlocks) {
+void AssetImport::addAssetToWorld(QString path, QString zipFile, bool isZip, bool isBlocks) {
     // Automatically upload and add asset to world as an alternative manual process initiated by showAssetServerWidget().
     QString mapping;
     QString filename = filenameFromPath(path);
@@ -153,7 +168,7 @@ void Application::addAssetToWorld(QString path, QString zipFile, bool isZip, boo
     addAssetToWorldWithNewMapping(path, mapping, 0, isZip, isBlocks);
 }
 
-void Application::addAssetToWorldWithNewMapping(QString filePath, QString mapping, int copy, bool isZip, bool isBlocks) {
+void AssetImport::addAssetToWorldWithNewMapping(QString filePath, QString mapping, int copy, bool isZip, bool isBlocks) {
     auto request = DependencyManager::get<AssetClient>()->createGetMappingRequest(mapping);
 
     QObject::connect(request, &GetMappingRequest::finished, this, [=](GetMappingRequest* request) mutable {
@@ -186,7 +201,7 @@ void Application::addAssetToWorldWithNewMapping(QString filePath, QString mappin
     request->start();
 }
 
-void Application::addAssetToWorldUpload(QString filePath, QString mapping, bool isZip, bool isBlocks) {
+void AssetImport::addAssetToWorldUpload(QString filePath, QString mapping, bool isZip, bool isBlocks) {
     qInfo(interfaceapp) << "Uploading" << filePath << "to Asset Server as" << mapping;
     auto upload = DependencyManager::get<AssetClient>()->createUpload(filePath);
     QObject::connect(upload, &AssetUpload::finished, this, [=](AssetUpload* upload, const QString& hash) mutable {
@@ -212,7 +227,7 @@ void Application::addAssetToWorldUpload(QString filePath, QString mapping, bool 
     upload->start();
 }
 
-void Application::addAssetToWorldSetMapping(QString filePath, QString mapping, QString hash, bool isZip, bool isBlocks) {
+void AssetImport::addAssetToWorldSetMapping(QString filePath, QString mapping, QString hash, bool isZip, bool isBlocks) {
     auto request = DependencyManager::get<AssetClient>()->createSetMappingRequest(mapping, hash);
     connect(request, &SetMappingRequest::finished, this, [=](SetMappingRequest* request) mutable {
         if (request->getError() != SetMappingRequest::NoError) {
@@ -235,7 +250,7 @@ void Application::addAssetToWorldSetMapping(QString filePath, QString mapping, Q
     request->start();
 }
 
-void Application::addAssetToWorldAddEntity(QString filePath, QString mapping) {
+void AssetImport::addAssetToWorldAddEntity(QString filePath, QString mapping) {
     EntityItemProperties properties;
     properties.setName(mapping.right(mapping.length() - 1));
     if (filePath.toLower().endsWith(PNG_EXTENSION) || filePath.toLower().endsWith(JPG_EXTENSION)) {
@@ -275,7 +290,7 @@ void Application::addAssetToWorldAddEntity(QString filePath, QString mapping) {
     }
 }
 
-void Application::addAssetToWorldCheckModelSize() {
+void AssetImport::addAssetToWorldCheckModelSize() {
     if (_addAssetToWorldResizeList.size() == 0) {
         return;
     }
@@ -348,11 +363,10 @@ void Application::addAssetToWorldCheckModelSize() {
     }
 }
 
-
-void Application::addAssetToWorldInfo(QString modelName, QString infoText) {
+void AssetImport::addAssetToWorldInfo(QString modelName, QString infoText) {
     // Displays the most recent info message, subject to being overridden by error messages.
 
-    if (_aboutToQuit) {
+    if (qApp->isAboutToQuit()) {
         return;
     }
 
@@ -384,10 +398,10 @@ void Application::addAssetToWorldInfo(QString modelName, QString infoText) {
     }
 }
 
-void Application::addAssetToWorldInfoClear(QString modelName) {
+void AssetImport::addAssetToWorldInfoClear(QString modelName) {
     // Clears modelName entry from message list without affecting message currently displayed.
 
-    if (_aboutToQuit) {
+    if (qApp->isAboutToQuit()) {
         return;
     }
 
@@ -402,10 +416,10 @@ void Application::addAssetToWorldInfoClear(QString modelName) {
     }
 }
 
-void Application::addAssetToWorldInfoDone(QString modelName) {
+void AssetImport::addAssetToWorldInfoDone(QString modelName) {
     // Continues to display this message if the latest for a few seconds, then deletes it and displays the next latest.
 
-    if (_aboutToQuit) {
+    if (qApp->isAboutToQuit()) {
         return;
     }
 
@@ -418,8 +432,8 @@ void Application::addAssetToWorldInfoDone(QString modelName) {
     _addAssetToWorldInfoTimer.start();
 }
 
-void Application::addAssetToWorldInfoTimeout() {
-    if (_aboutToQuit) {
+void AssetImport::addAssetToWorldInfoTimeout() {
+    if (qApp->isAboutToQuit()) {
         return;
     }
 
@@ -440,10 +454,10 @@ void Application::addAssetToWorldInfoTimeout() {
     }
 }
 
-void Application::addAssetToWorldError(QString modelName, QString errorText) {
+void AssetImport::addAssetToWorldError(QString modelName, QString errorText) {
     // Says what went wrong in an alert of its own, which stays until it is answered.
 
-    if (_aboutToQuit) {
+    if (qApp->isAboutToQuit()) {
         return;
     }
 
@@ -451,8 +465,8 @@ void Application::addAssetToWorldError(QString modelName, QString errorText) {
     OffscreenUi::asyncWarning("Couldn't add " + modelName + " to the world", errorText);
 }
 
-void Application::addAssetToWorldErrorTimeout() {
-    if (_aboutToQuit) {
+void AssetImport::addAssetToWorldErrorTimeout() {
+    if (qApp->isAboutToQuit()) {
         return;
     }
 
@@ -473,8 +487,7 @@ void Application::addAssetToWorldErrorTimeout() {
     }
 }
 
-
-void Application::addAssetToWorldMessageClose() {
+void AssetImport::addAssetToWorldMessageClose() {
     // Clear messages, e.g., if Interface is being closed or domain changes.
 
     /*
@@ -501,7 +514,7 @@ void Application::addAssetToWorldMessageClose() {
     _addAssetToWorldInfoMessages.clear();
 }
 
-void Application::onAssetToWorldMessageBoxClosed() {
+void AssetImport::onAssetToWorldMessageBoxClosed() {
     if (_addAssetToWorldMessageBox) {
         // User manually closed message box; perhaps because it has become stuck, so reset all messages.
         qInfo(interfaceapp) << "User manually closed download status message box";
@@ -511,8 +524,7 @@ void Application::onAssetToWorldMessageBoxClosed() {
     }
 }
 
-
-void Application::handleUnzip(QString zipFile, QStringList unzipFile, bool autoAdd, bool isZip, bool isBlocks) {
+void AssetImport::handleUnzip(QString zipFile, QStringList unzipFile, bool autoAdd, bool isZip, bool isBlocks) {
     if (autoAdd) {
         if (!unzipFile.isEmpty()) {
             for (int i = 0; i < unzipFile.length(); i++) {
@@ -525,118 +537,6 @@ void Application::handleUnzip(QString zipFile, QStringList unzipFile, bool autoA
             addAssetToWorldUnzipFailure(zipFile);
         }
     } else {
-        showAssetServerWidget(unzipFile.first());
+        qApp->showAssetServerWidget(unzipFile.first());
     }
-}
-
-// The URL dispatch, after the import steps above: the extensions ImportExtensions.h declares and the table of importers
-// by extension first, then the members in Application.cpp's order.
-const QString SNAPSHOT_EXTENSION = ".jpg";
-const QString JPG_EXTENSION = ".jpg";
-const QString PNG_EXTENSION = ".png";
-const QString SVO_EXTENSION = ".svo";
-const QString SVO_JSON_EXTENSION = ".svo.json";
-const QString JSON_EXTENSION = ".json";
-const QString JS_EXTENSION = ".js";
-const QString FST_EXTENSION = ".fst";
-const QString FBX_EXTENSION = ".fbx";
-const QString OBJ_EXTENSION = ".obj";
-const QString AVA_JSON_EXTENSION = ".ava.json";
-static const QString WEB_VIEW_TAG = "noDownload=true";
-const QString ZIP_EXTENSION = ".zip";
-
-const std::vector<std::pair<QString, Application::AcceptURLMethod>> Application::_acceptedExtensions {
-    { SVO_EXTENSION, &Application::importSVOFromURL },
-    { SVO_JSON_EXTENSION, &Application::importSVOFromURL },
-    { AVA_JSON_EXTENSION, &Application::askToWearAvatarAttachmentUrl },
-    { JSON_EXTENSION, &Application::importJSONFromURL },
-    { JS_EXTENSION, &Application::askToLoadScript },
-    { FST_EXTENSION, &Application::askToSetAvatarUrl },
-    { ZIP_EXTENSION, &Application::importFromZIP },
-    { JPG_EXTENSION, &Application::importImage },
-    { PNG_EXTENSION, &Application::importImage }
-};
-
-bool Application::importJSONFromURL(const QString& urlString) {
-    // we only load files that terminate in just .json (not .svo.json and not .ava.json)
-    QUrl jsonURL { urlString };
-
-    emit svoImportRequested(urlString);
-    return true;
-}
-
-bool Application::importSVOFromURL(const QString& urlString) {
-    emit svoImportRequested(urlString);
-    return true;
-}
-
-bool Application::importFromZIP(const QString& filePath) {
-    qDebug() << "A zip file has been dropped in: " << filePath;
-    QUrl empty;
-    qApp->getFileDownloadInterface()->runUnzip(filePath, empty, true, true, false);
-    return true;
-}
-
-bool Application::importImage(const QString& urlString) {
-    qCDebug(interfaceapp) << "An image file has been dropped in";
-    QString filepath(urlString);
-    filepath.remove("file:///");
-    addAssetToWorld(filepath, "", false, false);
-    return true;
-}
-
-// This is currently not used, but could be invoked if the user wants to go to the place embedded in an
-// Interface-taken snapshot. (It was developed for drag and drop, before we had asset-server loading or in-world browsers.)
-bool Application::acceptSnapshot(const QString& urlString) {
-    QUrl url(urlString);
-    QString snapshotPath = url.toLocalFile();
-
-    SnapshotMetaData* snapshotData = DependencyManager::get<Snapshot>()->parseSnapshotData(snapshotPath);
-    if (snapshotData) {
-        if (!snapshotData->getURL().toString().isEmpty()) {
-            DependencyManager::get<AddressManager>()->handleLookupString(snapshotData->getURL().toString());
-        }
-    } else {
-        OffscreenUi::asyncWarning("", "No location details were found in the file\n" +
-                             snapshotPath + "\nTry dragging in a Darkride Snap saved on this computer.");
-    }
-    return true;
-}
-
-bool Application::canAcceptURL(const QString& urlString) const {
-    QUrl url(urlString);
-    if (url.query().contains(WEB_VIEW_TAG)) {
-        return false;
-    } else if (urlString.startsWith(URL_SCHEME_HIFI)) {
-        return true;
-    }
-    QString lowerPath = url.path().toLower();
-    for (auto& pair : _acceptedExtensions) {
-        if (lowerPath.endsWith(pair.first, Qt::CaseInsensitive)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool Application::acceptURL(const QString& urlString, bool defaultUpload) {
-    QUrl url(urlString);
-
-    if (url.scheme() == URL_SCHEME_HIFI) {
-        // this is a hifi URL - have the AddressManager handle it
-        QMetaObject::invokeMethod(DependencyManager::get<AddressManager>().data(), "handleLookupString",
-                                  Qt::AutoConnection, Q_ARG(const QString&, urlString));
-        return true;
-    }
-
-    QString lowerPath = url.path().toLower();
-    for (auto& pair : _acceptedExtensions) {
-        if (lowerPath.endsWith(pair.first, Qt::CaseInsensitive)) {
-            AcceptURLMethod method = pair.second;
-            return (this->*method)(urlString);
-        }
-    }
-
-    
-    return defaultUpload;
 }

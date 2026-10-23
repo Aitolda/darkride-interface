@@ -56,6 +56,7 @@ class ClientOptions;
 #include "avatar/MyAvatar.h"
 #include "ViewState.h"
 #include "EntityClipboard.h"
+#include "AssetImport.h"
 #include "ConnectionMonitor.h"
 #include "CursorManager.h"
 #include "WindowCursor.h"
@@ -184,6 +185,7 @@ public:
     GraphicsEngine& getGraphicsEngine() { return _graphicsEngine; }
     MainWindow* getWindow() const { return _window; }
     EntityClipboard& getEntityClipboard() { return _entityClipboard; }   // the entities' clipboard: export, import, paste (EntityClipboard.h)
+    AssetImport& getAssetImport() { return _assetImport; }   // a file from a URL or a drop becomes an asset and an entity (AssetImport.h)
     EntityEditPacketSender* getEntityEditPacketSender() { return &_entityEditSender; }
 
     ApplicationOverlay& getApplicationOverlay() { return _applicationOverlay; }
@@ -416,17 +418,7 @@ public slots:
 
     void showLoginScreen();
 
-    // FIXME: Move addAssetToWorld* methods to own class?
-    void addAssetToWorldFromURL(QString url);
-    void addAssetToWorldFromURLRequestFinished();
-    void addAssetToWorld(QString filePath, QString zipFile, bool isZip = false, bool isBlocks = false);
-    void addAssetToWorldUnzipFailure(QString filePath);
-    void addAssetToWorldWithNewMapping(QString filePath, QString mapping, int copy, bool isZip = false, bool isBlocks = false);
-    void addAssetToWorldUpload(QString filePath, QString mapping, bool isZip = false, bool isBlocks = false);
-    void addAssetToWorldSetMapping(QString filePath, QString mapping, QString hash, bool isZip = false, bool isBlocks = false);
-    void addAssetToWorldAddEntity(QString filePath, QString mapping);
-
-    void handleUnzip(QString sourceFile, QStringList destinationFile, bool autoAdd, bool isZip, bool isBlocks);
+    void addAssetToWorldFromURL(QString url) { _assetImport.addAssetToWorldFromURL(url); }   // QML's ApplicationInterface.addAssetToWorldFromURL (the tablet and window roots, the web view)
 
     FileScriptingInterface* getFileDownloadInterface() { return _fileDownload; }
 
@@ -468,8 +460,6 @@ public slots:
     KeyboardFocus& getKeyboardFocus() { return _keyboardFocus; }   // which entity has the keyboard, and its highlight (KeyboardFocus.h)
     const QUuid& getLoginDialogID() const { return _loginDialogID; }   // the headset's sign-in dialog entity, null when there is none
     std::shared_ptr<KeyboardMouseDevice> getKeyboardMouseDevice() const { return _keyboardMouseDevice; }
-
-    void addAssetToWorldMessageClose();
 
     void loadLODToolsDialog();
     void loadEntityStatisticsDialog();
@@ -531,12 +521,6 @@ private slots:
     void updateDisplayMode();
     void setDisplayPlugin(DisplayPluginPointer newPlugin);
     void domainConnectionRefused(const QString& reasonMessage, int reason, const QString& extraInfo);
-
-    void addAssetToWorldCheckModelSize();
-
-    void onAssetToWorldMessageBoxClosed();
-    void addAssetToWorldInfoTimeout();
-    void addAssetToWorldErrorTimeout();
 
     void goToStartingLocation();
     void switchDisplayMode();
@@ -778,19 +762,7 @@ private:
 
     ConnectionMonitor _connectionMonitor;
 
-    QTimer _addAssetToWorldResizeTimer;
-    QHash<QUuid, int> _addAssetToWorldResizeList;
-
-    void addAssetToWorldInfo(QString modelName, QString infoText);
-    void addAssetToWorldInfoClear(QString modelName);
-    void addAssetToWorldInfoDone(QString modelName);
-    void addAssetToWorldError(QString modelName, QString errorText);
-
-    QQuickItem* _addAssetToWorldMessageBox{ nullptr };
-    QStringList _addAssetToWorldInfoKeys;      // Model name
-    QStringList _addAssetToWorldInfoMessages;  // Info message
-    QTimer _addAssetToWorldInfoTimer;
-    QTimer _addAssetToWorldErrorTimer;
+    AssetImport _assetImport;   // a file from a URL or a drop becomes an asset and an entity (AssetImport.h)
     mutable QTimer _entityServerConnectionTimer;
 
     FileScriptingInterface* _fileDownload;
