@@ -12,7 +12,9 @@
 
 #include <QDebug>
 #include <QDir>
+#include <QThreadPool>
 #include <QTranslator>
+#include <QtNetwork/QSslConfiguration>
 
 #include <BuildInfo.h>
 #include <SharedUtil.h>
@@ -76,6 +78,12 @@ int main(int argc, const char* argv[]) {
 
     StartupProfiler::phase("main: settings (Setting::init)");
     Setting::init();
+
+    // The SSL backend's first use loads OpenSSL and the system's root certificates, about 130 ms on this Mac, and it
+    // used to fall on the main thread at start-up: inside the keypair request in a fresh home, inside the profile
+    // request in a signed-in one. Warmed on a pool thread here, beside the rest of the start; a first use that
+    // comes sooner waits on the backend's own lock.
+    QThreadPool::globalInstance()->start([] { QSslConfiguration::defaultConfiguration(); });
 
     StartupProfiler::phase("main: crash handler");
     auto crashHandlerStarted = startCrashHandler(argv[0]);
