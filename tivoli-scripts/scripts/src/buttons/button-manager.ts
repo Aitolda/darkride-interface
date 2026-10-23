@@ -431,17 +431,25 @@ export class ButtonManager {
 				visible: false,
 			});
 			this.qmlWindows.push(window);
-			// the window's own close box
+			// the window's own close box: a hide counts once the window has been seen open since open() (a new
+			// window's first signals say "hidden" while it is still coming up; taken as a close, they hid it mid
+			// fade-in, which left it on screen marked hidden, and its close box did nothing)
 			this.signalManager.connect(window.visibleChanged, () => {
-				if (!window.isVisible() && visible && !this.inVr()) close();
+				if (window.isVisible()) {
+					seenOpen = true;
+				} else if (seenOpen && visible && !this.inVr()) {
+					close();
+				}
 			});
 		};
 
 		let visible = false;
+		let seenOpen = false;
 
 		const open = () => {
 			if (visible) return;
 			visible = true;
+			seenOpen = false;
 			button.editProperties({ isActive: true });
 
 			if (this.inVr()) {
@@ -471,6 +479,7 @@ export class ButtonManager {
 		const close = (force = false) => {
 			if (!visible) return;
 			visible = false;
+			seenOpen = false;
 			button.editProperties({ isActive: false });
 
 			const inVr = this.inVr();
