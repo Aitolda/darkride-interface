@@ -248,7 +248,7 @@ using namespace std;
 
 QSharedPointer<OffscreenUi> getOffscreenUI();            // Application.cpp's
 QString labelledTitle(const QString& title);             // Application.cpp's: a window title with the client label
-extern Setting::Handle<int> maxOctreePacketsPerSecond;   // Application.cpp's
+extern Setting::Handle<int> maxOctreePacketsPerSecond;   // ApplicationDomain.cpp's
 
 QTimer locationUpdateTimer;   // started by the constructor, stopped in ApplicationShutdown.cpp
 
