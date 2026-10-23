@@ -13,6 +13,7 @@
 #include "Application.h"
 #include "ApplicationServices.h"
 #include "ImportExtensions.h"
+#include "ApplicationSettingNames.h"
 #include "LambdaEvent.h"
 #include "ClientOptions.h"
 #include "DeadlockWatchdog.h"
@@ -274,9 +275,7 @@ Q_LOGGING_CATEGORY(trace_app_input_mouse, "trace.app.input.mouse")
 
 using namespace std;
 
-static QTimer locationUpdateTimer;
-static QTimer identityPacketTimer;
-static QTimer pingTimer;
+QTimer locationUpdateTimer;   // started by the constructor, stopped in ApplicationShutdown.cpp
 
 // The window title's client label, first in the title when there is one: --clientLabel "<text>" on the command line,
 // else the DARKRIDE_CLIENT_LABEL environment variable, else the build's (cmake -DCLIENT_LABEL=...). With several
@@ -352,9 +351,9 @@ static const QString NO_MOVEMENT_MAPPING_JSON = PathUtils::resourcesPath() + "/c
 
 static const int INTERVAL_TO_CHECK_HMD_WORN_STATUS = 500; // milliseconds
 static const QString DESKTOP_DISPLAY_PLUGIN_NAME = "Desktop";
-static const QString ACTIVE_DISPLAY_PLUGIN_SETTING_NAME = "activeDisplayPlugin";
+const QString ACTIVE_DISPLAY_PLUGIN_SETTING_NAME = "activeDisplayPlugin";
 static const QString SYSTEM_TABLET = "com.highfidelity.interface.tablet.system";
-static const QString KEEP_ME_LOGGED_IN_SETTING_NAME = "keepMeLoggedIn";
+const QString KEEP_ME_LOGGED_IN_SETTING_NAME = "keepMeLoggedIn";
 
 static const float FOCUS_HIGHLIGHT_EXPANSION_FACTOR = 1.05f;
 
@@ -2017,249 +2016,7 @@ void Application::updateHeartbeat() const {
     DeadlockWatchdogThread::updateHeartbeat();
 }
 
-void Application::onAboutToQuit() {
-    setCrashAnnotation("shutdown", "1");
-
-    // quickly save AvatarEntityData before the EntityTree is dismantled
-    getMyAvatar()->saveAvatarEntityDataToSettings();
-
-    emit beforeAboutToQuit();
-
-    if (getLoginDialogPoppedUp() && _firstRun.get()) {
-        _firstRun.set(false);
-    }
-
-    foreach(auto inputPlugin, PluginManager::getInstance()->getInputPlugins()) {
-        if (inputPlugin->isActive()) {
-            inputPlugin->deactivate();
-        }
-    }
-
-    // The active display plugin needs to be loaded before the menu system is active,
-    // so its persisted explicitly here
-    Setting::Handle<QString>{ ACTIVE_DISPLAY_PLUGIN_SETTING_NAME }.set(getActiveDisplayPlugin()->getName());
-
-    loginDialogPoppedUp.set(false);
-
-    getActiveDisplayPlugin()->deactivate();
-    if (_autoSwitchDisplayModeSupportedHMDPlugin
-        && _autoSwitchDisplayModeSupportedHMDPlugin->isSessionActive()) {
-        _autoSwitchDisplayModeSupportedHMDPlugin->endSession();
-    }
-    // Hide Running Scripts dialog so that it gets destroyed in an orderly manner; prevents warnings at shutdown.
-    getOffscreenUI()->hide("RunningScripts");
-
-    _aboutToQuit = true;
-
-    cleanupBeforeQuit();
-
-    if (_crashOnShutdown) {
-        // triggered by crash menu
-        crash::nullDeref();
-    }
-
-    getRefreshRateManager().setRefreshRateRegime(RefreshRateManager::RefreshRateRegime::SHUTDOWN);
-}
-
-void Application::cleanupBeforeQuit() {
-    // add a logline indicating if QTWEBENGINE_REMOTE_DEBUGGING is set or not
-    QString webengineRemoteDebugging = QProcessEnvironment::systemEnvironment().value("QTWEBENGINE_REMOTE_DEBUGGING", "false");
-    qCDebug(interfaceapp) << "QTWEBENGINE_REMOTE_DEBUGGING =" << webengineRemoteDebugging;
-
-    DependencyManager::prepareToExit();
-
-    if (tracing::enabled()) {
-        auto tracer = DependencyManager::get<tracing::Tracer>();
-        tracer->stopTracing();
-        auto outputFile = property(hifi::properties::TRACING).toString();
-        tracer->serialize(outputFile);
-    }
-
-    // Stop third party processes so that they're not left running in the event of a subsequent shutdown crash.
-    AnimDebugDraw::getInstance().shutdown();
-
-    // FIXME: once we move to shared pointer for the INputDevice we shoud remove this naked delete:
-    _applicationStateDevice.reset();
-
-    {
-        if (_keyboardFocusHighlightID != UNKNOWN_ENTITY_ID) {
-            DependencyManager::get<EntityScriptingInterface>()->deleteEntity(_keyboardFocusHighlightID);
-            _keyboardFocusHighlightID = UNKNOWN_ENTITY_ID;
-        }
-    }
-
-    {
-        auto nodeList = DependencyManager::get<NodeList>();
-
-        // send the domain a disconnect packet, force stoppage of domain-server check-ins
-        nodeList->getDomainHandler().disconnect("Quitting");
-        nodeList->setIsShuttingDown(true);
-
-        // tell the packet receiver we're shutting down, so it can drop packets
-        nodeList->getPacketReceiver().setShouldDropPackets(true);
-    }
-
-    getEntities()->shutdown(); // tell the entities system we're shutting down, so it will stop running scripts
-
-    // Clear any queued processing (I/O, FBX/OBJ/Texture parsing)
-    QThreadPool::globalInstance()->clear();
-    QThreadPool::globalInstance()->waitForDone();
-
-    DependencyManager::destroy<RecordingScriptingInterface>();
-
-    // FIXME: Something is still holding on to the ScriptEnginePointers contained in ScriptEngines, and they hold backpointers to ScriptEngines,
-    // so this doesn't shut down properly
-
-    // CPM Commenting this out below makes much faster shutdown and takes care of the 30s shutdown delay
-    // It does come at the expense of scripts not being able to shut down promptly.  TO DO
-    // Look at the ScriptEngine shutdownScripting() function itself and see if there's a way to speed it up
-
-    DependencyManager::get<ScriptEngines>()->shutdownScripting(); // stop all currently running global scripts
-
-    // These classes hold ScriptEnginePointers, so they must be destroyed before ScriptEngines
-    // Must be done after shutdownScripting in case any scripts try to access these things
-    {
-        DependencyManager::destroy<StandAloneJSConsole>();
-        EntityTreePointer tree = getEntities()->getTree();
-        tree->setSimulation(nullptr);
-        DependencyManager::destroy<EntityTreeRenderer>();
-    }
-    DependencyManager::destroy<ScriptEngines>();
-
-    bool keepMeLoggedIn = Setting::Handle<bool>(KEEP_ME_LOGGED_IN_SETTING_NAME, true).get();
-    if (!keepMeLoggedIn) {
-        DependencyManager::get<AccountManager>()->removeAccountFromFile();
-    }
-
-    _displayPlugin.reset();
-    PluginManager::getInstance()->shutdown();
-
-    // Cleanup all overlays after the scripts, as scripts might add more
-    _overlays.cleanupAllOverlays();
-
-    // first stop all timers directly or by invokeMethod
-    // depending on what thread they run in
-    locationUpdateTimer.stop();
-    identityPacketTimer.stop();
-    pingTimer.stop();
-
-    // Wait for the settings thread to shut down, and save the settings one last time when it's safe
-    if (_settingsGuard.wait()) {
-        // save state
-        saveSettings();
-    }
-
-    _window->saveGeometry();
-
-    // stop QML
-    DependencyManager::destroy<TabletScriptingInterface>();
-    DependencyManager::destroy<ToolbarScriptingInterface>();
-    DependencyManager::destroy<OffscreenUi>();
-
-    DependencyManager::destroy<OffscreenQmlSurfaceCache>();
-
-    // destroy Audio so it and its threads have a chance to go down safely
-    // this must happen after QML, as there are unexplained audio crashes originating in qtwebengine
-    AudioInjector::setLocalAudioInterface(nullptr);
-    DependencyManager::destroy<AudioClient>();
-    DependencyManager::destroy<AudioScriptingInterface>();
-
-    // The PointerManager must be destroyed before the PickManager because when a Pointer is deleted,
-    // it accesses the PickManager to delete its associated Pick
-    DependencyManager::destroy<PointerManager>();
-    DependencyManager::destroy<PickManager>();
-    DependencyManager::destroy<KeyboardScriptingInterface>();
-    DependencyManager::destroy<Keyboard>();
-
-    qCDebug(interfaceapp) << "Application::cleanupBeforeQuit() complete";
-}
-
-Application::~Application() {
-    // remove avatars from physics engine
-    auto avatarManager = DependencyManager::get<AvatarManager>();
-    avatarManager->clearOtherAvatars();
-    auto myCharacterController = getMyAvatar()->getCharacterController();
-    myCharacterController->clearDetailedMotionStates();
-
-    PhysicsEngine::Transaction transaction;
-    avatarManager->buildPhysicsTransaction(transaction);
-    _physicsEngine->processTransaction(transaction);
-    avatarManager->handleProcessedPhysicsTransaction(transaction);
-    avatarManager->deleteAllAvatars();
-
-    _physicsEngine->setCharacterController(nullptr);
-
-    // the _shapeManager should have zero references
-    _shapeManager.collectGarbage();
-    assert(_shapeManager.getNumShapes() == 0);
-
-    // shutdown graphics engine
-    _graphicsEngine.shutdown();
-
-    _gameWorkload.shutdown();
-
-    DependencyManager::destroy<Preferences>();
-    PlatformHelper::shutdown();
-
-    _entityClipboard->eraseAllOctreeElements();
-    _entityClipboard.reset();
-
-    _octreeProcessor.terminate();
-    _entityEditSender.terminate();
-
-    DependencyManager::destroy<PluginManager>();
-
-    DependencyManager::destroy<CompositorHelper>(); // must be destroyed before the FramebufferCache
-
-    DependencyManager::destroy<SoundCacheScriptingInterface>();
-
-    DependencyManager::destroy<AudioInjectorManager>();
-    DependencyManager::destroy<AvatarManager>();
-    DependencyManager::destroy<AnimationCacheScriptingInterface>();
-    DependencyManager::destroy<AnimationCache>();
-    DependencyManager::destroy<FramebufferCache>();
-    DependencyManager::destroy<MaterialCacheScriptingInterface>();
-    DependencyManager::destroy<MaterialCache>();
-    DependencyManager::destroy<TextureCacheScriptingInterface>();
-    DependencyManager::destroy<TextureCache>();
-    DependencyManager::destroy<ModelCacheScriptingInterface>();
-    DependencyManager::destroy<ModelCache>();
-    DependencyManager::destroy<ModelFormatRegistry>();
-    DependencyManager::destroy<ScriptCache>();
-    DependencyManager::destroy<SoundCacheScriptingInterface>();
-    DependencyManager::destroy<SoundCache>();
-    DependencyManager::destroy<OctreeStatsProvider>();
-    DependencyManager::destroy<GeometryCache>();
-
-    DependencyManager::get<ResourceManager>()->cleanup();
-
-    // remove the NodeList from the DependencyManager
-    DependencyManager::destroy<NodeList>();
-    // The window takes ownership of the menu, so this has the side effect of destroying it.
-    _window->setMenuBar(nullptr);
-
-    _window->deleteLater();
-
-    // Can't log to file past this point, FileLogger about to be deleted
-    qInstallMessageHandler(LogHandler::verboseMessageHandler);
-
-#ifdef Q_OS_MACOS
-    // 10/16/2019 - Disabling this call. This causes known crashes (A), and it is not
-    // fully understood whether it might cause other unknown crashes (B).
-    //
-    // (A) Although we try to shutdown the ScriptEngine threads in onAboutToQuit, there is
-    // currently no guarantee that they have stopped. Waiting on them to stop has so far appeared to
-    // never return on Mac, causing the application to hang on shutdown. Because ScriptEngines
-    // may still be running, they may end up receiving events that are triggered from this processEvents call,
-    // and then try to access resources that are no longer available at this point in time.
-    // If the ScriptEngine threads were fully destroyed before getting here, this would
-    // not be an issue.
-    //
-    // (B) It seems likely that a bunch of potential event handlers are dependent on Application
-    // and other common dependencies to be available and not destroyed or in the middle of being
-    // destroyed.
-#endif
-}
+// The shutdown sequence (onAboutToQuit, cleanupBeforeQuit, ~Application) is in ApplicationShutdown.cpp.
 
 void Application::initializeGL() {
     qCDebug(interfaceapp) << "Created Display Window.";
