@@ -671,6 +671,13 @@ void Editor::showPanels(bool show) {
     if (!_panelsCreated) {
         return;
     }
+    // An open popup (a dropdown's list in the Inspector) closes first, outside the guard: a combo box closing its
+    // list runs an event loop of its own on macOS (the chosen item's flash), and a QML surface rendered in that loop
+    // waits for its render thread, which waits for the GL lock the guard holds. Hiding the panels with the list open
+    // did that and froze the client (10-24: the Render Layer list open, Cmd+B).
+    for (int i = 0; i < 4 && QApplication::activePopupWidget(); i++) {
+        QApplication::activePopupWidget()->close();
+    }
     gl::ViewChangeGuard guard;   // panels coming and going change the window round the GL view
     _hierarchy->setVisible(show);
     _inspector->setVisible(show);
