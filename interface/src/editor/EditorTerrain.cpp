@@ -480,13 +480,16 @@ void EditorTerrain::update(float deltaTime) {
         return;         // the pointer is off the terrain: the stroke waits for it to come back
     }
     if (_strokeMode == terrain::SculptMode::Paint) {
-        // The paint map is a picture seen from the sky: it shows on the ground the sky sees, where that faces up. On
-        // steep ground, and below the top surface (a cave's floor, the ground under an overhang: terrain::TopSurface),
+        // The paint map is a picture seen from the sky: it shows on the ground the sky sees, where that faces up, and
+        // down the walls near it (a raised terrace's sides, within terrain::PAINT_WALL_REACH of the top). Below that
+        // (a cave's floor or walls, the ground under an overhang: terrain::TopSurface), and on ground facing down,
         // the stroke paints the voxels' materials instead, the layer's (Erase: the bottom layer's), as Paint Voxels
         // does, so it shows wherever it lands. The shader draws the same line.
         entity->updateTopSurface();
         const glm::vec3 terrainNormal = glm::normalize(hit.normal / entity->getVoxelScale());
-        const bool onMap = terrainNormal.y >= PAINT_MAP_FACING && entity->getTopSurface().isOnTop(hit.voxelPoint);
+        const bool steep = terrainNormal.y < PAINT_MAP_FACING;
+        const bool onMap = terrainNormal.y >= 0.0f &&
+            entity->getTopSurface().isOnTop(hit.voxelPoint, steep ? terrain::PAINT_WALL_REACH : terrain::TOP_SURFACE_TOLERANCE);
         if (onMap) {
             // the paint map: one pass of the brush, again once the pointer has moved on a little
             const terrain::PaintBrush brush = paintBrush(*entity, hit);
@@ -830,6 +833,24 @@ bool EditorTerrain::setLayers(const QUuid& id, const terrain::LayerStack& layers
         _undo->pushTerrainLayers(undoText, id, was, layers);
         markChanged(id);
     }
+    return true;
+}
+
+int EditorTerrain::capsOf(const QUuid& id) const {
+    auto entity = terrainEntity(id);
+    return entity ? (int)entity->getCaps() : -1;
+}
+
+bool EditorTerrain::setCaps(const QUuid& id, uint8_t caps, const QString& undoText) {
+    auto entity = terrainEntity(id);
+    if (!entity || !entity->hasGrid() || EditorUndo::isLocked(id)) {
+        return false;
+    }
+    const uint8_t was = entity->getCaps();
+    if (was == caps) {
+        return true;
+    }
+    _undo->pushTerrainCaps(undoText, id, was, caps);   // the step's first redo applies it and has the terrain saved
     return true;
 }
 

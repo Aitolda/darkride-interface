@@ -10,6 +10,9 @@
 //
 
 #include "ResourceCache.h"
+
+#include <QtCore/QDateTime>
+#include <QtCore/QMutex>
 #include "ResourceRequestObserver.h"
 
 #include <cfloat>
@@ -339,6 +342,32 @@ QVariantList ResourceCache::getResourceList() {
     return list;
 }
  
+namespace {
+QMutex deadHostsMutex;
+QHash<QString, qint64> deadHostsUntil;   // host -> when its death expires, ms since the epoch
+}
+
+bool ResourceCache::isHostDead(const QString& host) {
+    if (host.isEmpty()) {
+        return false;
+    }
+    QMutexLocker lock(&deadHostsMutex);
+    auto it = deadHostsUntil.find(host);
+    return it != deadHostsUntil.end() && QDateTime::currentMSecsSinceEpoch() < it.value();
+}
+
+void ResourceCache::markHostDead(const QString& host) {
+    if (host.isEmpty()) {
+        return;
+    }
+    QMutexLocker lock(&deadHostsMutex);
+    qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (!deadHostsUntil.contains(host) || now >= deadHostsUntil.value(host)) {
+        qCDebug(networking) << "Host did not resolve; its links fail at once for" << (DEAD_HOST_MSECS / 1000) << "s:" << host;
+    }
+    deadHostsUntil[host] = now + DEAD_HOST_MSECS;
+}
+
 void ResourceCache::setRequestLimit(uint32_t limit) {
     auto sharedItems = DependencyManager::get<ResourceCacheSharedItems>();
     sharedItems->setRequestLimit(limit);
@@ -737,6 +766,20 @@ void Resource::reinsert() {
 
 
 void Resource::makeRequest() {
+    // a host that did not resolve a moment ago is dead for a while: no request, and the failure is final. It is
+    // delivered from the event loop, as a request's failure would be, since a caller may still be setting the
+    // resource up when ensureLoading() brings it here.
+    if (ResourceCache::isHostDead(_activeUrl.host())) {
+        qCDebug(networking) << "Not loading, the host is dead for now:" << _activeUrl.toString();
+        QTimer::singleShot(0, this, [this] {
+            ResourceCache::requestCompleted(_self);
+            _attemptsRemaining = 0;
+            emit failed(QNetworkReply::HostNotFoundError);
+            finishedLoading(false);
+        });
+        return;
+    }
+
     if (_request) {
         PROFILE_ASYNC_END(resource, "Resource:" + getType(), QString::number(_requestID));
         _request->disconnect();
@@ -844,6 +887,13 @@ bool Resource::handleFailedRequest(ResourceRequest::Result result) {
                 break;
             }
             // fall through to final failure
+        }
+        // FALLTHRU
+        case ResourceRequest::Result::HostNotFound: {
+            // the name did not resolve: every link to that host would fail the same way, so the host is dead for a
+            // while (DEAD_HOST_MSECS) and this failure is final: the ladder of retries was what held old worlds'
+            // dead links in the loading state for minutes (ARCHITECTURE.md 2.3)
+            ResourceCache::markHostDead(_activeUrl.host());
         }
         // FALLTHRU
         default: {

@@ -323,6 +323,9 @@ public:
     float getImpostorAngleSetting() const { return _impostorAngleDeg; }
     // the angle as RenderArgs::_impostorAngleHalfTanSq takes it
     float getImpostorAngleHalfTanSq() const;
+    // the angle a model shown as its card fetches its mesh at (ENTITY-STREAMING.md 3.1): half the impostor angle, as
+    // the squared tangent of half of it (EntityTreeRenderer::setImpostorLoadView); 0 with the cards off
+    float getImpostorLoadHalfTanSq() const;
     // the card shader's debug view (impostor.slf), not saved: 0 draws the card
     int getImpostorDebug() const { return _impostorDebug; }
     void setImpostorDebug(int mode) { _impostorDebug = mode; }
@@ -353,10 +356,13 @@ public:
      * automatic LODs (Developer &gt; Render &gt; Show Impostors and LODs reads it for what is at the centre of the view).
      * @function LODManager.describeEntity
      * @param {Uuid} entityID - The entity.
-     * @returns {object} <code>name</code>; <code>card</code>, when the entity or an ancestor has an impostor card:
+     * @returns {object} <code>name</code>; <code>visuallyReady</code> (what it draws now has loaded, which the loading
+     *     screen waits for); <code>card</code>, when the entity or an ancestor has an impostor card:
      *     <code>ownerID</code>, <code>ownerName</code>, <code>showing</code> ("card", "model", "dissolving" or "loading"),
-     *     <code>angleDeg</code> (how wide its sphere looks), <code>switchAngleDeg</code> and <code>enabled</code>;
-     *     <code>lods</code>, for a loaded model: <code>parts</code>, one per mesh part, each with <code>full</code>
+     *     <code>standIn</code> (the card stands in for models not here yet), <code>angleDeg</code> (how wide its sphere
+     *     looks), <code>switchAngleDeg</code> and <code>enabled</code>; <code>mesh</code>, for a model entity: "waiting"
+     *     (behind its card, not fetched), "loading" or "loaded"; <code>textures</code>, for a loaded model: "loading" or
+     *     "loaded"; <code>lods</code>, for a loaded model: <code>parts</code>, one per mesh part, each with <code>full</code>
      *     (its triangles), <code>levels</code> (each level's triangles) and <code>shown</code> (the level the main view
      *     draws, 0 for full detail), and <code>enabled</code>.
      */

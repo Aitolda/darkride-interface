@@ -15,7 +15,6 @@
 
 #include <SettingHandle.h>
 #include <Util.h>
-#include <shared/GlobalAppProperties.h>
 #include <shared/QtHelpers.h>
 #include <EntityTreeRenderer.h>
 #include <ImpostorSwitch.h>
@@ -236,6 +235,14 @@ float LODManager::getImpostorAngleHalfTanSq() const {
     return halfTan * halfTan;
 }
 
+float LODManager::getImpostorLoadHalfTanSq() const {
+    if (!_impostorsEnabled) {
+        return 0.0f;
+    }
+    float halfTan = tanf(glm::radians(0.25f * getImpostorAngleDeg()));
+    return halfTan * halfTan;
+}
+
 void LODManager::setShowImpostorsAndLods(bool show) {
     const int TINT_DEBUG_VIEW = 10;   // impostor.slf's tint, the Inspector's Tint Cards
     _showImpostorsAndLods = show;
@@ -263,6 +270,7 @@ QVariantMap LODManager::describeEntity(const QUuid& entityID) const {
         return result;
     }
     result["name"] = entity->getName();
+    result["visuallyReady"] = entity->isVisuallyReady();
 
     // the card: the entity's own, or its nearest ancestor's (EntityRenderer::findImpostorSwitch's walk)
     const int MAX_DEPTH = 16;
@@ -278,6 +286,7 @@ QVariantMap LODManager::describeEntity(const QUuid& entityID) const {
             card["ownerName"] = item->getName();
             card["showing"] = !impostorSwitch->isCardReady() ? "loading"
                 : (share >= 1.0f ? "card" : (share <= 0.0f ? "model" : "dissolving"));
+            card["standIn"] = impostorSwitch->isStandIn();
             card["angleDeg"] = impostorSwitch->getShownAngleDeg();
             card["switchAngleDeg"] = getImpostorAngleDeg();
             card["enabled"] = _impostorsEnabled;
@@ -295,7 +304,14 @@ QVariantMap LODManager::describeEntity(const QUuid& entityID) const {
     auto modelRenderer = std::dynamic_pointer_cast<render::entities::ModelEntityRenderer>(
         treeRenderer->renderableForEntityId(entityID));
     ModelPointer model = modelRenderer ? modelRenderer->getModelForBake() : nullptr;
+    if (modelRenderer) {
+        // the mesh (ENTITY-STREAMING.md 3.1): waiting behind the card, on its way, or here
+        result["mesh"] = modelRenderer->isMeshDeferred() ? "waiting"
+            : ((model && model->isLoaded()) ? "loaded" : "loading");
+    }
     if (model && model->isLoaded()) {
+        // its textures, as the model cache has them (the renderer's own flag follows on its next update)
+        result["textures"] = (model->getNetworkModel() && model->getNetworkModel()->areTexturesLoaded()) ? "loaded" : "loading";
         QVariantList parts;
         for (const auto& part : model->getPartLods()) {
             QVariantMap entry;
@@ -445,11 +461,6 @@ QString LODManager::getLODFeedbackText() {
 void LODManager::loadSettings() {
     auto desktopQuality = static_cast<WorldDetailQuality>(desktopWorldDetailQuality.get());
     auto hmdQuality = static_cast<WorldDetailQuality>(hmdWorldDetailQuality.get());
-
-    Setting::Handle<bool> firstRun{ Settings::firstRun, true };
-    if (qApp->property(hifi::properties::OCULUS_STORE).toBool() && firstRun.get()) {
-        hmdQuality = WORLD_DETAIL_HIGH;
-    }
 
     setWorldDetailQuality(desktopQuality, false);
     setWorldDetailQuality(hmdQuality, true);

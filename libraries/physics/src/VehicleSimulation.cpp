@@ -8,8 +8,10 @@
 
 #include "VehicleSimulation.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
+
 
 #include <glm/gtx/norm.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -25,6 +27,7 @@
 #include <EntityItemProperties.h>
 #include <NLPacket.h>
 #include <NodeList.h>
+#include <NumericalConstants.h>
 #include <PhysicsHelpers.h>
 #include <SharedUtil.h>
 
@@ -257,7 +260,7 @@ bool VehicleSimulation::rebuild(Vehicle& vehicle) {
     vehicle.visuals.clear();
     vehicle.childCount = -1;
     vehicle.logged = false;
-    setInternalState(vehicle);
+    setInternalState(vehicle, stateFromRelay(vehicle));
     return true;
 }
 
@@ -321,7 +324,7 @@ bool VehicleSimulation::rebuildWheeled(Vehicle& vehicle, JPH::Body* body, Physic
             float frequency = spec.suspensionFrequency;
             if (frequency <= 0.0f) {
                 float restCompression = glm::max(0.01f, wheel.suspensionDistance * wheel.targetPosition);
-                frequency = sqrtf(gravity / restCompression) / (2.0f * (float)M_PI);
+                frequency = sqrtf(gravity / restCompression) / TWO_PI;
             }
             ws->mSuspensionSpring = JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping, frequency, spec.suspensionDamping);
         }
@@ -429,7 +432,32 @@ bool VehicleSimulation::isLocalDriver(EntityMotionState* state) const {
         || vehicle.entity->getVehicleProperties().getDriver() == Physics::getSessionUUID();
 }
 
+// The stream's states, as they arrived since the last substep, into their vehicles' buffers (round 9).
+void VehicleSimulation::drainReceivedStates() {
+    std::vector<std::pair<VehicleState, quint64>> received;
+    {
+        std::lock_guard<std::mutex> lock(_streamMutex);
+        received.swap(_receivedStates);
+    }
+    for (const auto& entry : received) {
+        auto found = _byEntity.find(entry.first.id);
+        if (found == _byEntity.end()) {
+            continue;
+        }
+        auto it = _vehicles.find(found->second);
+        if (it == _vehicles.end()) {
+            continue;
+        }
+        Vehicle& vehicle = it->second;
+        if (vehicle.snapshots.push(entry.first, entry.second)) {
+            vehicle.lastStreamArrival = std::max(vehicle.lastStreamArrival, entry.second);
+            ++_stats.streamStatesReceived;
+        }
+    }
+}
+
 void VehicleSimulation::preSubstep(uint32_t step, float dt) {
+    drainReceivedStates();
     for (auto& entry : _vehicles) {
         Vehicle& vehicle = entry.second;
         JPH::Body* body = vehicle.state->getBody();
@@ -442,9 +470,32 @@ void VehicleSimulation::preSubstep(uint32_t step, float dt) {
         if (authority != vehicle.wasAuthority) {
             vehicle.wasAuthority = authority;
             vehicle.history.clear();
+            {
+                std::lock_guard<std::mutex> lock(_inputMutex);
+                vehicle.inputs.reset();
+            }
+            vehicle.lead.reset();
             if (Physics::isServerAuthority() || authority) {
                 qCDebug(physics) << "vehicle" << vehicle.entity->getName() << (authority ? "is simulated here" : "is simulated elsewhere")
                     << (Physics::isServerAuthority() ? "(physics server)" : "");
+            }
+        }
+        bool localDriver = !authority && isLocalDriver(vehicle.state);
+        if (localDriver != vehicle.wasLocalDriver) {
+            vehicle.wasLocalDriver = localDriver;
+            if (localDriver) {
+                // the wheel taken (again): nothing of an earlier drive is kept. A second sit after standing found the
+                // round trips and the lead's window holding the standing time and jumped the clock a second ahead
+                // (round 12); the server aligns its buffer afresh from the first input after a gap, so the sequence
+                // itself need not start over.
+                vehicle.history.clear();
+                vehicle.lead.reset();
+                vehicle.inputSendTimes.clear();
+                vehicle.recent.clear();
+                vehicle.unsent.clear();
+                vehicle.rtt = 0.0f;
+                vehicle.driveStartSequence = vehicle.nextSequence;
+                qCDebug(physics) << "vehicle" << vehicle.entity->getName() << "driven from here from input" << vehicle.nextSequence;
             }
         }
         checkCorrection(vehicle, step);
@@ -460,6 +511,7 @@ void VehicleSimulation::postSubstep(uint32_t step, float dt) {
         _snapshots.clear();
     }
     recordTelemetry();
+    captureStream(step);
     for (auto& entry : _vehicles) {
         Vehicle& vehicle = entry.second;
         if (vehicle.pendingRecord && !vehicle.history.empty()) {
@@ -548,7 +600,7 @@ void VehicleSimulation::recordTelemetry() {
         vehicle.state->getBodyTransform(position, rotation);
         t.speed = glm::dot(vehicle.state->getBodyLinearVelocity(), rotation * FORWARD);
         for (const JPH::Wheel* wheel : vehicle.constraint->GetWheels()) {
-            t.wheelRPM.push_back(wheel->GetAngularVelocity() * 60.0f / (2.0f * (float)M_PI));
+            t.wheelRPM.push_back(wheel->GetAngularVelocity() * 60.0f / TWO_PI);
             t.wheelSlip.push_back(static_cast<const JPH::WheelWV*>(wheel)->mLongitudinalSlip);
             t.suspension.push_back(wheel->GetSuspensionLength());
             t.contact.push_back(wheel->HasContact());
@@ -559,13 +611,21 @@ void VehicleSimulation::recordTelemetry() {
     _telemetry = std::move(t);
 }
 
+// The ring of world snapshots is for rewinding: the driver's reconciliation, and a follower's correction from the
+// relay. A follower on a live stream interpolates and never rewinds, so it needs none.
 bool VehicleSimulation::needsSnapshots() const {
+    quint64 now = usecTimestampNow();
     for (const auto& entry : _vehicles) {
-        if (isBuilt(entry.second) && !isAuthority(entry.second)) {
+        const Vehicle& vehicle = entry.second;
+        if (isBuilt(vehicle) && !isAuthority(vehicle) && (isLocalDriver(vehicle.state) || !streamLive(vehicle, now))) {
             return true;
         }
     }
     return false;
+}
+
+int VehicleSimulation::relayUpdateSteps() {
+    return Physics::isServerAuthority() ? RELAY_UPDATE_STEPS : UPDATE_STEPS;
 }
 
 // Which input this substep applies: the authority takes its driver's (local controls here, or the queue of a remote
@@ -585,21 +645,24 @@ void VehicleSimulation::chooseInput(Vehicle& vehicle, uint32_t step) {
             return;
         }
         std::lock_guard<std::mutex> lock(_inputMutex);
-        if (!vehicle.queue.empty()) {
-            if ((int)vehicle.queue.size() > MAX_QUEUED_INPUTS) {
-                // the driver's clock runs ahead of this one, or a burst arrived: catch up to the last two
-                while (vehicle.queue.size() > 2) {
-                    vehicle.queue.pop_front();
-                    ++_stats.inputsDropped;
-                }
-            }
-            vehicle.applied = vehicle.queue.front();
-            vehicle.queue.pop_front();
+        // the input buffer (round 10): this substep's input is the one the driver's tick names, held from the last
+        // when none arrived for it
+        VehicleInput input;
+        bool taken = vehicle.inputs.take(step, input);
+        // the tick and margin the stream reports; none while the buffer is quiet (a second sit found the margin of the
+        // standing time, hundreds of ticks, clamped to -127 in the first states after the wheel was taken again, and the
+        // driver's lead jumped its clock a second ahead on it, round 12)
+        bool quiet = vehicle.inputs.quiet(step);
+        vehicle.lastTick = quiet ? 0 : vehicle.inputs.tickForStep(step);
+        vehicle.lastMargin = quiet ? 0 : vehicle.inputs.margin(step);
+        _stats.bufferMargin = vehicle.lastMargin;
+        if (taken) {
+            vehicle.applied = input;
             vehicle.lastInputTime = now;
             return;
         }
-        if (vehicle.applied.sequence != 0 && !group.getDriver().isNull()) {
-            ++_stats.inputsStarved;   // the driver's next input is late: hold the last
+        if (vehicle.inputs.aligned() && vehicle.applied.sequence != 0 && !group.getDriver().isNull()) {
+            ++_stats.inputsStarved;   // the driver's input for this substep is not here: hold the last
         }
         if (group.getDriver().isNull() || (vehicle.lastInputTime != 0 && now - vehicle.lastInputTime > DRIVER_SILENCE)) {
             // nobody at the wheel, or the driver has gone quiet: ease off and hold the brake
@@ -625,6 +688,10 @@ void VehicleSimulation::chooseInput(Vehicle& vehicle, uint32_t step) {
         return;
     }
 
+    // a follower on a live stream: the input followStream chose from the states (round 9)
+    if (streamLive(vehicle, now)) {
+        return;
+    }
     // a follower: the authority's last applied input; when the authority has gone quiet (its states are older than
     // the driver-silence limit) the vehicle eases off and holds the brake, as the authority would for a silent driver,
     // rather than driving on with the last input for ever
@@ -722,10 +789,20 @@ void VehicleSimulation::applyModelInput(Vehicle& vehicle, const VehicleInput& in
 
 void VehicleSimulation::checkCorrection(Vehicle& vehicle, uint32_t step) {
     EntityItem::NetworkPose pose = vehicle.entity->getNetworkPose();
-    if (pose.version == vehicle.networkPoseVersion) {
+    bool newPose = pose.version != vehicle.networkPoseVersion;
+    vehicle.networkPoseVersion = pose.version;
+    if (!isAuthority(vehicle) && streamLive(vehicle, usecTimestampNow())) {
+        // the stream carries the authority's state (round 9); the relay's pose, older, is not used while it is live
+        if (isLocalDriver(vehicle.state)) {
+            reconcileStream(vehicle, step);
+        } else {
+            followStream(vehicle, step);
+        }
         return;
     }
-    vehicle.networkPoseVersion = pose.version;
+    if (!newPose) {
+        return;
+    }
     if (isAuthority(vehicle)) {
         // (before its first update the authority cannot tell its own bid echoed from an edit: nothing is adopted)
         // (and the teleport it last took, delivered again while the entity server holds it, is the same edit)
@@ -777,11 +854,186 @@ void VehicleSimulation::checkCorrection(Vehicle& vehicle, uint32_t step) {
         return;   // no state, or one already adopted
     }
     vehicle.lastStateTime = stateTime;
+    vehicle.extrapolating = true;   // a follower: the next stream placement, if the stream comes back, blends from here
+    VehicleState state = stateFromRelay(vehicle);
     if (isLocalDriver(vehicle.state)) {
-        correctDriver(vehicle, pose, step);
+        correctDriver(vehicle, state, step, DRIVER_BLEND_TIME);
     } else {
-        correctFollower(vehicle, pose, step);
+        correctFollower(vehicle, state, step);
     }
+}
+
+// The entity's relayed state (the round 6 path): the pose the entity server delivered and the vehicle group's state,
+// its domain time made local.
+VehicleState VehicleSimulation::stateFromRelay(const Vehicle& vehicle) const {
+    const VehiclePropertyGroup& group = vehicle.entity->getVehicleProperties();
+    EntityItem::NetworkPose pose = vehicle.entity->getNetworkPose();
+    VehicleState s;
+    s.id = vehicle.entity->getID();
+    s.time = group.getStateTime() ? TrackSimulation::localTime(group.getStateTime()) : 0;
+    s.position = pose.position;
+    s.rotation = pose.rotation;
+    s.velocity = pose.velocity;
+    s.angularVelocity = pose.angularVelocity;
+    s.input = inputFromState(group);
+    s.engineRPM = group.getEngineRPM();
+    s.gear = (int8_t)group.getGear();
+    s.ballast = group.getBallast();
+    s.fill = group.getFill();
+    s.tilt = group.getTilt();
+    return s;
+}
+
+// The authority's own state after a substep, for the stream.
+VehicleState VehicleSimulation::stateFromBody(const Vehicle& vehicle, uint32_t step) const {
+    VehicleState s;
+    s.id = vehicle.entity->getID();
+    s.time = ObjectMotionState::getSubstepTime();
+    s.step = step;
+    vehicle.state->getBodyTransform(s.position, s.rotation);
+    s.velocity = vehicle.state->getBodyLinearVelocity();
+    s.angularVelocity = vehicle.state->getBodyAngularVelocity();
+    s.input = vehicle.applied;
+    if (JPH::WheeledVehicleController* controller = controllerOf(vehicle.constraint)) {
+        s.engineRPM = controller->GetEngine().GetCurrentRPM();
+        s.gear = (int8_t)controller->GetTransmission().GetCurrentGear();
+    }
+    s.ballast = vehicle.airshipState.ballast;
+    s.fill = vehicle.airshipState.fill;
+    s.tilt = vehicle.aircraftState.tilt;
+    s.tick = vehicle.lastTick;
+    s.margin = (int8_t)glm::clamp(vehicle.lastMargin, -127, 127);
+    return s;
+}
+
+// The server's side of the stream: every STREAM_STEPS substeps, the state of every vehicle it simulates, to go out
+// from sendStream.
+void VehicleSimulation::captureStream(uint32_t step) {
+    if (!Physics::isServerAuthority() || step % STREAM_STEPS != 0) {
+        return;
+    }
+    _pendingStream.clear();
+    for (auto& entry : _vehicles) {
+        Vehicle& vehicle = entry.second;
+        JPH::Body* body = vehicle.state->getBody();
+        if (!isBuilt(vehicle) || !isAuthority(vehicle) || !body) {
+            continue;
+        }
+        // a parked vehicle (its body asleep) is streamed for a second more, then not at all: its followers keep the
+        // last state, and the first state after it wakes blends from there
+        if (body->IsActive()) {
+            vehicle.lastActiveStep = step;
+        } else if (vehicle.lastActiveStep == 0 || step > vehicle.lastActiveStep + STREAM_PARKED_STEPS) {
+            continue;
+        }
+        _pendingStream.push_back(stateFromBody(vehicle, step));
+    }
+}
+
+// A follower on the stream (snapshot interpolation, PHYSICS.md 4.6): the vehicle is shown a little behind the newest
+// state, the body placed every substep on the line between the two states that bracket that time, so it moves as the
+// authority's did; when no state is past the shown time yet (a late or lost packet) the body runs on under the model
+// from where it is, with the newest input, and the first placement after that blends the difference away.
+void VehicleSimulation::followStream(Vehicle& vehicle, uint32_t step) {
+    SnapshotBuffer& buffer = vehicle.snapshots;
+    if (buffer.empty()) {
+        return;
+    }
+    quint64 substepTime = ObjectMotionState::getSubstepTime();
+    quint64 now = substepTime ? substepTime : usecTimestampNow();
+    quint64 delay = (quint64)(buffer.delay() * (float)USECS_PER_SECOND);
+    quint64 shownTime = now > delay ? now - delay : 0;
+    _stats.delayMs = buffer.delay() * 1000.0f;
+    _stats.streamIntervalMs = buffer.interval() * 1000.0f;
+    _stats.streamJitterMs = buffer.jitter() * 1000.0f;
+    VehicleState s;
+    if (!buffer.sample(shownTime, s)) {
+        ++_stats.streamExtrapolations;
+        vehicle.applied = buffer.newest().input;
+        vehicle.extrapolating = true;
+        return;
+    }
+    glm::vec3 shownPosition = vehicle.entity->getWorldPosition();
+    glm::quat shownRotation = vehicle.entity->getWorldOrientation();
+    glm::vec3 before;
+    glm::quat beforeRotation;
+    vehicle.state->getBodyTransform(before, beforeRotation);
+    setBodyState(vehicle, s.position, s.rotation, s.velocity, s.angularVelocity);
+    setInternalState(vehicle, s);
+    vehicle.applied = s.input;
+    if (vehicle.extrapolating) {
+        float error = glm::distance(before, s.position);
+        if (error > REPLAY_POSITION_THRESHOLD) {
+            ++_stats.corrections;
+            _stats.lastError = error;
+            _stats.maxError = glm::max(_stats.maxError, error);
+        }
+        smooth(vehicle, shownPosition, shownRotation, OTHERS_BLEND_TIME);
+        vehicle.extrapolating = false;
+    }
+}
+
+// The driver on the stream: every new state is an acknowledgement of an input, reconciled against the record of that
+// input (correctDriver), the residual blended over the measured round trip rather than a fixed time.
+void VehicleSimulation::reconcileStream(Vehicle& vehicle, uint32_t step) {
+    SnapshotBuffer& buffer = vehicle.snapshots;
+    if (buffer.empty() || buffer.newest().time <= vehicle.lastStreamTime) {
+        return;
+    }
+    const VehicleState newest = buffer.newest();
+    vehicle.lastStreamTime = newest.time;
+    quint64 now = usecTimestampNow();
+    uint32_t ack = newest.tick != 0 ? newest.tick : newest.input.sequence;
+    // a state acked outside what this sit has sent says nothing about its lead or round trip: before its first input, or
+    // past its newest (the server's tick under an alignment the sit's first input then replaces)
+    bool thisDrive = (int32_t)(ack - vehicle.driveStartSequence) >= 0 && (int32_t)(ack - vehicle.nextSequence) < 0;
+    if (thisDrive) {
+        noteRoundTrip(vehicle, ack, now);
+    }
+    correctDriver(vehicle, newest, step, driverBlendTime(vehicle));
+    if (newest.tick != 0 && thisDrive) {
+        // the lead (round 10): the server's margin at that substep, and a shift of this client's ticks when the least
+        // over a window says so: a few ticks by time dilation, a stall's worth by a jump of the counter
+        double t = (double)now * 1.0e-6;
+        vehicle.lead.note(newest.margin, t);
+        _stats.bufferMargin = newest.margin;
+        int shift = vehicle.lead.shift(t);
+        if (shift != 0) {
+            ++_stats.leadShifts;
+            if (LeadController::isJump(shift)) {
+                ++_stats.leadJumps;
+                vehicle.nextSequence += (uint32_t)shift;
+                qCDebug(physics) << "vehicle" << vehicle.entity->getName() << "lead: jumped" << shift << "ticks ahead (the least margin"
+                    << vehicle.lead.lastMinimum() << ")";
+            } else if (_engine) {
+                _engine->requestTimeShift((float)shift * PHYSICS_ENGINE_FIXED_SUBSTEP);
+                qCDebug(physics) << "vehicle" << vehicle.entity->getName() << "lead: shifting" << shift << "ticks by time dilation (the least margin"
+                    << vehicle.lead.lastMinimum() << ")";
+            }
+        }
+    }
+    _stats.timeShiftMs = _engine ? _engine->getTimeShiftPending() * 1000.0f : 0.0f;
+}
+
+// The round trip from an input's first sending to the state that acknowledges it, smoothed.
+void VehicleSimulation::noteRoundTrip(Vehicle& vehicle, uint32_t ack, quint64 now) {
+    quint64 sentAt = 0;
+    while (!vehicle.inputSendTimes.empty() && vehicle.inputSendTimes.front().first <= ack) {
+        if (vehicle.inputSendTimes.front().first == ack) {
+            sentAt = vehicle.inputSendTimes.front().second;
+        }
+        vehicle.inputSendTimes.pop_front();
+    }
+    if (sentAt == 0 || now < sentAt) {
+        return;
+    }
+    float sample = (float)(now - sentAt) * 1.0e-6f;
+    vehicle.rtt = vehicle.rtt > 0.0f ? vehicle.rtt + RTT_SMOOTHING * (sample - vehicle.rtt) : sample;
+    _stats.rttMs = vehicle.rtt * 1000.0f;
+}
+
+float VehicleSimulation::driverBlendTime(const Vehicle& vehicle) const {
+    return vehicle.rtt > 0.0f ? glm::clamp(vehicle.rtt, DRIVER_BLEND_MIN, DRIVER_BLEND_MAX) : DRIVER_BLEND_TIME;
 }
 
 // Whether a pose is one this authority published lately (its own update, echoed) or a stranger's. The entity server
@@ -813,33 +1065,33 @@ void VehicleSimulation::setBodyState(Vehicle& vehicle, const glm::vec3& position
     bodies.SetLinearAndAngularVelocity(vehicle.bodyID, glmToJolt(velocity), glmToJolt(angularVelocity));
 }
 
-void VehicleSimulation::setInternalState(Vehicle& vehicle) {
-    const VehiclePropertyGroup& group = vehicle.entity->getVehicleProperties();
+void VehicleSimulation::setInternalState(Vehicle& vehicle, const VehicleState& state) {
     if (vehicle.aircraft) {
-        vehicle.aircraftState.tilt = glm::clamp(group.getTilt(), 0.0f, 1.0f);
+        vehicle.aircraftState.tilt = glm::clamp(state.tilt, 0.0f, 1.0f);
         return;
     }
     if (vehicle.airship) {
         // the author's ballast and fill the first time, the authority's after
-        vehicle.airshipState.ballast = glm::max(0.0f, group.getBallast());
-        vehicle.airshipState.fill = glm::clamp(group.getFill(), 0.0f, 1.0f);
+        vehicle.airshipState.ballast = glm::max(0.0f, state.ballast);
+        vehicle.airshipState.fill = glm::clamp(state.fill, 0.0f, 1.0f);
         return;
     }
     JPH::WheeledVehicleController* controller = controllerOf(vehicle.constraint);
     if (!controller) {
         return;
     }
-    if (group.getStateTime() != 0) {
-        controller->GetEngine().SetCurrentRPM(group.getEngineRPM());
-        controller->GetTransmission().Set(group.getGear(), 1.0f);
+    if (state.time != 0) {
+        controller->GetEngine().SetCurrentRPM(state.engineRPM);
+        controller->GetTransmission().Set(state.gear, 1.0f);
     }
 }
 
 // The driver's reconciliation: the record for the sequence the authority reached is compared with its state; within the
 // thresholds the prediction stands, else the world is rewound to that substep and the inputs since are replayed.
-void VehicleSimulation::correctDriver(Vehicle& vehicle, const EntityItem::NetworkPose& pose, uint32_t step) {
-    const VehiclePropertyGroup& group = vehicle.entity->getVehicleProperties();
-    uint32_t ack = group.getInputSequence();
+void VehicleSimulation::correctDriver(Vehicle& vehicle, const VehicleState& pose, uint32_t step, float blendTime) {
+    // the record to compare: the tick the state's substep applied (round 10's buffer, which may have held an older
+    // input for it), or, from a relay or a server without the buffer, the input it applied
+    uint32_t ack = pose.tick != 0 ? pose.tick : pose.input.sequence;
     const Record* acked = nullptr;
     for (auto it = vehicle.history.rbegin(); it != vehicle.history.rend(); ++it) {
         if (it->sequence == ack) {
@@ -855,6 +1107,17 @@ void VehicleSimulation::correctDriver(Vehicle& vehicle, const EntityItem::Networ
         correctFollower(vehicle, pose, step);
         return;
     }
+    if (glm::length2(pose.position - acked->position) > 1.0e6f) {
+        // a thousand metres off: not a state of this flight (an echo of an old pose through the relay, round 9's
+        // baseline saw 1.35 km); taken as the follower would, logged, never replayed through
+        qCDebug(physics) << "vehicle" << vehicle.entity->getName() << "state" << glm::distance(pose.position, acked->position)
+            << "m from the prediction at input" << ack << ": adopted outright";
+        setBodyState(vehicle, pose.position, pose.rotation, pose.velocity, pose.angularVelocity);
+        setInternalState(vehicle, pose);
+        vehicle.history.clear();
+        vehicle.state->setCorrection(glm::vec3(0.0f), glm::quat(), 0.0f);
+        return;
+    }
     float error = glm::distance(acked->position, pose.position);
     float angle = angleBetween(acked->rotation, pose.rotation);
     if (error < REPLAY_POSITION_THRESHOLD && angle < REPLAY_ANGLE_THRESHOLD) {
@@ -864,6 +1127,26 @@ void VehicleSimulation::correctDriver(Vehicle& vehicle, const EntityItem::Networ
     _stats.lastError = error;
     _stats.maxError = glm::max(_stats.maxError, error);
 
+    // every correction, for the parity measurement (PHYSICS.md round 9, item 3): the error in the vehicle's own axes
+    // (right, up, forward), the speed, the height above whatever is below, so a log can tell a timing error (along the
+    // velocity) from a ground one (up, near the ground)
+    {
+        glm::vec3 delta = pose.position - acked->position;
+        glm::vec3 local = glm::inverse(acked->rotation) * delta;
+        float height = -1.0f;
+        if (PhysicsWorld* world = rootWorld()) {
+            RayHit hit;
+            glm::vec3 start = acked->position - glm::vec3(0.0f, 1.0f, 0.0f);
+            if (world->castRayClosest(start, start - glm::vec3(0.0f, 200.0f, 0.0f), BULLET_COLLISION_GROUP_DYNAMIC,
+                                      BULLET_COLLISION_MASK_DYNAMIC, nullptr, hit)) {
+                height = 1.0f + hit.fraction * 200.0f;
+            }
+        }
+        qCDebug(physics) << "parity" << vehicle.entity->getName() << "input" << ack << "error" << error << "m right" << local.x
+            << "up" << local.y << "forward" << -local.z << "angle" << glm::degrees(angle) << "deg; speed"
+            << glm::length(acked->velocity) << "m/s, height" << height << "m, y" << acked->position.y;
+    }
+
     glm::vec3 shownPosition = vehicle.entity->getWorldPosition();
     glm::quat shownRotation = vehicle.entity->getWorldOrientation();
     uint32_t fromStep = acked->step;
@@ -871,7 +1154,7 @@ void VehicleSimulation::correctDriver(Vehicle& vehicle, const EntityItem::Networ
     if (toStep < fromStep || toStep - fromStep > (uint32_t)MAX_REPLAY_STEPS) {
         // too far back to replay: take the state and run on from it
         setBodyState(vehicle, pose.position, pose.rotation, pose.velocity, pose.angularVelocity);
-        setInternalState(vehicle);
+        setInternalState(vehicle, pose);
     } else {
         std::map<uint32_t, VehicleInput> inputs;
         for (const Record& record : vehicle.history) {
@@ -888,15 +1171,14 @@ void VehicleSimulation::correctDriver(Vehicle& vehicle, const EntityItem::Networ
     }
     if (error > 0.25f || angle > 0.17f) {
         qCDebug(physics) << "vehicle" << vehicle.entity->getName() << "corrected by" << error << "m" << glm::degrees(angle)
-            << "deg at input" << ack << "(" << (toStep - fromStep) << "substeps replayed)";
+            << "deg at input" << ack << "(" << (toStep - fromStep) << "substeps replayed, blend" << blendTime << "s)";
     }
-    smooth(vehicle, shownPosition, shownRotation, DRIVER_BLEND_TIME);
+    smooth(vehicle, shownPosition, shownRotation, blendTime);
 }
 
 // Everyone else: rewind to the state's time and run the same vehicle on from it with the authority's last inputs.
-void VehicleSimulation::correctFollower(Vehicle& vehicle, const EntityItem::NetworkPose& pose, uint32_t step) {
-    const VehiclePropertyGroup& group = vehicle.entity->getVehicleProperties();
-    quint64 stateLocalTime = TrackSimulation::localTime(group.getStateTime());
+void VehicleSimulation::correctFollower(Vehicle& vehicle, const VehicleState& pose, uint32_t step) {
+    quint64 stateLocalTime = pose.time;
     glm::vec3 shownPosition = vehicle.entity->getWorldPosition();
     glm::quat shownRotation = vehicle.entity->getWorldOrientation();
     glm::vec3 bodyPosition;
@@ -915,9 +1197,9 @@ void VehicleSimulation::correctFollower(Vehicle& vehicle, const EntityItem::Netw
             rotation = glm::normalize(computeBulletRotationStep(pose.angularVelocity, age) * rotation);
         }
         setBodyState(vehicle, position, rotation, pose.velocity, pose.angularVelocity);
-        setInternalState(vehicle);
+        setInternalState(vehicle, pose);
     } else {
-        VehicleInput input = inputFromState(group);
+        VehicleInput input = pose.input;
         replay(vehicle, pose, snapshot->step, toStep, [&](uint32_t) { return input; });
     }
     float error = glm::distance(bodyPosition, shownPosition);
@@ -935,7 +1217,7 @@ void VehicleSimulation::correctFollower(Vehicle& vehicle, const EntityItem::Netw
 
 // Rewind: the other bodies back to the snapshot after fromStep, the vehicle to the authority's state; then every
 // substep up to toStep again, with the inputs the caller names, re-recording the driver's history and the snapshots.
-void VehicleSimulation::replay(Vehicle& vehicle, const EntityItem::NetworkPose& pose, uint32_t fromStep, uint32_t toStep,
+void VehicleSimulation::replay(Vehicle& vehicle, const VehicleState& pose, uint32_t fromStep, uint32_t toStep,
                                const std::function<VehicleInput(uint32_t)>& inputAt) {
     PhysicsWorld* world = rootWorld();
     if (!world || !isBuilt(vehicle)) {
@@ -946,7 +1228,7 @@ void VehicleSimulation::replay(Vehicle& vehicle, const EntityItem::NetworkPose& 
         world->restoreBodies(snapshot->bodies, JPH::BodyID());
     }
     setBodyState(vehicle, pose.position, pose.rotation, pose.velocity, pose.angularVelocity);
-    setInternalState(vehicle);
+    setInternalState(vehicle, pose);
 
     for (uint32_t s = fromStep + 1; s <= toStep; ++s) {
         VehicleInput input = inputAt(s);
@@ -1102,10 +1384,15 @@ void VehicleSimulation::sendInputs() {
             vehicle.unsent.clear();
             continue;
         }
+        quint64 now = usecTimestampNow();
         for (const VehicleInput& input : vehicle.unsent) {
             vehicle.recent.push_back(input);
+            vehicle.inputSendTimes.push_back({ input.sequence, now });   // its first sending, for the round trip
         }
         vehicle.unsent.clear();
+        while (vehicle.inputSendTimes.size() > 256) {
+            vehicle.inputSendTimes.pop_front();
+        }
         while ((int)vehicle.recent.size() > VehicleInputPacket::MAX_INPUTS) {
             vehicle.recent.erase(vehicle.recent.begin());
         }
@@ -1138,18 +1425,125 @@ void VehicleSimulation::receiveInputs(const QUuid& vehicleID, const QUuid& sende
     }
     std::lock_guard<std::mutex> lock(_inputMutex);
     if (vehicle.queueDriver != sender) {
-        // a new driver counts from one again
+        // a new driver: aligned afresh from its first input
         vehicle.queueDriver = sender;
-        vehicle.queue.clear();
-        vehicle.lastQueuedSequence = 0;
+        vehicle.inputs.reset();
     }
+    uint32_t step = ObjectMotionState::getWorldSimulationStep();
+    int realigned = vehicle.inputs.counts().realigned;
     for (const VehicleInput& input : inputs) {
-        if (input.sequence > vehicle.lastQueuedSequence) {
-            vehicle.queue.push_back(input);
-            vehicle.lastQueuedSequence = input.sequence;
-            ++_stats.inputsReceived;
+        switch (vehicle.inputs.push(input, step)) {
+            case InputBuffer::Push::Stored:
+                ++_stats.inputsReceived;
+                break;
+            case InputBuffer::Push::Late:
+                ++_stats.inputsLate;
+                ++_stats.inputsDropped;
+                break;
+            case InputBuffer::Push::Early:
+                ++_stats.inputsEarly;
+                ++_stats.inputsDropped;
+                break;
+            case InputBuffer::Push::Duplicate:
+                break;
         }
     }
+    if (vehicle.inputs.counts().realigned != realigned) {
+        _stats.bufferRealigned += vehicle.inputs.counts().realigned - realigned;
+        qCDebug(physics) << "vehicle" << vehicle.entity->getName() << "input buffer aligned again at tick" << inputs.front().sequence
+            << "(late" << vehicle.inputs.counts().late << "early" << vehicle.inputs.counts().early << "held" << vehicle.inputs.counts().holds << ")";
+    }
+}
+
+// The stream's packets (round 9)
+
+void VehicleSimulation::receiveStates(const std::vector<VehicleState>& states, qint64 clockSkew, quint64 arrivalTime) {
+    std::lock_guard<std::mutex> lock(_streamMutex);
+    for (VehicleState state : states) {
+        state.time = (quint64)((qint64)state.time - clockSkew);   // the server's clock to this one's
+        _receivedStates.push_back({ state, arrivalTime });
+    }
+}
+
+void VehicleSimulation::receiveStateRequest(const QUuid& node, const std::vector<QUuid>& vehicleIDs) {
+    std::lock_guard<std::mutex> lock(_streamMutex);
+    Subscriber& subscriber = _subscribers[node];
+    subscriber.vehicles = std::set<QUuid>(vehicleIDs.begin(), vehicleIDs.end());
+    subscriber.time = usecTimestampNow();
+}
+
+// The server: the captured states to each subscriber, those of the vehicles it asked for, unreliable.
+void VehicleSimulation::sendStream() {
+    if (_pendingStream.empty()) {
+        return;
+    }
+    std::vector<VehicleState> states;
+    states.swap(_pendingStream);
+    auto nodeList = DependencyManager::get<NodeList>();
+    if (!nodeList) {
+        return;
+    }
+    quint64 now = usecTimestampNow();
+    std::map<QUuid, Subscriber> subscribers;
+    {
+        std::lock_guard<std::mutex> lock(_streamMutex);
+        for (auto it = _subscribers.begin(); it != _subscribers.end();) {
+            if (now > it->second.time + SUBSCRIPTION_TIMEOUT) {
+                it = _subscribers.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        subscribers = _subscribers;
+    }
+    _stats.streamSubscribers = (int)subscribers.size();
+    for (const auto& entry : subscribers) {
+        SharedNodePointer node = nodeList->nodeWithUUID(entry.first);
+        if (!node || !node->getActiveSocket()) {
+            continue;
+        }
+        std::vector<VehicleState> wanted;
+        for (const VehicleState& state : states) {
+            if (entry.second.vehicles.find(state.id) != entry.second.vehicles.end()) {
+                wanted.push_back(state);
+            }
+        }
+        for (size_t first = 0; first < wanted.size(); first += VehicleStatePacket::MAX_STATES) {
+            std::vector<VehicleState> batch(wanted.begin() + first,
+                                            wanted.begin() + std::min(wanted.size(), first + (size_t)VehicleStatePacket::MAX_STATES));
+            QByteArray payload = VehicleStatePacket::pack(batch);
+            auto packet = NLPacket::create(PacketType::VehicleState, payload.size());
+            packet->write(payload);
+            nodeList->sendUnreliablePacket(*packet, *node);
+            _stats.streamStatesSent += (int)batch.size();
+        }
+    }
+}
+
+// A client: the vehicles it simulates, to the physics server, once a second and when the set changes.
+void VehicleSimulation::sendStateRequests() {
+    if (Physics::isServerAuthority() || _serverless || _vehicles.empty()) {
+        return;
+    }
+    quint64 now = usecTimestampNow();
+    if (_vehicles.size() == _lastRequestCount && now < _lastRequestTime + SUBSCRIPTION_INTERVAL) {
+        return;
+    }
+    auto nodeList = DependencyManager::get<NodeList>();
+    SharedNodePointer server = nodeList ? nodeList->soloNodeOfType(NodeType::PhysicsServer) : nullptr;
+    if (!server || !server->getActiveSocket()) {
+        return;
+    }
+    std::vector<QUuid> ids;
+    for (const auto& entry : _vehicles) {
+        ids.push_back(entry.second.entity->getID());
+    }
+    QByteArray payload = VehicleStateRequestPacket::pack(ids);
+    auto packet = NLPacket::create(PacketType::VehicleStateRequest, payload.size());
+    packet->write(payload);
+    nodeList->sendUnreliablePacket(*packet, *server);
+    _lastRequestTime = now;
+    _lastRequestCount = _vehicles.size();
 }
 
 void VehicleSimulation::fillState(EntityMotionState* state, EntityItemProperties& properties) {

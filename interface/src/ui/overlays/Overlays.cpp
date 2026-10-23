@@ -776,7 +776,6 @@ QUuid Overlays::addOverlay(const QString& type, const QVariant& properties) {
     }
 
     if (type == ImageOverlay::TYPE || type == TextOverlay::TYPE || type == RectangleOverlay::TYPE) {
-#if !defined(DISABLE_QML)
         if (QThread::currentThread() != thread()) {
             QUuid result;
             PROFILE_RANGE(script, __FUNCTION__);
@@ -796,7 +795,6 @@ QUuid Overlays::addOverlay(const QString& type, const QVariant& properties) {
             overlay->setProperties(properties.toMap());
             return add2DOverlay(overlay);
         }
-#endif
         return QUuid();
     }
 

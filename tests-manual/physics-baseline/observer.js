@@ -27,7 +27,9 @@
     // where to stand, which way to walk aboard, how to tell one is aboard, and which way off: round 3's cabin is
     // boarded from behind; a mover may say otherwise in the cabin's userData ({"boarding": {...}}, see track.js)
     var boarding = { spot: PLATFORM_SPOT, direction: { x: 0, y: 0, z: -1 }, axis: "z", limit: ABOARD_Z, off: { x: 0, y: 0, z: 1 } };
-    var TIMEOUT = 150;            // s, the whole run
+    var TIMEOUT = 150;            // s, from the cabin's appearance (the world can take 90 s to load on a cold cache under loss)
+    var MAX_WAIT = 300;           // s, for the cabin to appear at all
+    var cabinSeenT0 = -1;
 
     var cabin = null;
     var mode = "waiting";         // waiting, arriving, stepping-on, riding, stepping-off, ground
@@ -297,13 +299,14 @@
 
     var lastPoll = 0;
     function onUpdate(dt) {
-        if (now() > TIMEOUT) { finish("timeout"); return; }
+        if (now() > (cabinSeenT0 >= 0 ? cabinSeenT0 + TIMEOUT : MAX_WAIT)) { finish("timeout"); return; }
         if (mode === "waiting") {
             if (now() - lastPoll < 0.1) { return; }
             lastPoll = now();
             cabin = findCabin();
             if (cabin) {
                 log("cabin " + cabin + " seen at " + now().toFixed(2) + " s");
+                if (cabinSeenT0 < 0) { cabinSeenT0 = now(); }
                 try {
                     var said = JSON.parse(Entities.getEntityProperties(cabin, ["userData"]).userData || "{}");
                     if (said.boarding) {

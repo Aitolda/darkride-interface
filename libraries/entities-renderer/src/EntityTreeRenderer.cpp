@@ -15,6 +15,7 @@
 #include <queue>
 
 #include <QEventLoop>
+#include <QProcessEnvironment>
 #include <QScriptSyntaxCheckResult>
 #include <QThreadPool>
 #include <QSet>
@@ -223,19 +224,33 @@ void EntityTreeRenderer::stopDomainAndNonOwnedEntities() {
     // unload and stop the engine
     if (_entitiesScriptEngine) {
         QList<EntityItemID> entitiesWithEntityScripts = _entitiesScriptEngine->getListOfEntityScriptIDs();
+        int unloaded = 0, unloadedGone = 0, kept = 0;
 
         foreach (const EntityItemID& entityID,  entitiesWithEntityScripts) {
             EntityItemPointer entityItem = getTree()->findEntityByEntityItemID(entityID);
 
-            if (entityItem && !entityItem->getScript().isEmpty()) {
+            // a script whose entity is no longer in the tree is a domain entity's (local and avatar entities stay): it
+            // goes too, or it runs on with no entity (Tivoli Town's hideByDistance.js after a Cancel, 10-22)
+            if (!entityItem) {
+                _entitiesScriptEngine->unloadEntityScript(entityID, true);
+                unloadedGone++;
+                continue;
+            }
+            if (!entityItem->getScript().isEmpty()) {
                 if (!(entityItem->isLocalEntity() || entityItem->isMyAvatarEntity())) {
                     if (_currentEntitiesInside.contains(entityID)) {
                         _entitiesScriptEngine->callEntityScriptMethod(entityID, "leaveEntity");
                     }
                     _entitiesScriptEngine->unloadEntityScript(entityID, true);
+                    unloaded++;
+                } else {
+                    kept++;
                 }
             }
         }
+        qCDebug(entitiesrenderer) << "leaving the world's entities: of" << entitiesWithEntityScripts.size()
+                                 << "entity scripts listed," << unloaded << "unloaded," << unloadedGone
+                                 << "unloaded whose entities were already gone," << kept << "kept (local or avatar)";
     }
 }
 
@@ -268,6 +283,12 @@ void EntityTreeRenderer::clearDomainAndNonOwnedEntities() {
     }
 
     OctreeProcessor::clearDomainAndNonOwnedEntities();
+
+    // the world's entities are erased now: a script that started on the script thread since the unloads above were
+    // asked for (a load queued before the world was left) is unloaded after them
+    if (_entitiesScriptEngine) {
+        _entitiesScriptEngine->unloadEntityScriptsOfGoneEntities();
+    }
 }
 
 void EntityTreeRenderer::clear() {
@@ -309,6 +330,10 @@ void EntityTreeRenderer::clear() {
     _renderablesToUpdate.clear();
     _priorityRenderablesToUpdate.clear();
     _staticRenderablesToUpdate.clear();
+    {
+        std::lock_guard<std::mutex> lock(_deferredModelMeshesLock);
+        _deferredModelMeshes.clear();
+    }
     _layeredZones.clear();
 
     if (!_shuttingDown) {
@@ -405,6 +430,17 @@ void EntityTreeRenderer::addPendingEntities(const render::ScenePointer& scene, r
             }
 
             auto entityID = entity->getEntityItemID();
+            // One renderer per entity: an entity can be asked for again after its renderer was made (SafeLanding asks
+            // for a renderer for a nearby entity that has none yet, and then the tree's own queued addingEntity comes
+            // in). A second renderer was not kept in _entitiesInScene, yet its first update gave the entity its own
+            // model, so the kept renderer's model was never readied or added and neither drew: Tivoli Town's ground,
+            // cliffs and grass, one arrival in three (2026-10-22)
+            auto existing = _entitiesInScene.find(entityID);
+            if (existing != _entitiesInScene.end() && existing->second && existing->second->getEntity() == entity) {
+                qCDebug(entitiesrenderer) << "not making a second renderer for" << entity->getName() << entityID;
+                processedIds.insert(entityID);
+                continue;
+            }
             auto renderable = EntityRenderer::addToScene(*this, entity, scene, transaction);
             if (renderable) {
                 _entitiesInScene.insert({ entityID, renderable });
@@ -430,7 +466,9 @@ void EntityTreeRenderer::updateChangedEntities(const render::ScenePointer& scene
     });
     // bool selectionPriority = false;
 
-    _renderablesToUpdate.clear();
+    // the renderables the last frame's time budget left over stay for this one, as High Fidelity had it (the sort below
+    // ages them up): cleared here from 2020 on, they were lost, and a far model put off while its textures loaded was
+    // never updated again (Tivoli Town's far trees on arrival, 2026-10-21)
     _priorityRenderablesToUpdate.clear();
 
     {   // build list of renderables and priority renderables. 
@@ -571,6 +609,15 @@ void EntityTreeRenderer::updateChangedEntities(const render::ScenePointer& scene
                     _renderablesToUpdate.erase(renderable);
                 }
 
+                // TIVOLI_UPDATE_DIAG in the environment: a log line a second while the budget leaves renderables over
+                static const bool UPDATE_DIAG = QProcessEnvironment::systemEnvironment().contains("TIVOLI_UPDATE_DIAG");
+                static uint64_t lastUpdateDiag = 0;
+                if (UPDATE_DIAG && !_renderablesToUpdate.empty() && updateStart - lastUpdateDiag > USECS_PER_SECOND) {
+                    lastUpdateDiag = updateStart;
+                    qCDebug(entitiesrenderer) << "renderable updates:" << _renderablesToUpdate.size() << "of"
+                        << sortedRenderables.size() << "left for the next frame (budget" << timeBudget << "us)";
+                }
+
                 // compute average per-renderable update cost
                 _prevNumEntityUpdates = sortedRenderables.size() - _renderablesToUpdate.size();
                 size_t numUpdated = _prevNumEntityUpdates + 1; // add one to avoid divide by zero
@@ -580,6 +627,65 @@ void EntityTreeRenderer::updateChangedEntities(const render::ScenePointer& scene
             }
         }
         MeshPartPayload::sceneIsReady = true;
+    }
+}
+
+void EntityTreeRenderer::deferModelMesh(const EntityItemID& id, const glm::vec3& centerWS, float radius) {
+    std::lock_guard<std::mutex> lock(_deferredModelMeshesLock);
+    auto& entry = _deferredModelMeshes[id];
+    entry.center = centerWS;
+    entry.radius = radius;
+    entry.wake = false;
+}
+
+void EntityTreeRenderer::undeferModelMesh(const EntityItemID& id) {
+    std::lock_guard<std::mutex> lock(_deferredModelMeshesLock);
+    _deferredModelMeshes.erase(id);
+}
+
+void EntityTreeRenderer::wakeDeferredModelMesh(const EntityItemID& id) {
+    std::lock_guard<std::mutex> lock(_deferredModelMeshesLock);
+    auto itr = _deferredModelMeshes.find(id);
+    if (itr != _deferredModelMeshes.end()) {
+        itr->second.wake = true;
+    }
+}
+
+void EntityTreeRenderer::setImpostorLoadView(const glm::vec3& cameraPosition, float loadHalfTanSq) {
+    _impostorLoadPosition = cameraPosition;
+    _impostorLoadHalfTanSq = loadHalfTanSq;
+}
+
+// The waiting meshes whose time has come update now, whatever their entity's update priority; each one's renderer
+// decides again, starts its download or puts it back here (ModelEntityRenderer::doRenderUpdateSynchronousTyped).
+// One distance test each per frame.
+void EntityTreeRenderer::updateDeferredModelMeshes(const render::ScenePointer& scene, render::Transaction& transaction) {
+    std::vector<EntityItemID> due;
+    {
+        std::lock_guard<std::mutex> lock(_deferredModelMeshesLock);
+        for (auto itr = _deferredModelMeshes.begin(); itr != _deferredModelMeshes.end();) {
+            const auto& entry = itr->second;
+            glm::vec3 toCamera = _impostorLoadPosition - entry.center;
+            float distanceSq = glm::dot(toCamera, toCamera);
+            float radiusSq = entry.radius * entry.radius;
+            if (entry.wake || _impostorLoadHalfTanSq <= 0.0f || distanceSq <= radiusSq ||
+                radiusSq >= _impostorLoadHalfTanSq * distanceSq) {
+                due.push_back(itr->first);
+                itr = _deferredModelMeshes.erase(itr);
+            } else {
+                ++itr;
+            }
+        }
+    }
+    if (!due.empty()) {
+        qCDebug(entitiesrenderer) << "impostor stand-in:" << due.size() << "waiting meshes woken";
+    }
+    for (const auto& id : due) {
+        auto renderable = renderableForEntityId(id);
+        if (renderable) {
+            renderable->getEntity()->setNeedsRenderUpdate(true);
+            renderable->updateInScene(scene, transaction);
+        }
     }
 }
 
@@ -609,6 +715,7 @@ void EntityTreeRenderer::update(bool simulate) {
                 render::Transaction transaction;
                 addPendingEntities(scene, transaction);
                 updateChangedEntities(scene, transaction);
+                updateDeferredModelMeshes(scene, transaction);
                 scene->enqueueTransaction(transaction);
             }
         }
@@ -747,8 +854,11 @@ void EntityTreeRenderer::setZoneCullingSuspended(bool suspended) {
     _refreshAllRenderables = true;
 }
 
-void EntityTreeRenderer::evaluateZoneCullingStack() {  
-    if (_zoneCullingStack != _prevZoneCullingStack) QMetaObject::invokeMethod(qApp, "requeryOctree"); 
+void EntityTreeRenderer::evaluateZoneCullingStack() {
+    // Until 2026-10-19 a change of the zone stack also asked qApp for requeryOctree, whose new connection id made
+    // the entity server forget what this client holds and resend its whole view: once on every zone border crossed,
+    // and once about a second after every arrival, when the stack first fills (Tivoli's 14f41d044a). The client
+    // already holds what zone culling shows or hides; the recheck below is all a zone change needs.
     if (!_forceRecheckEntities && _zoneCullingStack == _prevZoneCullingStack) return; // stack hasn't changed
     _forceRecheckEntities = false;
     _zoneCullSkipList.clear();    
@@ -1215,6 +1325,7 @@ void EntityTreeRenderer::deletingEntity(const EntityItemID& entityID) {
     auto renderable = itr->second;
     _renderablesToUpdate.erase(renderable);
     _entitiesInScene.erase(itr);
+    undeferModelMesh(entityID);
 
     if (!renderable) {
         qCWarning(entitiesrenderer) << "EntityTreeRenderer::deletingEntity(), trying to remove non-renderable entity";

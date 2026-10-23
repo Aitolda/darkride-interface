@@ -80,6 +80,22 @@ public:
     // asks the nearest ancestor with a card to update (its card's visibility follows its Model descendants')
     static void updateImpostorAncestor(const EntityItemPointer& entity);
 
+    // What a Model entity's mesh may wait behind (ENTITY-STREAMING.md 3.1): the impostor card of the entity or of its
+    // nearest ancestor with an "impostor" entry, the sphere it stands in (world space) and its atlases' state. An
+    // entry whose card is not made yet (its entity's renderer has not updated since) is found with its atlases not
+    // loaded, on their way. Main thread.
+    struct ImpostorStandIn {
+        bool found { false };
+        glm::vec3 center { 0.0f };
+        float radius { 0.0f };
+        bool atlasesLoaded { false };
+        bool atlasesFailed { false };
+    };
+    static ImpostorStandIn findImpostorStandIn(const EntityItemPointer& entity);
+    // a model that does not draw yet, for which its card stands in (ModelEntityRenderer: its mesh waits behind the
+    // card, or it or its textures are on their way)
+    virtual bool needsImpostorStandIn() const { return false; }
+
     enum ZoneCullingState {
         ZoneCull_Inactive,
         ZoneCull_Culled,
@@ -163,6 +179,9 @@ protected:
     void updateImpostorCard(const ScenePointer& scene, Transaction& transaction, const EntityItemPointer& entity);
     void removeImpostorCard(Transaction& transaction);
     bool impostorCardVisible(const EntityItemPointer& entity) const;
+    bool impostorCardStandsIn(const EntityItemPointer& entity) const;
+    // a Model's own card or its nearest ancestor's updates: whether the card stands in for it has changed
+    void updateImpostorOwner(const EntityItemPointer& entity);
     uint32_t fetchImpostorCardSubItem(ItemIDs& subItems) const;
     std::shared_ptr<ImpostorCard> _impostorCard;
     ItemID _impostorCardItemID { Item::INVALID_ITEM_ID };

@@ -12,6 +12,7 @@
 # default). The summaries (PHYSICS-AIRSHIP lines) are printed; the
 # samples land in <results dir>/pilot/physics-airship.json and <results dir>/crew/physics-airship.json, and the sandbox's
 # assignment-client log of the run (the physics server's lines are in it under [physics-server]) is copied beside them.
+# The sandbox is stopped at the end (harness.sh: clients walled off, the sandbox by its pids).
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
 APP=${1:-"$D/../../build/interface/Darkride.app"}
@@ -22,12 +23,10 @@ DELAY=${5:-0}
 CAR=${6:-}
 DECK_CAR=false
 [ "$CAR" = "car" ] && DECK_CAR=true
-SANDBOX=${SANDBOX:-$HOME/tivoli-sandboxes/physics}
-DOMAIN_SANDBOX=${DOMAIN_SANDBOX:-$HOME/git/tivolicloud/domain-sandbox.sh}   # darkride-ops' sandbox starter
 BIN="$APP/Contents/MacOS/Darkride"
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
 mkdir -p "$R/pilot" "$R/crew"
-export HIFI_METAVERSE_URL=${HIFI_METAVERSE_URL:-https://vr.darkride.ai}
+. "$D/harness.sh"
 SIZE=192; HEIGHT=32; VOXEL=0.5
 HTTP_PORT=42180
 [ "$PORT" != "serverless" ] && HTTP_PORT=$((PORT + 78))
@@ -49,57 +48,29 @@ echo "terrain: $TERRAIN_URL"
 echo "results: $R"
 if [ "$PORT" = "serverless" ]; then
     echo "serverless: the pilot alone in world.json"
-    "$BIN" --allowMultipleInstances --url "file://$D/world.json" --testScript "$R/airship-pilot.js" --testResultsLocation "$R/pilot" \
-        > "$R/pilot.log" 2>&1 || true
+    client pilot --url "file://$D/world.json" --testScript "$R/airship-pilot.js" --testResultsLocation "$R/pilot" || true
     grep "PHYSICS-AIRSHIP" "$R/pilot.log" || echo "no pilot summary in $R/pilot.log" >&2
     exit 0
 fi
 
-# an earlier run's terrain (lifetime 600 s) would still be in the world beside this run's: stop the sandbox, take the
-# earlier runs' rover-terrain and airship-* entities out of its world file, then start it from the client's build
 BUILD=$(cd "$APP/../.." && pwd)
-for pidfile in "$SANDBOX"/*.pid(N); do
-    pid=$(cat "$pidfile"); kill "$pid" 2>/dev/null || true; rm -f "$pidfile"
-done
-sleep 3
-python3 - "$SANDBOX/entities/models.json.gz" <<'PY'
-import gzip, json, sys
-path = sys.argv[1]
-try:
-    world = json.load(gzip.open(path))
-except Exception as e:
-    print("no world file to clean:", e); sys.exit(0)
-before = len(world.get("Entities", []))
-world["Entities"] = [e for e in world.get("Entities", [])
-                     if not (str(e.get("name", "")).startswith("airship-") or e.get("name") == "rover-terrain")]
-with gzip.open(path, "wt") as f:
-    json.dump(world, f)
-print("world cleaned of earlier runs' test entities:", before - len(world["Entities"]), "removed,", len(world["Entities"]), "kept")
-PY
-# the physics server is off by default (describe-settings.json); this sandbox runs it
-python3 -c 'import json, os, sys; p = sys.argv[1]; c = json.load(open(p)) if os.path.exists(p) else {}; c.setdefault("physics_server", {})["enabled"] = True; json.dump(c, open(p, "w"), indent=2)' "$SANDBOX/domain-config.json"
-"$DOMAIN_SANDBOX" physics "$BUILD" "$PORT"
-# the sandbox's monitor starts six children for seven services and adds the seventh, the physics server, at its next
-# spare check (30 s)
-for i in $(seq 1 90); do
-    curl -s "http://localhost:$((PORT - 2))/nodes.json" 2>/dev/null | grep -q '"physics-server"' && break
-    sleep 1
-done
-echo "physics-server in the domain after ${i}s"
+sandbox_stop
+sandbox_clean_world airship- rover-terrain
+sandbox_start "$BUILD" "$PORT"
 
 URL="hifi://localhost:$PORT"
 echo "domain: $URL; the pilot under packet loss $LOSS and a delay of $DELAY ms"
-"$BIN" --allowMultipleInstances --url "$URL" --testScript "$R/airship-crew.js" --testResultsLocation "$R/crew" \
-    > "$R/crew.log" 2>&1 &
+client crew --url "$URL" --testScript "$R/airship-crew.js" --testResultsLocation "$R/crew" &
 CREW=$!
-sleep 12
-TIVOLI_PACKET_LOSS="$LOSS" TIVOLI_PACKET_DELAY_MS="$DELAY" "$BIN" --allowMultipleInstances --url "$URL" --testScript "$R/airship-pilot.js" \
-    --testResultsLocation "$R/pilot" > "$R/pilot.log" 2>&1 || true
+wait_for_client crew
+TIVOLI_PACKET_LOSS="$LOSS" TIVOLI_PACKET_DELAY_MS="$DELAY" \
+    client pilot --url "$URL" --testScript "$R/airship-pilot.js" --testResultsLocation "$R/pilot" || true
 wait $CREW || true
 echo "== pilot"
 grep "PHYSICS-AIRSHIP" "$R/pilot.log" || echo "no pilot summary in $R/pilot.log" >&2
 echo "== crew"
 grep "PHYSICS-AIRSHIP" "$R/crew.log" || echo "no crew summary in $R/crew.log" >&2
-cp "$SANDBOX/logs/assignment-client.log" "$R/sandbox-assignment-client.log" 2>/dev/null || true
+sandbox_copy_logs
+sandbox_stop
 echo "== physics server"
-grep "\[physics-server\]" "$R/sandbox-assignment-client.log" 2>/dev/null | grep -i "airship\|vehicle\|teleport\|terrain\|error\|crash\|fatal" | tail -30
+grep "\[physics-server\]" "$R/sandbox-assignment-client.log" 2>/dev/null | grep -i "airship\|vehicle\|teleport\|terrain\|late\|error\|crash\|fatal" | tail -30

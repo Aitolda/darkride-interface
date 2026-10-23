@@ -15,10 +15,6 @@ set(CUSTOM_INTERFACE_QRC_PATHS "")
 
 find_npm()
 
-if (BUILD_TOOLS AND NPM_EXECUTABLE)
-  add_custom_qrc_path(CUSTOM_INTERFACE_QRC_PATHS "${CMAKE_SOURCE_DIR}/tools/jsdoc/out/doclets.json" "auto-complete/doclets.json")
-endif ()
-
 set(RESOURCES_QRC ${CMAKE_CURRENT_BINARY_DIR}/resources.qrc)
 set(RESOURCES_RCC ${CMAKE_CURRENT_SOURCE_DIR}/compiledResources/resources.rcc)
 generate_qrc(OUTPUT ${RESOURCES_QRC} PATH ${CMAKE_CURRENT_SOURCE_DIR}/resources CUSTOM_PATHS ${CUSTOM_INTERFACE_QRC_PATHS} GLOBS *)
@@ -193,8 +189,7 @@ endif ()
 
 
 if (BUILD_TOOLS AND NPM_EXECUTABLE)
-  # require JSDoc and Tivoli scripts to be build before interface is deployed
-  add_dependencies(resources jsdoc)
+  # require the Tivoli scripts to be built before interface is deployed
   add_dependencies(resources tivoli-scripts)
 endif()
 
@@ -203,11 +198,6 @@ add_dependencies(${TARGET_NAME} resources)
 if (WIN32)
   # These are external plugins, but we need to do the 'add dependency' here so that their
   # binary directories get added to the fixup path
-
-  if (USE_SIXENSE)
-    add_dependency_external_projects(sixense)
-  endif ()
-
   add_dependency_external_projects(wasapi)
 endif()
 
@@ -224,8 +214,8 @@ link_hifi_libraries(
   pointers recording hfm fbx networking material-networking
   model-networking model-baker entities avatars
   audio audio-client animation script-engine wasm-scripting physics vehicles
-  render-utils entities-renderer avatars-renderer ui qml auto-updater midi terrain
-  controllers plugins image platform auto-rigging unity-import
+  render-utils entities-renderer avatars-renderer ui qml terrain
+  controllers plugins image platform auto-rigging unity-import chat
   ui-plugins display-plugins input-plugins
   # Platform specific GL libraries
   ${PLATFORM_GL_BACKEND}
@@ -335,16 +325,12 @@ if (APPLE)
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
       "${CMAKE_SOURCE_DIR}/scripts"
       "${RESOURCES_DEV_DIR}/scripts"
+    # the developer test scripts are for the repo, not for players
+    COMMAND "${CMAKE_COMMAND}" -E remove_directory
+      "${RESOURCES_DEV_DIR}/scripts/developer/tests"
 
     # # copy JSDoc files beside the executable
     # COMMAND "${CMAKE_COMMAND}" -E copy_directory
-    #   "${CMAKE_SOURCE_DIR}/tools/jsdoc/out"
-    #   "${RESOURCES_DEV_DIR}/jsdoc"
-    # copy JSDoc files beside the executable
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-      "${CMAKE_SOURCE_DIR}/tools/jsdoc/out/doclets.json"
-      "${RESOURCES_DEV_DIR}/jsdoc/doclets.json"
-
     # copy Tivoli scripts into scripts folder
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
       "${CMAKE_SOURCE_DIR}/tivoli-scripts/dist"
@@ -395,6 +381,9 @@ else()
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
       "${CMAKE_SOURCE_DIR}/scripts"
       "${INTERFACE_EXEC_DIR}/scripts"
+    # the developer test scripts are for the repo, not for players
+    COMMAND "${CMAKE_COMMAND}" -E remove_directory
+      "${INTERFACE_EXEC_DIR}/scripts/developer/tests"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
       "${PROJECT_SOURCE_DIR}/resources/serverless/tutorial.json"
       "${RESOURCES_DEV_DIR}/serverless/tutorial.json"
@@ -404,12 +393,6 @@ else()
 
     # copy JSDoc files beside the executable
     # COMMAND "${CMAKE_COMMAND}" -E copy_directory
-    #   "${CMAKE_SOURCE_DIR}/tools/jsdoc/out"
-    #   "${INTERFACE_EXEC_DIR}/jsdoc"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-      "${CMAKE_SOURCE_DIR}/tools/jsdoc/out/doclets.json"
-      "${INTERFACE_EXEC_DIR}/jsdoc/doclets.json"
-
     # copy Tivoli scripts into scripts folder
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
       "${CMAKE_SOURCE_DIR}/tivoli-scripts/dist"
@@ -464,19 +447,6 @@ if (SCRIPTS_INSTALL_DIR)
   )
 endif()
 
-if (DOWNLOAD_SERVERLESS_CONTENT)
-  add_dependency_external_projects(serverless-content)
-
-  ExternalProject_Get_Property(serverless-content SOURCE_DIR)
-
-  # for dev builds, copy the serverless content to the resources folder
-  add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-    COMMAND "${CMAKE_COMMAND}" -E copy_directory
-      "${SOURCE_DIR}"
-      "${RESOURCES_DEV_DIR}/serverless"
-  )
-endif ()
-
 if (WIN32)
     set(EXTRA_DEPLOY_OPTIONS "--qmldir  \"${PROJECT_SOURCE_DIR}/resources/qml\"")
 
@@ -486,6 +456,7 @@ if (WIN32)
 
     package_libraries_for_deployment()
 endif()
+
 
 # tell CMake to exclude ui_console.h for policy CMP0071
 set_property(SOURCE ui_console.h PROPERTY SKIP_AUTOMOC ON)

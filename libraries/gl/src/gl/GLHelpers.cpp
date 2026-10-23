@@ -1,5 +1,6 @@
 #include "GLHelpers.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -14,6 +15,10 @@
 #include <QtGui/QSurfaceFormat>
 #include <QtGui/QOpenGLContext>
 #include <QtGui/QOpenGLDebugLogger>
+
+#ifdef Q_OS_MACOS
+#include <dispatch/dispatch.h>
+#endif
 
 #include "Context.h"
 
@@ -59,9 +64,12 @@ bool gl::disableGl45() {
 // it, even with gratuitous use of glFinish hasn't improved the situation
 
 static std::mutex _globalOpenGLLock;
+static std::atomic<int> _globalOpenGLWaiters { 0 };
 
 void gl::globalLock() {
+    ++_globalOpenGLWaiters;
     _globalOpenGLLock.lock();
+    --_globalOpenGLWaiters;
 }
 
 void gl::globalRelease(bool finish) {
@@ -71,10 +79,15 @@ void gl::globalRelease(bool finish) {
     _globalOpenGLLock.unlock();
 }
 
+bool gl::globalLockWanted() {
+    return _globalOpenGLWaiters.load() > 0;
+}
+
 #else
 
 void gl::globalLock() {}
 void gl::globalRelease(bool finish) {}
+bool gl::globalLockWanted() { return false; }
 
 #endif
 
@@ -84,6 +97,11 @@ static int _viewChangeDepth { 0 };
 static std::atomic<int64_t> _presentationPausedUntil { 0 };
 // how the app puts pending window changes in place at once (main thread only)
 static std::function<void()> _viewChangeFlush;
+// a guard has ended since the presenting thread last looked (takeViewChanged)
+static std::atomic<bool> _viewChanged { false };
+// for the present-stall report: how many changes began, and the last one's Qt event type
+static std::atomic<uint32_t> _viewChangeGuards { 0 };
+static std::atomic<int> _viewChangeEventType { 0 };
 // the pause after a change: a frame's margin once it is in place; with no way to put it in place at once, long enough
 // for it to settle by itself at the end of the main thread's loop pass
 static const int64_t PAUSE_AFTER_FLUSH_MS = 20;
@@ -94,15 +112,23 @@ static int64_t steadyMilliseconds() {
 }
 
 bool gl::isPresentationPaused() {
+#ifdef Q_OS_MACOS
     return steadyMilliseconds() < _presentationPausedUntil.load();
+#else
+    // the pause is for macOS, which finishes resizing a view's surface after the change (298e8dba84); elsewhere it only
+    // held presents off, and a steady run of window events could hold them off indefinitely (a Windows run, 10-21)
+    return false;
+#endif
 }
 
 void gl::setViewChangeFlush(const std::function<void()>& flush) {
     _viewChangeFlush = flush;
 }
 
-gl::ViewChangeGuard::ViewChangeGuard() {
+gl::ViewChangeGuard::ViewChangeGuard(int eventType) {
     if (_viewChangeDepth++ == 0) {
+        _viewChangeGuards.fetch_add(1, std::memory_order_relaxed);
+        _viewChangeEventType.store(eventType, std::memory_order_relaxed);
         // the pause first: a frame waiting for the lock finds it when it gets the lock
         _presentationPausedUntil = steadyMilliseconds() + PAUSE_WITHOUT_FLUSH_MS;
         globalLock();
@@ -117,8 +143,37 @@ gl::ViewChangeGuard::~ViewChangeGuard() {
     }
     if (--_viewChangeDepth == 0) {
         _presentationPausedUntil = steadyMilliseconds() + (_viewChangeFlush ? PAUSE_AFTER_FLUSH_MS : PAUSE_WITHOUT_FLUSH_MS);
+        _viewChanged = true;
         globalRelease(false);   // the main thread has no context of its own to finish
     }
+}
+
+gl::ViewChangeState gl::viewChangeState() {
+    ViewChangeState state;
+    state.guards = _viewChangeGuards.load(std::memory_order_relaxed);
+    state.lastEventType = _viewChangeEventType.load(std::memory_order_relaxed);
+    state.pauseLeftMs = std::max<int64_t>(0, _presentationPausedUntil.load() - steadyMilliseconds());
+    return state;
+}
+
+bool gl::takeViewChanged() {
+    return _viewChanged.exchange(false);
+}
+
+void gl::waitForMainQueue(int milliseconds) {
+#ifdef Q_OS_MACOS
+    // a marker behind what is queued: the queue runs in order, so its signal means all before it has run. The block
+    // holds its own reference to the semaphore, so a wait that times out leaves it nothing freed to signal.
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    dispatch_retain(done);
+    dispatch_async_f(dispatch_get_main_queue(), done, [](void* context) {
+        auto semaphore = (dispatch_semaphore_t)context;
+        dispatch_semaphore_signal(semaphore);
+        dispatch_release(semaphore);
+    });
+    dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, (int64_t)milliseconds * (int64_t)NSEC_PER_MSEC));
+    dispatch_release(done);
+#endif
 }
 
 

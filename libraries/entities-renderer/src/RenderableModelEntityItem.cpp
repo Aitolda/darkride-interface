@@ -51,6 +51,15 @@ void ModelEntityWrapper::setModel(const ModelPointer& model) {
     });
 }
 
+// a renderer leaving the scene clears its own model only, never the one a newer renderer of the entity has set
+void ModelEntityWrapper::clearModel(const ModelPointer& model) {
+    withWriteLock([&] {
+        if (_model == model) {
+            _model.reset();
+        }
+    });
+}
+
 ModelPointer ModelEntityWrapper::getModel() const {
     return resultWithReadLock<ModelPointer>([&] {
         return _model;
@@ -61,6 +70,21 @@ bool ModelEntityWrapper::isModelLoaded() const {
     return resultWithReadLock<bool>([&] {
         return _model.operator bool() && _model->isLoaded();
     });
+}
+
+bool RenderableModelEntityItem::isModelLoadedWithTextures() const {
+    ModelPointer model = getModel();
+    return model && model->isLoaded() && model->getNetworkModel() && model->getNetworkModel()->areTexturesLoaded();
+}
+
+QString RenderableModelEntityItem::loadStateForLog() const {
+    ModelPointer model = getModel();
+    if (!model) {
+        return "no model yet";
+    }
+    bool texturesLoaded = model->getNetworkModel() && model->getNetworkModel()->areTexturesLoaded();
+    return QString("url %1, geometry %2, textures %3").arg(model->getURL().isEmpty() ? "none" : "set",
+        model->isLoaded() ? "in" : "loading", texturesLoaded ? "in" : "loading");
 }
 
 EntityItemPointer RenderableModelEntityItem::factory(const EntityItemID& entityID, const EntityItemProperties& properties) {
@@ -332,6 +356,9 @@ bool RenderableModelEntityItem::isReadyToComputeShape() const {
             return false;
         }
 
+        if (!model->isLoaded()) {
+            askForMesh();   // a mesh waiting behind its impostor card loads now
+        }
         if (model->getURL().isEmpty() || !_dimensionsInitialized) {
             // we need a render geometry with a scale to proceed, so give up.
             return false;
@@ -356,9 +383,21 @@ bool RenderableModelEntityItem::isReadyToComputeShape() const {
         // the model is still being downloaded.
         return false;
     } else if (type >= SHAPE_TYPE_SIMPLE_HULL && type <= SHAPE_TYPE_STATIC_MESH) {
+        if (!isModelLoaded()) {
+            askForMesh();   // a mesh waiting behind its impostor card loads now
+        }
         return isModelLoaded();
     }
     return true;
+}
+
+void RenderableModelEntityItem::askForMesh() const {
+    if (!_meshWanted.exchange(true)) {
+        auto renderer = DependencyManager::get<EntityTreeRenderer>();
+        if (renderer) {
+            renderer->wakeDeferredModelMesh(getID());
+        }
+    }
 }
 
 void RenderableModelEntityItem::computeShapeInfo(ShapeInfo& shapeInfo) {
@@ -905,6 +944,29 @@ QStringList RenderableModelEntityItem::getJointNames() const {
     return result;
 }
 
+QVariantMap RenderableModelEntityItem::getModelExtras() const {
+    QVariantMap result;
+    auto model = getModel();
+    if (model && model->isActive()) {
+        const HFMModel& hfmModel = model->getHFMModel();
+        QVariantMap objects;
+        for (const auto& joint : hfmModel.joints) {
+            if (!joint.extras.isEmpty()) {
+                objects[joint.name] = joint.extras;
+            }
+        }
+        QVariantMap materials;
+        for (const auto& material : hfmModel.materials) {
+            if (!material.extras.isEmpty()) {
+                materials[material.name] = material.extras;
+            }
+        }
+        result["objects"] = objects;
+        result["materials"] = materials;
+    }
+    return result;
+}
+
 scriptable::ScriptableModelBase render::entities::ModelEntityRenderer::getScriptableModel() {
     auto model = resultWithReadLock<ModelPointer>([this]{ return _model; });
 
@@ -1043,7 +1105,15 @@ void ModelEntityRenderer::removeFromScene(const ScenePointer& scene, Transaction
 }
 
 void ModelEntityRenderer::onRemoveFromSceneTyped(const TypedEntityPointer& entity) {
-    entity->setModel({});
+    ModelPointer model;
+    withReadLock([&] { model = _model; });
+    entity->clearModel(model);
+    auto entityTreeRenderer = DependencyManager::get<EntityTreeRenderer>();
+    if (entityTreeRenderer) {
+        entityTreeRenderer->undeferModelMesh(entity->getID());
+    }
+    // a group's card counts its models again
+    updateImpostorAncestor(entity);
 }
 
 void ModelEntityRenderer::animate(const TypedEntityPointer& entity) {
@@ -1276,15 +1346,11 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
     ModelPointer model;
     withReadLock([&] { model = _model; });
 
-    withWriteLock([&] {
-        bool visuallyReady = true;
-        if (_hasModel) {
-            if (model && _didLastVisualGeometryRequestSucceed) {
-                visuallyReady = (_prevModelLoaded && _texturesLoaded);
-            }
-        }
-        entity->setVisuallyReady(visuallyReady);
-    });
+    // a model shown as its impostor card does not fetch its mesh until it comes close (ENTITY-STREAMING.md 3.1)
+    ImpostorStandIn standIn;
+    const bool deferMesh = _hasModel && shouldDeferMesh(entity, standIn);
+
+    updateVisuallyReady(entity, deferMesh, standIn.atlasesLoaded);
 
     // Check for removal
     if (!_hasModel) {
@@ -1297,6 +1363,12 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
         }
         setKey(false);
         _didLastVisualGeometryRequestSucceed = false;
+        _meshFetched = false;
+        if (_meshDeferred) {
+            withWriteLock([&] { _meshDeferred = false; });
+            DependencyManager::get<EntityTreeRenderer>()->undeferModelMesh(entity->getID());
+        }
+        reportImpostorStandIn(entity);
         return;
     }
 
@@ -1321,12 +1393,27 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
     }
 
     // From here on, we are guaranteed a populated model
+    if (deferMesh) {
+        // the card stands in until the camera comes close: the tree renderer wakes this update then
+        withWriteLock([&] {
+            _meshDeferred = true;
+            _prevModelLoaded = false;
+        });
+        DependencyManager::get<EntityTreeRenderer>()->deferModelMesh(entity->getID(), standIn.center, standIn.radius);
+        reportImpostorStandIn(entity);
+        return;
+    }
+    if (_meshDeferred) {
+        withWriteLock([&] { _meshDeferred = false; });
+        DependencyManager::get<EntityTreeRenderer>()->undeferModelMesh(entity->getID());
+    }
     if (_parsedModelURL != model->getURL()) {
         withWriteLock([&] {
             _texturesLoaded = false;
             _jointMappingCompleted = false;
             model->setURL(_parsedModelURL);
         });
+        _meshFetched = true;
     }
 
     // Nothing else to do unless the model is loaded
@@ -1334,6 +1421,8 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
         withWriteLock([&] {
             _prevModelLoaded = false;
         });
+        updateVisuallyReady(entity, deferMesh, standIn.atlasesLoaded);
+        reportImpostorStandIn(entity);
         emit requestRenderUpdate();
         return;
     } else if (!_prevModelLoaded) {
@@ -1438,6 +1527,10 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
     } else if (!_texturesLoaded) {
         emit requestRenderUpdate();
     }
+    // the update that sees the model and its textures load is often the last one a loaded model gets: the flag set at
+    // the top, from before it, stayed false for good (far models on arrival, 2026-10-21)
+    updateVisuallyReady(entity, deferMesh, standIn.atlasesLoaded);
+    reportImpostorStandIn(entity);
 
     if (!_allProceduralMaterialsLoaded) {
         std::lock_guard<std::mutex> lock(_materialsLock);
@@ -1495,6 +1588,93 @@ void ModelEntityRenderer::doRenderUpdateSynchronousTyped(const ScenePointer& sce
             animate(entity);
         }
         emit requestRenderUpdate();
+    }
+}
+
+// The mesh waits behind the impostor card (ENTITY-STREAMING.md 3.1) while all of this holds: this renderer has never
+// fetched it (a loaded mesh stays; a new URL loads at once), the entity has its dimensions (an entity sized from its mesh needs
+// it), nothing has asked for it (askForMesh: physics for a shape made from it, the impostor baker), a
+// card stands in for it (its own or an ancestor's, its atlases loaded or on their way, not failed) and the card's
+// sphere looks smaller than the load angle from the main camera, half the impostor angle, so that the mesh has time to
+// come before the switch needs it.
+bool ModelEntityRenderer::shouldDeferMesh(const TypedEntityPointer& entity, ImpostorStandIn& standIn) {
+    // (a new Model's URL is a placeholder, not empty: whether this renderer has fetched is its own flag)
+    if (_meshFetched) {
+        return false;
+    }
+    standIn = findImpostorStandIn(entity);
+    if (!standIn.found) {
+        return false;
+    }
+    auto entityTreeRenderer = DependencyManager::get<EntityTreeRenderer>();
+    float loadHalfTanSq = entityTreeRenderer ? entityTreeRenderer->getImpostorLoadHalfTanSq() : 0.0f;
+    glm::vec3 toCamera = (entityTreeRenderer ? entityTreeRenderer->getImpostorLoadPosition() : glm::vec3(0.0f)) - standIn.center;
+    float distance = glm::length(toCamera);
+    float radiusSq = standIn.radius * standIn.radius;
+    const char* reason = nullptr;
+    if (!entity->_dimensionsInitialized) {
+        reason = "it is sized from its mesh";
+    } else if (entity->_meshWanted) {
+        reason = "it was asked for";
+    } else if (loadHalfTanSq <= 0.0f) {
+        reason = "the cards are off";
+    } else if (standIn.atlasesFailed) {
+        reason = "the card's atlases failed";
+    } else if (standIn.radius <= 0.0f) {
+        reason = "the card has no size";
+    } else if (distance * distance <= radiusSq || radiusSq >= loadHalfTanSq * distance * distance) {
+        reason = "the camera is close";
+    }
+    // one log line when a mesh starts to wait, and one when it stops
+    if ((reason == nullptr) != _meshDeferred) {
+        float loadAngleDeg = glm::degrees(2.0f * atanf(sqrtf(std::max(loadHalfTanSq, 0.0f))));
+        float sphereDeg = distance > standIn.radius ? glm::degrees(2.0f * atanf(standIn.radius / distance)) : 180.0f;
+        if (!reason) {
+            qCDebug(entitiesrenderer).nospace() << "impostor stand-in: " << entity->getName() << " " << entity->getID()
+                << " waits behind its card (distance " << distance << " m, sphere " << sphereDeg << " deg, load angle "
+                << loadAngleDeg << " deg)";
+        } else {
+            qCDebug(entitiesrenderer).nospace() << "impostor stand-in: " << entity->getName() << " " << entity->getID()
+                << " fetches its mesh: " << reason << " (distance " << distance << " m, sphere " << sphereDeg
+                << " deg, load angle " << loadAngleDeg << " deg)";
+        }
+    }
+    return reason == nullptr;
+}
+
+// What the entity draws now has loaded (the arrival's landing waits for it, WORLD-LOADING.md): the card's atlases while
+// the card stands in for a waiting mesh, else the model and its textures
+void ModelEntityRenderer::updateVisuallyReady(const TypedEntityPointer& entity, bool deferMesh, bool atlasesLoaded) {
+    withWriteLock([&] {
+        bool visuallyReady = true;
+        if (_hasModel) {
+            if (deferMesh) {
+                // what it draws now is its card: ready once the card's atlases are
+                visuallyReady = atlasesLoaded;
+            } else if (!_model) {
+                // the model is made on this first update: nothing is drawn yet (until 2026-10-19 this read as drawn,
+                // and the arrival's landing let a cold model through before its download had begun)
+                visuallyReady = false;
+            } else if (_didLastVisualGeometryRequestSucceed) {
+                visuallyReady = (_prevModelLoaded && _texturesLoaded);
+            }
+        }
+        entity->setVisuallyReady(visuallyReady);
+    });
+}
+
+bool ModelEntityRenderer::needsImpostorStandIn() const {
+    return resultWithReadLock<bool>([&] {
+        return _hasModel && (_meshDeferred || !_prevModelLoaded || !_texturesLoaded);
+    });
+}
+
+// The card this model follows learns whether it stands in for it, when that changes
+void ModelEntityRenderer::reportImpostorStandIn(const TypedEntityPointer& entity) {
+    int standIn = needsImpostorStandIn() ? 1 : 0;
+    if (standIn != _reportedStandIn) {
+        _reportedStandIn = standIn;
+        updateImpostorOwner(entity);
     }
 }
 

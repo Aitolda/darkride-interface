@@ -37,6 +37,7 @@
 #include "HighlightEffect.h"
 #include "BloomEffect.h"
 #include <gpu/Context.h>
+#include <FrameDiag.h>
 
 namespace ru {
     using render_utils::slot::texture::Texture;
@@ -341,6 +342,10 @@ void DrawForward::run(const RenderContextPointer& renderContext, const Inputs& i
     const auto& inItems = inputs.get0();
     const auto& lightingModel = inputs.get1();
     const auto& hazeFrame = inputs.get2();
+
+    if (_opaquePass && args->_renderMode == RenderArgs::RenderMode::DEFAULT_RENDER_MODE) {
+        FrameDiag::mainOpaques() = (int)inItems.size();
+    }
 
     graphics::HazePointer haze;
     const auto& hazeStage = renderContext->args->_scene->getStage<HazeStage>();

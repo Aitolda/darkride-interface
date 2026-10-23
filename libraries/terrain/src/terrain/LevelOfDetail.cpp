@@ -275,8 +275,12 @@ void terrain::sampleNode(const VoxelGrid& grid, const ChunkKey& key, const NodeC
         }
     }
     // across the low faces and edges where the nodes are at another level, theirs at that level (as
-    // VoxelGrid::sampleChunk() does for the grid's chunks)
-    for (int region = 1; region < 7; ++region) {
+    // VoxelGrid::sampleChunk() does for the grid's chunks; the corner too along a closed low face)
+    bool anyCapLow = false;
+    for (int axis = 0; axis < 3; ++axis) {
+        anyCapLow = anyCapLow || ((grid.getCaps() & (1 << (2 * axis))) != 0 && key.getOrigin()[axis] <= 0);
+    }
+    for (int region = 1; region < (anyCapLow ? 8 : 7); ++region) {
         const glm::ivec3 below(region & 1 ? -1 : 0, region & 2 ? -1 : 0, region & 4 ? -1 : 0);
         const int delta = context.get(below.x, below.y, below.z);
         samples.setNeighbourLevel(region, delta);
@@ -285,11 +289,29 @@ void terrain::sampleNode(const VoxelGrid& grid, const ChunkKey& key, const NodeC
         }
         SampleBlock block;
         block.levelDelta = delta;
-        block.origin = below;
         const int side = delta > 0 ? CHUNK_SIZE * 2 : CHUNK_SIZE / 2;   // the node's side in the block's voxels
         block.size = glm::ivec3(region & 1 ? 2 : side + 1, region & 2 ? 2 : side + 1, region & 4 ? 2 : side + 1);
+        // along a closed low face of the box the cap's edges start a voxel further out, and their polygons reach the
+        // neighbours' cells a point further out along that axis (as VoxelGrid::sampleChunk)
+        glm::ivec3 reach = below;
+        for (int axis = 0; axis < 3; ++axis) {
+            if (!(grid.getCaps() & (1 << (2 * axis))) || key.getOrigin()[axis] > 0) {
+                continue;
+            }
+            if (below[axis] < 0) {
+                if (delta > 0) {
+                    reach[axis] = -2;
+                    block.size[axis] = 3;
+                }
+            } else {
+                const int extra = delta > 0 ? 2 : 1;
+                reach[axis] = -extra;
+                block.size[axis] += extra;
+            }
+        }
+        block.origin = reach;
         block.voxels.resize((size_t)block.size.x * block.size.y * block.size.z);
-        const glm::ivec3 first = key.coords * side + below;
+        const glm::ivec3 first = key.coords * side + reach;
         size_t index = 0;
         for (int z = 0; z < block.size.z; ++z) {
             for (int y = 0; y < block.size.y; ++y) {
@@ -300,6 +322,7 @@ void terrain::sampleNode(const VoxelGrid& grid, const ChunkKey& key, const NodeC
         }
         samples.addBlock(std::move(block));
     }
+    grid.applyCaps(samples);
 }
 
 // --- LodCut -----------------------------------------------------------------------------------------------------
@@ -508,7 +531,8 @@ void LevelOfDetail::send(const EntryKey& entryKey, Entry& entry, const VoxelGrid
     // one value on one side, no surface crosses the node
     const glm::ivec3 low = glm::clamp(glm::max(entry.readLow, glm::ivec3(0)) / FINEST, glm::ivec3(0), grid.getVoxelCount() - 1);
     const glm::ivec3 high = glm::max(glm::min(glm::max(entry.readHigh, glm::ivec3(0)) / FINEST, grid.getChunkCount() * CHUNK_SIZE - 1), low);
-    if (grid.isOneSided(low, high)) {
+    // (a node against a closed face of the box may need a cap there even with its voxels all ground)
+    if (!grid.capsReach(low, high) && grid.isOneSided(low, high)) {
         settle();
         return;
     }

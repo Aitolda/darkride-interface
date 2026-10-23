@@ -81,7 +81,8 @@ public:
         InvalidByteRange,
         InvalidURL,
         NotFound,
-        RedirectFail
+        RedirectFail,
+        HostNotFound    // the name did not resolve: final, and the host is dead for a while (ResourceCache)
     };
     Q_ENUM(Result)
 

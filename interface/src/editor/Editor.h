@@ -39,8 +39,12 @@
 #include "EditorBounds.h"
 #include "EditorCamera.h"
 #include "EditorClipboard.h"
+#include <QtGui/QPixmap>
+
 #include "EditorGizmo.h"
 #include "EditorLightGizmos.h"
+#include "EditorTrackGizmos.h"
+#include "EditorVehicleGizmos.h"
 #include "EditorGrid.h"
 #include "EditorSelection.h"
 #include "EditorTerrain.h"
@@ -125,9 +129,26 @@ public:
 
     Q_INVOKABLE void viewFromAxis(int axis, int sign);
 
+    // the whole Inspector as drawn, scrolled or not (a scripted test's picture of it, Test.saveInspectorPicture)
+    QPixmap inspectorPicture() const;
+    // a gizmo drag of the selection driven by a scripted test (Test.editorDrag): begin captures the selection as a
+    // press on the gizmo would (a move handle, or a rotate ring when rotate), every call applies the delta or the
+    // rotation about the selection's centre as the pointer's motion would, final takes the undo step as the release would
+    void dragSelectionForTest(const glm::vec3& delta, const glm::quat& rotationDelta, bool rotate, bool begin, bool final);
+
 public slots:
     void setActive(bool active);
     void toggleActive() { setActive(!_active); }
+    // selects these entities, turning build mode on first (a scripted test, Test.selectInEditor)
+    void select(const QList<QUuid>& ids);
+    // a Track's control points, for scripted tests (Test.chooseTrackPoint and the others): what a click on a point's
+    // diamond, Shift+click on the curve and Delete do
+    void chooseTrackPoint(int index, bool fromInspector);
+    int chosenTrackPoint() const { return _trackPointChosen; }
+    // an Inspector edit of the selection, begun and committed as a list's + button does (Test.commitInspectorEdit)
+    void testInspectorEdit(const QString& key, const QVariant& value);
+    void insertTrackPoint(float arcLength);
+    void deleteTrackPoint();
     void setGridVisible(bool visible);
     void setTool(EditorToolBar::Tool tool);
     void setLocalSpace(bool local);
@@ -167,7 +188,7 @@ signals:
     void marqueeChanged();
 
 private:
-    enum class DragKind { None, Move, Rotate, Scale };
+    enum class DragKind { None, Move, Rotate, Scale, TrackPoint };   // TrackPoint: a Track's chosen control point, by the Move gizmo
 
     void createPanels();
     void placeToolBars();
@@ -262,6 +283,17 @@ private:
 
     // the lights' icons, and the handles of a light selected on its own (see EditorLightGizmos.h)
     void updateLightGizmos();
+    // a selected vehicle's wheels, seats and force points, the part chosen in the Inspector bright (EditorVehicleGizmos.h)
+    void updateVehicleGizmos();
+    // the tracks' curves, and the handles of a Track selected on its own (EditorTrackGizmos.h)
+    void updateTrackGizmos();
+    // the Track selected on its own, whose points can be chosen and moved; false when the selection is anything else
+    bool trackPointTrack(QUuid& id) const;
+    // (chooseTrackPoint, insertTrackPoint and deleteTrackPoint are public, above: a click chooses a point, bright in
+    // the viewport with the Move gizmo on it and the Inspector's Points list on its row; Shift+click on the curve
+    // inserts one at an arc length; Delete removes the chosen one)
+    // the Track's box grown or shrunk to hold its curve and guideway, as an edit of its dimensions
+    void fitTrackBox(const EntityItemPointer& track, const QVector<glm::vec3>& points, EntityItemProperties& properties) const;
     void setGizmosVisible(bool visible);
     // what a click there selects: a light's icon, or else the surface under it
     QUuid pickAt(const QPoint& viewportPos) const;
@@ -354,6 +386,18 @@ private:
     EditorBounds _bounds;
     std::vector<EditorBoundsShape> _boundsShapes;
     EditorLightGizmos _lightGizmos;
+    EditorTrackGizmos _trackGizmos;
+    QVector<QUuid> _nearbyTracks;       // the tracks round the camera, looked for every so often
+    int _trackSearchFrame { -1 };
+    int _trackPointChosen { -1 };       // the control point chosen in the Track selected on its own, -1 for none
+    QUuid _trackPointTrack;             // that track
+    // a drag of the chosen point: the track's points and transform when it began
+    QVector<glm::vec3> _dragTrackPoints;
+    glm::vec3 _dragTrackPosition;
+    glm::quat _dragTrackRotation;
+    EditorVehicleGizmos _vehicleGizmos;
+    std::vector<EditorVehicleGizmoVehicle> _vehicleGizmoVehicles;
+    QHash<QString, int> _vehiclePartChosen;   // the row selected in each of the Inspector's vehicle lists, by key ("vehicle.wheels")
     EditorTerrain _terrain;             // the Terrain tool: its brushes, strokes and outline
     bool _stableLinksPending { false };  // Use Stable Links waits for the listing of My Files
     bool _gizmosVisible { true };       // every light's icon, not only the selected ones'

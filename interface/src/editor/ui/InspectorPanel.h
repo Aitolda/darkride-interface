@@ -16,6 +16,7 @@
 #include <QtCore/QString>
 #include <QtCore/QVariant>
 #include <QtCore/QVector>
+#include <QtGui/QPixmap>
 #include <QtWidgets/QDockWidget>
 
 #include <EntityItemProperties.h>
@@ -43,6 +44,8 @@ public:
     void refreshValues(const QVector<EntityItemProperties>& snapshots);
     // the world cannot be edited: fields greyed out, with a note at the top saying why
     void setReadOnly(bool readOnly, const QString& reason);
+    // everything shown, whatever is scrolled into view (a scripted test's picture)
+    QPixmap contentPicture() const;
     // the Terrain tool, which a Terrain's Layers section reads and sets the layers through (they live in the
     // terrain file on this client, not in a property); set once, before any terrain is shown
     void setTerrainEditor(EditorTerrain* terrain) { _terrainEditor = terrain; }
@@ -52,12 +55,20 @@ signals:
     void terrainLayerChosen(int slot);
     // a Terrain's Layers section showed its list again: names or order may have changed
     void terrainLayersShown();
+    // a vehicle's Wheels or Seats list selected a row (-1 none): the part the viewport draws bright
+    void vehiclePartChosen(const QString& key, int index);
+    // a Track's Points list selected a row (-1 none): the point the viewport draws bright and the Move gizmo stands on
+    void trackPointChosen(int index);
     void editBegan(const QString& key);
     void liveEdit(const QString& key, const QVariant& value);
     void committed(const QString& key, const QVariant& value);
     void editCancelled(const QString& key);
     // a picture on this computer chosen for a field (a light's Cookie): to be uploaded, its URL then set
     void uploadRequested(const QString& key, const QString& localPath);
+
+public slots:
+    // the viewport chose a track point (a click on its diamond): the Points list follows
+    void chooseTrackPoint(int index);
 
 protected:
     // the content follows the scroll area's width exactly: rows compress rather than run off the edge

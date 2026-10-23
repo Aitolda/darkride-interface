@@ -213,7 +213,11 @@
                      rpm: v.engineRPM, gear: v.gear, stateTime: v.stateTime, driver: v.driver },
             // kept small: the file holds some 4,000 rows
             stats: { corrections: stats.corrections, replaySteps: stats.replaySteps, maxError: stats.maxError, inputsSent: stats.inputsSent,
-                     inputsReceived: stats.inputsReceived, inputsDropped: stats.inputsDropped, inputsStarved: stats.inputsStarved, vehicles: stats.vehicles },
+                     inputsReceived: stats.inputsReceived, inputsDropped: stats.inputsDropped, inputsStarved: stats.inputsStarved, vehicles: stats.vehicles,
+                     streamStatesReceived: stats.streamStatesReceived, streamExtrapolations: stats.streamExtrapolations, rttMs: stats.rttMs,
+                     delayMs: stats.delayMs, streamIntervalMs: stats.streamIntervalMs, streamJitterMs: stats.streamJitterMs,
+                     inputsLate: stats.inputsLate, inputsEarly: stats.inputsEarly, bufferMargin: stats.bufferMargin, leadShifts: stats.leadShifts,
+                     leadJumps: stats.leadJumps, timeShiftMs: stats.timeShiftMs },
             live: stats.live ? { engineRPM: stats.live.engineRPM, gear: stats.live.gear, clutch: stats.live.clutch, speed: stats.live.speed,
                                  wheelRPM: stats.live.wheelRPM, wheelSlip: stats.live.wheelSlip, contact: stats.live.contact } : null,
             seated: seated, parented: MyAvatar.parentID == chassis,
@@ -529,7 +533,12 @@
         var last = samples.length ? samples[samples.length - 1].stats : {};
         log("totals: " + samples.length + " samples; corrections " + (last.corrections || 0) + ", replay substeps " + (last.replaySteps || 0) +
             ", max error " + (1000 * (last.maxError || 0)).toFixed(0) + " mm, inputs sent " + (last.inputsSent || 0) + ", received " + (last.inputsReceived || 0) +
-            ", dropped " + (last.inputsDropped || 0) + ", starved " + (last.inputsStarved || 0) + ", vehicles " + (last.vehicles || 0));
+            ", dropped " + (last.inputsDropped || 0) + ", starved " + (last.inputsStarved || 0) + ", vehicles " + (last.vehicles || 0) +
+            "; stream: states received " + (last.streamStatesReceived || 0) + ", extrapolated substeps " + (last.streamExtrapolations || 0) +
+            ", rtt " + (last.rttMs || 0).toFixed(1) + " ms, delay " + (last.delayMs || 0).toFixed(1) + " ms, interval " + (last.streamIntervalMs || 0).toFixed(1) +
+            " ms, jitter " + (last.streamJitterMs || 0).toFixed(1) + " ms" +
+            "; input buffer: margin " + (last.bufferMargin || 0) + ", lead shifts " + (last.leadShifts || 0) + " (jumps " + (last.leadJumps || 0) +
+            "), late " + (last.inputsLate || 0) + ", early " + (last.inputsEarly || 0));
         log("wheels: " + wheelReport());
         Test.saveObject({ role: ROLE, summary: summary, events: events, wheelSamples: wheelSamples, samples: samples }, "physics-rover.json");
         log("done (" + reason + "), " + samples.length + " samples");

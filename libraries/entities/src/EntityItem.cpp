@@ -3324,10 +3324,72 @@ void EntityItem::setUserData(const QString& value) {
         if (frameChanged) {
             _flags |= Simulation::DIRTY_MOTION_TYPE;
         }
+        // The impostor card's radius (IMPOSTORS.md 2.1), read once here for the entity server's send rule
+        // (ENTITY-STREAMING.md 3.3) with ImpostorEntry::parse's conditions for a card: its two atlases, six frames and
+        // a radius in metres.
+        float cardRadius = 0.0f;
+        if (value.contains("impostor")) {
+            QJsonObject entry = QJsonDocument::fromJson(value.toUtf8()).object().value("impostor").toObject();
+            float radius = (float)entry.value("radius").toDouble(0.0);
+            if (radius > 0.0f && entry.value("frames").toString("cube6") == "cube6" &&
+                !entry.value("albedo").toString().isEmpty() && !entry.value("normal").toString().isEmpty()) {
+                cardRadius = radius;
+            }
+        }
+        _impostorCardRadius = cardRadius;
     });
     if (frameChanged) {
         onFrameChanged();
     }
+}
+
+bool EntityItem::getImpostorCardSphere(glm::vec3& center, float& radius) const {
+    float cardRadius = 0.0f;
+    withReadLock([&] { cardRadius = _impostorCardRadius; });
+    if (cardRadius <= 0.0f) {
+        return false;
+    }
+    // The sphere stands on the entity's query cube's centre. The cube is in world space and holds the entity with
+    // everything under it, the models the card stands for, so its centre lies within half a cube of the entry's own
+    // (the entity's position plus the entry's centre, turned with it): nothing at the distances a card is sent to.
+    // The entry's centre is not placed here because the entity server resolves no parents (it registers no
+    // SpatialParentFinder), so a parented entity has no world transform there; its query cube it has.
+    bool success = false;
+    AACube cube = getQueryAACube(success);
+    if (!success) {
+        return false;
+    }
+    center = cube.calcCenter();
+    radius = cardRadius;
+    return true;
+}
+
+bool EntityItem::findImpostorCardSphere(glm::vec3& center, float& radius, bool& inherited) const {
+    inherited = false;
+    if (getImpostorCardSphere(center, radius)) {
+        return true;
+    }
+    inherited = true;
+    // up the parents to the nearest with a card, as the renderer's findImpostorStandIn, by ID through the tree (the
+    // entity server resolves parents no other way); a bounded walk, since a chain can be long or, by a stale edit,
+    // a loop
+    EntityTreePointer tree = getTree();
+    if (!tree) {
+        return false;
+    }
+    const int MAX_ANCESTORS = 16;
+    QUuid parentID = getParentID();
+    for (int depth = 0; !parentID.isNull() && depth < MAX_ANCESTORS; ++depth) {
+        EntityItemPointer ancestor = tree->findEntityByEntityItemID(parentID);
+        if (!ancestor) {
+            return false;   // not an entity of this tree (an avatar's attachment shows no card), or not here yet
+        }
+        if (ancestor->getImpostorCardSphere(center, radius)) {
+            return true;
+        }
+        parentID = ancestor->getParentID();
+    }
+    return false;
 }
 
 bool EntityItem::getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorner) const {
@@ -3440,38 +3502,6 @@ void EntityItem::somethingChangedNotification() {
             handler(id);
         }
     });
-}
-
-// static
-void EntityItem::retrieveMarketplacePublicKey() {
-    // QNetworkAccessManager& networkAccessManager = NetworkAccessManager::getInstance();
-    // QNetworkRequest networkRequest;
-    // networkRequest.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
-    // QUrl requestURL = NetworkingConstants::METAVERSE_SERVER_URL();
-    // requestURL.setPath("/api/v1/commerce/marketplace_key");
-    // QJsonObject request;
-    // networkRequest.setUrl(requestURL);
-
-    // QNetworkReply* networkReply = NULL;
-    // networkReply = networkAccessManager.get(networkRequest);
-
-    // connect(networkReply, &QNetworkReply::finished, [=]() {
-    //     QJsonObject jsonObject = QJsonDocument::fromJson(networkReply->readAll()).object();
-    //     jsonObject = jsonObject["data"].toObject();
-
-    //     if (networkReply->error() == QNetworkReply::NoError) {
-    //         if (!jsonObject["public_key"].toString().isEmpty()) {
-    //             EntityItem::_marketplacePublicKey = jsonObject["public_key"].toString();
-    //             qCWarning(entities) << "Marketplace public key has been set to" << _marketplacePublicKey;
-    //         } else {
-    //             qCWarning(entities) << "Marketplace public key is empty!";
-    //         }
-    //     } else {
-    //         qCWarning(entities) << "Call to" << networkRequest.url() << "failed! Error:" << networkReply->error();
-    //     }
-
-    //     networkReply->deleteLater();
-    // });
 }
 
 void EntityItem::collectChildrenForDelete(std::vector<EntityItemPointer>& entitiesToDelete, const QUuid& sessionID) const {

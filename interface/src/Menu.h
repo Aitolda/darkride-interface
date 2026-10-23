@@ -47,7 +47,6 @@ namespace MenuOption {
     const QString AutoMuteAudio = "Auto Mute Microphone";
     const QString AvatarReceiveStats = "Show Receive Stats";
     const QString AvatarBookmarks = "Avatar Bookmarks";
-    const QString AvatarPackager = "Avatar Packager";
     const QString Back = "Back";
     const QString BinaryEyelidControl = "Binary Eyelid Control";
     const QString BookmarkAvatar = "Bookmark Avatar";
@@ -100,7 +99,6 @@ namespace MenuOption {
     const QString DeleteAvatarBookmark = "Delete Avatar Bookmark...";
     const QString DeleteAvatarEntitiesBookmark = "Delete Avatar Entities Bookmark";
     const QString DeleteBookmark = "Delete Bookmark...";
-    const QString DisableActivityLogger = "Disable Activity Logger";
     const QString DisableEyelidAdjustment = "Disable Eyelid Adjustment";
     const QString DisableLightEntities = "Disable Light Entities";
     const QString DisplayCrashOptions = "Display Crash Options";
@@ -230,6 +228,8 @@ namespace MenuOption {
     const QString DesktopTabletToToolbar = "Desktop Tablet Becomes Toolbar";
     const QString HMDTabletToToolbar = "HMD Tablet Becomes Toolbar";
     const QString Shadows = "Shadows";
+    const QString GpuInstancing = "GPU Instancing";
+    const QString Vsync = "Vsync";
     const QString RenderForward = "Forward Rendering";
     const QString RenderMsaaMenu = "MSAA (Forward)";
     const QString RenderMsaaOff = "No MSAA";

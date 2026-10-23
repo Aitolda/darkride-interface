@@ -21,6 +21,14 @@
 #include "PhysicsLogging.h"
 #include "ShapeManager.h"
 
+#include <algorithm>
+#include <chrono>
+
+#include <NLPacket.h>
+#include <NodeList.h>
+#include <PortableHighResolutionClock.h>
+#include <VehicleState.h>
+
 namespace {
     // The physics server drives a car on a track without its real shape: it collides with nothing this round and loads
     // no models, so a model car would wait for a shape forever. It gets a box of its dimensions instead.
@@ -79,6 +87,49 @@ void PhysicalEntitySimulation::init(
 
     assert(packetSender);
     _entityPacketSender = packetSender;
+
+    // the physics server's state stream (PHYSICS.md round 9): a client hears the states, the server the requests
+    auto nodeList = DependencyManager::get<NodeList>();
+    if (nodeList && !_streamListenersRegistered) {
+        auto& packetReceiver = nodeList->getPacketReceiver();
+        packetReceiver.registerListener(PacketType::VehicleState, this, "handleVehicleStatePacket");
+        packetReceiver.registerListener(PacketType::VehicleStateRequest, this, "handleVehicleStateRequest");
+        _streamListenersRegistered = true;
+    }
+}
+
+void PhysicalEntitySimulation::handleVehicleStatePacket(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode) {
+    if (!senderNode || senderNode->getType() != NodeType::PhysicsServer || !_vehicleSimulation) {
+        return;
+    }
+    std::vector<VehicleState> states;
+    if (!VehicleStatePacket::unpack(message->getMessage(), states)) {
+        qCWarning(physics) << "a vehicle state packet from" << senderNode->getUUID() << "could not be read";
+        return;
+    }
+    // when it arrived at the socket, on this clock (the receive time is on another clock; the wait since is the same)
+    quint64 arrival = usecTimestampNow();
+    if (message->getFirstPacketReceiveTime() > 0) {
+        qint64 nowReceiveClock = std::chrono::duration_cast<std::chrono::microseconds>(
+            p_high_resolution_clock::now().time_since_epoch()).count();
+        qint64 queued = nowReceiveClock - message->getFirstPacketReceiveTime();
+        if (queued > 0 && (quint64)queued < arrival) {
+            arrival -= (quint64)queued;
+        }
+    }
+    _vehicleSimulation->receiveStates(states, senderNode->getClockSkewUsec(), arrival);
+}
+
+void PhysicalEntitySimulation::handleVehicleStateRequest(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode) {
+    if (!senderNode || !_vehicleSimulation) {
+        return;
+    }
+    std::vector<QUuid> ids;
+    if (!VehicleStateRequestPacket::unpack(message->getMessage(), ids)) {
+        qCWarning(physics) << "a vehicle state request from" << senderNode->getUUID() << "could not be read";
+        return;
+    }
+    _vehicleSimulation->receiveStateRequest(senderNode->getUUID(), ids);
 }
 
 uint8_t PhysicalEntitySimulation::regionOf(const EntityItemPointer& entity) const {
@@ -288,6 +339,24 @@ QVariantMap PhysicalEntitySimulation::getVehicleStats() const {
     map["inputsReceived"] = stats.inputsReceived;
     map["inputsDropped"] = stats.inputsDropped;
     map["inputsStarved"] = stats.inputsStarved;
+    // the input buffer (round 10)
+    map["inputsLate"] = stats.inputsLate;
+    map["inputsEarly"] = stats.inputsEarly;
+    map["bufferRealigned"] = stats.bufferRealigned;
+    map["bufferMargin"] = stats.bufferMargin;
+    map["leadShifts"] = stats.leadShifts;
+    map["leadJumps"] = stats.leadJumps;
+    map["timeShiftMs"] = stats.timeShiftMs;
+    // the state stream (round 9)
+    map["streamStatesSent"] = stats.streamStatesSent;
+    map["streamStatesReceived"] = stats.streamStatesReceived;
+    map["streamExtrapolations"] = stats.streamExtrapolations;
+    map["streamSubscribers"] = stats.streamSubscribers;
+    map["rttMs"] = stats.rttMs;
+    map["delayMs"] = stats.delayMs;
+    map["streamIntervalMs"] = stats.streamIntervalMs;
+    map["streamJitterMs"] = stats.streamJitterMs;
+
     VehicleSimulation::Telemetry live = _vehicleSimulation->getTelemetry();
     if (live.valid) {
         QVariantMap telemetry;
@@ -798,6 +867,8 @@ void PhysicalEntitySimulation::handleChangedMotionStates(const VectorOfMotionSta
     if (_lastStepSendPackets != numSubsteps) {
         _lastStepSendPackets = numSubsteps;
         _vehicleSimulation->sendInputs();
+        _vehicleSimulation->sendStream();           // the physics server's states to its subscribers (round 9)
+        _vehicleSimulation->sendStateRequests();    // a client's subscription
 
         if (Physics::getSessionUUID().isNull()) {
             // usually don't get here, but if so clear all ownership

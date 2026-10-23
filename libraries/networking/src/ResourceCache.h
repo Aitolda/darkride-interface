@@ -13,6 +13,7 @@
 #define hifi_ResourceCache_h
 
 #include <atomic>
+#include <cmath>
 #include <mutex>
 
 #include <QtCore/QHash>
@@ -224,6 +225,12 @@ public:
     Q_INVOKABLE QVariantList getResourceList();
 
     static void setRequestLimit(uint32_t limit);
+
+    // The hosts whose names did not resolve, dead for DEAD_HOST_MSECS from the failure: a link to one fails at once,
+    // with no request (Resource::makeRequest). Old worlds carry hundreds of links to hosts that are gone.
+    static bool isHostDead(const QString& host);
+    static void markHostDead(const QString& host);
+    static const qint64 DEAD_HOST_MSECS = 2 * 60 * 1000;
     static uint32_t getRequestLimit() { return DependencyManager::get<ResourceCacheSharedItems>()->getRequestLimit(); }
     
     void setUnusedResourceCacheSize(qint64 unusedResourcesMaxSize);
@@ -447,6 +454,10 @@ public:
 
     /// Returns the highest load priority across all owners.
     float getLoadPriority();
+
+    /// The load priority as a QThreadPool priority, for the work done on the resource once it has arrived (reading,
+    /// decoding), so the nearest and most wanted are also processed first
+    int getThreadPoolPriority() { return (int)std::lround(10.0f * getLoadPriority()); }
 
     /// Checks whether the resource has loaded.
     virtual bool isLoaded() const { return _loaded; }

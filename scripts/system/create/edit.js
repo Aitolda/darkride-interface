@@ -5,7 +5,7 @@
 //
 
 /* global Script, SelectionDisplay, LightOverlayManager, CameraManager, Grid, GridTool, EntityListTool, Vec3, SelectionManager,
-   Overlays, OverlayWebWindow, UserActivityLogger, Settings, Entities, Tablet, Toolbars, Messages, Menu, Camera,
+   Overlays, OverlayWebWindow, Settings, Entities, Tablet, Toolbars, Messages, Menu, Camera,
    progressDialog, tooltip, MyAvatar, Quat, Controller, Clipboard, HMD, UndoStack, OverlaySystemWindow,
    keyUpEventFromUIWindow:true */
 
@@ -17,6 +17,9 @@
 	var EDIT_TOGGLE_BUTTON = "com.highfidelity.interface.system.editButton";
 
 	var CONTROLLER_MAPPING_NAME = "com.highfidelity.editMode";
+
+	// Create's button and the Edit menu ask for the same thing in the same words
+	var IMPORT_FROM_URL_PROMPT = { placeholderText: "https://\u2026/objects.json", buttonText: "Import" };
 
 	Script.include([
 		"../libraries/stringHelpers.js?" + Date.now(),
@@ -212,8 +215,6 @@
 	var CREATE_ENABLED_ICON = "icons/tablet-icons/edit-i.svg";
 	var CREATE_DISABLED_ICON = "icons/tablet-icons/edit-disabled.svg";
 
-	// marketplace info, etc.  not quite ready yet.
-	var SHOULD_SHOW_PROPERTY_MENU = false;
 	var INSUFFICIENT_PERMISSIONS_ERROR_MSG =
 		"You do not have the necessary permissions to edit on this domain.";
 	var INSUFFICIENT_PERMISSIONS_IMPORT_ERROR_MSG =
@@ -259,40 +260,6 @@
 		backgroundAlpha: 0.7,
 		visible: false
 	});
-
-	var MARKETPLACE_URL = Account.metaverseServerURL + "/marketplace";
-	var marketplaceWindow = new OverlayWebWindow({
-		title: "Marketplace",
-		source: "about:blank",
-		width: 900,
-		height: 700,
-		visible: false
-	});
-
-	function showMarketplace(marketplaceID) {
-		var url = MARKETPLACE_URL;
-		if (marketplaceID) {
-			url = url + "/items/" + marketplaceID;
-		}
-		marketplaceWindow.setURL(url);
-		marketplaceWindow.setVisible(true);
-		marketplaceWindow.raise();
-
-		UserActivityLogger.logAction("opened_marketplace");
-	}
-
-	function hideMarketplace() {
-		marketplaceWindow.setVisible(false);
-		marketplaceWindow.setURL("about:blank");
-	}
-
-	// function toggleMarketplace() {
-	//     if (marketplaceWindow.visible) {
-	//         hideMarketplace();
-	//     } else {
-	//         showMarketplace();
-	//     }
-	// }
 
 	function adjustPositionPerBoundingBox(
 		position,
@@ -1042,7 +1009,7 @@
 
 			addButton("importEntitiesFromURLButton", function () {
 				Window.promptTextChanged.connect(onPromptTextChanged);
-				Window.promptAsync("URL of entities json to import", "");
+				Window.promptAsync("Import Objects from the Web", "", IMPORT_FROM_URL_PROMPT);
 			});
 
 			addButton("openAssetBrowserButton", function () {
@@ -1169,7 +1136,6 @@
 		};
 
 		that.setActive = function (active) {
-			ContextOverlay.enabled = !active;
 			Settings.setValue(EDIT_SETTING, active);
 			if (active) {
 				Controller.captureEntityClickEvents();
@@ -1225,7 +1191,6 @@
 					// make other apps inactive while in desktop mode
 					tablet.gotoHomeScreen();
 				}
-				UserActivityLogger.enabledEdit();
 				entityListTool.setVisible(true);
 				entityListTool.sendUpdate();
 				gridTool.setVisible(true);
@@ -1399,10 +1364,7 @@
 		mouseHasMovedSincePress = false;
 		mouseCapturedByTool = false;
 
-		if (
-			propertyMenu.mousePressEvent(event) ||
-			progressDialog.mousePressEvent(event)
-		) {
+		if (progressDialog.mousePressEvent(event)) {
 			mouseCapturedByTool = true;
 			return;
 		}
@@ -1456,7 +1418,6 @@
 		// allow the selectionDisplay and cameraManager to handle the event first, if it doesn't handle it, then do our own thing
 		if (
 			selectionDisplay.mouseMoveEvent(event) ||
-			propertyMenu.mouseMoveEvent(event) ||
 			cameraManager.mouseMoveEvent(event)
 		) {
 			return;
@@ -1474,9 +1435,6 @@
 		if (lastMouseMoveEvent) {
 			mouseMove(lastMouseMoveEvent);
 			lastMouseMoveEvent = null;
-		}
-		if (propertyMenu.mouseReleaseEvent(event)) {
-			return true;
 		}
 		if (isActive && selectionManager.hasSelection()) {
 			tooltip.show(false);
@@ -1603,35 +1561,6 @@
 						Menu.isOptionChecked(MENU_EASE_ON_FOCUS)
 					);
 				}
-			}
-		} else if (event.isRightButton) {
-			result = findClickedEntity(event);
-			if (result) {
-				if (SHOULD_SHOW_PROPERTY_MENU !== true) {
-					return;
-				}
-				// TIVOLI - Turn off right click marketplace inspect
-				// Want to do something different here when you RMB?
-				// Like a context menu?
-				//
-				// properties = Entities.getEntityProperties(result.entityID);
-				// if (properties.marketplaceID) {
-				// 	propertyMenu.marketplaceID = properties.marketplaceID;
-				// 	propertyMenu.updateMenuItemText(
-				// 		showMenuItem,
-				// 		"Show in Marketplace"
-				// 	);
-				// } else {
-				// 	propertyMenu.marketplaceID = null;
-				// 	propertyMenu.updateMenuItemText(
-				// 		showMenuItem,
-				// 		"No marketplace info"
-				// 	);
-				// }
-				// propertyMenu.setPosition(event.x, event.y);
-				// propertyMenu.show();
-			} else {
-				propertyMenu.hide();
 			}
 		}
 	}
@@ -1894,7 +1823,6 @@
 		);
 		var dPosition = Vec3.distance(Camera.position, lastPosition);
 		if (dOrientation > 0.001 || dPosition > 0.001) {
-			propertyMenu.hide();
 			lastOrientation = Camera.orientation;
 			lastPosition = Camera.position;
 		}
@@ -2313,7 +2241,7 @@
 				Window.browseAsync("Select Model to Import", "", "*.json");
 			} else {
 				Window.promptTextChanged.connect(onPromptTextChanged);
-				Window.promptAsync("URL of SVO to import", "");
+				Window.promptAsync("Import Objects from the Web", "", IMPORT_FROM_URL_PROMPT);
 			}
 		} else if (menuItem === "Select All Entities In Box") {
 			selectAllEntitiesInCurrentSelectionBox(false);
@@ -3106,8 +3034,6 @@
 				data.ids.forEach(function (entityID) {
 					Entities.editEntity(entityID, data.properties);
 				});
-			} else if (data.type === "showMarketplace") {
-				showMarketplace();
 			} else if (data.type === "action") {
 				if (data.action === "moveSelectionToGrid") {
 					if (selectionManager.hasSelection()) {
@@ -3458,182 +3384,6 @@
 		return that;
 	};
 
-	var PopupMenu = function () {
-		var self = this;
-
-		var MENU_ITEM_HEIGHT = 21;
-		var MENU_ITEM_SPACING = 1;
-		var TEXT_MARGIN = 7;
-
-		var overlays = [];
-		var overlayInfo = {};
-
-		var visible = false;
-
-		var upColor = {
-			red: 0,
-			green: 0,
-			blue: 0
-		};
-		var downColor = {
-			red: 192,
-			green: 192,
-			blue: 192
-		};
-		var overColor = {
-			red: 128,
-			green: 128,
-			blue: 128
-		};
-
-		self.onSelectMenuItem = function () {};
-
-		self.addMenuItem = function (name) {
-			var id = Overlays.addOverlay("text", {
-				text: name,
-				backgroundAlpha: 1.0,
-				backgroundColor: upColor,
-				topMargin: TEXT_MARGIN,
-				leftMargin: TEXT_MARGIN,
-				width: 210,
-				height: MENU_ITEM_HEIGHT,
-				font: {
-					size: 12
-				},
-				visible: false
-			});
-			overlays.push(id);
-			overlayInfo[id] = {
-				name: name
-			};
-			return id;
-		};
-
-		self.updateMenuItemText = function (id, newText) {
-			Overlays.editOverlay(id, {
-				text: newText
-			});
-		};
-
-		self.setPosition = function (x, y) {
-			for (var key in overlayInfo) {
-				Overlays.editOverlay(key, {
-					x: x,
-					y: y
-				});
-				y += MENU_ITEM_HEIGHT + MENU_ITEM_SPACING;
-			}
-		};
-
-		self.onSelected = function () {};
-
-		var pressingOverlay = null;
-		var hoveringOverlay = null;
-
-		self.mousePressEvent = function (event) {
-			if (event.isLeftButton) {
-				var overlay = Overlays.getOverlayAtPoint({
-					x: event.x,
-					y: event.y
-				});
-				if (overlay in overlayInfo) {
-					pressingOverlay = overlay;
-					Overlays.editOverlay(pressingOverlay, {
-						backgroundColor: downColor
-					});
-				} else {
-					self.hide();
-				}
-				return false;
-			}
-		};
-		self.mouseMoveEvent = function (event) {
-			if (visible) {
-				var overlay = Overlays.getOverlayAtPoint({
-					x: event.x,
-					y: event.y
-				});
-				if (!pressingOverlay) {
-					if (
-						hoveringOverlay !== null &&
-						overlay !== hoveringOverlay
-					) {
-						Overlays.editOverlay(hoveringOverlay, {
-							backgroundColor: upColor
-						});
-						hoveringOverlay = null;
-					}
-					if (overlay !== hoveringOverlay && overlay in overlayInfo) {
-						Overlays.editOverlay(overlay, {
-							backgroundColor: overColor
-						});
-						hoveringOverlay = overlay;
-					}
-				}
-			}
-			return false;
-		};
-		self.mouseReleaseEvent = function (event) {
-			var overlay = Overlays.getOverlayAtPoint({
-				x: event.x,
-				y: event.y
-			});
-			if (pressingOverlay !== null && pressingOverlay !== undefined) {
-				if (overlay === pressingOverlay) {
-					self.onSelectMenuItem(overlayInfo[overlay].name);
-				}
-				Overlays.editOverlay(pressingOverlay, {
-					backgroundColor: upColor
-				});
-				pressingOverlay = null;
-				self.hide();
-			}
-		};
-
-		self.setVisible = function (newVisible) {
-			if (newVisible !== visible) {
-				visible = newVisible;
-				for (var key in overlayInfo) {
-					Overlays.editOverlay(key, {
-						visible: newVisible
-					});
-				}
-			}
-		};
-		self.show = function () {
-			self.setVisible(true);
-		};
-		self.hide = function () {
-			self.setVisible(false);
-		};
-
-		function cleanup() {
-			ContextOverlay.enabled = true;
-			for (var i = 0; i < overlays.length; i++) {
-				Overlays.deleteOverlay(overlays[i]);
-			}
-			Controller.mousePressEvent.disconnect(self.mousePressEvent);
-			Controller.mouseMoveEvent.disconnect(self.mouseMoveEvent);
-			Controller.mouseReleaseEvent.disconnect(self.mouseReleaseEvent);
-
-			Entities.canRezChanged.disconnect(checkEditPermissionsAndUpdate);
-			Entities.canRezTmpChanged.disconnect(checkEditPermissionsAndUpdate);
-			Entities.canRezCertifiedChanged.disconnect(
-				checkEditPermissionsAndUpdate
-			);
-			Entities.canRezTmpCertifiedChanged.disconnect(
-				checkEditPermissionsAndUpdate
-			);
-		}
-
-		Controller.mousePressEvent.connect(self.mousePressEvent);
-		Controller.mouseMoveEvent.connect(self.mouseMoveEvent);
-		Controller.mouseReleaseEvent.connect(self.mouseReleaseEvent);
-		Script.scriptEnding.connect(cleanup);
-
-		return this;
-	};
-
 	function whenPressed(fn) {
 		return function (value) {
 			if (value > 0) {
@@ -3833,16 +3583,6 @@
 			console.warn("unhandled key event: " + JSON.stringify(keyUpEvent));
 		}
 	};
-
-	var propertyMenu = new PopupMenu();
-
-	propertyMenu.onSelectMenuItem = function (name) {
-		if (propertyMenu.marketplaceID) {
-			showMarketplace(propertyMenu.marketplaceID);
-		}
-	};
-
-	var showMenuItem = propertyMenu.addMenuItem("Show in Marketplace");
 
 	var propertiesTool = new PropertiesTool();
 

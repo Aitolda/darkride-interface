@@ -27,6 +27,7 @@
 #include "../AssignmentDynamicFactory.h"
 #include "../entities/AssignmentParentFinder.h"
 #include "ServerTerrainEntityItem.h"
+#include "ServerTrackEntityItem.h"
 
 namespace {
     const QString PHYSICS_SERVER_LOGGING_NAME = "physics-server";
@@ -34,6 +35,13 @@ namespace {
     const quint64 QUERY_INTERVAL = USECS_PER_SECOND;   // the entity server is asked again this often
     const quint64 TERRAIN_INTERVAL = USECS_PER_SECOND; // the terrains are checked for a new file this often
     const int EDIT_PACKETS_PER_SECOND = 300;
+    // Jolt's workers on the server (PHYSICS.md round 9, the idle cost): a few, not the machine's cores less one
+    const int SERVER_WORKERS = 4;
+    // TIVOLI_PHYSICS_NO_IDLE=1 keeps the old behaviour (every worker, every step) for a before measurement
+    bool idleSkipAllowed() {
+        static const bool allowed = qgetenv("TIVOLI_PHYSICS_NO_IDLE").isEmpty();
+        return allowed;
+    }
 }
 
 PhysicsServer::PhysicsServer(ReceivedMessage& message) : ThreadedAssignment(message) {
@@ -44,7 +52,8 @@ PhysicsServer::PhysicsServer(ReceivedMessage& message) : ThreadedAssignment(mess
     DependencyManager::set<ResourceManager>();
 
     auto& packetReceiver = DependencyManager::get<NodeList>()->getPacketReceiver();
-    packetReceiver.registerListenerForTypes({ PacketType::OctreeStats, PacketType::EntityData, PacketType::EntityErase },
+    packetReceiver.registerListenerForTypes({ PacketType::OctreeStats, PacketType::EntityData, PacketType::EntityErase,
+                                              PacketType::EntityQueryInitialResultsComplete },
                                             this, "handleOctreePacket");
     packetReceiver.registerListener(PacketType::VehicleInput, this, "handleVehicleInput");
 }
@@ -57,8 +66,9 @@ void PhysicsServer::run() {
 
     auto nodeList = DependencyManager::get<NodeList>();
     // the entity server for the tree; the clients (agents) so that the domain introduces them and the hole punch
-    // completes: a driver's VehicleInput packets come straight from its client (round 6)
-    nodeList->addSetOfNodeTypesToNodeInterestSet({ NodeType::EntityServer, NodeType::Agent });
+    // completes: a driver's VehicleInput packets come straight from its client (round 6); the asset server for the
+    // world's own files, such as a terrain at an atp: URL (without it every atp: fetch fails "Server Unavailable")
+    nodeList->addSetOfNodeTypesToNodeInterestSet({ NodeType::EntityServer, NodeType::Agent, NodeType::AssetServer });
     connect(nodeList.data(), &LimitedNodeList::nodeActivated, this, &PhysicsServer::nodeActivated);
     connect(nodeList.data(), &LimitedNodeList::nodeKilled, this, &PhysicsServer::nodeKilled);
     connect(nodeList.data(), &LimitedNodeList::uuidChanged, this, [](const QUuid& sessionUUID, const QUuid&) {
@@ -69,8 +79,10 @@ void PhysicsServer::run() {
 
     _entityEditSender.setPacketsPerSecond(EDIT_PACKETS_PER_SECOND);
 
-    // this server's Terrain entities hold the ground's collision mesh (round 6); the plain one is only its properties
+    // this server's Terrain entities hold the ground's collision mesh (round 6); the plain one is only its properties.
+    // Its Track entities hold their guideway's (the beam and pylons) the same way.
     EntityTypes::registerEntityType(EntityTypes::Terrain, "Terrain", ServerTerrainEntityItem::factory);
+    EntityTypes::registerEntityType(EntityTypes::Track, "Track", ServerTrackEntityItem::factory);
 
     _entityViewer.init();
     EntityTreePointer tree = _entityViewer.getTree();
@@ -102,7 +114,7 @@ void PhysicsServer::run() {
     ObjectMotionState::setShapeManager(&_shapeManager);
     ObjectMotionState::setInterpolatePresentation(false);   // nothing is drawn here: the records are the last substep itself
     _physicsEngine = std::make_shared<PhysicsEngine>(Vectors::ZERO);
-    _physicsEngine->init();
+    _physicsEngine->init(idleSkipAllowed() ? SERVER_WORKERS : 0);
     _entitySimulation = std::make_shared<PhysicalEntitySimulation>();
     _entitySimulation->init(tree, _physicsEngine, &_entityEditSender);
     tree->setSimulation(_entitySimulation);
@@ -150,6 +162,9 @@ void PhysicsServer::step() {
     _physicsEngine->forEachDynamic([&](EntityDynamicPointer dynamic) {
         dynamic->prepareForPhysicsSimulation();
     });
+    // with no train, no vehicle and nothing awake, the step is skipped (round 9): a world of resting things costs nothing
+    _physicsEngine->setIdleWhenStill(idleSkipAllowed() && _entitySimulation->getTrackSimulation()->getNumTrains() == 0
+                                     && _entitySimulation->getVehicleSimulation()->getNumVehicles() == 0);
     tree->withWriteLock([&] {
         _physicsEngine->stepSimulation();
     });
@@ -180,15 +195,26 @@ void PhysicsServer::step() {
             << _statesPublished << "train states published," << _entityEditSender.getPacketsPerSecond() << "pps;"
             << _entitySimulation->getVehicleSimulation()->getNumVehicles() << "vehicles,"
             << _entitySimulation->getVehicleSimulation()->getStats().inputsReceived << "inputs received,"
-            << _entitySimulation->getVehicleSimulation()->getStats().inputsStarved << "starved,"
-            << _entitySimulation->getVehicleSimulation()->getStats().inputsDropped << "dropped;"
+            << _entitySimulation->getVehicleSimulation()->getStats().inputsStarved << "held,"
+            << _entitySimulation->getVehicleSimulation()->getStats().inputsLate << "late,"
+            << _entitySimulation->getVehicleSimulation()->getStats().inputsEarly << "early,"
+            << _entitySimulation->getVehicleSimulation()->getStats().bufferRealigned << "realigned, margin"
+            << _entitySimulation->getVehicleSimulation()->getStats().bufferMargin << ";"
             << "stream" << _streamPackets << "packets, flight max" << _streamFlightMax / 1000 << "ms, queued max"
-            << _streamQueuedMax / 1000 << "ms";
+            << _streamQueuedMax / 1000 << "ms, parse max" << _parseMaxUsec / 1000 << "ms, total" << _parseTotalUsec / 1000
+            << "ms (lock wait" << _entityViewer.getAverageWaitLockPerPacket() / 1000.0f << "ms, uncompress"
+            << _entityViewer.getAverageUncompressPerPacket() / 1000.0f << "ms, read" << _entityViewer.getAverageReadBitstreamPerPacket() / 1000.0f
+            << "ms per packet;" << describeEntityServerConnection() << ");" << _physicsEngine->getNumIdleSteps() << "idle substeps skipped ("
+            << _physicsEngine->describeActiveBodies(3) << "),"
+            << _entitySimulation->getVehicleSimulation()->getStats().streamStatesSent << "states streamed to"
+            << _entitySimulation->getVehicleSimulation()->getStats().streamSubscribers << "subscribers";
         _lastLogTime = now;
         _stepsAtLastLog = _stepsTaken;
         _streamPackets = 0;
         _streamFlightMax = 0;
         _streamQueuedMax = 0;
+        _parseMaxUsec = 0;
+        _parseTotalUsec = 0;
     }
 
     // the bids, the cars' updates and the train states go out from here: an assignment client's edit sender is
@@ -229,15 +255,18 @@ void PhysicsServer::publishTrainStates() {
     }
 }
 
-// The Terrain entities fetch their files and build their meshes from here, once a second.
+// The Terrain entities fetch their files and build their meshes from here, once a second; the Track entities build
+// their guideways' the same way.
 void PhysicsServer::updateTerrains() {
     EntityTreePointer tree = _entityViewer.getTree();
     if (!tree) {
         return;
     }
     QVector<QUuid> terrainIDs;
+    QVector<QUuid> trackIDs;
     unsigned int searchFilter = PickFilter::getBitMask(PickFilter::FlagBit::DOMAIN_ENTITIES);
     std::vector<std::shared_ptr<ServerTerrainEntityItem>> terrains;
+    std::vector<std::shared_ptr<ServerTrackEntityItem>> tracks;
     tree->withReadLock([&] {
         tree->evalEntitiesInSphereWithType(Vectors::ZERO, (float)TREE_SCALE, EntityTypes::Terrain, PickFilter(searchFilter), terrainIDs);
         for (const QUuid& id : terrainIDs) {
@@ -245,9 +274,18 @@ void PhysicsServer::updateTerrains() {
                 terrains.push_back(terrain);
             }
         }
+        tree->evalEntitiesInSphereWithType(Vectors::ZERO, (float)TREE_SCALE, EntityTypes::Track, PickFilter(searchFilter), trackIDs);
+        for (const QUuid& id : trackIDs) {
+            if (auto track = std::dynamic_pointer_cast<ServerTrackEntityItem>(tree->findEntityByID(id))) {
+                tracks.push_back(track);
+            }
+        }
     });
     for (auto& terrain : terrains) {
         terrain->update();
+    }
+    for (auto& track : tracks) {
+        track->update();
     }
 }
 
@@ -353,6 +391,7 @@ void PhysicsServer::sendStatsPacket() {
 
 void PhysicsServer::handleOctreePacket(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode) {
     auto packetType = message->getType();
+    qint64 receiveTime = message->getFirstPacketReceiveTime();
 
     if (packetType == PacketType::OctreeStats) {
         int statsMessageLength = OctreeHeadlessViewer::parseOctreeStats(message, senderNode);
@@ -370,17 +409,41 @@ void PhysicsServer::handleOctreePacket(QSharedPointer<ReceivedMessage> message, 
     }
 
     if (packetType == PacketType::EntityData) {
-        measureStreamAge(*message, senderNode);
+        measureStreamAge(*message, senderNode, receiveTime);
+        quint64 parseStart = usecTimestampNow();
         _entityViewer.processDatagram(*message, senderNode);
+        qint64 parse = (qint64)(usecTimestampNow() - parseStart);
+        _parseMaxUsec = std::max(_parseMaxUsec, parse);
+        _parseTotalUsec += parse;
     } else if (packetType == PacketType::EntityErase) {
         _entityViewer.processEraseMessage(*message, senderNode);
+    } else if (packetType == PacketType::EntityQueryInitialResultsComplete) {
+        _entityViewer.handleInitialResultsComplete(message, senderNode);
     }
+}
+
+// The udt connection to the entity server as this side sees it: what came in reliably and unreliably over the window,
+// the ACKs this side sent, the round trip udt measured (sampling resets the node list's own window; a diagnostic).
+QString PhysicsServer::describeEntityServerConnection() {
+    auto nodeList = DependencyManager::get<NodeList>();
+    SharedNodePointer entityServer = nodeList ? nodeList->soloNodeOfType(NodeType::EntityServer) : nullptr;
+    if (!entityServer || !entityServer->getActiveSocket()) {
+        return "no entity server";
+    }
+    for (const auto& entry : nodeList->sampleStatsForAllConnections()) {
+        if (entry.first == *entityServer->getActiveSocket()) {
+            const udt::ConnectionStats::Stats& s = entry.second;
+            return QString("udt from the entity server: %1 reliable and %2 unreliable packets in, %3 ACKs sent, rtt %4 ms")
+                .arg(s.receivedPackets).arg(s.receivedUnreliablePackets).arg(s.events[udt::ConnectionStats::Stats::SentACK]).arg(s.rtt / 1000);
+        }
+    }
+    return "udt: no connection sampled";
 }
 
 // How late the entity server's stream is when this server reads it: the flight by the packet's stamp (the entity
 // server's clock, skew-corrected) and the wait in this process's queue by the socket's receive time. A packet a second
 // late is logged at once (one line a second); the ten-second line carries the window's maxima.
-void PhysicsServer::measureStreamAge(ReceivedMessage& message, const SharedNodePointer& senderNode) {
+void PhysicsServer::measureStreamAge(ReceivedMessage& message, const SharedNodePointer& senderNode, qint64 receiveTime) {
     qint64 position = message.getPosition();
     OCTREE_PACKET_FLAGS flags;
     OCTREE_PACKET_SEQUENCE sequence;
@@ -394,10 +457,10 @@ void PhysicsServer::measureStreamAge(ReceivedMessage& message, const SharedNodeP
     qint64 flight = (qint64)now - (qint64)sentAt + clockSkew;
     // (a message built from a packet list has no receive time; then the wait is unknown and counts as none)
     qint64 queued = 0;
-    if (message.getFirstPacketReceiveTime() > 0) {
+    if (receiveTime > 0) {
         qint64 nowReceiveClock = std::chrono::duration_cast<std::chrono::microseconds>(
             p_high_resolution_clock::now().time_since_epoch()).count();
-        queued = nowReceiveClock - message.getFirstPacketReceiveTime();
+        queued = nowReceiveClock - receiveTime;
     }
     _streamPackets++;
     _streamFlightMax = std::max(_streamFlightMax, flight);

@@ -366,6 +366,14 @@ public:
     bool isFrame() const { return _frame || _isFrame; }
     // the box named in userData inside which something belongs to this frame, in the entity's coordinates; false when none
     bool getFrameVolume(glm::vec3& minCorner, glm::vec3& maxCorner) const;
+    // the sphere of this entity's impostor card (the "impostor" entry of its userData, IMPOSTORS.md 2.1) in world
+    // space: the entry's radius on the entity's query cube's centre; false without a valid entry. The radius is
+    // parsed once when the userData changes, never per traversal: the entity server sizes a carded entity by it for
+    // a client that draws cards (ENTITY-STREAMING.md 3.3)
+    bool getImpostorCardSphere(glm::vec3& center, float& radius) const;
+    // the card this entity shows as from afar: its own, or else the nearest ancestor's (a group's models draw as the
+    // group's card, and wait behind it), inherited then true; false without either
+    bool findImpostorCardSphere(glm::vec3& center, float& radius, bool& inherited) const;
     virtual void setUserData(const QString& value); // FIXME: This is suspicious(?)
 
     QString getPrivateUserData() const;
@@ -528,6 +536,7 @@ public:
 
     virtual int getJointIndex(const QString& name) const { return -1; }
     virtual QStringList getJointNames() const { return QStringList(); }
+    virtual QVariantMap getModelExtras() const { return QVariantMap(); }
 
     virtual void loader() {} // called indirectly when urls for geometry are updated
 
@@ -581,8 +590,8 @@ public:
     ChangeHandlerId registerChangeHandler(const ChangeHandlerCallback& handler);
     void deregisterChangeHandler(const ChangeHandlerId& changeHandlerId);
 
+    // Always empty since the marketplace went; EntityItemProperties::verifyStaticCertificateProperties still reads it.
     static QString _marketplacePublicKey;
-    static void retrieveMarketplacePublicKey();
 
     void collectChildrenForDelete(std::vector<EntityItemPointer>& entitiesToDelete, const QUuid& sessionID) const;
 
@@ -753,6 +762,7 @@ protected:
     bool _hasFrameVolume { false };
     glm::vec3 _frameVolumeMin { 0.0f };
     glm::vec3 _frameVolumeMax { 0.0f };
+    float _impostorCardRadius { 0.0f }; // the userData "impostor" entry's sphere radius in metres, 0 for no card (getImpostorCardSphere)
     QString _privateUserData{ ENTITY_ITEM_DEFAULT_PRIVATE_USER_DATA };
     SimulationOwner _simulationOwner;
     bool _shouldHighlight { false };

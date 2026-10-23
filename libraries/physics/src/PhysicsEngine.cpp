@@ -67,11 +67,14 @@ PhysicsEngine::~PhysicsEngine() {
     _tempAllocator.reset();
 }
 
-void PhysicsEngine::init() {
+void PhysicsEngine::init(int maxWorkers) {
     JoltSupport::initialize();
     if (!_rootWorld) {
         _tempAllocator.reset(new JPH::TempAllocatorImpl(TEMP_ALLOCATOR_BYTES));
         int numThreads = glm::max(1, (int)std::thread::hardware_concurrency() - 1);
+        if (maxWorkers > 0) {
+            numThreads = glm::min(numThreads, maxWorkers);
+        }
         _jobSystem.reset(new JPH::JobSystemThreadPool(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, numThreads));
         _rootWorld.reset(new PhysicsWorld(QUuid(), _tempAllocator.get(), _jobSystem.get()));
 
@@ -496,20 +499,89 @@ void PhysicsEngine::stepSimulation() {
     // duration and is eased back to the wall clock, within a frame of it; a hitch snaps it back.
     const float FRAME_SMOOTHING = 0.05f;
     const float CLOCK_EASING = 0.05f;
-    if (_smoothedFrameDuration <= 0.0f) {
-        _smoothedFrameDuration = dt;
+    float paced;
+    if (_presentPeriod > 0.0f) {
+        // The presents are paced at the display's period (the editor renderer's frame-pacing round, 10-19): this
+        // update is a whole number of periods after the last, whatever the wall clock read between them (the
+        // threads' wake-up jitter, a fraction of a millisecond). The paced clock advances by that number of
+        // periods, so a frame presented two periods later advances two: the display's time is the frame's time
+        // (PHYSICS.md "The driver's stutter"). The lead is then only the jitter, bounded; it is eased out through
+        // its slow average, so a nominal period a little off the panel's true one never accumulates, and a lead
+        // beyond a period and a half (a wrong period) snaps.
+        // The periods come counted from the present schedule when the game loop has them (Application::update):
+        // an update run late and the next one on time are 2 ms apart on the wall clock, yet each one's frame shows
+        // for a refresh, and rounding that 2 ms up to a period would put a whole period of lead on the clock each
+        // time, to be taken out later as a snap. Without the count, the wall clock rounded.
+        const float LEAD_SMOOTHING = 0.02f;
+        float refreshes = _presentPeriods > 0 ? (float)_presentPeriods : glm::max(1.0f, roundf(dt / _presentPeriod));
+        paced = glm::min(refreshes * _presentPeriod, MAX_TIMESTEP);
+        _smoothedFrameDuration = paced;   // where the free-running clock picks up if vsync goes off
+        _pacedClockLead += paced - dt;
+        if (refreshes >= 2.0f) {
+            _pacedMultiFrames++;
+        }
+        if (fabsf(_pacedClockLead) > 1.5f * _presentPeriod) {
+            // a period and a half off (a wrong period, a stall the count missed): taken out at once, but never
+            // backwards, which the eye reads as a snap: a clock ahead holds this frame's picture (paced 0) and the
+            // rest comes off the next; a clock behind jumps forward, the substep cap below bounding it
+            float taken = glm::min(_pacedClockLead, paced);
+            paced -= taken;
+            _pacedClockLead -= taken;
+            _smoothedClockLead = 0.0f;
+            _pacedSnaps++;
+            _pacedSnapTotal += taken;
+        } else {
+            _smoothedClockLead += LEAD_SMOOTHING * (_pacedClockLead - _smoothedClockLead);
+            float correction = CLOCK_EASING * _smoothedClockLead;
+            paced -= correction;
+            _pacedClockLead -= correction;
+        }
+        // the record, every five seconds while there is something in it
+        const uint64_t PACED_LOG_INTERVAL = 5 * USECS_PER_SECOND;
+        if (_pacedLogTime == 0) {
+            _pacedLogTime = now;
+        } else if (now - _pacedLogTime > PACED_LOG_INTERVAL) {
+            if (_pacedMultiFrames > 0 || _pacedSnaps > 0) {
+                qCDebug(physics) << "paced clock, last" << (int)((now - _pacedLogTime) / USECS_PER_SECOND) << "s:" << _pacedMultiFrames
+                                 << "updates of two or more periods," << _pacedSnaps << "leads taken out at once, total"
+                                 << (_pacedSnapTotal * 1000.0f) << "ms; lead now" << (_pacedClockLead * 1000.0f) << "ms";
+            }
+            _pacedLogTime = now;
+            _pacedMultiFrames = 0;
+            _pacedSnaps = 0;
+            _pacedSnapTotal = 0.0f;
+        }
     } else {
-        _smoothedFrameDuration += FRAME_SMOOTHING * (dt - _smoothedFrameDuration);
+        if (_smoothedFrameDuration <= 0.0f) {
+            _smoothedFrameDuration = dt;
+        } else {
+            _smoothedFrameDuration += FRAME_SMOOTHING * (dt - _smoothedFrameDuration);
+        }
+        paced = _smoothedFrameDuration;
+        _pacedClockLead += paced - dt;
+        if (fabsf(_pacedClockLead) > _smoothedFrameDuration) {
+            // more than a frame off: taken out at once, but never backwards (the eye reads a step back as a snap): a
+            // clock ahead holds this frame (paced 0) and the rest comes off the next frames; a clock behind jumps
+            // forward. Until the 10-21 review this subtracted the whole lead, which could make paced negative; the
+            // free clock runs whenever the presents are not paced (vsync, a present that overran, a restart).
+            float taken = _pacedClockLead > 0.0f ? glm::min(_pacedClockLead, paced) : _pacedClockLead;
+            paced -= taken;
+            _pacedClockLead -= taken;
+        } else {
+            float correction = CLOCK_EASING * _pacedClockLead;
+            paced -= correction;
+            _pacedClockLead -= correction;
+        }
+        _smoothedClockLead = 0.0f;
     }
-    float paced = _smoothedFrameDuration;
-    _pacedClockLead += paced - dt;
-    if (fabsf(_pacedClockLead) > _smoothedFrameDuration) {
-        paced -= _pacedClockLead;
-        _pacedClockLead = 0.0f;
-    } else {
-        float correction = CLOCK_EASING * _pacedClockLead;
-        paced -= correction;
-        _pacedClockLead -= correction;
+    if (_timeShiftPending != 0.0f) {
+        // time dilation (round 10): a few percent of each frame's time added or left out until the shift is in
+        float extra = paced * TIME_DILATION * (_timeShiftPending > 0.0f ? 1.0f : -1.0f);
+        if (fabsf(extra) > fabsf(_timeShiftPending)) {
+            extra = _timeShiftPending;
+        }
+        paced += extra;
+        _timeShiftPending -= extra;
     }
     _accumulatedTime = glm::max(_accumulatedTime + paced, 0.0f);
 
@@ -520,6 +592,14 @@ void PhysicsEngine::stepSimulation() {
         _accumulatedTime = 0.0f;
     } else {
         _accumulatedTime -= (float)numSubsteps * PHYSICS_ENGINE_FIXED_SUBSTEP;
+    }
+
+    if (numSubsteps > 0 && _idleWhenStill && isStill()) {
+        // nothing to simulate: the substeps are skipped, their time dropped (a body that wakes is stepped from now),
+        // and Jolt's workers stay asleep
+        _numIdleSteps += numSubsteps;
+        numSubsteps = 0;
+        _accumulatedTime = 0.0f;
     }
 
     uint64_t start = usecTimestampNow();
@@ -547,6 +627,23 @@ void PhysicsEngine::stepSimulation() {
             }
         }
     }
+}
+
+// No body awake in any world and no frame: a step would move nothing.
+bool PhysicsEngine::isStill() const {
+    // a frame's world is stepped whatever is in it; a moving kinematic body (a keyframed entity the network moves)
+    // does not need a step here: nothing simulated meets it while no dynamic body is awake
+    return _frameWorlds.empty() && _rootWorld && _rootWorld->getNumActiveDynamicBodies() == 0;
+}
+
+QString PhysicsEngine::describeActiveBodies(int maxNames) const {
+    if (!_rootWorld) {
+        return "no world";
+    }
+    QStringList names;
+    uint32_t dynamic = _rootWorld->getNumActiveDynamicBodies(&names, maxNames);
+    return QString("%1 active bodies, %2 dynamic%3").arg(_rootWorld->getNumActiveBodies()).arg(dynamic)
+        .arg(names.isEmpty() ? QString() : " (" + names.join(", ") + ")");
 }
 
 void PhysicsEngine::harvestPerformanceStats() {

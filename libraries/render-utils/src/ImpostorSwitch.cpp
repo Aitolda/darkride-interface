@@ -14,6 +14,7 @@
 #include "FadeEffectJobs.h"
 
 const float ImpostorSwitch::CROSSFADE_SECONDS = 0.35f;
+const float ImpostorSwitch::STAND_IN_GRACE_SECONDS = 0.25f;
 
 namespace {
     // the hysteresis band of the main view, on the squared half-tangent: the card comes at a fifth under the angle's
@@ -38,6 +39,17 @@ bool ImpostorSwitch::wantsCardAt(float distanceSq, float thresholdSq) const {
     return distanceSq > radiusSq && radiusSq < thresholdSq * distanceSq;
 }
 
+bool ImpostorSwitch::standsIn(quint64 now) {
+    if (!_standIn.load(std::memory_order_relaxed)) {
+        _standInSince = 0;
+        return false;
+    }
+    if (_standInSince == 0) {
+        _standInSince = now;
+    }
+    return (float)(now - _standInSince) >= STAND_IN_GRACE_SECONDS * (float)USECS_PER_SECOND;
+}
+
 ImpostorSwitch::View ImpostorSwitch::evaluate(const RenderArgs* args) {
     View view;
     if (!args) {
@@ -51,6 +63,8 @@ ImpostorSwitch::View ImpostorSwitch::evaluate(const RenderArgs* args) {
             // with each other for either state, so the model's parts and the card never disagree about it
             bool target = _mainViewShowsCard;
             const float thresholdSq = args->_impostorAngleHalfTanSq;
+            quint64 now = usecTimestampNow();
+            const bool standIn = standsIn(now);
             if (!_cardReady || _radius <= 0.0f || thresholdSq <= 0.0f || !args->hasViewFrustum()) {
                 target = false;
             } else {
@@ -61,6 +75,8 @@ ImpostorSwitch::View ImpostorSwitch::evaluate(const RenderArgs* args) {
                                      std::memory_order_relaxed);
                 if (distanceSq <= radiusSq) {
                     target = false;
+                } else if (standIn) {
+                    target = true;   // the models are not here yet: the card at any angle
                 } else if (_mainViewShowsCard) {
                     if (radiusSq > thresholdSq * (1.0f + BAND) * distanceSq) {
                         target = false;
@@ -69,7 +85,6 @@ ImpostorSwitch::View ImpostorSwitch::evaluate(const RenderArgs* args) {
                     target = true;
                 }
             }
-            quint64 now = usecTimestampNow();
             if (target != _mainViewShowsCard) {
                 _mainViewShowsCard = target;
                 _fadeFrom = _share;   // a reversal in mid-dissolve goes on from where it is
@@ -94,7 +109,9 @@ ImpostorSwitch::View ImpostorSwitch::evaluate(const RenderArgs* args) {
     bool card = false;
     if (_cardReady && _radius > 0.0f && args->_impostorAngleHalfTanSq > 0.0f && args->hasViewFrustum()) {
         glm::vec3 toCamera = args->getViewFrustum().getPosition() - _center;
-        card = wantsCardAt(glm::dot(toCamera, toCamera), args->_impostorAngleHalfTanSq);
+        float distanceSq = glm::dot(toCamera, toCamera);
+        card = wantsCardAt(distanceSq, args->_impostorAngleHalfTanSq) ||
+            (standsIn(usecTimestampNow()) && distanceSq > _radius * _radius);
     }
     view.card = card;
     view.model = !card;

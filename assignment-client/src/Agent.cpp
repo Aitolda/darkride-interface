@@ -37,7 +37,6 @@
 #include <ScriptEngines.h>
 #include <SoundCacheScriptingInterface.h>
 #include <SoundCache.h>
-#include <UserActivityLoggerScriptingInterface.h>
 #include <UsersScriptingInterface.h>
 #include <UUID.h>
 
@@ -92,7 +91,6 @@ Agent::Agent(ReceivedMessage& message) :
     DependencyManager::set<EntityScriptingInterface>(false);
 
     DependencyManager::set<ResourceScriptingInterface>();
-    DependencyManager::set<UserActivityLoggerScriptingInterface>();
 
     _entityEditSender.setPacketsPerSecond(DEFAULT_ENTITY_PPS_PER_SCRIPT);
     DependencyManager::get<EntityScriptingInterface>()->setPacketSender(&_entityEditSender);
@@ -128,7 +126,7 @@ Agent::Agent(ReceivedMessage& message) :
         { PacketType::MixedAudio, PacketType::SilentAudioFrame },
         this, "handleAudioPacket");
     packetReceiver.registerListenerForTypes(
-        { PacketType::OctreeStats, PacketType::EntityData, PacketType::EntityErase },
+        { PacketType::OctreeStats, PacketType::EntityData, PacketType::EntityErase, PacketType::EntityQueryInitialResultsComplete },
         this, "handleOctreePacket");
     packetReceiver.registerListener(PacketType::SelectedAudioFormat, this, "handleSelectedAudioFormat");
 
@@ -180,8 +178,11 @@ void Agent::handleOctreePacket(QSharedPointer<ReceivedMessage> message, SharedNo
         _entityViewer.processDatagram(*message, senderNode);
     } else if (packetType == PacketType::EntityErase) {
         _entityViewer.processEraseMessage(*message, senderNode);
+    } else if (packetType == PacketType::EntityQueryInitialResultsComplete) {
+        _entityViewer.handleInitialResultsComplete(message, senderNode);
     }
 }
+
 
 void Agent::handleAudioPacket(QSharedPointer<ReceivedMessage> message) {
     _receivedAudioStream.parseData(*message);
@@ -964,7 +965,6 @@ void Agent::aboutToFinish() {
     DependencyManager::destroy<AnimationCacheScriptingInterface>();
     DependencyManager::destroy<EntityScriptingInterface>();
     DependencyManager::destroy<ResourceScriptingInterface>();
-    DependencyManager::destroy<UserActivityLoggerScriptingInterface>();
 
     DependencyManager::destroy<ScriptCache>();
     DependencyManager::destroy<SoundCache>();

@@ -23,6 +23,7 @@
 #include <set>
 #include <vector>
 
+#include <QtCore/QStringList>
 #include <QUuid>
 
 #include <glm/glm.hpp>
@@ -134,6 +135,9 @@ public:
     const JoltLayers::Tables& getLayers() const { return *_layers; }
     int32_t getNumBodies() const;
     uint32_t getNumActiveBodies() const;
+    // the active bodies that are dynamic (Jolt counts moving kinematic ones too, a keyframed entity among them), and a
+    // few of their names for a log
+    uint32_t getNumActiveDynamicBodies(QStringList* names = nullptr, int maxNames = 0) const;
     size_t getNumObjects() const { return _motionStates.size(); }
     bool contains(ObjectMotionState* motionState) const { return _motionStates.find(motionState) != _motionStates.end(); }
     const std::set<ObjectMotionState*>& getMotionStates() const { return _motionStates; }

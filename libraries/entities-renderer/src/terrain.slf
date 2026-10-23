@@ -101,6 +101,10 @@ const float PAINT_LEAST = 0.002;         // a weight below this is nothing: its 
 // beyond the sum of both (TOP_SURFACE_TOLERANCE and TOP_SURFACE_FADE in TopSurface.h).
 const float TOP_SURFACE_TOLERANCE = 1.0;
 const float TOP_SURFACE_FADE = 0.5;
+// How far below its column's top, in grid voxels, a wall still takes the paint of the ground above it (and the fade
+// past that): a raised terrace's sides, not a cave's walls (TopSurface.h, PAINT_WALL_REACH there for the editor)
+const float PAINT_WALL_REACH = 8.0;
+const float PAINT_WALL_FADE = 4.0;
 const float HEIGHT_BLEND_EDGE = 0.2;     // the Height blend: how far above what is below a layer rises to show fully
 
 // The surface's derivatives in terrain space, taken once for the whole fragment, so every texture sample can be
@@ -307,13 +311,36 @@ void main(void) {
 
     // the paint map, where the ground faces up: the stack's layers bottom to top, each laid over what is below it
     // by its coverage here times its opacity, as a painter would, starting from the voxel material
-    float facingUp = smoothstep(PAINT_FACING_LOW, PAINT_FACING_HIGH, terrainNormal.y);
-    // and only on the ground the sky sees: under it, on a cave's floor or the ground beneath an overhang, the voxel
-    // material shows (an explicit level: the tile has one, and this may be a branch no neighbour takes)
-    if (facingUp > 0.0 && chunk.top.w > 0.5) {
-        float topHeight = textureLod(topHeights, _positionMS.xz * chunk.top.x + chunk.top.yz, 0.0).r;
+    float up = terrainNormal.y;
+    float facingUp = smoothstep(PAINT_FACING_LOW, PAINT_FACING_HIGH, up);
+    if (chunk.top.w > 0.5) {
+        // and only on the ground the sky sees: under it, on a cave's floor or the ground beneath an overhang, the
+        // voxel material shows (an explicit level: the tile has one, and this may be a branch no neighbour takes).
+        // A wall, steep ground within PAINT_WALL_REACH grid voxels below its column's top, takes the paint of the
+        // ground it rises from, so a raised terrace is snow down its sides rather than a band of voxel material
+        // (2026-10-18); deeper down, a cave's wall shows its voxels as its floor does, and so does an overhang.
+        // the top is one height a voxel column; a point takes the lowest of the four columns around it, so the ground
+        // at the foot of a wall is not read as under the wall's own column (a square notch of voxel material along
+        // every raised edge, 2026-10-18), and the ground over a lower neighbour still counts as on top. The tile's
+        // second channel is a sheltered floor (TopSurface.h: the ground under a pillar's lip or a ledge that open
+        // ground of its height reaches): a point at the highest of the four around it is the sky's ground too.
+        vec2 uv = _positionMS.xz * chunk.top.x + chunk.top.yz;
+        vec4 tops = textureGather(topHeights, uv, 0);
+        vec4 floors = textureGather(topHeights, uv, 1);
+        float topHeight = min(min(tops.x, tops.y), min(tops.z, tops.w));
+        float floorHeight = max(max(floors.x, floors.y), max(floors.z, floors.w));
         float height = chunk.vertical.y + _positionMS.y * chunk.vertical.x;
-        facingUp *= 1.0 - smoothstep(TOP_SURFACE_TOLERANCE, TOP_SURFACE_TOLERANCE + TOP_SURFACE_FADE, topHeight - height);
+        float below = topHeight - height;
+        float onTop = 1.0 - smoothstep(TOP_SURFACE_TOLERANCE, TOP_SURFACE_TOLERANCE + TOP_SURFACE_FADE, below);
+        onTop = max(onTop, 1.0 - smoothstep(TOP_SURFACE_TOLERANCE, TOP_SURFACE_TOLERANCE + TOP_SURFACE_FADE, abs(floorHeight - height)));
+        // (a wall cut by the box's closed face, or a plumb one, has a normal at or a hair under horizontal: upright
+        // counts down to a slight overhang)
+        float upright = smoothstep(-0.2, 0.0, up);
+        float wall = (1.0 - facingUp) * upright * (1.0 - smoothstep(PAINT_WALL_REACH, PAINT_WALL_REACH + PAINT_WALL_FADE, below));
+        facingUp = facingUp * onTop + wall;
+    } else {
+        // a coarse node draws the top alone: its walls take the paint too, only an overhang shows its voxels
+        facingUp = max(facingUp, smoothstep(-0.2, 0.0, up));
     }
     if (facingUp > 0.0) {
         vec2 uv = _positionMS.xz * chunk.paint.x + chunk.paint.yz;

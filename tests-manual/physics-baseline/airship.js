@@ -33,7 +33,8 @@
     var TAG = KIND === "aircraft" ? "PHYSICS-AIRCRAFT" : "PHYSICS-AIRSHIP";
     var TERRAIN_URL = config.terrainURL || "";
     var LIFETIME = config.lifetime || 600;
-    var TIMEOUT = config.timeout || 260;
+    var TIMEOUT = config.timeout || 260;    // s of course; the wait for the world before it (a cold cache took 90 s) is not counted
+    var courseT0 = -1;
     var BOOT = (config.boot !== undefined) ? config.boot : 8;
     var DECK_CAR = !!config.deckCar;         // round 8: the trolley on the deck; the crew rides it instead of walking the deck
     var CRUISE_HEIGHT = 35;                  // m above the pad's ground
@@ -116,7 +117,7 @@
 
     function now() { return Date.now() / 1000 - t0; }
     function log(s) { print(TAG + " " + s); }
-    function setMode(m) { mode = m; modeT0 = now(); events.push({ t: now(), mode: m }); log("mode " + m + " at " + now().toFixed(2) + " s"); }
+    function setMode(m) { mode = m; modeT0 = now(); events.push({ t: now(), mode: m }); log("mode " + m + " at " + now().toFixed(2) + " s"); if (m === "course" && courseT0 < 0) { courseT0 = now(); } }
     function setPhase(p) {
         if (p === phase) { return; }
         phase = p;
@@ -272,7 +273,11 @@
             state: { sequence: v.inputSequence, throttle: v.throttle, steering: v.steering, pitch: v.pitch, lift: v.lift, trim: v.trim,
                      ballast: v.ballast, fill: v.fill, tilt: v.tilt, stateTime: v.stateTime, driver: v.driver },
             stats: { corrections: stats.corrections, replaySteps: stats.replaySteps, maxError: stats.maxError, inputsSent: stats.inputsSent,
-                     inputsReceived: stats.inputsReceived, inputsDropped: stats.inputsDropped, inputsStarved: stats.inputsStarved, vehicles: stats.vehicles },
+                     inputsReceived: stats.inputsReceived, inputsDropped: stats.inputsDropped, inputsStarved: stats.inputsStarved, vehicles: stats.vehicles,
+                     streamStatesReceived: stats.streamStatesReceived, streamExtrapolations: stats.streamExtrapolations, rttMs: stats.rttMs,
+                     delayMs: stats.delayMs, streamIntervalMs: stats.streamIntervalMs, streamJitterMs: stats.streamJitterMs,
+                     inputsLate: stats.inputsLate, inputsEarly: stats.inputsEarly, bufferMargin: stats.bufferMargin, leadShifts: stats.leadShifts,
+                     leadJumps: stats.leadJumps, timeShiftMs: stats.timeShiftMs },
             live: stats.live && (stats.live.airship || stats.live.aircraft) ? { altitude: stats.live.altitude, airDensity: stats.live.airDensity, buoyancy: stats.live.buoyancy,
                     ballastWeight: stats.live.ballastWeight, thrust: stats.live.thrust, verticalThrust: stats.live.verticalThrust,
                     airspeed: stats.live.airspeed, sideslip: stats.live.sideslip, incidence: stats.live.incidence, ballast: stats.live.ballast,
@@ -843,6 +848,7 @@
         } else if (mode === "ride") {
             var c = Entities.getEntityProperties(hull, ["description"]);
             var p = c ? (c.description || "") : "";
+            if (p && courseT0 < 0) { courseT0 = now(); }   // the crew's clock for the timeout runs from the pilot's first phase
             if (p !== phase) {
                 setPhase(p);
                 if (p === "teleport" && !teleportDone) { stopWalking(); Script.setTimeout(teleportShip, 1500); }
@@ -1045,6 +1051,11 @@
         log("totals: " + samples.length + " samples; corrections " + (last.corrections || 0) + ", replay substeps " + (last.replaySteps || 0) +
             ", max error " + (1000 * (last.maxError || 0)).toFixed(0) + " mm, inputs sent " + (last.inputsSent || 0) + ", received " + (last.inputsReceived || 0) +
             ", dropped " + (last.inputsDropped || 0) + ", starved " + (last.inputsStarved || 0) + ", vehicles " + (last.vehicles || 0) +
+            "; stream: states received " + (last.streamStatesReceived || 0) + ", extrapolated substeps " + (last.streamExtrapolations || 0) +
+            ", rtt " + (last.rttMs || 0).toFixed(1) + " ms, delay " + (last.delayMs || 0).toFixed(1) + " ms, interval " + (last.streamIntervalMs || 0).toFixed(1) +
+            " ms, jitter " + (last.streamJitterMs || 0).toFixed(1) + " ms" +
+            "; input buffer: margin " + (last.bufferMargin || 0) + ", lead shifts " + (last.leadShifts || 0) + " (jumps " + (last.leadJumps || 0) +
+            "), late " + (last.inputsLate || 0) + ", early " + (last.inputsEarly || 0) +
             "; crossings " + crossings.length);
         Test.saveObject({ role: ROLE, summary: summary, events: events, crossings: crossings, probes: probes, samples: samples }, "physics-airship.json");
         log("done (" + reason + "), " + samples.length + " samples");
@@ -1055,7 +1066,8 @@
     }
 
     function onUpdate(dt) {
-        if (now() > TIMEOUT) { finish("timeout"); return; }
+        if (now() > TIMEOUT + (courseT0 >= 0 ? courseT0 : 0)) { finish("timeout"); return; }
+
         if (hull && !sample(dt)) { finish("airship gone"); return; }
         if (ROLE === "pilot") { drivePilot(); } else { driveCrew(); }
     }

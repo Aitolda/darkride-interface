@@ -414,17 +414,21 @@ signals:
      * Triggered when looking up the details of a metaverse user or location to go to has completed and the domain or user is 
      * offline.
      * @function location.lookupResultIsOffline
+     * @param {string} name - The place's or user's name that was looked up, or <code>""</code> for a domain ID.
+     * @param {boolean} isUser - <code>true</code> if a user was looked up, <code>false</code> if a place or domain.
      * @returns {Signal}
      */
-    void lookupResultIsOffline();
+    void lookupResultIsOffline(const QString& name, bool isUser);
 
     /**jsdoc
      * Triggered when looking up the details of a metaverse user or location to go to has completed and the domain or user could
      * not be found.
      * @function location.lookupResultIsNotFound
+     * @param {string} name - The place's or user's name that was looked up, or <code>""</code> for a domain ID.
+     * @param {boolean} isUser - <code>true</code> if a user was looked up, <code>false</code> if a place or domain.
      * @returns {Signal}
      */
-    void lookupResultIsNotFound();
+    void lookupResultIsNotFound(const QString& name, bool isUser);
 
     /**jsdoc
      * Triggered when a request is made to go to an IP address.

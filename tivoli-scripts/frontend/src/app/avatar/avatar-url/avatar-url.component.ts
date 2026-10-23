@@ -1,4 +1,4 @@
-import { Component, Inject } from "@angular/core";
+import { Component, ElementRef, Inject, ViewChild } from "@angular/core";
 import { MatDialogRef, MAT_DIALOG_DATA } from "@angular/material/dialog";
 import { ScriptService } from "../../script.service";
 
@@ -8,18 +8,27 @@ import { ScriptService } from "../../script.service";
 	styleUrls: ["./avatar-url.component.scss"],
 })
 export class AvatarUrlComponent {
+	@ViewChild("avatarURLInput") avatarURLInput: ElementRef<HTMLInputElement>;
+
 	constructor(
 		private scriptService: ScriptService,
 		private dialogRef: MatDialogRef<AvatarUrlComponent>,
 		@Inject(MAT_DIALOG_DATA) public avatarURL: string,
-	) {}
+	) {
+		// the whole address is selected once the box is open, so one paste or one key replaces it
+		this.dialogRef.afterOpened().subscribe(() => {
+			const input = this.avatarURLInput.nativeElement;
+			input.focus();
+			input.select();
+		});
+	}
 
 	onDiscard() {
 		this.dialogRef.close();
 	}
 
 	onUpdate(input: any) {
-		let avatarUrl = input.value;
+		let avatarUrl = input.value.trim();
 		const isWindows = /^[A-Z]:\\/i.test(avatarUrl);
 		const isUnix = /^\//.test(avatarUrl);
 		if (isWindows || isUnix) {
