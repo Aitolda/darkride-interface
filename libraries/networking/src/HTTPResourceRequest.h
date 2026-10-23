@@ -46,6 +46,7 @@ private:
     QUrl _requestUrl;                     // _url, or the target RedirectCache remembers for it
     bool _viaRedirectCache { false };
     bool _triedOriginal { false };        // the remembered target failed and the original URL was asked
+    bool _withAccessToken { false };      // our files host refused it without the player's login: asked again with it
 };
 
 #endif

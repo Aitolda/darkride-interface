@@ -21,7 +21,9 @@
 #include <Gzip.h>
 #include <Brotli.h>
 
+#include "AccountManager.h"
 #include "NetworkAccessManager.h"
+#include "NetworkingConstants.h"
 #include "RedirectCache.h"
 #include "ResourceCache.h"
 #include "NetworkLogging.h"
@@ -53,6 +55,23 @@ void HTTPResourceRequest::cleanupTimer() {
     _sendTimer = nullptr;
 }
 
+// The metaverse's files host, files.<metaverse host>: a private file there goes only to a signed-in Darkride client.
+static bool isMetaverseFilesHost(const QUrl& url) {
+    const QUrl metaverse = NetworkingConstants::METAVERSE_SERVER_URL();
+    return url.scheme() == metaverse.scheme() && url.port() == metaverse.port() &&
+        url.host().compare("files." + metaverse.host(), Qt::CaseInsensitive) == 0;
+}
+
+// The player's login as an Authorization header value, or nothing when signed out or expired. Read as it is, without
+// AccountManager::hasValidAccessToken, which may start a token refresh from this thread.
+static QByteArray accessTokenHeaderValue() {
+    const auto& token = DependencyManager::get<AccountManager>()->getAccountInfo().getAccessToken();
+    if (token.token.isEmpty() || token.isExpired()) {
+        return QByteArray();
+    }
+    return token.authorizationHeaderValue();
+}
+
 void HTTPResourceRequest::doSend() {
     DependencyManager::get<StatTracker>()->incrementStat(STAT_HTTP_REQUEST_STARTED);
 
@@ -60,7 +79,7 @@ void HTTPResourceRequest::doSend() {
     // original URL is asked once more (onRequestFinished)
     _requestUrl = _url;
     _viaRedirectCache = false;
-    if (!_triedOriginal) {
+    if (!_triedOriginal && !_withAccessToken) {
         QUrl remembered = RedirectCache::target(_url);
         if (!remembered.isEmpty()) {
             _requestUrl = remembered;
@@ -69,7 +88,9 @@ void HTTPResourceRequest::doSend() {
     }
 
     QNetworkRequest networkRequest(_requestUrl);
-    networkRequest.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+    // with the player's login, no redirect is followed: Qt would send the login on to wherever it led (a private file
+    // is passed through by the files host, never redirected)
+    networkRequest.setAttribute(QNetworkRequest::FollowRedirectsAttribute, !_withAccessToken);
     // not HTTP/2: Qt 5.15's implementation made cold loads slower on this link, with 64 KB windows and with 32 MB
     // ones (measured 10-23, ARCHITECTURE.md §6 phase 2b); six HTTP/1.1 connections per host it is
     networkRequest.setHeader(QNetworkRequest::UserAgentHeader, TIVOLI_CLOUD_VR_USER_AGENT);
@@ -95,6 +116,11 @@ void HTTPResourceRequest::doSend() {
 
     // when overriding Accept-Encoding, qt disables auto decompress
     networkRequest.setRawHeader("Accept-Encoding", "gzip, br");
+
+    // a private file: the player's login, to our own files host only, only after it refused the file without it
+    if (_withAccessToken) {
+        networkRequest.setRawHeader(ACCESS_TOKEN_AUTHORIZATION_HEADER, accessTokenHeaderValue());
+    }
 
     _reply = NetworkAccessManager::getInstance().get(networkRequest);
     
@@ -150,14 +176,20 @@ void HTTPResourceRequest::onRequestFinished() {
         return { true, contentTypeParts[0] };
     };
 
+    const int statusCode = _reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     switch(_reply->error()) {
         case QNetworkReply::NoError:
+            if (_withAccessToken && statusCode >= 300 && statusCode < 400) {
+                // redirects aren't followed with the login (doSend): a file that went public meanwhile, asked again
+                // next time without it
+                _result = Error;
+                break;
+            }
             _data = _reply->readAll();
             _loadedFromCache = _reply->attribute(QNetworkRequest::SourceIsFromCacheAttribute).toBool();
             _result = Success;
 
             if (_byteRange.isSet()) {
-                auto statusCode = _reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
                 if (statusCode == 206) {
                     _rangeRequestSuccessful = true;
                     auto contentRangeHeader = _reply->rawHeader("Content-Range");
@@ -251,6 +283,18 @@ void HTTPResourceRequest::onRequestFinished() {
             qCDebug(networking) << "HTTPResourceRequest error:" << QMetaEnum::fromType<QNetworkReply::NetworkError>().valueToKey(_reply->error());
             _result = Error;
             break;
+    }
+
+    // our files host refuses a private file to a request without the player's login: asked once more with it, in this
+    // same request (so the login never goes anywhere else, and only for private files)
+    if (_result == AccessDenied && !_withAccessToken && isMetaverseFilesHost(_requestUrl) &&
+        !accessTokenHeaderValue().isEmpty()) {
+        _reply->disconnect(this);
+        _reply->deleteLater();
+        _reply = nullptr;
+        _withAccessToken = true;
+        doSend();
+        return;
     }
 
     // where the request ended, after the redirects Qt followed, is remembered for the next request of this URL; a
