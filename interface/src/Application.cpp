@@ -72,7 +72,6 @@
 #include <AnimationCacheScriptingInterface.h>
 #include <AssetClient.h>
 #include <AssetUpload.h>
-#include <Midi.h>
 #include <AudioInjectorManager.h>
 #include <AvatarBookmarks.h>
 #include <CrashHelpers.h>
@@ -549,21 +548,6 @@ public:
                 qApp->setActiveWindow(applicationWindow);  // Flashes the taskbar icon if not focus.
                 return true;
             }
-
-            // Attempting to close MIDI interfaces of a hot-unplugged device can result in audio-driver deadlock.
-            // Detecting MIDI devices that have been added/removed after starting Inteface has been disabled.
-            // https://support.microsoft.com/en-us/help/4460006/midi-device-app-hangs-when-former-midi-api-is-used
-#if 0
-            if (message->message == WM_DEVICECHANGE) {
-                const float MIN_DELTA_SECONDS = 2.0f; // de-bounce signal
-                static float lastTriggerTime = 0.0f;
-                const float deltaSeconds = secTimestampNow() - lastTriggerTime;
-                lastTriggerTime = secTimestampNow();
-                if (deltaSeconds > MIN_DELTA_SECONDS) {
-                    Midi::USBchanged();                // re-scan the MIDI bus
-                }
-            }
-#endif
         }
         return false;
     }
@@ -915,7 +899,6 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
 #if !defined(DISABLE_QML)
     DependencyManager::set<OffscreenUi>();
 #endif
-    DependencyManager::set<Midi>();
     DependencyManager::set<PathUtils>();
     DependencyManager::set<InterfaceDynamicFactory>();
     DependencyManager::set<AudioInjectorManager>();

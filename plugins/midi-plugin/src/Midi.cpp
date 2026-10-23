@@ -1,6 +1,6 @@
 //
 //  Midi.cpp
-//  libraries/midi/src
+//  plugins/midi-plugin/src
 //
 //  Created by Burt Sloane
 //  Modified by Bruce Brown

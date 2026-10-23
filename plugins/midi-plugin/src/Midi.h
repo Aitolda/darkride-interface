@@ -1,6 +1,6 @@
 //
 //  Midi.h
-//  libraries/midi/src
+//  plugins/midi-plugin/src
 //
 //  Created by Burt Sloane
 //  Modified by Bruce Brown
@@ -14,8 +14,8 @@
 #define hifi_Midi_h
 
 #include <QtCore/QObject>
+#include <QtCore/QVariant>
 #include <QAbstractNativeEventFilter>
-#include <DependencyManager.h>
 
 #include <vector>
 #include <string>
@@ -34,9 +34,8 @@
  * @hifi-avatar
  */
 
-class Midi : public QObject, public Dependency {
+class Midi : public QObject {
     Q_OBJECT
-    SINGLETON_DEPENDENCY
 
 public:
     void midiReceived(int device, int raw, int channel, int status, int type, int note, int velocity, int bend, int program);  // relay a note to Javascript
