@@ -31,7 +31,7 @@
 	"tivoli/tivoli.js",
 	"system/inspect.js",
 	"system/controllers/controllerScripts.js",
-	"system/create/edit.js",
+	"system/buildMode.js", // the bar's Create button: the native editor's build mode
 	"system/impostorLodView.js" // Developer > Render > Show Impostors and LODs
 ].forEach(function (script) {
 	var runningScripts = ScriptDiscoveryService.getRunning();
