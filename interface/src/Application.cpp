@@ -285,8 +285,8 @@ float Application::getNumCollisionObjects() const {
 // loadScriptURLDialog, getSampleSound, the LOD tools, entity statistics and domain connection dialogs, the log windows) are
 // in ApplicationDialogs.cpp.
 
-// Snapshots (addSnapshotOperator, takeSnapshotOperators, takeSnapshot, takeSecondaryCameraSnapshot,
-// takeSecondaryCamera360Snapshot, shareSnapshot) are in ApplicationSnapshots.cpp.
+// The snapshots asked of the next frame are a SnapshotRequests (SnapshotRequests.h), the member _snapshotRequests, reached
+// by getSnapshotRequests().
 
 // getRenderResolutionScale is in ApplicationDisplay.cpp.
 

@@ -487,19 +487,19 @@ bool WindowScriptingInterface::setDisplayTexture(const QString& name) {
 }
 
 void WindowScriptingInterface::takeSnapshot(bool notify, bool includeAnimated, float aspectRatio, const QString& filename) {
-    qApp->takeSnapshot(notify, includeAnimated, aspectRatio, filename);
+    qApp->getSnapshotRequests().takeSnapshot(notify, includeAnimated, aspectRatio, filename);
 }
 
 void WindowScriptingInterface::takeSecondaryCameraSnapshot(const bool& notify, const QString& filename) {
-    qApp->takeSecondaryCameraSnapshot(notify, filename);
+    qApp->getSnapshotRequests().takeSecondaryCameraSnapshot(notify, filename);
 }
 
 void WindowScriptingInterface::takeSecondaryCamera360Snapshot(const glm::vec3& cameraPosition, const bool& cubemapOutputFormat, const bool& notify, const QString& filename) {
-    qApp->takeSecondaryCamera360Snapshot(cameraPosition, cubemapOutputFormat, notify, filename);
+    qApp->getSnapshotRequests().takeSecondaryCamera360Snapshot(cameraPosition, cubemapOutputFormat, notify, filename);
 }
 
 void WindowScriptingInterface::shareSnapshot(const QString& path, const QUrl& href) {
-    qApp->shareSnapshot(path, href);
+    qApp->getSnapshotRequests().shareSnapshot(path, href);
 }
 
 void WindowScriptingInterface::makeConnection(bool success, const QString& userNameOrError) {

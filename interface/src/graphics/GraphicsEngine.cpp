@@ -356,7 +356,7 @@ void GraphicsEngine::render_performFrame() {
         displayPlugin->getHUDOperator()(batch, _signInNavy);
     };
 
-    std::queue<Application::SnapshotOperator> snapshotOperators;
+    std::queue<SnapshotRequests::Operator> snapshotOperators;
     if (signInCover && !_programsCompiled.load()) {
         gpu::doInBatch("signInFrame", _gpuContext, drawSignInNavy);
     } else if (signInCover) {
@@ -401,7 +401,7 @@ void GraphicsEngine::render_performFrame() {
             PROFILE_RANGE(render, "/runRenderFrame");
             renderArgs._hudOperator = displayPlugin->getHUDOperator();
             renderArgs._hudTexture = qApp->getApplicationOverlay().getOverlayTexture();
-            renderArgs._takingSnapshot = qApp->takeSnapshotOperators(snapshotOperators);
+            renderArgs._takingSnapshot = qApp->getSnapshotRequests().take(snapshotOperators);
             renderArgs._blitFramebuffer = finalFramebuffer;
             FrameDiag::beginFrame();
             render_runRenderFrame(&renderArgs);

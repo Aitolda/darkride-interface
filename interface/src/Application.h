@@ -58,6 +58,7 @@ class ClientOptions;
 #include "ConnectionMonitor.h"
 #include "CursorManager.h"
 #include "WindowCursor.h"
+#include "SnapshotRequests.h"
 #include "gpu/Context.h"
 #include "LoginStateManager.h"
 #include "Menu.h"
@@ -325,14 +326,7 @@ public:
 
     float getGameLoopRate() const { return _gameLoopCounter.rate(); }
 
-    void takeSnapshot(bool notify, bool includeAnimated = false, float aspectRatio = 0.0f, const QString& filename = QString());
-    void takeSecondaryCameraSnapshot(const bool& notify, const QString& filename = QString());
-    void takeSecondaryCamera360Snapshot(const glm::vec3& cameraPosition,
-                                        const bool& cubemapOutputFormat,
-                                        const bool& notify,
-                                        const QString& filename = QString());
-
-    void shareSnapshot(const QString& filename, const QUrl& href = QUrl(""));
+    SnapshotRequests& getSnapshotRequests() { return _snapshotRequests; }   // the snapshots asked of the next frame (SnapshotRequests.h)
 
     QUuid getTabletScreenID() const;
     QUuid getTabletHomeButtonID() const;
@@ -381,10 +375,6 @@ public:
     void enterForeground();
     void toggleAwayMode();
 #endif
-
-    using SnapshotOperator = std::tuple<std::function<void(const QImage&)>, float, bool>;
-    void addSnapshotOperator(const SnapshotOperator& snapshotOperator);
-    bool takeSnapshotOperators(std::queue<SnapshotOperator>& snapshotOperators);
 
     void openDirectory(const QString& path);
 
@@ -834,9 +824,7 @@ private:
     FileScriptingInterface* _fileDownload;
     SharedSoundPointer _snapshotSound;
     SharedSoundPointer _sampleSound;
-    std::mutex _snapshotMutex;
-    std::queue<SnapshotOperator> _snapshotOperators;
-    bool _hasPrimarySnapshot{ false };
+    SnapshotRequests _snapshotRequests;
 
     DisplayPluginPointer _autoSwitchDisplayModeSupportedHMDPlugin{ nullptr };
     QString _autoSwitchDisplayModeSupportedHMDPluginName;
