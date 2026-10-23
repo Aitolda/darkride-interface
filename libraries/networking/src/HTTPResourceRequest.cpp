@@ -23,6 +23,7 @@
 
 #include "NetworkAccessManager.h"
 #include "RedirectCache.h"
+#include "ResourceCache.h"
 #include "NetworkLogging.h"
 
 HTTPResourceRequest::~HTTPResourceRequest() {
@@ -98,6 +99,10 @@ void HTTPResourceRequest::doSend() {
     _reply = NetworkAccessManager::getInstance().get(networkRequest);
     
     connect(_reply, &QNetworkReply::finished, this, &HTTPResourceRequest::onRequestFinished);
+    // the first headers of a reply, a redirect's included, say the host is there (ResourceCache::hasHostAnswered)
+    const QString host = _url.host();
+    connect(_reply, &QNetworkReply::metaDataChanged, this, [host] { ResourceCache::markHostAnswered(host); });
+    connect(_reply, &QNetworkReply::redirected, this, [host](const QUrl&) { ResourceCache::markHostAnswered(host); });
     connect(_reply, &QNetworkReply::downloadProgress, this, &HTTPResourceRequest::onDownloadProgress);
 
     setupTimer();
