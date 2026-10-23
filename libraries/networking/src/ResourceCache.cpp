@@ -13,6 +13,7 @@
 
 #include <QtCore/QDateTime>
 #include <QtCore/QMutex>
+#include <QtCore/QSet>
 #include "ResourceRequestObserver.h"
 
 #include <cfloat>
@@ -345,6 +346,20 @@ QVariantList ResourceCache::getResourceList() {
 namespace {
 QMutex deadHostsMutex;
 QHash<QString, qint64> deadHostsUntil;   // host -> when its death expires, ms since the epoch
+QSet<QString> answeredHosts;
+}
+
+bool ResourceCache::hasHostAnswered(const QString& host) {
+    QMutexLocker lock(&deadHostsMutex);
+    return answeredHosts.contains(host);
+}
+
+void ResourceCache::markHostAnswered(const QString& host) {
+    if (host.isEmpty()) {
+        return;
+    }
+    QMutexLocker lock(&deadHostsMutex);
+    answeredHosts.insert(host);
 }
 
 bool ResourceCache::isHostDead(const QString& host) {
@@ -363,7 +378,7 @@ void ResourceCache::markHostDead(const QString& host) {
     QMutexLocker lock(&deadHostsMutex);
     qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (!deadHostsUntil.contains(host) || now >= deadHostsUntil.value(host)) {
-        qCDebug(networking) << "Host did not resolve; its links fail at once for" << (DEAD_HOST_MSECS / 1000) << "s:" << host;
+        qCDebug(networking) << "Host did not resolve or answer; its links fail at once for" << (DEAD_HOST_MSECS / 1000) << "s:" << host;
     }
     deadHostsUntil[host] = now + DEAD_HOST_MSECS;
 }
@@ -864,6 +879,14 @@ void Resource::handleReplyFinished() {
 
 bool Resource::handleFailedRequest(ResourceRequest::Result result) {
     bool willRetry = false;
+    if (result == ResourceRequest::Result::Timeout && _bytesReceived == 0 && !ResourceCache::hasHostAnswered(_activeUrl.host())) {
+        // ten seconds with nothing from a host that has not answered once this run: an address where nothing listens
+        // (Portalarium names three links on one), so it is dead for a while like a name that does not resolve,
+        // instead of eight ten-second attempts per link on the retry ladder. A host that has answered is never
+        // declared dead by a timeout: a slow or busy link is not a dead host.
+        qCDebug(networking) << "Timed out with nothing received from a host that never answered:" << _activeUrl.toString();
+        result = ResourceRequest::Result::HostNotFound;
+    }
     switch (result) {
         case ResourceRequest::Result::Timeout: {
             qCDebug(networking) << "Timed out loading: received " << _bytesReceived << " total " << _bytesTotal;
