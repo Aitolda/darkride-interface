@@ -10,6 +10,7 @@
 #include "ImpostorBaker.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <functional>
 
@@ -69,6 +70,7 @@
 #include <TrackCurve.h>
 #include <TrackEntityItem.h>
 
+#include <plugins/DisplayPlugin.h>
 #include "Application.h"
 #include "avatar/AvatarManager.h"
 #include "avatar/MyAvatar.h"
@@ -260,6 +262,10 @@ void Editor::setReady() {
     }
 }
 
+static int64_t steadyNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 void Editor::setActive(bool active) {
     if (active == _active) {
         return;
@@ -269,6 +275,7 @@ void Editor::setActive(bool active) {
         Menu::getInstance()->setIsOptionChecked(MenuOption::BuildMode, false);
         return;
     }
+    const int64_t toggleStartMs = steadyNowMs();
     _active = active;
     if (active) {
         createPanels();
@@ -361,6 +368,42 @@ void Editor::setActive(bool active) {
     }
     Menu::getInstance()->setIsOptionChecked(MenuOption::BuildMode, active);
     emit activeChanged(active);
+    reportToggleTiming(active, toggleStartMs, steadyNowMs());
+}
+
+// One line a toggle: how long the shortcut's key waited before the client got it (its queue time), from then to
+// the toggle, the toggle's own work, and when the next frame begun after it was shown. The frame is watched for from
+// a short timer, so the line comes a moment after the toggle.
+void Editor::reportToggleTiming(bool active, int64_t startMs, int64_t endMs) {
+    auto plugin = qApp->getActiveDisplayPlugin();
+    if (!plugin) {
+        return;
+    }
+    QString key = "no key";
+    if (_toggleKeyArrivedMs >= 0 && startMs - _toggleKeyArrivedMs < 5000) {
+        // the key's own time is the system's uptime, the steady clock's base on macOS; a figure that makes no sense
+        // (another base) is left out
+        int64_t queued = _toggleKeyArrivedMs - _toggleKeyMadeMs;
+        key = (queued >= 0 && queued < 60000 ? QString("the key waited %1 ms to reach the client, ").arg(queued) : QString())
+            + QString("%1 ms from there to the toggle").arg(startMs - _toggleKeyArrivedMs);
+    }
+    _toggleKeyArrivedMs = -1;
+    const uint32_t presentsAtEnd = plugin->presentCount();
+    auto timer = new QTimer(this);
+    timer->setInterval(5);
+    connect(timer, &QTimer::timeout, this, [timer, plugin, presentsAtEnd, active, key, startMs, endMs] {
+        const int64_t now = steadyNowMs();
+        // the second present after the toggle: the first may be a frame begun before it
+        if (plugin->presentCount() >= presentsAtEnd + 2 || now - endMs > 5000) {
+            qCDebug(interfaceapp).noquote() << QString("Build mode %1: %2; the toggle took %3 ms; the next new frame was "
+                                                      "shown %4 ms after it")
+                .arg(active ? "on" : "off").arg(key).arg(endMs - startMs)
+                .arg(plugin->presentCount() >= presentsAtEnd + 2 ? QString::number(now - endMs) : QString("more than 5000"));
+            timer->stop();
+            timer->deleteLater();
+        }
+    });
+    timer->start();
 }
 
 void Editor::updateRenderMethod() {
@@ -3453,6 +3496,19 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
             return true;
         }
         return false;
+    }
+    // the Build Mode shortcut (Cmd+B): when it was made and when it got here, for the toggle's log line. The first
+    // sight of it only: Qt offers a shortcut to more than one receiver.
+    if (event->type() == QEvent::ShortcutOverride) {
+        auto keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->key() == Qt::Key_B && (keyEvent->modifiers() & Qt::ControlModifier) && !keyEvent->isAutoRepeat()) {
+            int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (_toggleKeyArrivedMs < 0 || now - _toggleKeyArrivedMs > 100) {
+                _toggleKeyMadeMs = (int64_t)keyEvent->timestamp();
+                _toggleKeyArrivedMs = now;
+            }
+        }
     }
     // the camera keys (1 first person, 2 selfie, 3 look at) do nothing in build mode, which has its own camera:
     // a stray one (a number meant for a field) quietly changed the camera you came back to

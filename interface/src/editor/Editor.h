@@ -306,6 +306,11 @@ private:
 
     bool _ready { false };
     bool _active { false };
+    // a build mode toggle's timing, for its log line (Caity, 10-24: toggles took 0.5-2 s at times): when the Build
+    // Mode shortcut's key was made (the system's clock, ms since start-up) and reached the client (the steady clock)
+    int64_t _toggleKeyMadeMs { -1 };
+    int64_t _toggleKeyArrivedMs { -1 };
+    void reportToggleTiming(bool active, int64_t startMs, int64_t endMs);
     bool _gridVisible { true };
     EditorCamera _camera;
     EditorGrid _grid;
