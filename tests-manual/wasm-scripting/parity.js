@@ -59,6 +59,9 @@
         check("entity id is a string", typeof id === "string");
         check("entity id braces", /^\{[0-9a-f-]{36}\}$/.test(id));
         attempt("getEntityProperties(id).name", function () { return Entities.getEntityProperties(id).name; });
+        // the full map and a group, keys unsorted: the order a script sees them in
+        attempt("getEntityProperties(id) keys in order", function () { return Object.keys(Entities.getEntityProperties(id)); });
+        attempt("getEntityProperties(id).grab keys in order", function () { return Object.keys(Entities.getEntityProperties(id).grab); });
         attempt("getEntityProperties(id, [position]) keys", function () { return Object.keys(Entities.getEntityProperties(id, ["position"])).sort(); });
         attempt("getEntityProperties(id, position) keys", function () { return Object.keys(Entities.getEntityProperties(id, "position")).sort(); });
         attempt("getEntityProperties position", function () { return Entities.getEntityProperties(id, ["position"]).position; });
