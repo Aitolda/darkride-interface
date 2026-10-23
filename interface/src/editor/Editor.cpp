@@ -276,6 +276,13 @@ void Editor::setActive(bool active) {
         return;
     }
     const int64_t toggleStartMs = steadyNowMs();
+    // the GL view keeps its size while the panels come or go, and takes the final one once, below: coming on, the
+    // panels arrived one by one, and the view and the overlay were resized five times over (10-24: a toggle's jank)
+    if (auto viewport = qApp->getPrimaryWidget()) {
+        if (auto container = qobject_cast<ViewportContainer*>(viewport->parentWidget())) {
+            container->setDeferResizes(true);
+        }
+    }
     _active = active;
     if (active) {
         createPanels();
@@ -351,13 +358,17 @@ void Editor::setActive(bool active) {
     // The panels take their places now, and the GL view its new size with them: left to the next layout pass, with
     // resizes held for the splitters, the view kept its old size for a moment (a stretched picture as build mode came
     // and went). Then, while the panels can be dragged, the view takes a new size only once the dragging stops.
+    // The layout settles with the view's resizes still held (from the top of setActive), and the view then takes
+    // its final size once, inside the guard.
     if (auto viewport = qApp->getPrimaryWidget()) {
         if (auto container = qobject_cast<ViewportContainer*>(viewport->parentWidget())) {
-            container->setDeferResizes(false);
             auto window = qApp->getWindow();
-            if (window && window->layout()) {
+            {
                 gl::ViewChangeGuard guard;
-                window->layout()->activate();
+                if (window && window->layout()) {
+                    window->layout()->activate();
+                }
+                container->setDeferResizes(false);
             }
             container->setDeferResizes(active);
         }
