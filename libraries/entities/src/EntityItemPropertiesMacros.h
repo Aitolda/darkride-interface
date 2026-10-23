@@ -8,6 +8,19 @@
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
 //
+//
+//  Entity properties are converted for two kinds of script value from one source: QtScript's QScriptValue (with a
+//  QScriptEngine) and PlainScriptValue (with a PlainScriptEngine), which the WebAssembly script engine and the code
+//  outside scripting use. The rule for new property code:
+//  - a property goes through these macros, as before;
+//  - in a hand-written line of copyToScriptValue or copyFromScriptValue, a value is `auto`, not QScriptValue, and is
+//    converted with convertScriptValue(engine, value) or with the RegisteredMetaTypes.h conversion of the same name,
+//    which PlainScriptValueConversions.h has for plain values;
+//  - a property group's two conversions are member templates over the value and engine types (PropertyGroup.h), and
+//    its .cpp ends with INSTANTIATE_PROPERTY_GROUP_CONVERSIONS(TheGroup);
+//  - a conversion that only QtScript has does not compile for plain values: add its twin, under the same name, to
+//    PlainScriptValueConversions.h. tests/script-values compares the two kinds for every entity type.
+//
 
 
 #ifndef hifi_EntityItemPropertiesMacros_h
