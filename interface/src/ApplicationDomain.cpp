@@ -247,7 +247,7 @@
 using namespace std;
 
 QSharedPointer<OffscreenUi> getOffscreenUI();   // Application.cpp's
-QString worldNameForPopup();                     // Application.cpp's: the world's name for a popup's text
+QString worldNameForPopup();                     // ApplicationDialogs.cpp's: the world's name for a popup's text
 
 // constants and the one setting only the domain session reads (the constructor's initializer list reads the setting too)
 static const int ENTITY_SERVER_CONNECTION_TIMEOUT = 5000;

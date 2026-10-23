@@ -22,7 +22,7 @@ extern const QString ACTIVE_DISPLAY_PLUGIN_SETTING_NAME;   // ApplicationDisplay
 extern const QString KEEP_ME_LOGGED_IN_SETTING_NAME;       // Application.cpp
 extern const int MIN_PROCESSING_THREAD_POOL_SIZE;          // Application.cpp
 extern const QUrl AVATAR_INPUTS_BAR_QML;                   // ApplicationUi.cpp
-extern const QString SYSTEM_TABLET;                        // Application.cpp (the dialogs read it); ApplicationUi.cpp reads it too
+extern const QString SYSTEM_TABLET;                        // ApplicationDialogs.cpp; ApplicationUi.cpp reads it too
 extern const QString DEFAULT_CURSOR_NAME;                  // ApplicationStartup.cpp, with the other settings' defaults
 
 #endif // hifi_ApplicationConstants_h
