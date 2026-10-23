@@ -2552,13 +2552,6 @@ bool EntityTree::sendEntitiesOperation(const OctreeElementPointer& element, void
             }
         }
 
-        properties.setXNNeighborID(getMapped(properties.getXNNeighborID()));
-        properties.setXPNeighborID(getMapped(properties.getXPNeighborID()));
-        properties.setYNNeighborID(getMapped(properties.getYNNeighborID()));
-        properties.setYPNeighborID(getMapped(properties.getYPNeighborID()));
-        properties.setZNNeighborID(getMapped(properties.getZNNeighborID()));
-        properties.setZPNeighborID(getMapped(properties.getZPNeighborID()));
-
         QByteArray actionData = properties.getActionData();
         properties.setActionData(remapActionDataIDs(actionData, *args->map));
 
@@ -2805,6 +2798,14 @@ bool EntityTree::readFromMap(QVariantMap& map, const bool isImport) {
         QScriptValue entityScriptValue = variantMapToScriptValue(entityMap, scriptEngine);
         EntityItemProperties properties;
         EntityItemPropertiesFromScriptValueIgnoreReadOnly(entityScriptValue, properties);
+
+        // an entity of a type this version does not have (PolyVox, removed 2026-10-23) is left out and the rest of the
+        // world loads; it is not a failure of the file
+        if (properties.getType() == EntityTypes::Unknown) {
+            qCDebug(entities) << "Leaving out an entity of a type this version does not have:" << entityMap["type"].toString()
+                              << entityMap["id"].toString();
+            continue;
+        }
 
         EntityItemID entityItemID;
         if (entityMap.contains("id")) {

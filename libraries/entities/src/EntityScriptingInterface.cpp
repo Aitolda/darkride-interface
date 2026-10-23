@@ -1504,30 +1504,6 @@ void RayToEntityIntersectionResultFromScriptValue(const QScriptValue& object, Ra
     value.extraInfo = object.property("extraInfo").toVariant().toMap();
 }
 
-bool EntityScriptingInterface::polyVoxWorker(QUuid entityID, std::function<bool(PolyVoxEntityItem&)> actor) {
-    PROFILE_RANGE(script_entities, __FUNCTION__);
-
-    if (!_entityTree) {
-        return false;
-    }
-
-    EntityItemPointer entity = _entityTree->findEntityByEntityItemID(entityID);
-    if (!entity) {
-        qCDebug(entities) << "EntityScriptingInterface::setVoxels no entity with ID" << entityID;
-        return false;
-    }
-
-    EntityTypes::EntityType entityType = entity->getType();
-    if (entityType != EntityTypes::PolyVox) {
-        return false;
-    }
-
-    auto polyVoxEntity = std::dynamic_pointer_cast<PolyVoxEntityItem>(entity);
-    bool result;
-    _entityTree->withWriteLock([&] { result = actor(*polyVoxEntity); });
-    return result;
-}
-
 bool EntityScriptingInterface::setPoints(QUuid entityID, std::function<bool(LineEntityItem&)> actor) {
     PROFILE_RANGE(script_entities, __FUNCTION__);
 
@@ -1564,50 +1540,6 @@ bool EntityScriptingInterface::setPoints(QUuid entityID, std::function<bool(Line
 
     queueEntityMessage(PacketType::EntityEdit, entityID, properties);
     return success;
-}
-
-bool EntityScriptingInterface::setVoxelSphere(const QUuid& entityID, const glm::vec3& center, float radius, int value) {
-    PROFILE_RANGE(script_entities, __FUNCTION__);
-    return polyVoxWorker(entityID, [center, radius, value](PolyVoxEntityItem& polyVoxEntity) {
-        return polyVoxEntity.setSphere(center, radius, value);
-    });
-}
-
-bool EntityScriptingInterface::setVoxelCapsule(const QUuid& entityID,
-                                               const glm::vec3& start,
-                                               const glm::vec3& end,
-                                               float radius,
-                                               int value) {
-    PROFILE_RANGE(script_entities, __FUNCTION__);
-
-    return polyVoxWorker(entityID, [start, end, radius, value](PolyVoxEntityItem& polyVoxEntity) {
-        return polyVoxEntity.setCapsule(start, end, radius, value);
-    });
-}
-
-bool EntityScriptingInterface::setVoxel(const QUuid& entityID, const glm::vec3& position, int value) {
-    PROFILE_RANGE(script_entities, __FUNCTION__);
-
-    return polyVoxWorker(entityID, [position, value](PolyVoxEntityItem& polyVoxEntity) {
-        return polyVoxEntity.setVoxelInVolume(position, value);
-    });
-}
-
-bool EntityScriptingInterface::setAllVoxels(const QUuid& entityID, int value) {
-    PROFILE_RANGE(script_entities, __FUNCTION__);
-
-    return polyVoxWorker(entityID, [value](PolyVoxEntityItem& polyVoxEntity) { return polyVoxEntity.setAll(value); });
-}
-
-bool EntityScriptingInterface::setVoxelsInCuboid(const QUuid& entityID,
-                                                 const glm::vec3& lowPosition,
-                                                 const glm::vec3& cuboidSize,
-                                                 int value) {
-    PROFILE_RANGE(script_entities, __FUNCTION__);
-
-    return polyVoxWorker(entityID, [lowPosition, cuboidSize, value](PolyVoxEntityItem& polyVoxEntity) {
-        return polyVoxEntity.setCuboid(lowPosition, cuboidSize, value);
-    });
 }
 
 bool EntityScriptingInterface::setAllPoints(const QUuid& entityID, const QVector<glm::vec3>& points) {
@@ -1794,42 +1726,6 @@ EntityItemPointer EntityScriptingInterface::checkForTreeEntityAndTypeMatch(const
     }
 
     return entity;
-}
-
-glm::vec3 EntityScriptingInterface::voxelCoordsToWorldCoords(const QUuid& entityID, glm::vec3 voxelCoords) {
-    if (auto entity = checkForTreeEntityAndTypeMatch(entityID, EntityTypes::PolyVox)) {
-        auto polyVoxEntity = std::dynamic_pointer_cast<PolyVoxEntityItem>(entity);
-        return polyVoxEntity->voxelCoordsToWorldCoords(voxelCoords);
-    } else {
-        return glm::vec3(0.0f);
-    }
-}
-
-glm::vec3 EntityScriptingInterface::worldCoordsToVoxelCoords(const QUuid& entityID, glm::vec3 worldCoords) {
-    if (auto entity = checkForTreeEntityAndTypeMatch(entityID, EntityTypes::PolyVox)) {
-        auto polyVoxEntity = std::dynamic_pointer_cast<PolyVoxEntityItem>(entity);
-        return polyVoxEntity->worldCoordsToVoxelCoords(worldCoords);
-    } else {
-        return glm::vec3(0.0f);
-    }
-}
-
-glm::vec3 EntityScriptingInterface::voxelCoordsToLocalCoords(const QUuid& entityID, glm::vec3 voxelCoords) {
-    if (auto entity = checkForTreeEntityAndTypeMatch(entityID, EntityTypes::PolyVox)) {
-        auto polyVoxEntity = std::dynamic_pointer_cast<PolyVoxEntityItem>(entity);
-        return polyVoxEntity->voxelCoordsToLocalCoords(voxelCoords);
-    } else {
-        return glm::vec3(0.0f);
-    }
-}
-
-glm::vec3 EntityScriptingInterface::localCoordsToVoxelCoords(const QUuid& entityID, glm::vec3 localCoords) {
-    if (auto entity = checkForTreeEntityAndTypeMatch(entityID, EntityTypes::PolyVox)) {
-        auto polyVoxEntity = std::dynamic_pointer_cast<PolyVoxEntityItem>(entity);
-        return polyVoxEntity->localCoordsToVoxelCoords(localCoords);
-    } else {
-        return glm::vec3(0.0f);
-    }
 }
 
 int EntityScriptingInterface::getJointParent(const QUuid& entityID, int index) {

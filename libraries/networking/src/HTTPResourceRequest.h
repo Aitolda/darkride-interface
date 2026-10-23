@@ -43,6 +43,9 @@ private:
 
     QTimer* _sendTimer { nullptr };
     QNetworkReply* _reply { nullptr };
+    QUrl _requestUrl;                     // _url, or the target RedirectCache remembers for it
+    bool _viaRedirectCache { false };
+    bool _triedOriginal { false };        // the remembered target failed and the original URL was asked
 };
 
 #endif

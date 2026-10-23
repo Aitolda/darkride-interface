@@ -16,5 +16,4 @@ include_hifi_library_headers(controllers)
 include_hifi_library_headers(task)
 include_hifi_library_headers(graphics-scripting) # for Forward.h
 
-target_polyvox()
 

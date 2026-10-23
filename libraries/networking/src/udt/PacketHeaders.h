@@ -299,6 +299,8 @@ enum class EntityVersion : PacketVersion {
     // TO DO - reinstate with tonemapping in zones
     // ToneMappingMode, // caitlyn
     
+    PolyVoxRemoved, // darkride: the PolyVox entity is gone (its type number reserved); a world's PolyVox entities are dropped on load
+
     // Add new versions above here
     NUM_PACKET_TYPE,
     LAST_PACKET_TYPE = NUM_PACKET_TYPE - 1
