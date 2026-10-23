@@ -41,6 +41,7 @@
 #include <shared/GlobalAppProperties.h>
 #include <StartupProfiler.h>
 #include <AccountManager.h>
+#include <ChatService.h>
 #include <AddressManager.h>
 #include <BuildInfo.h>
 #include <DebugDraw.h>
@@ -968,6 +969,10 @@ void Application::setupInterface() {
         }, Qt::QueuedConnection);
     }
 #endif
+
+    StartupProfiler::phase("constructor: chat started");
+    // Darkride chat (libraries/chat) follows the account from here: signed in to chat while it is signed in
+    DependencyManager::get<ChatService>()->start();
 
     StartupProfiler::phase("constructor: initializeUi");
     // Initialize the user interface and menu system

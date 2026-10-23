@@ -22,6 +22,8 @@
 #include <shared/PlatformHelper.h>
 #include <shared/GlobalAppProperties.h>
 #include <AccountManager.h>
+#include <ChatService.h>
+#include <FriendsService.h>
 #include <AnimDebugDraw.h>
 #include <AnimationCacheScriptingInterface.h>
 #include <AudioInjectorManager.h>
@@ -176,6 +178,10 @@ void Application::cleanupBeforeQuit() {
     if (!keepMeLoggedIn) {
         DependencyManager::get<AccountManager>()->removeAccountFromFile();
     }
+    // an account not kept on this computer leaves no chat session on it either
+    DependencyManager::get<ChatService>()->stop(!keepMeLoggedIn);
+    DependencyManager::destroy<ChatService>();
+    DependencyManager::destroy<FriendsService>();
 
     _display.releasePlugin();
     PluginManager::getInstance()->shutdown();

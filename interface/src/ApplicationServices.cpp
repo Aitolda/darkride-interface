@@ -15,6 +15,8 @@
 #include "ApplicationServices.h"
 
 #include <AccountManager.h>
+#include <ChatService.h>
+#include <FriendsService.h>
 #include <AddressManager.h>
 #include <AnimationCacheScriptingInterface.h>
 #include <AudioClient.h>
@@ -218,12 +220,15 @@ void registerApplicationServices(int listenPort, const QString& defaultScriptsOv
     DependencyManager::set<DomainConnectionModel>();
 
 
-    // Speech recognition where the platform has it; discoverability (the metaverse's where-are-you); the scene API; the
+    // Speech recognition where the platform has it; discoverability (the metaverse's where-are-you); Darkride chat and the
+// account's friends; the scene API; the
     // offscreen QML UI; paths; the entity dynamics factory; audio injectors; the messages client.
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     DependencyManager::set<SpeechRecognizer>();
 #endif
     DependencyManager::set<DiscoverabilityManager>();
+    DependencyManager::set<ChatService>();       // Darkride chat (libraries/chat), signed in with the account
+    DependencyManager::set<FriendsService>();    // the account's friends, for the chat window's Friends page
     DependencyManager::set<SceneScriptingInterface>();
     DependencyManager::set<OffscreenUi>();
     DependencyManager::set<PathUtils>();
