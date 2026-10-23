@@ -7,8 +7,9 @@
 //  in ten named stages (the process, the services and their connections, the window and the renderer, the
 //  interface, the entity processing, input, settings, the operators, then the sign-in screen), each a function
 //  here whose body is the constructor's former text between two of the start-up profile's phase marks. With the
-//  pieces only the start-up uses: the Qt message handler, the Windows native event filter, the settings' defaults
-//  (ARCHITECTURE.md §5.4 step 4).
+//  pieces only the start-up uses: the Qt message handler, the Windows native event filter, the settings' defaults;
+//  and init, which the interface stage calls once the UI is up, to bring up the avatar manager, the entity tree
+//  renderer, the physics engine, the entity simulation and the game workload (ARCHITECTURE.md §5.4 step 4).
 //
 //  Copyright 2026 Darkride.
 //
@@ -1795,4 +1796,86 @@ void Application::finishStartup() {
 #endif
     StartupProfiler::phase("constructor: pauseUntilLoginDetermined");
     pauseUntilLoginDetermined();
+}
+
+// init, which the interface stage (setupInterface) calls once the UI is up: the avatar manager, the entity tree
+// renderer, the physics engine, the entity simulation and the game workload brought up, in that order.
+void Application::init() {
+    // Make sure Login state is up to date
+    DependencyManager::get<DialogsManager>()->toggleLoginDialog();
+    {
+        StartupProfiler::Scope step("init: avatar manager");
+        DependencyManager::get<AvatarManager>()->init();
+    }
+
+    _lastTimeUpdated.start();
+
+    qCDebug(interfaceapp) << "Loaded settings";
+
+    // fire off an immediate domain-server check in now that settings are loaded
+    QMetaObject::invokeMethod(DependencyManager::get<NodeList>().data(), "sendDomainServerCheckIn");
+
+    // This allows collision to be set up properly for shape entities supported by GeometryCache.
+    // This is before entity setup to ensure that it's ready for whenever instance collision is initialized.
+    ShapeEntityItem::setShapeInfoCalulator(ShapeEntityItem::ShapeInfoCalculator(&shapeInfoCalculator));
+
+    {
+        StartupProfiler::Scope step("init: entity tree renderer");
+        getEntities()->init();
+    }
+    getEntities()->setEntityLoadingPriorityFunction([this, editor = DependencyManager::get<Editor>()](const EntityItem& item) {
+        auto dims = item.getScaledDimensions();
+        auto maxSize = glm::compMax(dims);
+
+        if (maxSize <= 0.0f) {
+            return 0.0f;
+        }
+
+        auto distance = glm::distance(getMyAvatar()->getWorldPosition(), item.getWorldPosition());
+        // in build mode the camera roams far from the avatar: what it looks at loads first
+        if (editor && editor->isActive()) {
+            distance = std::min(distance, glm::distance(_myCamera.getPosition(), item.getWorldPosition()));
+        }
+        return atan2(maxSize, distance);
+    });
+
+    ObjectMotionState::setShapeManager(&_shapeManager);
+    {
+        StartupProfiler::Scope step("init: physics engine");
+        _physicsEngine->init();
+    }
+
+    EntityTreePointer tree = getEntities()->getTree();
+    {
+        StartupProfiler::Scope step("init: entity simulation");
+        _entitySimulation->init(tree, _physicsEngine, &_entityEditSender);
+    }
+    tree->setSimulation(_entitySimulation);
+
+    auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
+
+    // connect the _entityCollisionSystem to our EntityTreeRenderer since that's what handles running entity scripts
+    connect(_entitySimulation.get(), &PhysicalEntitySimulation::entityCollisionWithEntity,
+            getEntities().data(), &EntityTreeRenderer::entityCollisionWithEntity);
+
+     // connect the _entities (EntityTreeRenderer) to our script engine's EntityScriptingInterface for firing
+    // of events related clicking, hovering over, and entering entities
+    getEntities()->connectSignalsToSlots(entityScriptingInterface.data());
+
+    // Make sure any new sounds are loaded as soon as know about them.
+    connect(tree.get(), &EntityTree::newCollisionSoundURL, this, [this](QUrl newURL, EntityItemID id) {
+        getEntities()->setCollisionSound(id, DependencyManager::get<SoundCache>()->getSound(newURL));
+    }, Qt::QueuedConnection);
+    connect(getMyAvatar().get(), &MyAvatar::newCollisionSoundURL, this, [this](QUrl newURL) {
+        if (auto avatar = getMyAvatar()) {
+            auto sound = DependencyManager::get<SoundCache>()->getSound(newURL);
+            avatar->setCollisionSound(sound);
+        }
+    }, Qt::QueuedConnection);
+
+    {
+        StartupProfiler::Scope step("init: game workload");
+        _gameWorkload.startup(getEntities()->getWorkloadSpace(), _graphicsEngine.getRenderScene(), _entitySimulation);
+    }
+    _entitySimulation->setWorkloadSpace(getEntities()->getWorkloadSpace());
 }
