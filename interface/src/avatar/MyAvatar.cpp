@@ -2271,7 +2271,7 @@ void MyAvatar::snapOtherAvatarLookAtTargetsToMe(const AvatarHash& hash) {
                 glm::vec3 gazeOffset = lookAtPosition - getHead()->getEyePosition();
 
                  ViewFrustum viewFrustum;
-                 qApp->copyViewFrustum(viewFrustum);
+                 qApp->getViewState().copyViewFrustum(viewFrustum);
 
                  glm::vec3 viewPosition = viewFrustum.getPosition();
 #if DEBUG_ALWAYS_LOOKAT_EYES_NOT_CAMERA
@@ -4188,7 +4188,7 @@ void MyAvatar::updateActionMotor(float deltaTime) {
 
     // May need to change view if boom length has changed
     if (previousBoomLength != _boomLength) {
-        qApp->changeViewAsNeeded(_boomLength);
+        qApp->getViewState().changeViewAsNeeded(_boomLength);
     }
 }
 
@@ -4229,7 +4229,7 @@ void MyAvatar::updateViewBoom() {
 
     // May need to change view if boom length has changed
     if (previousBoomLength != _boomLength) {
-        qApp->changeViewAsNeeded(_boomLength);
+        qApp->getViewState().changeViewAsNeeded(_boomLength);
     }
 }
 

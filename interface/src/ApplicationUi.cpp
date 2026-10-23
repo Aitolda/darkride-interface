@@ -366,9 +366,7 @@ void Application::pauseUntilLoginDetermined() {
     if (_developerMenuVisible) {
         menu->getMenu("Developer")->setVisible(false);
     }
-    _previousCameraMode = _myCamera.getMode();
-    _myCamera.setMode(CAMERA_MODE_FIRST_PERSON_LOOK_AT);
-    cameraModeChanged();
+    _viewState.setModeKeepingPrevious(CAMERA_MODE_FIRST_PERSON_LOOK_AT);
 
     // disconnect domain handler.
     nodeList->getDomainHandler().disconnect("Pause until login determined");
@@ -457,8 +455,7 @@ void Application::resumeAfterLoginDialogActionTaken() {
     menu->getMenu("Navigate")->setVisible(true);
     menu->getMenu("Settings")->setVisible(true);
     menu->getMenu("Developer")->setVisible(_developerMenuVisible);
-    _myCamera.setMode(_previousCameraMode);
-    cameraModeChanged();
+    _viewState.restorePreviousMode();
     _startUpFinished = true;
     StartupProfiler::instant("signed in: scripts loading, going to the starting location");
     getRefreshRateManager().setRefreshRateRegime(RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE);
@@ -482,8 +479,8 @@ void Application::centerUI() {
 void Application::createLoginDialog() {
     const glm::vec3 LOGIN_DIMENSIONS { 0.89f, 0.5f, 0.01f };
     const auto OFFSET = glm::vec2(0.7f, -0.1f);
-    auto cameraPosition = _myCamera.getPosition();
-    auto cameraOrientation = _myCamera.getOrientation();
+    auto cameraPosition = _viewState.camera().getPosition();
+    auto cameraOrientation = _viewState.camera().getOrientation();
     auto upVec = getMyAvatar()->getWorldOrientation() * Vectors::UNIT_Y;
     auto headLookVec = (cameraOrientation * Vectors::FRONT);
     // DEFAULT_DPI / tablet scale percentage
@@ -537,8 +534,8 @@ void Application::updateLoginDialogPosition() {
     desiredProperties += PROP_POSITION;
     auto properties = entityScriptingInterface->getEntityProperties(_loginDialogID, desiredProperties);
     auto positionVec = properties.getPosition();
-    auto cameraPositionVec = _myCamera.getPosition();
-    auto cameraOrientation = cancelOutRollAndPitch(_myCamera.getOrientation());
+    auto cameraPositionVec = _viewState.camera().getPosition();
+    auto cameraOrientation = cancelOutRollAndPitch(_viewState.camera().getOrientation());
     auto headLookVec = (cameraOrientation * Vectors::FRONT);
     auto entityToHeadVec = positionVec - cameraPositionVec;
     auto pointAngle = (glm::acos(glm::dot(glm::normalize(entityToHeadVec), glm::normalize(headLookVec))) * 180.0f / PI);

@@ -5,8 +5,8 @@
 //  Application's frame loop: idle() (the tick at the display's rate: the timers, the simulation step, the
 //  keyboard-focus highlight, the game-loop counter; on Windows the CPU monitor it starts), update() (the simulation
 //  step: input, the avatars, physics and its gate, the entities, the audio and octree housekeeping, the post-update
-//  work), the physics gate (setArrivalWaitsForNearby, tryToEnablePhysics), the camera (updateCamera,
-//  updateSecondaryCameraViewFrustum) and the render arguments handed to the graphics engine (updateRenderArgs),
+//  work), the physics gate (setArrivalWaitsForNearby, tryToEnablePhysics) and the render arguments handed to the
+//  graphics engine (updateRenderArgs; the camera's placement and the view frustums are the ViewState's, ViewState.h),
 //  with the small per-frame helpers (updateLOD, pushPostUpdateLambda, updateMyAvatarLookAtPosition, updateThreads,
 //  updateDialogs). The members as they stood in Application.cpp, in their order; a home of their own until an
 //  owner takes them (ARCHITECTURE.md §5.4 step 4).
@@ -34,16 +34,13 @@
 #include <OffscreenUi.h>
 #include <PhysicsEngine.h>
 #include <plugins/PluginManager.h>
-#include <SecondaryCamera.h>
 #include <ResourceCache.h>
 #include <SceneScriptingInterface.h>
 #include <display-plugins/hmd/HmdDisplayPlugin.h>
 #include "AudioClient.h"
 #include "avatar/AvatarManager.h"
-#include "avatar/MyHead.h"
 #include "LODManager.h"
 #include "scripting/HMDScriptingInterface.h"
-#include "editor/Editor.h"
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
 #include "SpeechRecognizer.h"
 #endif
@@ -67,147 +64,8 @@ using namespace std;
 QSharedPointer<OffscreenUi> getOffscreenUI();                        // Application.cpp's
 float verticalFieldOfView(float horizontalFov, float aspectRatio);   // ApplicationDisplay.cpp's, beside resizeGL
 
-// Application.cpp's constants that only the frame loop reads
-static const float MIRROR_FULLSCREEN_DISTANCE = 0.789f;
+// Application.cpp's constant that only the frame loop reads
 static const quint64 TOO_LONG_SINCE_LAST_SEND_DOWNSTREAM_AUDIO_STATS = 1 * USECS_PER_SECOND;
-
-void Application::updateCamera(RenderArgs& renderArgs, float deltaTime) {
-    PROFILE_RANGE(render, __FUNCTION__);
-    PerformanceTimer perfTimer("updateCamera");
-
-    glm::vec3 boomOffset;
-    auto myAvatar = getMyAvatar();
-    boomOffset = myAvatar->getModelScale() * myAvatar->getBoomLength() * -IDENTITY_FORWARD;
-
-    // The render mode is default or mirror if the camera is in mirror mode, assigned further below
-    renderArgs._renderMode = RenderArgs::DEFAULT_RENDER_MODE;
-
-    // build mode drives the camera itself, on CAMERA_MODE_INDEPENDENT
-    {
-        auto editor = DependencyManager::get<Editor>();
-        if (editor && editor->isActive()) {
-            editor->update(deltaTime);
-        }
-    }
-
-    // Always use the default eye position, not the actual head eye position.
-    // Using the latter will cause the camera to wobble with idle animations,
-    // or with changes from the face tracker
-    CameraMode mode = _myCamera.getMode();
-    if (mode == CAMERA_MODE_FIRST_PERSON || mode == CAMERA_MODE_FIRST_PERSON_LOOK_AT) {
-        _thirdPersonHMDCameraBoomValid= false;
-        if (isHMDMode()) {
-            mat4 camMat = myAvatar->getSensorToWorldMatrix() * myAvatar->getHMDSensorMatrix();
-            _myCamera.setPosition(extractTranslation(camMat));
-            _myCamera.setOrientation(glmExtractRotation(camMat));
-        } else if (mode == CAMERA_MODE_FIRST_PERSON) {
-            _myCamera.setPosition(myAvatar->getDefaultEyePosition());
-            _myCamera.setOrientation(myAvatar->getMyHead()->getHeadOrientation());
-        } else {
-            _myCamera.setPosition(myAvatar->getCameraEyesPosition(deltaTime));
-            _myCamera.setOrientation(myAvatar->getLookAtRotation());
-        }
-    } else if (mode == CAMERA_MODE_THIRD_PERSON || mode == CAMERA_MODE_LOOK_AT || mode == CAMERA_MODE_SELFIE) {
-        if (isHMDMode()) {
-            if (!_thirdPersonHMDCameraBoomValid) {
-                const glm::vec3 CAMERA_OFFSET = glm::vec3(0.0f, 0.0f, 0.7f);
-                _thirdPersonHMDCameraBoom = cancelOutRollAndPitch(myAvatar->getHMDSensorOrientation()) * CAMERA_OFFSET;
-                _thirdPersonHMDCameraBoomValid = true;
-            }
-
-            glm::mat4 thirdPersonCameraSensorToWorldMatrix = myAvatar->getSensorToWorldMatrix();
-
-            const glm::vec3 cameraPos = myAvatar->getHMDSensorPosition() + _thirdPersonHMDCameraBoom * myAvatar->getBoomLength();
-            glm::mat4 sensorCameraMat = createMatFromQuatAndPos(myAvatar->getHMDSensorOrientation(), cameraPos);
-            glm::mat4 worldCameraMat = thirdPersonCameraSensorToWorldMatrix * sensorCameraMat;
-
-            _myCamera.setOrientation(glm::normalize(glmExtractRotation(worldCameraMat)));
-            _myCamera.setPosition(extractTranslation(worldCameraMat));
-        } else {
-            _thirdPersonHMDCameraBoomValid = false;
-            if (mode == CAMERA_MODE_THIRD_PERSON) {
-                _myCamera.setOrientation(myAvatar->getHead()->getOrientation());
-                if (isOptionChecked(MenuOption::CenterPlayerInView)) {
-                    _myCamera.setPosition(myAvatar->getDefaultEyePosition()
-                        + _myCamera.getOrientation() * boomOffset);
-                } else {
-                    _myCamera.setPosition(myAvatar->getDefaultEyePosition()
-                        + myAvatar->getWorldOrientation() * boomOffset);
-                }
-            } else {
-                glm::quat lookAtRotation = myAvatar->getLookAtRotation();
-                if (mode == CAMERA_MODE_SELFIE) {
-                    lookAtRotation = lookAtRotation * glm::angleAxis(PI, myAvatar->getWorldOrientation() * Vectors::UP);
-                }
-                _myCamera.setPosition(myAvatar->getLookAtPivotPoint()
-                    + lookAtRotation * boomOffset);
-                _myCamera.lookAt(myAvatar->getLookAtPivotPoint());
-            }
-        }
-    } else if (mode == CAMERA_MODE_MIRROR) {
-        _thirdPersonHMDCameraBoomValid= false;
-
-        if (isHMDMode()) {
-            auto mirrorBodyOrientation = myAvatar->getWorldOrientation() * glm::quat(glm::vec3(0.0f, PI + _mirrorYawOffset, 0.0f));
-
-            glm::quat hmdRotation = extractRotation(myAvatar->getHMDSensorMatrix());
-            // Mirror HMD yaw and roll
-            glm::vec3 mirrorHmdEulers = glm::eulerAngles(hmdRotation);
-            mirrorHmdEulers.y = -mirrorHmdEulers.y;
-            mirrorHmdEulers.z = -mirrorHmdEulers.z;
-            glm::quat mirrorHmdRotation = glm::quat(mirrorHmdEulers);
-
-            glm::quat worldMirrorRotation = mirrorBodyOrientation * mirrorHmdRotation;
-
-            _myCamera.setOrientation(worldMirrorRotation);
-
-            glm::vec3 hmdOffset = extractTranslation(myAvatar->getHMDSensorMatrix());
-            // Mirror HMD lateral offsets
-            hmdOffset.x = -hmdOffset.x;
-
-            _myCamera.setPosition(myAvatar->getDefaultEyePosition()
-                + glm::vec3(0, _raiseMirror * myAvatar->getModelScale(), 0)
-                + mirrorBodyOrientation * glm::vec3(0.0f, 0.0f, 1.0f) * MIRROR_FULLSCREEN_DISTANCE * _scaleMirror
-                + mirrorBodyOrientation * hmdOffset);
-        } else {
-            auto userInputMapper = DependencyManager::get<UserInputMapper>();
-            const float YAW_SPEED = TWO_PI / 5.0f;
-            float deltaYaw = userInputMapper->getActionState(controller::Action::YAW) * YAW_SPEED * deltaTime;
-            _mirrorYawOffset += deltaYaw;
-            _myCamera.setOrientation(myAvatar->getWorldOrientation() * glm::quat(glm::vec3(0.0f, PI + _mirrorYawOffset, 0.0f)));
-            _myCamera.setPosition(myAvatar->getDefaultEyePosition()
-                + glm::vec3(0, _raiseMirror * myAvatar->getModelScale(), 0)
-                + (myAvatar->getWorldOrientation() * glm::quat(glm::vec3(0.0f, _mirrorYawOffset, 0.0f))) *
-                glm::vec3(0.0f, 0.0f, -1.0f) * myAvatar->getBoomLength() * _scaleMirror);
-        }
-        renderArgs._renderMode = RenderArgs::MIRROR_RENDER_MODE;
-    } else if (mode == CAMERA_MODE_ENTITY) {
-        _thirdPersonHMDCameraBoomValid= false;
-        if (auto cameraEntity = _myCamera.getParentPointer()) {
-            bool success;
-            Transform entityTransform = _myCamera.parentJointIndex != -1 ?
-              cameraEntity->getJointTransform(_myCamera.parentJointIndex, success) :
-              cameraEntity->getTransform();
-            Transform localTransform = { _myCamera.localRotation, glm::vec3(), _myCamera.localPosition };
-            Transform worldTransform = entityTransform.worldTransform(localTransform);
-            if (isHMDMode()) {
-                glm::quat hmdRotation = extractRotation(myAvatar->getHMDSensorMatrix());
-                _myCamera.setOrientation(worldTransform.getRotation() * hmdRotation);
-                glm::vec3 hmdOffset = extractTranslation(myAvatar->getHMDSensorMatrix());
-                _myCamera.setPosition(worldTransform.getTranslation() + (hmdRotation * hmdOffset));
-            } else {
-                _myCamera.setOrientation(worldTransform.getRotation());
-                _myCamera.setPosition(worldTransform.getTranslation());
-            }
-        }
-    }
-    // Update camera position
-    if (!isHMDMode()) {
-        _myCamera.update();
-    }
-
-    renderArgs._cameraMode = (int8_t)_myCamera.getMode();
-}
 
 #ifdef Q_OS_WIN
 #include <Windows.h>
@@ -494,7 +352,7 @@ void Application::idle() {
     PerformanceWarning warn(showWarnings, "idle()");
 
     {
-        _gameWorkload.updateViews(_viewFrustum, getMyAvatar()->getHeadPosition());
+        _gameWorkload.updateViews(_viewState.viewFrustum(), getMyAvatar()->getHeadPosition());
         _gameWorkload._engine->run();
     }
     {
@@ -590,115 +448,6 @@ void Application::updateDialogs(float deltaTime) const {
     if (octreeStatsDialog) {
         octreeStatsDialog->update();
     }
-}
-
-void Application::updateSecondaryCameraViewFrustum() {
-    // TODO: Fix this by modeling the way the secondary camera works on how the main camera works
-    // ie. Use a camera object stored in the game logic and informs the Engine on where the secondary
-    // camera should be.
-
-    // Code based on SecondaryCameraJob
-    auto renderConfig = _graphicsEngine.getRenderEngine()->getConfiguration();
-    assert(renderConfig);
-    auto camera = dynamic_cast<SecondaryCameraJobConfig*>(renderConfig->getConfig("SecondaryCamera"));
-
-    if (!camera || !camera->isEnabled()) {
-        return;
-    }
-
-    ViewFrustum secondaryViewFrustum;
-    if (camera->portalProjection && !camera->attachedEntityId.isNull() && !camera->portalEntranceEntityId.isNull()) {
-        auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
-        EntityItemPointer portalEntrance = qApp->getEntities()->getTree()->findEntityByID(camera->portalEntranceEntityId);
-        EntityItemPointer portalExit = qApp->getEntities()->getTree()->findEntityByID(camera->attachedEntityId);
-
-        glm::vec3 portalEntrancePropertiesPosition = portalEntrance->getWorldPosition();
-        glm::quat portalEntrancePropertiesRotation = portalEntrance->getWorldOrientation();
-        glm::mat4 worldFromPortalEntranceRotation = glm::mat4_cast(portalEntrancePropertiesRotation);
-        glm::mat4 worldFromPortalEntranceTranslation = glm::translate(portalEntrancePropertiesPosition);
-        glm::mat4 worldFromPortalEntrance = worldFromPortalEntranceTranslation * worldFromPortalEntranceRotation;
-        glm::mat4 portalEntranceFromWorld = glm::inverse(worldFromPortalEntrance);
-
-        glm::vec3 portalExitPropertiesPosition = portalExit->getWorldPosition();
-        glm::quat portalExitPropertiesRotation = portalExit->getWorldOrientation();
-        glm::vec3 portalExitPropertiesDimensions = portalExit->getScaledDimensions();
-        glm::vec3 halfPortalExitPropertiesDimensions = 0.5f * portalExitPropertiesDimensions;
-
-        glm::mat4 worldFromPortalExitRotation = glm::mat4_cast(portalExitPropertiesRotation);
-        glm::mat4 worldFromPortalExitTranslation = glm::translate(portalExitPropertiesPosition);
-        glm::mat4 worldFromPortalExit = worldFromPortalExitTranslation * worldFromPortalExitRotation;
-
-        glm::vec3 mainCameraPositionWorld = getCamera().getPosition();
-        glm::vec3 mainCameraPositionPortalEntrance = vec3(portalEntranceFromWorld * vec4(mainCameraPositionWorld, 1.0f));
-        mainCameraPositionPortalEntrance = vec3(-mainCameraPositionPortalEntrance.x, mainCameraPositionPortalEntrance.y,
-            -mainCameraPositionPortalEntrance.z);
-        glm::vec3 portalExitCameraPositionWorld = vec3(worldFromPortalExit * vec4(mainCameraPositionPortalEntrance, 1.0f));
-
-        secondaryViewFrustum.setPosition(portalExitCameraPositionWorld);
-        secondaryViewFrustum.setOrientation(portalExitPropertiesRotation);
-
-        float nearClip = mainCameraPositionPortalEntrance.z + portalExitPropertiesDimensions.z * 2.0f;
-        // `mainCameraPositionPortalEntrance` should technically be `mainCameraPositionPortalExit`,
-        // but the values are the same.
-        glm::vec3 upperRight = halfPortalExitPropertiesDimensions - mainCameraPositionPortalEntrance;
-        glm::vec3 bottomLeft = -halfPortalExitPropertiesDimensions - mainCameraPositionPortalEntrance;
-        glm::mat4 frustum = glm::frustum(bottomLeft.x, upperRight.x, bottomLeft.y, upperRight.y, nearClip, camera->farClipPlaneDistance);
-        secondaryViewFrustum.setProjection(frustum);
-    } else if (camera->mirrorProjection && !camera->attachedEntityId.isNull()) {
-        auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
-        auto entityProperties = entityScriptingInterface->getEntityProperties(camera->attachedEntityId);
-        glm::vec3 mirrorPropertiesPosition = entityProperties.getPosition();
-        glm::quat mirrorPropertiesRotation = entityProperties.getRotation();
-        glm::vec3 mirrorPropertiesDimensions = entityProperties.getDimensions();
-        glm::vec3 halfMirrorPropertiesDimensions = 0.5f * mirrorPropertiesDimensions;
-
-        // setup mirror from world as inverse of world from mirror transformation using inverted x and z for mirrored image
-        // TODO: we are assuming here that UP is world y-axis
-        glm::mat4 worldFromMirrorRotation = glm::mat4_cast(mirrorPropertiesRotation) * glm::scale(vec3(-1.0f, 1.0f, -1.0f));
-        glm::mat4 worldFromMirrorTranslation = glm::translate(mirrorPropertiesPosition);
-        glm::mat4 worldFromMirror = worldFromMirrorTranslation * worldFromMirrorRotation;
-        glm::mat4 mirrorFromWorld = glm::inverse(worldFromMirror);
-
-        // get mirror camera position by reflecting main camera position's z coordinate in mirror space
-        glm::vec3 mainCameraPositionWorld = getCamera().getPosition();
-        glm::vec3 mainCameraPositionMirror = vec3(mirrorFromWorld * vec4(mainCameraPositionWorld, 1.0f));
-        glm::vec3 mirrorCameraPositionMirror = vec3(mainCameraPositionMirror.x, mainCameraPositionMirror.y,
-                                                    -mainCameraPositionMirror.z);
-        glm::vec3 mirrorCameraPositionWorld = vec3(worldFromMirror * vec4(mirrorCameraPositionMirror, 1.0f));
-
-        // set frustum position to be mirrored camera and set orientation to mirror's adjusted rotation
-        glm::quat mirrorCameraOrientation = glm::quat_cast(worldFromMirrorRotation);
-        secondaryViewFrustum.setPosition(mirrorCameraPositionWorld);
-        secondaryViewFrustum.setOrientation(mirrorCameraOrientation);
-
-        // build frustum using mirror space translation of mirrored camera
-        float nearClip = mirrorCameraPositionMirror.z + mirrorPropertiesDimensions.z * 2.0f;
-        glm::vec3 upperRight = halfMirrorPropertiesDimensions - mirrorCameraPositionMirror;
-        glm::vec3 bottomLeft = -halfMirrorPropertiesDimensions - mirrorCameraPositionMirror;
-        glm::mat4 frustum = glm::frustum(bottomLeft.x, upperRight.x, bottomLeft.y, upperRight.y, nearClip, camera->farClipPlaneDistance);
-        secondaryViewFrustum.setProjection(frustum);
-    } else {
-        if (!camera->attachedEntityId.isNull()) {
-            auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
-            auto entityProperties = entityScriptingInterface->getEntityProperties(camera->attachedEntityId);
-            secondaryViewFrustum.setPosition(entityProperties.getPosition());
-            secondaryViewFrustum.setOrientation(entityProperties.getRotation());
-        } else {
-            secondaryViewFrustum.setPosition(camera->position);
-            secondaryViewFrustum.setOrientation(camera->orientation);
-        }
-
-        float aspectRatio = (float)camera->textureWidth / (float)camera->textureHeight;
-        secondaryViewFrustum.setProjection(camera->vFoV,
-                                            aspectRatio,
-                                            camera->nearClipPlaneDistance,
-                                            camera->farClipPlaneDistance);
-    }
-    // Without calculating the bound planes, the secondary camera will use the same culling frustum as the main camera,
-    // which is not what we want here.
-    secondaryViewFrustum.calculate();
-
-    _conicalViews.push_back(secondaryViewFrustum);
 }
 
 static bool domainLoadingInProgress = false;
@@ -824,8 +573,8 @@ void Application::update(float deltaTime) {
         // Transfer the user inputs to the driveKeys
         // FIXME can we drop drive keys and just have the avatar read the action states directly?
         myAvatar->clearDriveKeys();
-        if (_myCamera.getMode() != CAMERA_MODE_INDEPENDENT && !isInterstitialMode()) {
-            if (!_controllerScriptingInterface->areActionsCaptured() && _myCamera.getMode() != CAMERA_MODE_MIRROR) {
+        if (_viewState.camera().getMode() != CAMERA_MODE_INDEPENDENT && !isInterstitialMode()) {
+            if (!_controllerScriptingInterface->areActionsCaptured() && _viewState.camera().getMode() != CAMERA_MODE_MIRROR) {
                 myAvatar->setDriveKey(MyAvatar::TRANSLATE_Z, -1.0f * userInputMapper->getActionState(controller::Action::TRANSLATE_Z));
                 myAvatar->setDriveKey(MyAvatar::TRANSLATE_Y, userInputMapper->getActionState(controller::Action::TRANSLATE_Y));
                 myAvatar->setDriveKey(MyAvatar::TRANSLATE_X, userInputMapper->getActionState(controller::Action::TRANSLATE_X));
@@ -1128,26 +877,7 @@ void Application::update(float deltaTime) {
         _overlays.update(deltaTime);
     }
 
-    // Update _viewFrustum with latest camera and view frustum data...
-    // NOTE: we get this from the view frustum, to make it simpler, since the
-    // loadViewFrumstum() method will get the correct details from the camera
-    // We could optimize this to not actually load the viewFrustum, since we don't
-    // actually need to calculate the view frustum planes to send these details
-    // to the server.
-    {
-        QMutexLocker viewLocker(&_viewMutex);
-        _myCamera.loadViewFrustum(_viewFrustum);
-        // where a model shown as its impostor card fetches its mesh (ENTITY-STREAMING.md 3.1)
-        getEntities()->setImpostorLoadView(_viewFrustum.getPosition(),
-                                           DependencyManager::get<LODManager>()->getImpostorLoadHalfTanSq());
-
-        _conicalViews.clear();
-        _conicalViews.push_back(_viewFrustum);
-        // TODO: Fix this by modeling the way the secondary camera works on how the main camera works
-        // ie. Use a camera object stored in the game logic and informs the Engine on where the secondary
-        // camera should be.
-        updateSecondaryCameraViewFrustum();
-    }
+    _viewState.update();   // the view frustum from the camera, the conical views for the queries below
 
     quint64 now = usecTimestampNow();
 
@@ -1155,12 +885,12 @@ void Application::update(float deltaTime) {
     {
         PROFILE_RANGE_EX(app, "QueryOctree", 0xffff0000, (uint64_t)getActiveDisplayPlugin()->presentCount());
         PerformanceTimer perfTimer("queryOctree");
-        QMutexLocker viewLocker(&_viewMutex);
+        QMutexLocker viewLocker(&_viewState.mutex());
 
         bool viewIsDifferentEnough = false;
-        if (_conicalViews.size() == _lastQueriedViews.size()) {
-            for (size_t i = 0; i < _conicalViews.size(); ++i) {
-                if (!_conicalViews[i].isVerySimilar(_lastQueriedViews[i])) {
+        if (_viewState.conicalViews().size() == _lastQueriedViews.size()) {
+            for (size_t i = 0; i < _viewState.conicalViews().size(); ++i) {
+                if (!_viewState.conicalViews()[i].isVerySimilar(_lastQueriedViews[i])) {
                     viewIsDifferentEnough = true;
                     break;
                 }
@@ -1203,7 +933,7 @@ void Application::update(float deltaTime) {
             }
             queryAvatars();
 
-            _lastQueriedViews = _conicalViews;
+            _lastQueriedViews = _viewState.conicalViews();
             _queryExpiry = now + MIN_PERIOD_BETWEEN_QUERIES;
         }
     }
@@ -1290,7 +1020,6 @@ void Application::updateRenderArgs(float deltaTime) {
         {
             PROFILE_RANGE(render, "/buildFrustrumAndArgs");
             {
-                QMutexLocker viewLocker(&_viewMutex);
                 // adjust near clip plane to account for sensor scaling. This is rebuilt every frame, so the near
                 // clip setting (Render.nearClip, desktop only: an HMD keeps the short one for the hands) is read here
                 float aspectRatio = getActiveDisplayPlugin()->getRecommendedAspectRatio();
@@ -1299,8 +1028,7 @@ void Application::updateRenderArgs(float deltaTime) {
                 auto adjustedProjection = glm::perspective(
                     glm::radians(fovY), aspectRatio, nearClip * sensorToWorldScale, getFarClip()
                 );
-                _viewFrustum.setProjection(adjustedProjection);
-                _viewFrustum.calculate();
+                _viewState.setProjection(adjustedProjection);
             }
             appRenderArgs._renderArgs = RenderArgs(_graphicsEngine.getGPUContext(), lodManager->getVisibilityDistance(),
                 lodManager->getBoundaryLevelAdjust(), lodManager->getLODHalfAngleTan(), RenderArgs::DEFAULT_RENDER_MODE,
@@ -1317,8 +1045,8 @@ void Application::updateRenderArgs(float deltaTime) {
             appRenderArgs._renderArgs._enableInstancing = !menu || menu->isOptionChecked(MenuOption::GpuInstancing);
 
             {
-                QMutexLocker viewLocker(&_viewMutex);
-                appRenderArgs._renderArgs.setViewFrustum(_viewFrustum);
+                QMutexLocker viewLocker(&_viewState.mutex());
+                appRenderArgs._renderArgs.setViewFrustum(_viewState.viewFrustum());
             }
         }
         {
@@ -1335,8 +1063,8 @@ void Application::updateRenderArgs(float deltaTime) {
             resizeGL();
         }
 
-        this->updateCamera(appRenderArgs._renderArgs, deltaTime);
-        appRenderArgs._eyeToWorld = _myCamera.getTransform();
+        _viewState.updateCamera(appRenderArgs._renderArgs, deltaTime);
+        appRenderArgs._eyeToWorld = _viewState.camera().getTransform();
         appRenderArgs._isStereo = false;
 
         {
@@ -1358,7 +1086,7 @@ void Application::updateRenderArgs(float deltaTime) {
                 // just relying on the left FOV in each case and hoping that the
                 // overall culling margin of error doesn't cause popping in the
                 // right eye.  There are FIXMEs in the relevant plugins
-                _myCamera.setProjection(getActiveDisplayPlugin()->getCullingProjection(baseProjection));
+                _viewState.camera().setProjection(getActiveDisplayPlugin()->getCullingProjection(baseProjection));
                 appRenderArgs._isStereo = true;
 
                 auto& eyeOffsets = appRenderArgs._eyeOffsets;
@@ -1392,14 +1120,14 @@ void Application::updateRenderArgs(float deltaTime) {
         }
 
         {
-            QMutexLocker viewLocker(&_viewMutex);
-            _myCamera.loadViewFrustum(_displayViewFrustum);
-            appRenderArgs._view = glm::inverse(_displayViewFrustum.getView());
+            QMutexLocker viewLocker(&_viewState.mutex());
+            _viewState.loadDisplayViewFrustum();
+            appRenderArgs._view = glm::inverse(_viewState.displayViewFrustum().getView());
         }
 
         {
-            QMutexLocker viewLocker(&_viewMutex);
-            appRenderArgs._renderArgs.setViewFrustum(_displayViewFrustum);
+            QMutexLocker viewLocker(&_viewState.mutex());
+            appRenderArgs._renderArgs.setViewFrustum(_viewState.displayViewFrustum());
         }
 
 

@@ -144,7 +144,7 @@ void Application::onDesktopRootContextCreated(QQmlContext* surfaceContext) {
     surfaceContext->setContextProperty("AvatarList", DependencyManager::get<AvatarManager>().data());
     surfaceContext->setContextProperty("Users", DependencyManager::get<UsersScriptingInterface>().data());
 
-    surfaceContext->setContextProperty("Camera", &_myCamera);
+    surfaceContext->setContextProperty("Camera", &_viewState.camera());
 
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     surfaceContext->setContextProperty("SpeechRecognizer", DependencyManager::get<SpeechRecognizer>().data());
@@ -295,7 +295,7 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
 
     scriptEngine->registerGlobalObject("AvatarList", DependencyManager::get<AvatarManager>().data());
 
-    scriptEngine->registerGlobalObject("Camera", &_myCamera);
+    scriptEngine->registerGlobalObject("Camera", &_viewState.camera());
 
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     scriptEngine->registerGlobalObject("SpeechRecognizer", DependencyManager::get<SpeechRecognizer>().data());

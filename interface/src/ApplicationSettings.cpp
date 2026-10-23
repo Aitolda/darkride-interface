@@ -169,8 +169,8 @@ void Application::loadSettings() {
     // dictated that we should be in first person
     Menu::getInstance()->setIsOptionChecked(MenuOption::FirstPersonLookAt, isFirstPerson);
     Menu::getInstance()->setIsOptionChecked(MenuOption::ThirdPerson, !isFirstPerson);
-    _myCamera.setMode((isFirstPerson) ? CAMERA_MODE_FIRST_PERSON_LOOK_AT : CAMERA_MODE_LOOK_AT);
-    cameraMenuChanged();
+    _viewState.camera().setMode((isFirstPerson) ? CAMERA_MODE_FIRST_PERSON_LOOK_AT : CAMERA_MODE_LOOK_AT);
+    _viewState.cameraMenuChanged();
 
     {
         StartupProfiler::Scope step("loadSettings: input plugins activated");

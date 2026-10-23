@@ -393,9 +393,6 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     _loadCompleteEntityTreeSetting("loadCompleteEntityTree", DEFAULT_LOAD_COMPLETE_ENTITY_TREE),
     _bypassPrioritySortingSetting("bypassPrioritySorting", DEFAULT_BYPASS_PRIORITY_SORTING), 
     _bypassScriptThrottling("bypassScriptThrottling", DEFAULT_BYPASS_SCRIPT_THROTTLING), 
-    _scaleMirror(1.0f),
-    _mirrorYawOffset(0.0f),
-    _raiseMirror(0.0f),
     _enableProcessOctreeThread(true),
     _lastNackTime(usecTimestampNow()),
     _lastSendDownstreamAudioStats(usecTimestampNow()),
@@ -1149,7 +1146,7 @@ void Application::setupInput() {
                 auto audioClient = DependencyManager::get<AudioClient>();
                 audioClient->setMuted(!audioClient->isMuted());
             } else if (action == controller::toInt(controller::Action::CYCLE_CAMERA)) {
-                cycleCamera();
+                _viewState.cycleCamera();
             } else if (action == controller::toInt(controller::Action::CONTEXT_MENU) && !isInterstitialMode()) {
                 toggleTabletUI();
             } else if (action == controller::toInt(controller::Action::RETICLE_X)) {
@@ -1487,7 +1484,7 @@ void Application::installOperators() {
 
     updateSystemTabletMode();
 
-    connect(&_myCamera, &Camera::modeUpdated, this, &Application::cameraModeChanged);
+    connect(&_viewState.camera(), &Camera::modeUpdated, this, [this] { _viewState.cameraModeChanged(); });
 
     DependencyManager::get<PickManager>()->setShouldPickHUDOperator([]() { return DependencyManager::get<HMDScriptingInterface>()->isHMDMode(); });
     DependencyManager::get<PickManager>()->setCalculatePos2DFromHUDOperator([this](const glm::vec3& intersection) {
@@ -1547,7 +1544,7 @@ void Application::installOperators() {
     });
     EntityItem::setPrimaryViewFrustumPositionOperator([this]() {
         ViewFrustum viewFrustum;
-        copyViewFrustum(viewFrustum);
+        _viewState.copyViewFrustum(viewFrustum);
         return viewFrustum.getPosition();
     });
 
@@ -1699,7 +1696,7 @@ void Application::init() {
         auto distance = glm::distance(getMyAvatar()->getWorldPosition(), item.getWorldPosition());
         // in build mode the camera roams far from the avatar: what it looks at loads first
         if (editor && editor->isActive()) {
-            distance = std::min(distance, glm::distance(_myCamera.getPosition(), item.getWorldPosition()));
+            distance = std::min(distance, glm::distance(_viewState.camera().getPosition(), item.getWorldPosition()));
         }
         return atan2(maxSize, distance);
     });

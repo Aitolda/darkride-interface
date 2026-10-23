@@ -227,11 +227,11 @@ void Application::queryAvatars() {
         auto destinationBuffer = reinterpret_cast<unsigned char*>(avatarPacket->getPayload());
         unsigned char* bufferStart = destinationBuffer;
 
-        uint8_t numFrustums = (uint8_t)_conicalViews.size();
+        uint8_t numFrustums = (uint8_t)_viewState.conicalViews().size();
         memcpy(destinationBuffer, &numFrustums, sizeof(numFrustums));
         destinationBuffer += sizeof(numFrustums);
 
-        for (const auto& view : _conicalViews) {
+        for (const auto& view : _viewState.conicalViews()) {
             destinationBuffer += view.serialize(destinationBuffer);
         }
 
@@ -327,7 +327,7 @@ void Application::queryOctree(
         if (menu && menu->isOptionChecked(MenuOption::LoadCompleteEntityTree)) {            // if Dev > Tivoli Options >>> LoadCompleteEntityTree truee
 
             ConicalViewFrustum farView;
-            farView.set(_viewFrustum);
+            farView.set(_viewState.viewFrustum());
 
             QJsonObject queryFlags;
             queryFlags["includeDescendants"] = true; // forces entire tree
@@ -347,7 +347,7 @@ void Application::queryOctree(
         static constexpr float MIN_LOD_ADJUST = -20.0f;
         _octreeQuery.setBoundaryLevelAdjust(MIN_LOD_ADJUST);
     } else {
-        _octreeQuery.setConicalViews(_conicalViews);
+        _octreeQuery.setConicalViews(_viewState.conicalViews());
         auto lodManager = DependencyManager::get<LODManager>();
         _octreeQuery.setOctreeSizeScale(lodManager->getOctreeSizeScale());
         _octreeQuery.setBoundaryLevelAdjust(lodManager->getBoundaryLevelAdjust());
@@ -389,7 +389,7 @@ void Application::queryOctree(
         static const bool QUERY_DIAG = QProcessEnvironment::systemEnvironment().contains("TIVOLI_QUERY_DIAG");
         if (QUERY_DIAG && serverType == NodeType::EntityServer) {
             QString views;
-            for (const auto& view : _conicalViews) {
+            for (const auto& view : _viewState.conicalViews()) {
                 const auto& p = view.getPosition();
                 const auto& d = view.getDirection();
                 views += QString(" [pos %1 %2 %3 dir %4 %5 %6 angle %7 far %8 radius %9]")
@@ -398,7 +398,7 @@ void Application::queryOctree(
                     .arg(glm::degrees(view.getAngle()), 0, 'f', 1).arg(view.getFarClip(), 0, 'f', 0).arg(view.getRadius(), 0, 'f', 2);
             }
             qCDebug(interfaceapp).noquote() << "entity query:" << (isModifiedQuery ? "initial-sphere" : "views")
-                << "views" << _conicalViews.size() << views
+                << "views" << _viewState.conicalViews().size() << views
                 << "lodAdjust" << _octreeQuery.getBoundaryLevelAdjust() << "sizeScale" << _octreeQuery.getOctreeSizeScale()
                 << "pps" << _octreeQuery.getMaxQueryPacketsPerSecond() << "bytes" << packetSize;
         }

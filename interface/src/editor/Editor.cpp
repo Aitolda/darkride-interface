@@ -1474,7 +1474,7 @@ QList<QUuid> Editor::entitiesInRect(const QRectF& rect) const {
         return ids;
     }
     ViewFrustum frustum;
-    qApp->copyViewFrustum(frustum);
+    qApp->getViewState().copyViewFrustum(frustum);
     glm::mat4 viewProjection = frustum.getProjection() * frustum.getView();
     float width = (float)std::max(1, viewport->width());
     float height = (float)std::max(1, viewport->height());

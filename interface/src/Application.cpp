@@ -30,6 +30,7 @@
 #include <plugins/CodecPlugin.h>
 #include <plugins/PluginManager.h>
 #include <display-plugins/CompositorHelper.h>
+#include "AudioClient.h"
 
 #include "InterfaceLogging.h"
 
@@ -179,8 +180,6 @@ void Application::updateHeartbeat() const {
 
 // The context properties of every other QML surface (setupQmlSurface) are in ApplicationScripting.cpp.
 
-// The camera's per-frame update (updateCamera) is in ApplicationFrame.cpp.
-
 void Application::runTests() {
     runTimingTests();
     runUnitTests();
@@ -211,8 +210,6 @@ void Application::runTests() {
 
 // The frame loop's tick (idle, with the Windows CPU monitor it starts) is in ApplicationFrame.cpp.
 
-// getMouse (the reticle's position) is in ApplicationCamera.cpp.
-
 // exportEntities (both forms) is in ApplicationImport.cpp.
 
 // loadSettings and saveSettings are in ApplicationSettings.cpp.
@@ -230,19 +227,18 @@ void Application::runTests() {
 
 // The overlays (toggleOverlays, setOverlaysVisible, centerUI) are in ApplicationUi.cpp.
 
-// The camera modes (cycleCamera, cameraModeChanged, changeViewAsNeeded, cameraMenuChanged) are in ApplicationCamera.cpp.
+// The camera and the view frustums are a ViewState (ViewState.h), the member _viewState, reached by getViewState();
+// getCamera(), the view-state overrides and the two View menu slots forward to it.
 
 // requeryOctree and resetPhysicsReadyInformation are in ApplicationDomain.cpp.
 
 // reloadResourceCaches (the domain's content reloaded) is in ApplicationDomain.cpp.
 
-// rotationModeChanged is in ApplicationCamera.cpp.
-
 // The keyboard focus and its highlight are a KeyboardFocus (KeyboardFocus.h), the member _keyboardFocus, reached by
 // getKeyboardFocus().
 
-// The simulation step and what frames it (updateDialogs, updateSecondaryCameraViewFrustum, the physics gate
-// setArrivalWaitsForNearby/tryToEnablePhysics, update, updateRenderArgs) is in ApplicationFrame.cpp.
+// The simulation step and what frames it (updateDialogs, the physics gate setArrivalWaitsForNearby/tryToEnablePhysics,
+// update, updateRenderArgs) is in ApplicationFrame.cpp.
 
 // The per-frame queries to the servers (queryAvatars, sendNackPackets, queryOctree) are in ApplicationDomain.cpp.
 
@@ -254,13 +250,18 @@ float Application::getNumCollisionObjects() const {
 
 // getTargetRenderFrameRate and getDesirableApplicationGeometry are in ApplicationDisplay.cpp.
 
-// computePickRay is in ApplicationCamera.cpp.
-
 // getMyAvatar and getAvatarPosition are in ApplicationAvatar.cpp.
 
-// copyViewFrustum and copyDisplayViewFrustum are in ApplicationCamera.cpp.
-
-// resetSensors is in ApplicationCamera.cpp.
+// resentSensors() is a bit of vestigial feature. It used to be used for Oculus DK2 to recenter the view around
+// the current head orientation.  With the introduction of "room scale" tracking we no longer need that particular
+// feature.  However, we still use this to reset face trackers, eye trackers, audio and to optionally re-load the avatar
+// rig and animations from scratch.
+void Application::resetSensors(bool andReload) {
+    _overlayConductor.centerUI();
+    getActiveDisplayPlugin()->resetSensors();
+    getMyAvatar()->reset(true, andReload);
+    QMetaObject::invokeMethod(DependencyManager::get<AudioClient>().data(), "reset", Qt::QueuedConnection);
+}
 
 // updateWindowTitle is in ApplicationDisplay.cpp.
 

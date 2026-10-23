@@ -318,16 +318,13 @@ void Application::resizeGL() {
     // FIXME the aspect ratio for stereo displays is incorrect based on this.
     float aspectRatio = displayPlugin->getRecommendedAspectRatio();
     float fovY = verticalFieldOfView(_fieldOfView.get(), aspectRatio);
-    _myCamera.setProjection(
+    _viewState.camera().setProjection(
         glm::perspective(
             glm::radians(fovY), aspectRatio, getNearClip(), getFarClip()
         )
     );
     // Possible change in aspect ratio
-    {
-        QMutexLocker viewLocker(&_viewMutex);
-        _myCamera.loadViewFrustum(_viewFrustum);
-    }
+    _viewState.loadViewFrustum();
 
     getOffscreenUI()->resize(fromGlm(displayPlugin->getRecommendedUiSize()));
 }
@@ -704,7 +701,7 @@ void Application::setDisplayPlugin(DisplayPluginPointer newDisplayPlugin) {
 
         if (isHmd && menu->isOptionChecked(MenuOption::FirstPersonHMD)) {
             menu->setIsOptionChecked(MenuOption::FirstPersonLookAt, true);
-            cameraMenuChanged();
+            _viewState.cameraMenuChanged();
         }
 
         // Remove the selfie camera options from menu if in HMD mode
@@ -753,11 +750,11 @@ void Application::endHMDSession() {
 }
 
 mat4 Application::getEyeProjection(int eye) const {
-    QMutexLocker viewLocker(&_viewMutex);
+    QMutexLocker viewLocker(&_viewState.mutex());
     if (isHMDMode()) {
-        return getActiveDisplayPlugin()->getEyeProjection((Eye)eye, _viewFrustum.getProjection());
+        return getActiveDisplayPlugin()->getEyeProjection((Eye)eye, _viewState.viewFrustum().getProjection());
     }
-    return _viewFrustum.getProjection();
+    return _viewState.viewFrustum().getProjection();
 }
 
 mat4 Application::getEyeOffset(int eye) const {

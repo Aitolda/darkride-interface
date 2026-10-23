@@ -54,7 +54,7 @@
 class ClientOptions;
 
 #include "avatar/MyAvatar.h"
-#include "FancyCamera.h"
+#include "ViewState.h"
 #include "ConnectionMonitor.h"
 #include "CursorManager.h"
 #include "WindowCursor.h"
@@ -148,9 +148,7 @@ public:
     void initializeDisplayPlugins();
     void initializeRenderEngine();
     void initializeUi();
-    void updateSecondaryCameraViewFrustum();
 
-    void updateCamera(RenderArgs& renderArgs, float deltaTime);
     void resizeGL();
 
     bool notify(QObject*, QEvent*) override;
@@ -171,18 +169,14 @@ public:
 
     bool isThrottleRendering() const;
 
-    Camera& getCamera() { return _myCamera; }
-    const Camera& getCamera() const { return _myCamera; }
-    // Represents the current view frustum of the avatar.
-    void copyViewFrustum(ViewFrustum& viewOut) const;
-    // Represents the view frustum of the current rendering pass,
-    // which might be different from the viewFrustum, i.e. shadowmap
-    // passes, mirror window passes, etc
-    void copyDisplayViewFrustum(ViewFrustum& viewOut) const;
+    ViewState& getViewState() { return _viewState; }   // the camera and what it sees: the view frustums, the conical views (ViewState.h)
+    const ViewState& getViewState() const { return _viewState; }
+    Camera& getCamera() { return _viewState.camera(); }
+    const Camera& getCamera() const { return _viewState.camera(); }
 
     bool isMissingSequenceNumbers() { return _isMissingSequenceNumbers; }
 
-    const ConicalViewFrustums& getConicalViews() const override { return _conicalViews; }
+    const ConicalViewFrustums& getConicalViews() const override { return _viewState.conicalViews(); }
 
     const OctreePacketProcessor& getOctreePacketProcessor() const { return _octreeProcessor; }
     QSharedPointer<EntityTreeRenderer> getEntities() const { return DependencyManager::get<EntityTreeRenderer>(); }
@@ -190,8 +184,6 @@ public:
     MainWindow* getWindow() const { return _window; }
     EntityTreePointer getEntityClipboard() const { return _entityClipboard; }
     EntityEditPacketSender* getEntityEditPacketSender() { return &_entityEditSender; }
-
-    ivec2 getMouse() const;
 
     ApplicationOverlay& getApplicationOverlay() { return _applicationOverlay; }
     const ApplicationOverlay& getApplicationOverlay() const { return _applicationOverlay; }
@@ -275,9 +267,9 @@ public:
     virtual controller::ScriptingInterface* getControllerScriptingInterface() { return _controllerScriptingInterface; }
     virtual void registerScriptEngineWithApplicationServices(const ScriptEnginePointer& scriptEngine) override;
 
-    virtual void copyCurrentViewFrustum(ViewFrustum& viewOut) const override { copyDisplayViewFrustum(viewOut); }
+    virtual void copyCurrentViewFrustum(ViewFrustum& viewOut) const override { _viewState.copyDisplayViewFrustum(viewOut); }
     virtual QThread* getMainThread() override { return thread(); }
-    virtual PickRay computePickRay(float x, float y) const override;
+    virtual PickRay computePickRay(float x, float y) const override { return _viewState.computePickRay(x, y); }
     virtual glm::vec3 getAvatarPosition() const override;
     virtual qreal getDevicePixelRatio() override;
 
@@ -456,9 +448,7 @@ public slots:
 
     static void showHelp();
 
-    void cycleCamera();
-    void cameraModeChanged();
-    void cameraMenuChanged();
+    void cameraMenuChanged() { _viewState.cameraMenuChanged(); }   // the View menu's camera items, connected by name in Menu.cpp
     void toggleOverlays();
     void setOverlaysVisible(bool visible);
     Q_INVOKABLE void centerUI();
@@ -474,7 +464,7 @@ public slots:
     static void deadlockApplication();
     static void unresponsiveApplication();  // cause main thread to be unresponsive for 35 seconds
 
-    void rotationModeChanged() const;
+    void rotationModeChanged() const { _viewState.rotationModeChanged(); }   // View > Center Player In View, connected by name in Menu.cpp
 
     static void runTests();
 
@@ -500,8 +490,6 @@ public slots:
     void setIsInterstitialMode(bool interstitialMode);
 
     void updateVerboseLogging();
-
-    void changeViewAsNeeded(float boomLength);
 
     QString getGraphicsCardType();
 
@@ -667,11 +655,7 @@ private:
 
     EntityTreePointer _entityClipboard;
 
-    mutable QMutex _viewMutex{ QMutex::Recursive };
-    ViewFrustum _viewFrustum;  // current state of view frustum, perspective, orientation, etc.
-    ViewFrustum _displayViewFrustum;
-
-    ConicalViewFrustums _conicalViews;
+    ViewState _viewState;   // the camera, the view frustums and the conical views (ViewState.h)
     ConicalViewFrustums _lastQueriedViews;  // last views used to query servers
 
     using SteadyClock = std::chrono::steady_clock;
@@ -686,7 +670,6 @@ private:
         _keyboardMouseDevice;  // Default input device, the good old keyboard mouse and maybe touchpad
     std::shared_ptr<TouchscreenDevice> _touchscreenDevice;  // the good old touchscreen
     std::shared_ptr<TouchscreenVirtualPadDevice> _touchscreenVirtualPadDevice;
-    FancyCamera _myCamera;  // My view onto the world
 
     Setting::Handle<QString> _previousScriptLocation;
     Setting::Handle<float> _fieldOfView;
@@ -708,10 +691,6 @@ private:
     Setting::Handle<bool> _loadCompleteEntityTreeSetting; 
     Setting::Handle<bool> _bypassPrioritySortingSetting;
     Setting::Handle<bool> _bypassScriptThrottling;
-
-    float _scaleMirror;
-    float _mirrorYawOffset;
-    float _raiseMirror;
 
     QHash<int, QKeyEvent> _keysPressed;
 
@@ -754,7 +733,6 @@ private:
     bool _developerMenuVisible{ false };
     QString _previousAvatarSkeletonModel;
     float _previousAvatarTargetScale;
-    CameraMode _previousCameraMode;
     QUuid _loginDialogID;
     QUuid _avatarInputsBarID;
     LoginStateManager _loginStateManager;
@@ -828,9 +806,6 @@ private:
     bool _previousHMDWornStatus;
     void startHMDStandBySession();
     void endHMDSession();
-
-    glm::vec3 _thirdPersonHMDCameraBoom{ 0.0f, 0.0f, -1.0f };
-    bool _thirdPersonHMDCameraBoomValid{ true };
 
     QUrl _avatarOverrideUrl;
     bool _saveAvatarOverrideUrl{ false };
