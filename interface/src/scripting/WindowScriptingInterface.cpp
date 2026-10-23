@@ -66,6 +66,7 @@ WindowScriptingInterface::WindowScriptingInterface() {
     connect(qApp, &Application::interstitialModeChanged, [this] (bool interstitialMode) {
         emit interstitialModeChanged(interstitialMode);
     });
+    connect(qApp, &Application::worldLoadingChanged, this, &WindowScriptingInterface::worldLoadingChanged);
 }
 
 WindowScriptingInterface::~WindowScriptingInterface() {
@@ -640,6 +641,14 @@ float WindowScriptingInterface::domainLoadingProgress() {
     return qApp->getOctreePacketProcessor().domainLoadingProgress();
 }
 
+QVariantMap WindowScriptingInterface::getWorldLoading() {
+    return qApp->getWorldLoadingState();
+}
+
+void WindowScriptingInterface::showWorldNow() {
+    QMetaObject::invokeMethod(qApp, [] { qApp->showWorldNow(); });
+}
+
 int WindowScriptingInterface::getDisplayPluginCount() {
     return (int)PluginManager::getInstance()->getDisplayPlugins().size();
 }
@@ -685,4 +694,8 @@ void WindowScriptingInterface::setLoadingScreen(const QVariantMap& state) {
         return;
     }
     emit loadingScreenChanged(state);
+}
+
+void WindowScriptingInterface::pressLoadingScreenButton(const QString& button) {
+    emit loadingScreenButtonPressed(button);
 }

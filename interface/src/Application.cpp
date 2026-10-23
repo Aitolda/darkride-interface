@@ -156,6 +156,7 @@
 #include <Preferences.h>
 #include <display-plugins/CompositorHelper.h>
 #include <display-plugins/hmd/HmdDisplayPlugin.h>
+#include <display-plugins/OpenGLDisplayPlugin.h>
 #include <display-plugins/RefreshRateController.h>
 #include <avatars-renderer/ScriptAvatar.h>
 #include <RenderableEntityItem.h>
@@ -455,9 +456,47 @@ public:
         _paused = false;
     }
 
+    // When presents stop while the present loop has a display plugin: one line saying where the loop is, once they
+    // have been gone a second and at most every 5 s. Release-1.1's Windows run of 10-21 lost presents and new frames
+    // for 45 s with nothing logged; this names the branch next time. Silent while presents flow, before the first, and
+    // while the loop has no plugin on purpose (minimized, quitting). Its own thread, so it reports whichever of the
+    // main and present threads is stuck.
+    void reportPresentStall() {
+        using namespace std::chrono;
+        const auto STALL = milliseconds(1000);
+        const auto REPORT_EVERY = seconds(5);
+        auto now = steady_clock::now();
+        uint64_t presents = OpenGLDisplayPlugin::getPresentsDone();
+        if (presents != _presentsSeen || presents == 0) {
+            _presentsSeen = presents;
+            _presentsMoved = now;
+            return;
+        }
+        if (OpenGLDisplayPlugin::isPresentLoopIdle() || now - _presentsMoved < STALL
+            || (_stallReported != steady_clock::time_point() && now - _stallReported < REPORT_EVERY)) {
+            return;
+        }
+        _stallReported = now;
+        auto view = gl::viewChangeState();
+        const char* lastChange = "the editor";
+        switch (view.lastEventType) {
+            case QEvent::LayoutRequest: lastChange = "a layout pass"; break;
+            case QEvent::Resize: lastChange = "a resize"; break;
+            case QEvent::Move: lastChange = "a move"; break;
+            case QEvent::MouseButtonRelease: lastChange = "a mouse button release"; break;
+            case QEvent::MouseMove: lastChange = "a drag"; break;
+            default: break;
+        }
+        qCWarning(interfaceapp).nospace() << "Presents stopped " << duration_cast<milliseconds>(now - _presentsMoved).count()
+            << " ms ago: the present loop is " << OpenGLDisplayPlugin::getPresentLoopStage()
+            << "; presentation paused " << gl::isPresentationPaused() << " (" << view.pauseLeftMs << " ms left); "
+            << view.guards << " view changes so far, the last from " << lastChange;
+    }
+
     void run() override {
         while (!_quit) {
             QThread::sleep(HEARTBEAT_UPDATE_INTERVAL_SECS);
+            reportPresentStall();
             // Don't do heartbeat detection under nsight
             if (_paused) {
                 continue;
@@ -531,6 +570,11 @@ public:
     bool _quit { false };
 
     Qt::HANDLE _mainThreadID = nullptr;
+
+    // reportPresentStall's: the present count last seen, when it last moved, the last report
+    uint64_t _presentsSeen { 0 };
+    std::chrono::steady_clock::time_point _presentsMoved;
+    std::chrono::steady_clock::time_point _stallReported;
 };
 
 std::atomic<bool> DeadlockWatchdogThread::_paused;
@@ -1422,6 +1466,23 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     });
 
     connect(addressManager.data(), &AddressManager::hostChanged, this, &Application::updateWindowTitle);
+
+    // a hop to a place or a person the metaverse doesn't find goes nowhere: say why. It finds a world by its address (a
+    // world's name is no address), and for a person it answers the same whether they are offline, out of sight or unknown
+    connect(addressManager.data(), &AddressManager::lookupResultIsNotFound, this, [](const QString& lookedUp, bool isUser) {
+        const QString name = lookedUp.trimmed();
+        if (isUser) {
+            OffscreenUi::asyncWarning(QString("Couldn't join %1").arg(name).trimmed(), "They're offline, or somewhere you can't join.");
+        } else {
+            OffscreenUi::asyncWarning(name.isEmpty() ? QString("Couldn't find that world")
+                                                     : QString::fromUtf8("Couldn't find “%1”").arg(name),
+                                      "Check the address, or choose a world in Explore.");
+        }
+    });
+    connect(addressManager.data(), &AddressManager::lookupResultIsOffline, this, [](const QString& lookedUp) {
+        const QString name = lookedUp.trimmed();
+        OffscreenUi::asyncWarning((name.isEmpty() ? QString("That world") : name) + " is offline", "Try again later.");
+    });
     connect(this, &QCoreApplication::aboutToQuit, addressManager.data(), &AddressManager::storeCurrentAddress);
 
     connect(this, &Application::activeDisplayPluginChanged, this, &Application::updateThreadPoolCount);
@@ -2727,6 +2788,17 @@ void Application::domainConnectionRefused(const QString& reasonMessage, int reas
                 why = "It runs a different version of Darkride.";
             }
             OffscreenUi::asyncWarning("Couldn't join " + (world.isEmpty() ? QString("this world") : world), why);
+            getMyAvatar()->setWorldVelocity(glm::vec3(0.0f));
+            break;
+        }
+        case DomainHandler::ConnectionRefusedReason::NotAuthorized: {
+            // a ban, or a world its owner keeps to some people; the world says so only once it knows who is asking, and
+            // someone signed out gets the sign-in screen instead (DomainHandler asks for it)
+            if (DependencyManager::get<AccountManager>()->isLoggedIn()) {
+                const QString world = worldNameForPopup();
+                OffscreenUi::asyncWarning("Couldn't join " + (world.isEmpty() ? QString("this world") : world),
+                                          "You don't have permission to enter it.");
+            }
             getMyAvatar()->setWorldVelocity(glm::vec3(0.0f));
             break;
         }
@@ -4210,7 +4282,9 @@ bool Application::isServerlessMode() const {
 }
 
 void Application::setIsInterstitialMode(bool interstitialMode) {
-    bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled();
+    // whole-world loading uses interstitial mode for its loading screen whatever the user's own setting says
+    bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
+        _worldLoading.active;
     if (enableInterstitial) {
         if (_interstitialMode != interstitialMode) {
             _interstitialMode = interstitialMode;
@@ -4309,8 +4383,31 @@ bool Application::importImage(const QString& urlString) {
     return true;
 }
 
+void Application::followScreenRefreshRate() {
+    QWindow* handle = _window ? _window->windowHandle() : nullptr;
+    if (!handle || _screenChangedConnection) {
+        return;
+    }
+    auto followScreen = [this, handle] {
+        QObject::disconnect(_screenRateConnection);
+        if (QScreen* screen = handle->screen()) {
+            _screenRateConnection = connect(screen, &QScreen::refreshRateChanged, this, [this](qreal) {
+                getRefreshRateManager().updateRefreshRateController();
+            });
+        }
+        getRefreshRateManager().updateRefreshRateController();
+    };
+    _screenChangedConnection = connect(handle, &QWindow::screenChanged, this, [followScreen](QScreen*) { followScreen(); });
+    followScreen();
+}
+
+float Application::getPresentPeriod() const {
+    return _displayPlugin ? _displayPlugin->getPresentPeriod() : 0.0f;
+}
+
 // thread-safe
-void Application::onPresent(quint32 frameCount) {
+void Application::onPresent(quint32 frameCount, quint64 presentSlot) {
+    _presentSlot = presentSlot;
     bool expected = false;
     if (_pendingIdleEvent.compare_exchange_strong(expected, true)) {
         postEvent(this, new QEvent((QEvent::Type)ApplicationEvent::Idle), Qt::HighEventPriority);
@@ -4383,7 +4480,7 @@ bool Application::notify(QObject * object, QEvent * event) {
                     break;
             }
             if (changesView) {
-                gl::ViewChangeGuard guard;
+                gl::ViewChangeGuard guard(event->type());
                 return QApplication::notify(object, event);
             }
         }
@@ -6220,6 +6317,8 @@ void Application::resetPhysicsReadyInformation() {
     _gpuTextureMemSizeAtLastCheck = 0;
     _physicsEnabled = false;
     _octreeProcessor.stopSafeLanding();
+    endWorldLoading();
+    _worldLoading = WorldLoading();
 }
 
 void Application::reloadResourceCaches() {
@@ -6480,13 +6579,16 @@ static bool domainLoadingInProgress = false;
 
 void Application::setArrivalWaitsForNearby(bool wait) {
     _arrivalWaitsForNearby = wait;
-    _octreeProcessor.setSafeLandingWaitsForVisuals(wait);
+    // whole-world loading sets SafeLanding's wait itself, with its radius
+    if (!_worldLoading.active) {
+        _octreeProcessor.setSafeLandingWaitsForVisuals(wait);
+    }
 }
 
-void Application::tryToEnablePhysics() {
+void Application::tryToEnablePhysics(bool skipTextureCheck) {
     bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled() ||
-        _arrivalWaitsForNearby;
-    if (gpuTextureMemSizeStable() || !enableInterstitial) {
+        _worldLoading.active || _arrivalWaitsForNearby;
+    if (skipTextureCheck || !enableInterstitial || gpuTextureMemSizeStable()) {
         _fullSceneCounterAtLastPhysicsCheck = _fullSceneReceivedCounter;
         _lastQueriedViews.clear();  // Force new view.
         // process octree stats packets are sent in between full sends of a scene (this isn't currently true).
@@ -6511,6 +6613,103 @@ void Application::tryToEnablePhysics() {
             // the real views goes out from the update loop as before
             DependencyManager::get<EntityTreeRenderer>()->forceRecheckEntities();
         }
+    }
+}
+
+// Whole-world loading. A domain's owner may ask (its settings' "loading" group) that visitors see a loading screen
+// until the whole world has arrived and its models and textures have loaded, instead of watching it stream in. The
+// settings come from the domain-server when the client connects; until they are here (a moment) the client sends no
+// entity query and does not start physics, and a domain that sends none within a few seconds loads as we go.
+void Application::updateWorldLoading() {
+    if (_worldLoading.settingsKnown) {
+        return;
+    }
+    auto& domainHandler = DependencyManager::get<NodeList>()->getDomainHandler();
+    quint64 now = usecTimestampNow();
+    if (!domainHandler.isConnected() || _worldLoading.waitStart == 0) {
+        _worldLoading.waitStart = now;
+        return;
+    }
+    const QJsonObject& settings = domainHandler.getSettingsObject();
+    if (settings.isEmpty()) {
+        static const quint64 SETTINGS_WAIT = 3 * USECS_PER_SECOND;
+        if (now - _worldLoading.waitStart > SETTINGS_WAIT) {
+            qCDebug(interfaceapp) << "World loading: no settings from the domain, loading as we go";
+            _worldLoading.settingsKnown = true;
+        }
+        return;
+    }
+    _worldLoading.settingsKnown = true;
+    QJsonObject loading = settings["loading"].toObject();
+    if (loading["whole_world"].toVariant().toBool()) {
+        static const int DEFAULT_TIME_LIMIT = 60;
+        static const int MIN_TIME_LIMIT = 10;
+        static const int MAX_TIME_LIMIT = 600;
+        int timeLimit = loading["time_limit"].toVariant().toInt();
+        if (timeLimit <= 0) {
+            timeLimit = DEFAULT_TIME_LIMIT;
+        }
+        // the whole world always arrives; the screen waits for the models and textures within this distance of
+        // the avatar (0: all of them)
+        static const float DEFAULT_RADIUS = 100.0f;
+        static const float MAX_RADIUS = 10000.0f;
+        bool hasRadius = false;
+        float radius = loading["radius"].toVariant().toFloat(&hasRadius);
+        if (!hasRadius || radius < 0.0f) {
+            radius = DEFAULT_RADIUS;
+        }
+        startWorldLoading(glm::clamp(timeLimit, MIN_TIME_LIMIT, MAX_TIME_LIMIT), glm::min(radius, MAX_RADIUS));
+    }
+}
+
+void Application::startWorldLoading(int timeLimitSeconds, float radius) {
+    _worldLoading.active = true;
+    _worldLoading.skipRequested = false;
+    _worldLoading.timeLimit = timeLimitSeconds;
+    _worldLoading.radius = radius;
+    _worldLoading.started = usecTimestampNow();
+    _worldLoading.deadline = _worldLoading.started + (quint64)timeLimitSeconds * USECS_PER_SECOND;
+    _worldLoading.lastQuery = 0;
+    _octreeProcessor.setSafeLandingWaitsForVisuals(true, radius);
+    setIsInterstitialMode(true);
+    // a new connection id: the entity server drops what it knows of this client and starts a first traversal, of
+    // the whole world now that the query has no view
+    _octreeQuery.incrementConnectionID();
+    qCDebug(interfaceapp) << "World loading: the whole world first, for at most" << timeLimitSeconds << "s, waiting for the models" <<
+        (radius > 0.0f ? QString("within %1 m").arg(radius) : QString("everywhere"));
+    emit worldLoadingChanged(true);
+}
+
+void Application::endWorldLoading() {
+    if (!_worldLoading.active) {
+        return;
+    }
+    setIsInterstitialMode(false);  // while still active, so it ends whatever the user's interstitial setting says
+    _worldLoading.active = false;
+    _octreeProcessor.setSafeLandingWaitsForVisuals(false);
+    emit worldLoadingChanged(false);
+}
+
+QVariantMap Application::getWorldLoadingState() {
+    QVariantMap state;
+    state["active"] = _worldLoading.active;
+    if (_worldLoading.active) {
+        auto progress = _octreeProcessor.safeLandingProgress();
+        quint64 now = usecTimestampNow();
+        state["received"] = progress.received;
+        state["ready"] = progress.received - progress.waiting;
+        state["serverDone"] = progress.serverDone;
+        state["seconds"] = (double)(now - _worldLoading.started) / USECS_PER_SECOND;
+        state["secondsLeft"] = _worldLoading.deadline > now ? (double)(_worldLoading.deadline - now) / USECS_PER_SECOND : 0.0;
+        state["timeLimit"] = _worldLoading.timeLimit;
+        state["radius"] = _worldLoading.radius;
+    }
+    return state;
+}
+
+void Application::showWorldNow() {
+    if (_worldLoading.active) {
+        _worldLoading.skipRequested = true;
     }
 }
 
@@ -6539,10 +6738,26 @@ void Application::update(float deltaTime) {
             }
         } else {
             _octreeProcessor.updateSafeLanding();
-            
-            // ghosting lets the avatar move before the world near it is in, unless a loading screen waits for that
-            bool ghosting = DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed() && !_arrivalWaitsForNearby;
-            if (ghosting || _octreeProcessor.safeLandingIsComplete()) {
+            updateWorldLoading();
+
+            if (_worldLoading.active) {
+                // the whole world first: until it has all arrived and loaded, "Show me now", or the time limit
+                bool timedOut = usecTimestampNow() > _worldLoading.deadline;
+                if (_worldLoading.skipRequested || timedOut) {
+                    tryToEnablePhysics(true);
+                } else if (_octreeProcessor.safeLandingIsComplete()) {
+                    tryToEnablePhysics();
+                }
+                if (_physicsEnabled) {
+                    qCDebug(interfaceapp) << "World loading:" << (_worldLoading.skipRequested ? "shown on request" :
+                        timedOut ? "time limit reached" : "the whole world is in") << "after" <<
+                        (usecTimestampNow() - _worldLoading.started) / USECS_PER_MSEC << "ms";
+                    endWorldLoading();
+                }
+            } else if (_worldLoading.settingsKnown &&
+                       // ghosting lets the avatar move before the world near it is in, unless a loading screen waits
+                       ((DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed() && !_arrivalWaitsForNearby) ||
+                        _octreeProcessor.safeLandingIsComplete())) {
                 tryToEnablePhysics();
             }
         }
@@ -6781,6 +6996,19 @@ void Application::update(float deltaTime) {
             }
         }
 
+        // Frame pacing (PHYSICS.md "The driver's stutter"): the presents are paced at the display's period, one a
+        // refresh interval, and this update is posted at each; the physics' paced clock advances by the intervals
+        // between the present that posted this update and the one that posted the last (one as a rule; two when a
+        // present lost a refresh or this thread missed a present's update), never by a wall clock this thread's own
+        // lateness disturbs (an update run late and the next on time are 2 ms apart, yet each shows for a refresh)
+        {
+            uint64_t slot = _presentSlot.load();
+            const uint64_t MAX_PERIODS = 16;
+            int periods = (_lastUpdateSlot != 0 && slot > _lastUpdateSlot) ? (int)std::min(slot - _lastUpdateSlot, MAX_PERIODS) : 1;
+            _lastUpdateSlot = slot;
+            _physicsEngine->setPresentPeriod(getPresentPeriod(), periods);
+        }
+
         if (_physicsEnabled) {
             {
                 PROFILE_RANGE(simulation_physics, "PrepareActions");
@@ -6955,7 +7183,15 @@ void Application::update(float deltaTime) {
         // from that fix stays periodic. requeryOctree, with its new connection id, remains for the explicit
         // refreshes: Redraw (Ctrl+Shift+T), a reload of the caches, physics coming up.
         bool enoughTimePassed = now > _queryExpiry;
-        if (enoughTimePassed) {
+        if (_worldLoading.active) {
+            // the same whole-world query again now and then (it travels unreliably), never a new one: a new
+            // connection id would start the entity server's traversal of the world over
+            quint64 usecNow = usecTimestampNow();
+            if (usecNow - _worldLoading.lastQuery > USECS_PER_SECOND) {
+                queryOctree(NodeType::EntityServer, PacketType::EntityQuery, QJsonObject());
+                _worldLoading.lastQuery = usecNow;
+            }
+        } else if (enoughTimePassed) {
             DependencyManager::get<EntityTreeRenderer>()->forceRecheckEntities();
         }
 
@@ -7277,6 +7513,19 @@ void Application::queryOctree(
             // don't send the octreeQuery until SafeLanding knows it has started
             return;
         }
+        if (!_worldLoading.settingsKnown) {
+            // the domain's settings say how to arrive (whole world or as we go): wait the moment they take
+            return;
+        }
+    }
+    if (isModifiedQuery && _worldLoading.active) {
+        // no view at all: the entity server's traversal then takes in the whole world, and its "initial results
+        // complete" means all of it has been sent
+        _octreeQuery.clearConicalViews();
+        _octreeQuery.setOctreeSizeScale(DEFAULT_OCTREE_SIZE_SCALE);
+        static constexpr float MIN_LOD_ADJUST = -20.0f;
+        _octreeQuery.setBoundaryLevelAdjust(MIN_LOD_ADJUST);
+    } else if (isModifiedQuery) {
         // Create modified view that is a simple sphere.
         // bool interstitialModeEnabled = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled();
 
@@ -7289,24 +7538,23 @@ void Application::queryOctree(
         sphericalView.setPositionAndSimpleRadius(getMyAvatar()->getWorldPosition(), radius);
 
         //if (interstitialModeEnabled) {
+        // (the else below belonged to `if (menu)`: with the menu up and the option off, no view was set at all and the
+        // query kept the last frame's, so the 10 m sphere never went out; avatar-ai's survey, 10-22)
         auto menu = Menu::getInstance(); 
-        if (menu) {
-            if (menu->isOptionChecked(MenuOption::LoadCompleteEntityTree)) {            // if Dev > Tivoli Options >>> LoadCompleteEntityTree truee
+        if (menu && menu->isOptionChecked(MenuOption::LoadCompleteEntityTree)) {   // Dev > Tivoli Options > LoadCompleteEntityTree
+            ConicalViewFrustum farView;
+            farView.set(_viewFrustum);
 
-                ConicalViewFrustum farView;
-                farView.set(_viewFrustum);
+            QJsonObject queryFlags;
+            queryFlags["includeDescendants"] = true; // forces entire tree
+            queryFlags["includeAncestors"] = true; // forces entire tree
+            queryFlags["serverScripts"] = true;
 
-                QJsonObject queryFlags;
-                queryFlags["includeDescendants"] = true; // forces entire tree
-                queryFlags["includeAncestors"] = true; // forces entire tree
-                queryFlags["serverScripts"] = true;
-
-                queryJSONParameters["flags"] = queryFlags;
-               // _octreeQuery->static_cast<EntityNodeData*>(node->getLinkedData()); //setShouldForceFullScene(true);
-                _octreeQuery.clearConicalViews();                     // TIVOLI go frustumless
-                _octreeQuery.setJSONParameters(queryJSONParameters);  // TIVOLI force ancestors and descendents
-                _octreeQuery.setConicalViews({ sphericalView, farView });
-            }
+            queryJSONParameters["flags"] = queryFlags;
+           // _octreeQuery->static_cast<EntityNodeData*>(node->getLinkedData()); //setShouldForceFullScene(true);
+            _octreeQuery.clearConicalViews();                     // TIVOLI go frustumless
+            _octreeQuery.setJSONParameters(queryJSONParameters);  // TIVOLI force ancestors and descendents
+            _octreeQuery.setConicalViews({ sphericalView, farView });
         } else {
             _octreeQuery.setConicalViews({ sphericalView });
         }
@@ -9403,6 +9651,7 @@ void Application::setDisplayPlugin(DisplayPluginPointer newDisplayPlugin) {
             RefreshRateManager::UXMode::DESKTOP;
 
         refreshRateManager.setUXMode(uxMode);
+        followScreenRefreshRate();
     }
 
     bool isHmd = _displayPlugin->isHmd();

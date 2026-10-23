@@ -66,6 +66,9 @@
 #include <SimulationFlags.h>
 #include <ViewFrustum.h>
 
+#include <TrackCurve.h>
+#include <TrackEntityItem.h>
+
 #include "Application.h"
 #include "avatar/AvatarManager.h"
 #include "avatar/MyAvatar.h"
@@ -117,6 +120,10 @@ namespace {
     // the lights round the camera, for their icons: looked for this often, this far out
     const int LIGHT_SEARCH_FRAMES = 15;
     const float LIGHT_SEARCH_RADIUS = 150.0f;
+    const int TRACK_SEARCH_FRAMES = 15;
+    const QString TRACK_POINTS_KEY = QStringLiteral("trackPoints");
+    const float TRACK_SEARCH_RADIUS = 600.0f;   // a track runs far; its gizmo is wanted from afar
+    const float TRACK_BOX_MARGIN = 0.5f;        // m round the curve and guideway in a fitted Track box
     // what the light handles can drag to: the Inspector's own limits, and no narrower a cone than this
     const float MIN_LIGHT_RANGE = 0.01f;
     const float MIN_SPOT_CUTOFF = 1.0f;
@@ -299,6 +306,12 @@ void Editor::setActive(bool active) {
         _vehicleGizmos.setVehicles(_vehicleGizmoVehicles);
         _nearbyLights.clear();
         _lightSearchFrame = -1;
+        // the tracks' curves too: update() stops once build mode is off, so the overlay would stay, into the next world
+        _trackGizmos.clear();
+        _nearbyTracks.clear();
+        _trackSearchFrame = -1;
+        _trackPointChosen = -1;
+        _trackPointTrack = QUuid();
         _inspectorRefresh.stop();
         if (_gizmo.isDragging()) {
             applyDrag(true);
@@ -582,6 +595,8 @@ void Editor::createPanels() {
     connect(_inspector, &InspectorPanel::vehiclePartChosen, this, [this](const QString& key, int index) {
         _vehiclePartChosen[key] = index;
     });
+    // a Track's Points list: the selected row is the point the viewport draws bright and the Move gizmo stands on
+    connect(_inspector, &InspectorPanel::trackPointChosen, this, [this](int index) { chooseTrackPoint(index, true); });
     connect(&_terrain, &EditorTerrain::terrainUnderPointerChanged, _terrainBar, &TerrainToolBar::refreshLayerNames);
 
     // notes ("Terrain saved", an upload's progress, a refusal) in a status bar along the bottom, where the
@@ -713,6 +728,7 @@ void Editor::update(float deltaTime) {
     updateBounds();
     updateLightGizmos();
     updateVehicleGizmos();
+    updateTrackGizmos();
     _terrain.setView(_camera.position(), 2.0f * tanHalfFov() / viewportHeight());
     if (_tool == EditorToolBar::Tool::Terrain) {
         _terrain.update(deltaTime);
@@ -952,6 +968,257 @@ void Editor::updateVehicleGizmos() {
     }
 }
 
+void Editor::updateTrackGizmos() {
+    auto tree = entityTree();
+    if (!tree) {
+        _trackGizmos.clear();
+        return;
+    }
+    glm::vec3 cameraPosition = _camera.position();
+    // the tracks round the camera, looked for now and then, as the lights are
+    if (_gizmosVisible && (_trackSearchFrame < 0 || _frameCounter - _trackSearchFrame >= TRACK_SEARCH_FRAMES)) {
+        _trackSearchFrame = _frameCounter;
+        QVector<QUuid> found;
+        tree->withReadLock([&] {
+            tree->evalEntitiesInSphereWithType(cameraPosition, TRACK_SEARCH_RADIUS, EntityTypes::Track, lightSearchFilter(), found);
+        });
+        _nearbyTracks = found;
+    }
+
+    std::vector<EditorTrackGizmoTrack> tracks;
+    QSet<QUuid> shown;
+    const auto& selected = _selection.ids();
+    tree->withReadLock([&] {
+        auto show = [&](const QUuid& id) {
+            if (shown.contains(id)) {
+                return;
+            }
+            auto entity = tree->findEntityByEntityItemID(id);
+            auto track = std::dynamic_pointer_cast<TrackEntityItem>(entity);
+            if (!track) {
+                return;
+            }
+            shown.insert(id);
+            EditorTrackGizmoTrack gizmo;
+            gizmo.id = id;
+            gizmo.position = track->getWorldPosition();
+            gizmo.rotation = track->getWorldOrientation();
+            QVector<glm::vec3> points = track->getTrackPoints();
+            QVector<float> bank = track->getTrackBank();
+            QVector<float> dwell = track->getTrackDwell();
+            gizmo.points.assign(points.begin(), points.end());
+            gizmo.bank.assign(bank.begin(), bank.end());
+            gizmo.dwell.assign(dwell.begin(), dwell.end());
+            gizmo.closed = track->getTrackClosed();
+            gizmo.selected = selected.contains(id);
+            tracks.push_back(gizmo);
+        };
+        for (const auto& id : selected) {
+            show(id);
+        }
+        if (_gizmosVisible) {
+            for (const auto& id : _nearbyTracks) {
+                show(id);
+            }
+        }
+    });
+
+    // a track selected on its own gets handles on its points, unless the world can't be changed
+    QUuid handlesFor;
+    if (!_readOnly && trackPointTrack(handlesFor) && !shown.contains(handlesFor)) {
+        handlesFor = QUuid();
+    }
+    int chosen = handlesFor.isNull() || handlesFor != _trackPointTrack ? -1 : _trackPointChosen;
+    float pixelSize = 2.0f * tanHalfFov() / viewportHeight();
+    _trackGizmos.update(tracks, handlesFor, chosen, cameraPosition, viewDirection(), pixelSize);
+}
+
+bool Editor::trackPointTrack(QUuid& id) const {
+    if (_selection.count() != 1) {
+        return false;
+    }
+    auto tree = entityTree();
+    if (!tree) {
+        return false;
+    }
+    QUuid only = _selection.ids().first();
+    bool track = false;
+    tree->withReadLock([&] {
+        auto entity = tree->findEntityByEntityItemID(only);
+        track = entity && entity->getType() == EntityTypes::Track;
+    });
+    if (track) {
+        id = only;
+    }
+    return track;
+}
+
+void Editor::chooseTrackPoint(int index, bool fromInspector) {
+    QUuid trackId;
+    if (index < 0 || !trackPointTrack(trackId)) {
+        index = -1;
+        trackId = QUuid();
+    }
+    bool changed = index != _trackPointChosen || trackId != _trackPointTrack;
+    _trackPointChosen = index;
+    _trackPointTrack = trackId;
+    if (changed && !fromInspector && _inspector) {
+        _inspector->chooseTrackPoint(index);
+    }
+    if (index >= 0 && _tool != EditorToolBar::Tool::Move && !fromInspector) {
+        setTool(EditorToolBar::Tool::Move);   // the point is moved with the Move gizmo
+    }
+    updateTrackGizmos();
+    updateGizmo();
+}
+
+void Editor::fitTrackBox(const EntityItemPointer& track, const QVector<glm::vec3>& points, EntityItemProperties& properties) const {
+    auto item = std::dynamic_pointer_cast<TrackEntityItem>(track);
+    if (!item || points.isEmpty()) {
+        return;
+    }
+    // the curve's points, with the guideway hanging below them (its beam, and the pylons down to their floor) and
+    // a margin round it all; the curve can bow a little past its points, which the margin covers
+    glm::vec3 low = points.first();
+    glm::vec3 high = points.first();
+    for (const glm::vec3& point : points) {
+        low = glm::min(low, point);
+        high = glm::max(high, point);
+    }
+    bool beam = item->getTrackProfile() != QStringLiteral("none");
+    float side = beam ? 0.5f * item->getTrackWidth() : 0.0f;
+    float drop = beam ? item->getTrackClearance() + item->getTrackHeight() : 0.0f;
+    low -= glm::vec3(side, drop, side);
+    high += glm::vec3(side, 0.0f, side);
+    if (beam && item->getTrackPylonSpacing() > 0.0f) {
+        low.y = std::min(low.y, item->getTrackPylonFloor());
+    }
+    low -= glm::vec3(TRACK_BOX_MARGIN);
+    high += glm::vec3(TRACK_BOX_MARGIN);
+    // the box sits at the entity's registration point: each axis reaches as far as the farther side needs
+    glm::vec3 registration = glm::clamp(item->getRegistrationPoint(), glm::vec3(0.01f), glm::vec3(0.99f));
+    glm::vec3 dimensions;
+    for (int axis = 0; axis < 3; ++axis) {
+        dimensions[axis] = std::max(std::max(-low[axis], 0.0f) / registration[axis], std::max(high[axis], 0.0f) / (1.0f - registration[axis]));
+        dimensions[axis] = std::max(dimensions[axis], 2.0f * TRACK_BOX_MARGIN);
+    }
+    properties.setDimensions(dimensions);
+}
+
+void Editor::insertTrackPoint(float arcLength) {
+    QUuid trackId;
+    if (!editable() || !trackPointTrack(trackId)) {
+        return;
+    }
+    auto tree = entityTree();
+    if (!tree) {
+        return;
+    }
+    EntityItemProperties before;
+    EntityItemProperties after;
+    int inserted = -1;
+    tree->withReadLock([&] {
+        auto entity = tree->findEntityByEntityItemID(trackId);
+        auto track = std::dynamic_pointer_cast<TrackEntityItem>(entity);
+        if (!track || track->getLocked()) {
+            return;
+        }
+        QVector<glm::vec3> points = track->getTrackPoints();
+        QVector<float> bank = track->getTrackBank();
+        QVector<float> dwell = track->getTrackDwell();
+        if (points.size() >= TrackEntityItem::MAX_POINTS) {
+            return;
+        }
+        bank.resize(points.size());
+        dwell.resize(points.size());
+        TrackCurve curve;
+        curve.build(std::vector<glm::vec3>(points.begin(), points.end()), std::vector<float>(bank.begin(), bank.end()), track->getTrackClosed());
+        if (!curve.isValid()) {
+            return;
+        }
+        arcLength = curve.normalize(arcLength);
+        // the segment the spot is in: after the last point whose arc length it has passed (on a loop, the segment
+        // back to the first point comes after the last)
+        int segment = 0;
+        for (int i = 0; i < points.size(); ++i) {
+            if (curve.arcLengthAtPoint(i) <= arcLength) {
+                segment = i;
+            }
+        }
+        int next = (segment + 1) % points.size();
+        float from = curve.arcLengthAtPoint(segment);
+        float to = next == 0 ? curve.length() : curve.arcLengthAtPoint(next);
+        float fraction = to > from ? glm::clamp((arcLength - from) / (to - from), 0.0f, 1.0f) : 0.0f;
+        before.setTrackPoints(points);
+        before.setTrackBank(bank);
+        before.setTrackDwell(dwell);
+        before.setDimensions(track->getScaledDimensions());
+        inserted = segment + 1;
+        points.insert(inserted, curve.positionAt(arcLength));
+        bank.insert(inserted, glm::mix(bank[segment], bank[next], fraction));
+        dwell.insert(inserted, 0.0f);
+        after.setTrackPoints(points);
+        after.setTrackBank(bank);
+        after.setTrackDwell(dwell);
+        fitTrackBox(entity, points, after);
+    });
+    if (inserted < 0) {
+        return;
+    }
+    _undo.pushPropertyEdit("Insert Point", { trackId }, { before }, { after }, false);
+    chooseTrackPoint(inserted, false);
+    refreshInspector(false);
+}
+
+void Editor::deleteTrackPoint() {
+    QUuid trackId;
+    if (!editable() || _trackPointChosen < 0 || !trackPointTrack(trackId) || _gizmo.isDragging()) {
+        return;
+    }
+    auto tree = entityTree();
+    if (!tree) {
+        return;
+    }
+    EntityItemProperties before;
+    EntityItemProperties after;
+    int remaining = -1;
+    int index = _trackPointChosen;
+    tree->withReadLock([&] {
+        auto entity = tree->findEntityByEntityItemID(trackId);
+        auto track = std::dynamic_pointer_cast<TrackEntityItem>(entity);
+        if (!track || track->getLocked()) {
+            return;
+        }
+        QVector<glm::vec3> points = track->getTrackPoints();
+        QVector<float> bank = track->getTrackBank();
+        QVector<float> dwell = track->getTrackDwell();
+        if (index >= points.size() || points.size() <= (int)TrackCurve::MIN_POINTS) {
+            return;   // a track keeps two points at least
+        }
+        bank.resize(points.size());
+        dwell.resize(points.size());
+        before.setTrackPoints(points);
+        before.setTrackBank(bank);
+        before.setTrackDwell(dwell);
+        before.setDimensions(track->getScaledDimensions());
+        points.removeAt(index);
+        bank.removeAt(index);
+        dwell.removeAt(index);
+        after.setTrackPoints(points);
+        after.setTrackBank(bank);
+        after.setTrackDwell(dwell);
+        fitTrackBox(entity, points, after);
+        remaining = points.size();
+    });
+    if (remaining < 0) {
+        setStatus("A track keeps two points at least", STATUS_CLEAR_MS);
+        return;
+    }
+    _undo.pushPropertyEdit("Delete Point", { trackId }, { before }, { after }, false);
+    chooseTrackPoint(std::min(index, remaining - 1), false);
+    refreshInspector(false);
+}
+
 bool Editor::pointerOverHierarchy() const {
     return _hierarchy && _hierarchy->isVisible() && _hierarchy->rect().contains(_hierarchy->mapFromGlobal(QCursor::pos()));
 }
@@ -1063,6 +1330,14 @@ bool Editor::primaryTransform(glm::vec3& position, glm::quat& rotation) const {
 }
 
 glm::vec3 Editor::gizmoPosition() const {
+    // a Track's chosen control point: the Move gizmo stands on it
+    QUuid trackId;
+    if (_trackPointChosen >= 0 && _tool == EditorToolBar::Tool::Move && trackPointTrack(trackId)) {
+        EditorTrackGizmoTrack track;
+        if (_trackGizmos.handleTrack(track) && track.id == trackId && _trackPointChosen < (int)track.points.size()) {
+            return _trackGizmos.pointInWorld(_trackPointChosen);
+        }
+    }
     glm::vec3 position;
     glm::quat rotation;
     if (_pivotMode && primaryTransform(position, rotation)) {
@@ -1092,7 +1367,7 @@ void Editor::updateGizmo() {
         glm::vec3 position;
         glm::quat rotation;
         if (_gizmo.isDragging()) {
-            position = _dragPivot + (_dragKind == DragKind::Move ? _dragDelta : glm::vec3(0.0f));
+            position = _dragPivot + ((_dragKind == DragKind::Move || _dragKind == DragKind::TrackPoint) ? _dragDelta : glm::vec3(0.0f));
             rotation = _dragGizmoRotation;
         } else {
             position = gizmoPosition();
@@ -1133,6 +1408,11 @@ void Editor::recordSelection() {
 void Editor::onSelectionChanged() {
     if (_selectionBatch == 0) {
         recordSelection();
+    }
+    QUuid trackId;
+    if (_trackPointChosen >= 0 && (!trackPointTrack(trackId) || trackId != _trackPointTrack)) {
+        _trackPointChosen = -1;
+        _trackPointTrack = QUuid();
     }
     if (_hierarchy && !_syncingSelection) {
         _syncingSelection = true;
@@ -1309,6 +1589,12 @@ void Editor::onInspectorEditCancelled(const QString& key) {
     refreshInspector(false);
 }
 
+void Editor::testInspectorEdit(const QString& key, const QVariant& value) {
+    onInspectorEditBegan(key);
+    onInspectorLiveEdit(key, value);
+    onInspectorCommitted(key, value);
+}
+
 void Editor::onInspectorCommitted(const QString& key, const QVariant& value) {
     commitInspectorEdit(key, value, _selection.ids());
 }
@@ -1385,6 +1671,22 @@ void Editor::commitInspectorEdit(const QString& key, const QVariant& value, cons
     QVector<EntityItemProperties> after;
     for (int i = 0; i < ids.size(); ++i) {
         after << inspectorEdit(key, value, naturalSizes[i], before[i]);
+    }
+    if (key == TRACK_POINTS_KEY) {
+        // the box follows the curve, as after a drag, an insert or a delete in the viewport; a scrub's points went out
+        // live without it, so the box goes now (the undo point holds the dimensions: storedKeys)
+        auto tree = entityTree();
+        auto entities = DependencyManager::get<EntityScriptingInterface>();
+        for (int i = 0; i < ids.size() && tree; ++i) {
+            tree->withReadLock([&] {
+                if (auto entity = tree->findEntityByEntityItemID(ids[i])) {
+                    fitTrackBox(entity, after[i].getTrackPoints(), after[i]);
+                }
+            });
+            if (alreadyApplied) {
+                entities->editEntity(ids[i], after[i]);
+            }
+        }
     }
     auto spec = PropertySpecs::find(key);
     _undo.pushPropertyEdit(spec ? spec->label : key, ids, before, after, alreadyApplied);
@@ -1816,6 +2118,51 @@ void Editor::beginGizmoDrag(GizmoHandle handle, const PickRay& ray) {
     }
     DragKind kind = EditorGizmo::isRing(handle) ? DragKind::Rotate
                   : EditorGizmo::isScale(handle) ? DragKind::Scale : DragKind::Move;
+    // the Move gizmo on a Track's chosen control point moves that point, in the track's own space
+    QUuid trackId;
+    if (kind == DragKind::Move && _trackPointChosen >= 0 && trackPointTrack(trackId)) {
+        bool ready = false;
+        tree->withReadLock([&] {
+            auto entity = tree->findEntityByEntityItemID(trackId);
+            auto track = std::dynamic_pointer_cast<TrackEntityItem>(entity);
+            if (!track || track->getLocked()) {
+                return;
+            }
+            _dragTrackPoints = track->getTrackPoints();
+            if (_trackPointChosen >= _dragTrackPoints.size()) {
+                return;
+            }
+            _dragTrackPosition = track->getWorldPosition();
+            _dragTrackRotation = track->getWorldOrientation();
+            EntityItemProperties before;
+            before.setTrackPoints(_dragTrackPoints);
+            before.setDimensions(track->getScaledDimensions());
+            _dragIds << trackId;
+            _dragPositions << _dragTrackPosition;
+            _dragRotations << _dragTrackRotation;
+            _dragDimensions << track->getScaledDimensions();
+            _dragBefore << before;
+            ready = true;
+        });
+        if (!ready) {
+            return;
+        }
+        _dragKind = DragKind::TrackPoint;
+        _dragPivot = _gizmo.position();
+        _dragGizmoRotation = _gizmo.rotation();
+        _dragDelta = glm::vec3(0.0f);
+        _dragRotationDelta = glm::quat();
+        _dragScale = glm::vec3(1.0f);
+        _lastDragPos = _pressPos;
+        _editTimer.start();
+        _gizmo.beginDrag(handle, ray);
+        if (!_gizmo.isDragging()) {
+            _dragKind = DragKind::None;
+        } else {
+            _trackGizmos.setActive(_trackPointChosen);
+        }
+        return;
+    }
     tree->withReadLock([&] {
         for (const auto& id : _selection.topLevel()) {
             auto entity = tree->findEntityByEntityItemID(id);
@@ -1889,7 +2236,8 @@ void Editor::moveGizmoDrag(const QPoint& viewportPos) {
     QPoint mouseDelta = viewportPos - _lastDragPos;
     _lastDragPos = viewportPos;
     switch (_dragKind) {
-        case DragKind::Move: {
+        case DragKind::Move:
+        case DragKind::TrackPoint: {
             glm::vec3 target;
             if (_vertexSnap && vertexSnapTarget(viewportPos, target)) {
                 _dragDelta = target - _dragPivot;   // the pivot lands on the vertex
@@ -1945,6 +2293,23 @@ void Editor::applyDrag(bool final) {
                 text = "Move";
                 properties.setPosition(_dragPositions[i] + _dragDelta);
                 break;
+            case DragKind::TrackPoint: {
+                text = "Move Point";
+                QVector<glm::vec3> points = _dragTrackPoints;
+                if (_trackPointChosen >= 0 && _trackPointChosen < points.size()) {
+                    glm::vec3 world = _dragTrackPosition + _dragTrackRotation * points[_trackPointChosen] + _dragDelta;
+                    points[_trackPointChosen] = glm::inverse(_dragTrackRotation) * (world - _dragTrackPosition);
+                }
+                properties.setTrackPoints(points);
+                if (final && tree) {
+                    tree->withReadLock([&] {
+                        if (auto entity = tree->findEntityByEntityItemID(_dragIds[i])) {
+                            fitTrackBox(entity, points, properties);
+                        }
+                    });
+                }
+                break;
+            }
             case DragKind::Rotate:
                 text = "Rotate";
                 properties.setRotation(_dragRotationDelta * _dragRotations[i]);
@@ -1979,7 +2344,7 @@ void Editor::applyDrag(bool final) {
         }
         after << properties;
     }
-    bool changed = _dragKind == DragKind::Move ? _dragDelta != glm::vec3(0.0f)
+    bool changed = (_dragKind == DragKind::Move || _dragKind == DragKind::TrackPoint) ? _dragDelta != glm::vec3(0.0f)
                  : _dragKind == DragKind::Rotate ? _dragRotationDelta != glm::quat()
                  : _dragScale != glm::vec3(1.0f);
     if (final && changed) {
@@ -2272,6 +2637,16 @@ void Editor::createAt(const QString& key, const glm::vec3& point) {
         // a material applies to its parent: the first selected entity
         properties.setParentID(_selection.topLevel().first());
         properties.setPosition(glm::vec3(0.0f));
+    }
+    if (key == "trackcar") {
+        // the car rides the Track selected when it is made: the physics takes it onto the curve from wherever it
+        // was placed (the nearest point of the track)
+        QUuid trackId;
+        if (trackPointTrack(trackId)) {
+            properties.setTrackID(trackId);
+        } else {
+            setStatus("Select a Track first and the car rides it; set Track in its Moving Frame section otherwise", STATUS_CLEAR_MS * 2);
+        }
     }
     place(properties, "Create " + item->label, point);
 }
@@ -2790,6 +3165,21 @@ bool Editor::handleMousePress(QMouseEvent* event) {
         beginLightHandleDrag(lightHandle, ray);
         return true;
     }
+    // a Track's control point: a click chooses it (the Move gizmo then stands on it); Shift+click on the curve
+    // between the points puts a new one there
+    int trackPoint = _trackGizmos.pointAt(ray);
+    if (trackPoint >= 0) {
+        chooseTrackPoint(trackPoint, false);
+        return true;
+    }
+    if (event->modifiers().testFlag(Qt::ShiftModifier) && _tool != EditorToolBar::Tool::Terrain) {
+        float arcLength;
+        glm::vec3 onCurve;
+        if (_trackGizmos.curveAt(ray, arcLength, onCurve)) {
+            insertTrackPoint(arcLength);
+            return true;
+        }
+    }
     // the Terrain tool: a press on the ground begins a stroke; elsewhere it is a click like any other
     if (_tool == EditorToolBar::Tool::Terrain && _terrain.pointsAtTerrain(ray)) {
         if (!editable()) {
@@ -2846,7 +3236,9 @@ bool Editor::handleMouseMove(QMouseEvent* event) {
             _gizmo.setHover(gizmoHover);
         }
         // the transform gizmo is picked first: only one of them lights up
-        _lightGizmos.setHover(gizmoHover == GizmoHandle::None ? _lightGizmos.handleAt(ray) : EditorLightHandle());
+        EditorLightHandle lightHover = gizmoHover == GizmoHandle::None ? _lightGizmos.handleAt(ray) : EditorLightHandle();
+        _lightGizmos.setHover(lightHover);
+        _trackGizmos.setHover(gizmoHover == GizmoHandle::None && lightHover.isNone() ? _trackGizmos.pointAt(ray) : -1);
         if (_tool == EditorToolBar::Tool::Terrain) {
             _terrain.hover(ray);
         }
@@ -2875,6 +3267,7 @@ bool Editor::handleMouseRelease(QMouseEvent* event) {
         applyDrag(true);
         _gizmo.endDrag();
         _dragKind = DragKind::None;
+        _trackGizmos.setActive(-1);
         updateGizmo();
         return true;
     }
@@ -2941,11 +3334,19 @@ bool Editor::handleKeyPress(QKeyEvent* event) {
     switch (event->key()) {
         case Qt::Key_Delete:
         case Qt::Key_Backspace:
-            deleteSelection();
+            if (_trackPointChosen >= 0) {
+                deleteTrackPoint();   // the chosen control point, not the track
+            } else {
+                deleteSelection();
+            }
             return true;
         case Qt::Key_Escape:
             if (_terrain.isStroking()) {
                 _terrain.endStroke(true);   // the ground goes back as it was
+                return true;
+            }
+            if (_trackPointChosen >= 0) {
+                chooseTrackPoint(-1, false);   // the point first, the track on a second Escape
                 return true;
             }
             _selection.clear();

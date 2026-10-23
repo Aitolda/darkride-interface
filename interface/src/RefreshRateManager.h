@@ -95,7 +95,8 @@ public:
     void setUXMode(UXMode uxMode);
     UXMode getUXMode() const { return _uxMode; }
 
-    void setRefreshRateOperator(std::function<void(int)> refreshRateOperator) { _refreshRateOperator = refreshRateOperator; }
+    // (the target rate, the display's own rate or 0 when unknown)
+    void setRefreshRateOperator(std::function<void(int, int)> refreshRateOperator) { _refreshRateOperator = refreshRateOperator; }
     int getActiveRefreshRate() const { return _activeRefreshRate; }
     void updateRefreshRateController() const;
 
@@ -119,7 +120,7 @@ private:
     mutable ReadWriteLockable _refreshRateProfileSettingLock;
     Setting::Handle<int> _refreshRateProfileSetting { "refreshRateProfile", RefreshRateProfile::DISPLAY_BASED };
 
-    std::function<void(int)> _refreshRateOperator { nullptr };
+    std::function<void(int, int)> _refreshRateOperator { nullptr };
 
     std::shared_ptr<QTimer> _inactiveTimer { std::make_shared<QTimer>() };
 };

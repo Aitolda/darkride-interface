@@ -13,6 +13,7 @@
 
 #include "Application.h"
 #include "ui/DialogsManager.h"
+#include "scripting/WindowScriptingInterface.h"
 
 #include <DependencyManager.h>
 #include <DomainHandler.h>
@@ -41,6 +42,8 @@ void ConnectionMonitor::init() {
     }
 
     connect(&_timer, &QTimer::timeout, this, [this]() {
+        // scripts are told first: the loading screen (worldLoading.js) lifts, so the failure window isn't hidden behind it
+        emit DependencyManager::get<WindowScriptingInterface>()->domainConnectionTimedOut();
         // set in a timeout error
         bool enableInterstitial = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled();
         if (enableInterstitial) {

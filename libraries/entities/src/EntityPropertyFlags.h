@@ -256,6 +256,13 @@ enum EntityPropertyList
     PROP_TRAIN_DWELL = PROP_DERIVED_9,
     PROP_TRAIN_STATION = PROP_DERIVED_10,
     PROP_TRAIN_TIME = PROP_DERIVED_11,
+    // the guideway the track draws and collides as (the monorail's beam and pylons, TrackGuideway in libraries/vehicles)
+    PROP_TRACK_PROFILE = PROP_DERIVED_12,
+    PROP_TRACK_WIDTH = PROP_DERIVED_13,
+    PROP_TRACK_HEIGHT = PROP_DERIVED_14,
+    PROP_TRACK_CLEARANCE = PROP_DERIVED_15,
+    PROP_TRACK_PYLON_SPACING = PROP_DERIVED_16,
+    PROP_TRACK_PYLON_FLOOR = PROP_DERIVED_17,
 
     // Particles
     PROP_MAX_PARTICLES = PROP_DERIVED_0,

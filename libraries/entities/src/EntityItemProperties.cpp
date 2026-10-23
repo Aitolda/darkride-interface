@@ -697,6 +697,12 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
     CHECK_PROPERTY_CHANGE(PROP_TRAIN_DWELL, trainDwell);
     CHECK_PROPERTY_CHANGE(PROP_TRAIN_STATION, trainStation);
     CHECK_PROPERTY_CHANGE(PROP_TRAIN_TIME, trainTime);
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_PROFILE, trackProfile);
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_WIDTH, trackWidth);
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_HEIGHT, trackHeight);
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_CLEARANCE, trackClearance);
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_PYLON_SPACING, trackPylonSpacing);
+    CHECK_PROPERTY_CHANGE(PROP_TRACK_PYLON_FLOOR, trackPylonFloor);
 
     CHECK_PROPERTY_CHANGE(PROP_LINE_POINTS, linePoints);
     CHECK_PROPERTY_CHANGE(PROP_STROKE_WIDTHS, strokeWidths);
@@ -1306,6 +1312,19 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
  *     <code>65535</code> for none.
  * @property {number} trainTime=0 - <em>Read-only.</em> The domain time the state is for, in microseconds; <code>0</code>
  *     when no physics server has driven this track.
+ * @property {string} trackProfile="beam" - What the track draws, and what collides, along its curve: <code>"beam"</code>
+ *     is a monorail's box beam hung under the ride line, with pylons; <code>"none"</code> draws nothing (dress the track
+ *     with models of your own).
+ * @property {number} trackWidth=0.8 - The beam's width across the track, in meters.
+ * @property {number} trackHeight=1 - The beam's height, in meters.
+ * @property {number} trackClearance=0.3 - From the ride line (the curve a car's origin follows) down to the beam's top,
+ *     in meters.
+ * @property {number} trackPylonSpacing=10 - The distance between pylons along the track, in meters; <code>0</code> for
+ *     no pylons.
+ * @property {number} trackPylonFloor=-8 - The height of the pylons' feet in the entity's local coordinates, in meters:
+ *     every pylon reaches from the beam's bottom down to this level, so pylons grow where the track climbs; none where
+ *     the beam is already down at it.
+ * @property {Color} color=255,255,255 - The guideway's color; a Material entity can skin it.
  */
 
 /**jsdoc
@@ -2032,6 +2051,13 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
         COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRAIN_DWELL, trainDwell);
         COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRAIN_STATION, trainStation);
         COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRAIN_TIME, trainTime);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_PROFILE, trackProfile);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_WIDTH, trackWidth);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_HEIGHT, trackHeight);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_CLEARANCE, trackClearance);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_PYLON_SPACING, trackPylonSpacing);
+        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRACK_PYLON_FLOOR, trackPylonFloor);
+        COPY_PROPERTY_TO_QSCRIPTVALUE_TYPED(PROP_COLOR, color, u8vec3Color);
     }
 
     if (_type == EntityTypes::PolyLine) {
@@ -2419,6 +2445,12 @@ void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool 
     COPY_PROPERTY_FROM_QSCRIPTVALUE(trainDwell, float, setTrainDwell);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(trainStation, quint16, setTrainStation);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(trainTime, quint64, setTrainTime);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackProfile, QString, setTrackProfile);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackWidth, float, setTrackWidth);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackHeight, float, setTrackHeight);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackClearance, float, setTrackClearance);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackPylonSpacing, float, setTrackPylonSpacing);
+    COPY_PROPERTY_FROM_QSCRIPTVALUE(trackPylonFloor, float, setTrackPylonFloor);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(linePoints, qVectorVec3, setLinePoints);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(strokeWidths, qVectorFloat, setStrokeWidths);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(normals, qVectorVec3, setNormals);
@@ -2734,6 +2766,12 @@ void EntityItemProperties::merge(const EntityItemProperties& other) {
     COPY_PROPERTY_IF_CHANGED(trainDwell);
     COPY_PROPERTY_IF_CHANGED(trainStation);
     COPY_PROPERTY_IF_CHANGED(trainTime);
+    COPY_PROPERTY_IF_CHANGED(trackProfile);
+    COPY_PROPERTY_IF_CHANGED(trackWidth);
+    COPY_PROPERTY_IF_CHANGED(trackHeight);
+    COPY_PROPERTY_IF_CHANGED(trackClearance);
+    COPY_PROPERTY_IF_CHANGED(trackPylonSpacing);
+    COPY_PROPERTY_IF_CHANGED(trackPylonFloor);
     COPY_PROPERTY_IF_CHANGED(linePoints);
     COPY_PROPERTY_IF_CHANGED(strokeWidths);
     COPY_PROPERTY_IF_CHANGED(normals);
@@ -3225,6 +3263,12 @@ bool EntityItemProperties::getPropertyInfo(const QString& propertyName, EntityPr
         ADD_PROPERTY_TO_MAP(PROP_TRAIN_DWELL, TrainDwell, trainDwell, float);
         ADD_PROPERTY_TO_MAP(PROP_TRAIN_STATION, TrainStation, trainStation, quint16);
         ADD_PROPERTY_TO_MAP(PROP_TRAIN_TIME, TrainTime, trainTime, quint64);
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_PROFILE, TrackProfile, trackProfile, QString);
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_WIDTH, TrackWidth, trackWidth, float);
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_HEIGHT, TrackHeight, trackHeight, float);
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_CLEARANCE, TrackClearance, trackClearance, float);
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_PYLON_SPACING, TrackPylonSpacing, trackPylonSpacing, float);
+        ADD_PROPERTY_TO_MAP(PROP_TRACK_PYLON_FLOOR, TrackPylonFloor, trackPylonFloor, float);
 
         ADD_PROPERTY_TO_MAP(PROP_LINE_POINTS, LinePoints, linePoints, QVector<vec3>);
         ADD_PROPERTY_TO_MAP(PROP_STROKE_WIDTHS, StrokeWidths, strokeWidths, QVector<float>);
@@ -3706,6 +3750,13 @@ OctreeElement::AppendState EntityItemProperties::encodeEntityEditPacket(PacketTy
                 APPEND_ENTITY_PROPERTY(PROP_TRAIN_DWELL, properties.getTrainDwell());
                 APPEND_ENTITY_PROPERTY(PROP_TRAIN_STATION, properties.getTrainStation());
                 APPEND_ENTITY_PROPERTY(PROP_TRAIN_TIME, properties.getTrainTime());
+                APPEND_ENTITY_PROPERTY(PROP_TRACK_PROFILE, properties.getTrackProfile());
+                APPEND_ENTITY_PROPERTY(PROP_TRACK_WIDTH, properties.getTrackWidth());
+                APPEND_ENTITY_PROPERTY(PROP_TRACK_HEIGHT, properties.getTrackHeight());
+                APPEND_ENTITY_PROPERTY(PROP_TRACK_CLEARANCE, properties.getTrackClearance());
+                APPEND_ENTITY_PROPERTY(PROP_TRACK_PYLON_SPACING, properties.getTrackPylonSpacing());
+                APPEND_ENTITY_PROPERTY(PROP_TRACK_PYLON_FLOOR, properties.getTrackPylonFloor());
+                APPEND_ENTITY_PROPERTY(PROP_COLOR, properties.getColor());
             }
 
             if (properties.getType() == EntityTypes::Line) {
@@ -4213,6 +4264,13 @@ bool EntityItemProperties::decodeEntityEditPacket(const unsigned char* data, int
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRAIN_DWELL, float, setTrainDwell);
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRAIN_STATION, quint16, setTrainStation);
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRAIN_TIME, quint64, setTrainTime);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_PROFILE, QString, setTrackProfile);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_WIDTH, float, setTrackWidth);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_HEIGHT, float, setTrackHeight);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_CLEARANCE, float, setTrackClearance);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_PYLON_SPACING, float, setTrackPylonSpacing);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_TRACK_PYLON_FLOOR, float, setTrackPylonFloor);
+        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_COLOR, u8vec3Color, setColor);
     }
 
     if (properties.getType() == EntityTypes::Line) {
@@ -4630,6 +4688,12 @@ void EntityItemProperties::markAllChanged() {
     _trainDwellChanged = true;
     _trainStationChanged = true;
     _trainTimeChanged = true;
+    _trackProfileChanged = true;
+    _trackWidthChanged = true;
+    _trackHeightChanged = true;
+    _trackClearanceChanged = true;
+    _trackPylonSpacingChanged = true;
+    _trackPylonFloorChanged = true;
     _linePointsChanged = true;
     _strokeWidthsChanged = true;
     _normalsChanged = true;
@@ -5356,6 +5420,24 @@ QList<QString> EntityItemProperties::listChangedProperties() {
     }
     if (trainTimeChanged()) {
         out += "trainTime";
+    }
+    if (trackProfileChanged()) {
+        out += "trackProfile";
+    }
+    if (trackWidthChanged()) {
+        out += "trackWidth";
+    }
+    if (trackHeightChanged()) {
+        out += "trackHeight";
+    }
+    if (trackClearanceChanged()) {
+        out += "trackClearance";
+    }
+    if (trackPylonSpacingChanged()) {
+        out += "trackPylonSpacing";
+    }
+    if (trackPylonFloorChanged()) {
+        out += "trackPylonFloor";
     }
     if (linePointsChanged()) {
         out += "linePoints";
