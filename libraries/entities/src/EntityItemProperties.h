@@ -150,6 +150,11 @@ public:
     virtual QScriptValue copyToScriptValue(QScriptEngine* engine, bool skipDefaults, bool allowUnknownCreateTime = false,
         bool strictSemantics = false, EntityPsuedoPropertyFlags psueudoPropertyFlags = EntityPsuedoPropertyFlags()) const;
     virtual void copyFromScriptValue(const QScriptValue& object, bool honorReadOnly);
+    /// The same conversions for plain values (PlainScriptValue.h): what a WebAssembly module, a world file or
+    /// avatar-entity data gets, member for member and in the same order what a script gets.
+    PlainScriptValue copyToScriptValue(PlainScriptEngine* engine, bool skipDefaults, bool allowUnknownCreateTime = false,
+        bool strictSemantics = false, EntityPsuedoPropertyFlags psueudoPropertyFlags = EntityPsuedoPropertyFlags()) const;
+    void copyFromScriptValue(const PlainScriptValue& object, bool honorReadOnly);
     void copyFromJSONString(QScriptEngine& scriptEngine, const QString& jsonString);
 
     static QScriptValue entityPropertyFlagsToScriptValue(QScriptEngine* engine, const EntityPropertyFlags& flags);
@@ -554,6 +559,13 @@ protected:
     void setCollisionMaskFromString(const QString& maskString);
 
 private:
+    // One body for each conversion, over the value and engine types (QScriptValue with QScriptEngine,
+    // PlainScriptValue with PlainScriptEngine); the public overloads above call them.
+    template <typename Value, typename Engine>
+    Value copyToScriptValueOf(Engine* engine, bool skipDefaults, bool allowUnknownCreateTime, bool strictSemantics,
+                          EntityPsuedoPropertyFlags psueudoPropertyFlags) const;
+    template <typename Value>
+    void copyFromScriptValueOf(const Value& object, bool honorReadOnly);
     QUuid _id;
     bool _idSet;
     quint64 _lastEdited;
