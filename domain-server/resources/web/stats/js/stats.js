@@ -319,7 +319,7 @@ $(document).ready(function(){
   function openSections() {
     var open = {};
     $('#stats-container details, #stats-connections details').each(function() {
-      open[$(this).data('id')] = this.open;
+      open[$(this).attr('data-id')] = this.open;
     });
     return open;
   }
@@ -391,7 +391,7 @@ $(document).ready(function(){
 
     // put the open groups back
     $('#stats-container details.dr-stat-group').each(function() {
-      if (open[$(this).data('id')]) this.open = true;
+      if (open[$(this).attr('data-id')]) this.open = true;
     });
   }
 
