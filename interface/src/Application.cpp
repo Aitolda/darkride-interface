@@ -64,6 +64,7 @@
 #include <GeometryUtil.h>
 #include <StatTracker.h>
 #include <Trace.h>
+#include <StartupProfiler.h>
 #include <ResourceScriptingInterface.h>
 #include <AccountManager.h>
 #include <AddressManager.h>
@@ -718,6 +719,8 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
 
     qInstallMessageHandler(messageHandler);
 
+    StartupProfiler::phase("setupEssentials: version switches, crash check, resources");
+
     // HRS: I could not figure out how to move these any earlier in startup, so when using this option, be sure to also supply
     // --allowMultipleInstances
     auto reportAndQuit = [&](const char* commandSwitch, std::function<void(FILE* fp)> report) {
@@ -788,6 +791,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
         }
     }
 
+    StartupProfiler::phase("setupEssentials: plug-in manager, runtime plug-ins loaded");
     // Tell the plugin manager about our statically linked plugins
     DependencyManager::set<ScriptInitializers>();
     DependencyManager::set<PluginManager>();
@@ -820,6 +824,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     DependencyManager::registerInheritance<EntityDynamicFactoryInterface, InterfaceDynamicFactory>();
     DependencyManager::registerInheritance<SpatialParentFinder, InterfaceParentFinder>();
 
+    StartupProfiler::phase("setupEssentials: the registrations (each row a service's constructor)");
     // Set dependencies
     DependencyManager::set<PickManager>();
     DependencyManager::set<PointerManager>();
@@ -924,6 +929,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     DependencyManager::set<Keyboard>();
     DependencyManager::set<KeyboardScriptingInterface>();
     DependencyManager::set<GrabManager>();
+    StartupProfiler::phase("setupEssentials: platform helper, bookmarks; then the members (physics engine, clipboard tree, settings)");
     PlatformHelper::setup();
     
     QObject::connect(PlatformHelper::instance(), &PlatformHelper::systemWillWake, [] {
@@ -1034,6 +1040,8 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     
     setProperty(hifi::properties::CRASHED, _previousSessionCrashed);
 
+    StartupProfiler::phase("constructor: log handler, test arguments, GPU identification, thread pool");
+
     LogHandler::getInstance().moveToThread(thread());
     LogHandler::getInstance().setupRepeatedMessageFlusher();
 
@@ -1108,6 +1116,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     installNativeEventFilter(&MyNativeEventFilter::getInstance());
 #endif
 
+    StartupProfiler::phase("constructor: 16 fonts");
     QFontDatabase::addApplicationFont(PathUtils::resourcesPath() + "fonts/Cairo-SemiBold.ttf");
     QFontDatabase::addApplicationFont(PathUtils::resourcesPath() + "fonts/fontawesome-webfont.ttf");
     QFontDatabase::addApplicationFont(PathUtils::resourcesPath() + "fonts/Graphik-Medium.ttf");
@@ -1129,6 +1138,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     QFontDatabase::addApplicationFont(PathUtils::resourcesPath() + "styles/Inconsolata.otf");
     
+    StartupProfiler::phase("constructor: node list thread, address manager");
     _window->setWindowTitle(labelledTitle("Darkride"));
 
     Model::setAbstractViewStateInterface(this); // The model class will sometimes need to know view state details from us
@@ -1146,6 +1156,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     if (cmdOptionExists(argc, constArgv, "--disableWatchdog")) {
         DISABLE_WATCHDOG = true;
     }
+    StartupProfiler::phase("constructor: deadlock watchdog");
     // Set up a watchdog thread to intentionally crash the application on deadlocks
     if (!DISABLE_WATCHDOG) {
         auto deadlockWatchdogThread = new DeadlockWatchdogThread();
@@ -1176,6 +1187,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         watchdogUpdateTimer->start();
     }
 
+    StartupProfiler::phase("constructor: avatar manager space, account manager and keypair, version log");
     // Set File Logger Session UUID
     auto avatarManager = DependencyManager::get<AvatarManager>();
     auto myAvatar = avatarManager ? avatarManager->getMyAvatar() : nullptr;
@@ -1212,6 +1224,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     updateHeartbeat();
 
+    StartupProfiler::phase("constructor: domain check-in timer, audio client thread");
     // setup a timer for domain-server check ins
     QTimer* domainCheckInTimer = new QTimer(this);
     connect(domainCheckInTimer, &QTimer::timeout, nodeList.data(), &NodeList::sendDomainServerCheckIn);
@@ -1253,6 +1266,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     // Make sure we don't time out during slow operations at startup
     updateHeartbeat();
 
+    StartupProfiler::phase("constructor: messages client thread, domain handler connections");
     // Setup MessagesClient
     DependencyManager::get<MessagesClient>()->startThread();
 
@@ -1265,6 +1279,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     });
     connect(&domainHandler, &DomainHandler::resetting, this, &Application::resettingDomain);
     connect(&domainHandler, &DomainHandler::connectedToDomain, this, &Application::updateWindowTitle);
+    connect(&domainHandler, &DomainHandler::connectedToDomain, this, [] { StartupProfiler::instant("connected to a domain"); });
     connect(&domainHandler, &DomainHandler::disconnectedFromDomain, this, &Application::updateWindowTitle);
     connect(&domainHandler, &DomainHandler::disconnectedFromDomain, this, [this]() {
         auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
@@ -1292,6 +1307,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     // to has gone down and switched to a new content set, so when you reconnect the cached ATP assets will no longer be valid.
     connect(&domainHandler, &DomainHandler::disconnectedFromDomain, DependencyManager::get<ScriptCache>().data(), &ScriptCache::clearATPScriptsFromCache);
 
+    StartupProfiler::phase("constructor: discoverability, node list and account connections");
     // update our location every 5 seconds in the metaverse server, assuming that we are authenticated with one
     const qint64 DATA_SERVER_LOCATION_CHANGE_UPDATE_MSECS = 5 * MSECS_PER_SECOND;
 
@@ -1417,6 +1433,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         setCrashAnnotation("avatar", avatarURL.toString().toStdString());
     });
 
+    StartupProfiler::phase("constructor: sample sound, script engine initializer, node interest set, options");
     // Inititalize sample before registering
     _sampleSound = DependencyManager::get<SoundCache>()->getSound(PathUtils::resourcesUrl("sounds/sample.wav"));
 
@@ -1472,6 +1489,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         _saveAvatarOverrideUrl = true;
     }
 
+    StartupProfiler::phase("constructor: GL canvas, window restored and shown");
     // setDefaultFormat has no effect after the platform window has been created, so call it here.
     QSurfaceFormat::setDefaultFormat(getDefaultOpenGLSurfaceFormat());
 
@@ -1500,10 +1518,12 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     // Make sure the window is set to the correct size by processing the pending events
     QCoreApplication::processEvents();
 
+    StartupProfiler::phase("constructor: initializeGL");
     // Create the main thread context, the GPU backend
     initializeGL();
     qCDebug(interfaceapp, "Initialized GL");
 
+    StartupProfiler::phase("constructor: initializeDisplayPlugins");
     // Initialize the display plugin architecture
     initializeDisplayPlugins();
     qCDebug(interfaceapp, "Initialized Display");
@@ -1512,6 +1532,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         _preferredCursor.set(Cursor::Manager::getIconName(Cursor::Icon::SYSTEM));
         showCursor(Cursor::Manager::lookupIcon(_preferredCursor.get()));
     }
+    StartupProfiler::phase("constructor: audio scripting interface");
     // An audio device changed signal received before the display plugins are set up will cause a crash,
     // so we defer the setup of the `scripting::Audio` class until this point
     {
@@ -1538,11 +1559,13 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         }
     }
 
+    StartupProfiler::phase("constructor: initializeRenderEngine");
     // Create the rendering engine.  This can be slow on some machines due to lots of
     // GPU pipeline creation.
     initializeRenderEngine();
     qCDebug(interfaceapp, "Initialized Render Engine.");
 
+    StartupProfiler::phase("constructor: overlays, sign-in connections");
     _overlays.init(); // do this before scripts load
 
     auto offscreenUi = getOffscreenUI();
@@ -1587,13 +1610,16 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     }
 #endif
 
+    StartupProfiler::phase("constructor: initializeUi");
     // Initialize the user interface and menu system
     // Needs to happen AFTER the render engine initialization to access its configuration
     initializeUi();
 
+    StartupProfiler::phase("constructor: init");
     init();
     qCDebug(interfaceapp, "init() complete.");
 
+    StartupProfiler::phase("constructor: octree processor and edit sender threads, first update");
     // create thread for parsing of octree data independent of the main network and rendering threads
     _octreeProcessor.initialize(_enableProcessOctreeThread);
     connect(&_octreeProcessor, &OctreePacketProcessor::packetVersionMismatch, this, &Application::notifyPacketVersionMismatch);
@@ -1627,6 +1653,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     connect(myAvatar->getSkeletonModel().get(), &SkeletonModel::skeletonLoaded,
         this, &Application::checkSkeleton, Qt::QueuedConnection);
 
+    StartupProfiler::phase("constructor: controller actions, input devices");
     // Setup the userInputMapper with the actions
     auto userInputMapper = DependencyManager::get<UserInputMapper>();
     connect(userInputMapper.data(), &UserInputMapper::actionEvent, [this](int action, float state) {
@@ -1844,6 +1871,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     // Make sure we don't time out during slow operations at startup
     updateHeartbeat();
 
+    StartupProfiler::phase("constructor: loadSettings");
     loadSettings();
     // the menu has just replayed its saved state (which build mode ignored); from here on it may be entered
     DependencyManager::get<Editor>()->setReady();
@@ -1852,6 +1880,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     // Make sure we don't time out during slow operations at startup
     updateHeartbeat();
+    StartupProfiler::phase("constructor: settings thread, audio interfaces, menu options");
     QTimer* settingsTimer = new QTimer();
     moveToNewNamedThread(settingsTimer, "Settings Thread", [this, settingsTimer]{
         // This needs to run on the settings thread, so we need to pass the `settingsTimer` as the
@@ -1900,6 +1929,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         MeshPartPayload::DEFAULT_ENABLE_MATERIAL_PROCEDURAL_SHADERS
     );
 
+    StartupProfiler::phase("constructor: pointer, entity and material operators");
     // If the user clicks on an object, we will check that it's a web surface, and if so, set the focus to it
     auto pointerManager = DependencyManager::get<PointerManager>();
     auto keyboardFocusOperator = [this](const QUuid& id, const PointerEvent& event) {
@@ -2033,6 +2063,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     connect(this, &Application::applicationStateChanged, this, &Application::activeChanged);
     connect(_window, SIGNAL(windowMinimizedChanged(bool)), this, SLOT(windowMinimizedChanged(bool)));
     qCDebug(interfaceapp, "Startup time: %4.2f seconds.", (double)startupTimer.elapsed() / 1000.0);
+    StartupProfiler::phase("constructor: fade function, snapshot sound, asset timers, picks, web-surface operators");
 
     EntityTreeRenderer::setEntitiesShouldFadeFunction([this]() {
         SharedNodePointer entityServerNode = DependencyManager::get<NodeList>()->soloNodeOfType(NodeType::EntityServer);
@@ -2203,6 +2234,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         webSurface.reset();
     });
 
+    StartupProfiler::phase("constructor: tablet sounds, keyboard, URL handlers, graphics engine start");
     // Preload Tablet sounds
     DependencyManager::get<EntityScriptingInterface>()->setEntityTree(qApp->getEntities()->getTree());
     DependencyManager::get<TabletScriptingInterface>()->preloadSounds();
@@ -2228,6 +2260,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     connect(&AndroidHelper::instance(), &AndroidHelper::toggleAwayMode, this, &Application::toggleAwayMode);
     AndroidHelper::instance().notifyLoadComplete();
 #endif
+    StartupProfiler::phase("constructor: pauseUntilLoginDetermined");
     pauseUntilLoginDetermined();
 }
 
@@ -2649,6 +2682,7 @@ void Application::initializeGL() {
 #if !defined(DISABLE_QML)
     // Build a shared canvas / context for the Chromium processes
     if (!globalShareContext) {
+        StartupProfiler::Scope step("initializeGL: Chromium share context");
         // Chromium rendering uses some GL functions that prevent nSight from capturing
         // frames, so we only create the shared context if nsight is NOT active.
         if (!nsightActive()) {
@@ -2674,14 +2708,17 @@ void Application::initializeGL() {
 #endif
 
 
-    _glWidget->createContext(globalShareContext);
+    {
+        StartupProfiler::Scope step("initializeGL: window context");
+        _glWidget->createContext(globalShareContext);
 
-    if (!_glWidget->makeCurrent()) {
-        qCWarning(interfaceapp, "Unable to make window context current");
+        if (!_glWidget->makeCurrent()) {
+            qCWarning(interfaceapp, "Unable to make window context current");
+        }
+
+        // Populate the global OpenGL context based on the information for the primary window GL context
+        gl::ContextInfo::get(true);
     }
-
-    // Populate the global OpenGL context based on the information for the primary window GL context
-    gl::ContextInfo::get(true);
 
 #if !defined(DISABLE_QML)
     QStringList chromiumFlags;
@@ -2716,6 +2753,7 @@ void Application::initializeGL() {
     // Build a shared canvas / context for the QML rendering
 #if !defined(DISABLE_QML)
     {
+        StartupProfiler::Scope step("initializeGL: QML share context");
         _qmlShareContext = new OffscreenGLCanvas();
         _qmlShareContext->setObjectName("QmlShareContext");
         _qmlShareContext->create(globalShareContext);
@@ -2737,7 +2775,10 @@ void Application::initializeGL() {
     glClear(GL_COLOR_BUFFER_BIT);
     _glWidget->swapBuffers();
 
-    _graphicsEngine.initializeGPU(_glWidget);
+    {
+        StartupProfiler::Scope step("initializeGL: GPU context and render thread (GraphicsEngine::initializeGPU)");
+        _graphicsEngine.initializeGPU(_glWidget);
+    }
 }
 
 void Application::initializeDisplayPlugins() {
@@ -2775,10 +2816,14 @@ void Application::initializeDisplayPlugins() {
 
     // The default display plugin needs to be activated first, otherwise the display plugin thread
     // may be launched by an external plugin, which is bad
-    setDisplayPlugin(defaultDisplayPlugin);
+    {
+        StartupProfiler::Scope step("initializeDisplayPlugins: default display plugin activated (the present thread)");
+        setDisplayPlugin(defaultDisplayPlugin);
+    }
 
     // Now set the desired plugin if it's not the same as the default plugin
     if (targetDisplayPlugin && (targetDisplayPlugin != defaultDisplayPlugin)) {
+        StartupProfiler::Scope step("initializeDisplayPlugins: the saved display plugin activated");
         setDisplayPlugin(targetDisplayPlugin);
     }
 
@@ -2800,7 +2845,10 @@ void Application::initializeDisplayPlugins() {
 void Application::initializeRenderEngine() {
     // FIXME: on low end systems os the shaders take up to 1 minute to compile, so we pause the deadlock watchdog thread.
     DeadlockWatchdogThread::withPause([&] {
-        _graphicsEngine.initializeRender();
+        {
+            StartupProfiler::Scope step("initializeRenderEngine: the render engine and its pipelines (GraphicsEngine::initializeRender)");
+            _graphicsEngine.initializeRender();
+        }
         DependencyManager::get<Keyboard>()->registerKeyboardHighlighting();
     });
 }
@@ -2822,6 +2870,7 @@ void Application::showLoginScreen() {
     _loginDialogPoppedUp = true;
     loginDialogPoppedUp.set(_loginDialogPoppedUp);
     dialogsManager->showLoginDialog();
+    StartupProfiler::instant("sign-in dialog opened");
     emit loginDialogFocusEnabled();
     _window->setWindowTitle(labelledTitle("Darkride"));
 #else
@@ -2868,6 +2917,7 @@ void Application::initializeUi() {
     qmlRegisterType<WebBrowserSuggestionsEngine>("HifiWeb", 1, 0, "WebBrowserSuggestionsEngine");
 
     {
+        StartupProfiler::Scope step("initializeUi: the system tablet");
         auto tabletScriptingInterface = DependencyManager::get<TabletScriptingInterface>();
         tabletScriptingInterface->getTablet(SYSTEM_TABLET);
     }
@@ -2883,6 +2933,7 @@ void Application::initializeUi() {
     // OffscreenUi is a subclass of OffscreenQmlSurface specifically designed to
     // support the window management and scripting proxies for VR use
     DeadlockWatchdogThread::withPause([&] {
+        StartupProfiler::Scope step("initializeUi: Desktop.qml (OffscreenUi::createDesktop)");
         offscreenUi->createDesktop(PathUtils::qmlUrl("hifi/Desktop.qml"));
     });
     // FIXME either expose so that dialogs can set this themselves or
@@ -2892,7 +2943,10 @@ void Application::initializeUi() {
     _window->setMenuBar(new Menu());
 #endif
 
-    setupPreferences();
+    {
+        StartupProfiler::Scope step("initializeUi: preferences");
+        setupPreferences();
+    }
 
 #if !defined(DISABLE_QML)
     _glWidget->installEventFilter(offscreenUi.data());
@@ -2960,11 +3014,17 @@ void Application::initializeUi() {
         }
     });
 
-    offscreenSurfaceCache->reserve(TabletScriptingInterface::QML, 1);
-    offscreenSurfaceCache->reserve(render::entities::WebEntityRenderer::QML, 2);
+    {
+        StartupProfiler::Scope step("initializeUi: offscreen surfaces reserved (one tablet, two web)");
+        offscreenSurfaceCache->reserve(TabletScriptingInterface::QML, 1);
+        offscreenSurfaceCache->reserve(render::entities::WebEntityRenderer::QML, 2);
+    }
 #endif
 
-    flushMenuUpdates();
+    {
+        StartupProfiler::Scope step("initializeUi: the menu (flushMenuUpdates)");
+        flushMenuUpdates();
+    }
 
 #if !defined(DISABLE_QML)
     // Now that the menu is instantiated, ensure the display plugin menu is properly updated
@@ -5002,15 +5062,22 @@ bool Application::exportEntities(const QString& filename, float x, float y, floa
 
 void Application::loadSettings() {
 
-    DependencyManager::get<AudioClient>()->loadSettings();
-    DependencyManager::get<LODManager>()->loadSettings();
+    {
+        StartupProfiler::Scope step("loadSettings: audio and LOD");
+        DependencyManager::get<AudioClient>()->loadSettings();
+        DependencyManager::get<LODManager>()->loadSettings();
+    }
 
     auto menu = Menu::getInstance();
-    menu->loadSettings();
+    {
+        StartupProfiler::Scope step("loadSettings: menu");
+        menu->loadSettings();
+    }
 
     // override the menu option show overlays to always be true on startup
     menu->setIsOptionChecked(MenuOption::Overlays, true);
 
+    int displayPluginStep = StartupProfiler::begin("loadSettings: display plugin from the menu");
     // If there is a preferred plugin, we probably messed it up with the menu settings, so fix it.
     auto pluginManager = PluginManager::getInstance();
     auto plugins = pluginManager->getPreferredDisplayPlugins();
@@ -5037,14 +5104,21 @@ void Application::loadSettings() {
         }
     }
     isFirstPerson = (qApp->isHMDMode());
+    StartupProfiler::end(displayPluginStep);
 
     // Load settings of the RenderScritpingInterface
     // Do that explicitely before being used
-    RenderScriptingInterface::getInstance()->loadSettings();
+    {
+        StartupProfiler::Scope step("loadSettings: render settings");
+        RenderScriptingInterface::getInstance()->loadSettings();
+    }
 
     // Setup the PerformanceManager which will enforce the several settings to match the Preset
     // On the first run, the Preset is evaluated from the 
-    getPerformanceManager().setupPerformancePresetSettings(_firstRun.get());
+    {
+        StartupProfiler::Scope step("loadSettings: performance preset");
+        getPerformanceManager().setupPerformancePresetSettings(_firstRun.get());
+    }
 
     // finish initializing the camera, based on everything we checked above. Third person camera will be used if no settings
     // dictated that we should be in first person
@@ -5053,10 +5127,13 @@ void Application::loadSettings() {
     _myCamera.setMode((isFirstPerson) ? CAMERA_MODE_FIRST_PERSON_LOOK_AT : CAMERA_MODE_LOOK_AT);
     cameraMenuChanged();
 
-    auto inputs = pluginManager->getInputPlugins();
-    for (auto plugin : inputs) {
-        if (!plugin->isActive()) {
-            plugin->activate();
+    {
+        StartupProfiler::Scope step("loadSettings: input plugins activated");
+        auto inputs = pluginManager->getInputPlugins();
+        for (auto plugin : inputs) {
+            if (!plugin->isActive()) {
+                plugin->activate();
+            }
         }
     }
 
@@ -5065,7 +5142,10 @@ void Application::loadSettings() {
         audioScriptingInterface->loadData();
     }
 
-    getMyAvatar()->loadData();
+    {
+        StartupProfiler::Scope step("loadSettings: avatar");
+        getMyAvatar()->loadData();
+    }
     _settingsLoaded = true;
 }
 
@@ -5107,7 +5187,10 @@ void Application::init() {
 #if !defined(DISABLE_QML)
     DependencyManager::get<DialogsManager>()->toggleLoginDialog();
 #endif
-    DependencyManager::get<AvatarManager>()->init();
+    {
+        StartupProfiler::Scope step("init: avatar manager");
+        DependencyManager::get<AvatarManager>()->init();
+    }
 
     _lastTimeUpdated.start();
 
@@ -5120,7 +5203,10 @@ void Application::init() {
     // This is before entity setup to ensure that it's ready for whenever instance collision is initialized.
     ShapeEntityItem::setShapeInfoCalulator(ShapeEntityItem::ShapeInfoCalculator(&shapeInfoCalculator));
 
-    getEntities()->init();
+    {
+        StartupProfiler::Scope step("init: entity tree renderer");
+        getEntities()->init();
+    }
     getEntities()->setEntityLoadingPriorityFunction([this, editor = DependencyManager::get<Editor>()](const EntityItem& item) {
         auto dims = item.getScaledDimensions();
         auto maxSize = glm::compMax(dims);
@@ -5138,10 +5224,16 @@ void Application::init() {
     });
 
     ObjectMotionState::setShapeManager(&_shapeManager);
-    _physicsEngine->init();
+    {
+        StartupProfiler::Scope step("init: physics engine");
+        _physicsEngine->init();
+    }
 
     EntityTreePointer tree = getEntities()->getTree();
-    _entitySimulation->init(tree, _physicsEngine, &_entityEditSender);
+    {
+        StartupProfiler::Scope step("init: entity simulation");
+        _entitySimulation->init(tree, _physicsEngine, &_entityEditSender);
+    }
     tree->setSimulation(_entitySimulation);
 
     auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
@@ -5165,7 +5257,10 @@ void Application::init() {
         }
     }, Qt::QueuedConnection);
 
-    _gameWorkload.startup(getEntities()->getWorkloadSpace(), _graphicsEngine.getRenderScene(), _entitySimulation);
+    {
+        StartupProfiler::Scope step("init: game workload");
+        _gameWorkload.startup(getEntities()->getWorkloadSpace(), _graphicsEngine.getRenderScene(), _entitySimulation);
+    }
     _entitySimulation->setWorkloadSpace(getEntities()->getWorkloadSpace());
 }
 
@@ -5304,6 +5399,7 @@ void Application::resumeAfterLoginDialogActionTaken() {
     _myCamera.setMode(_previousCameraMode);
     cameraModeChanged();
     _startUpFinished = true;
+    StartupProfiler::instant("signed in: scripts loading, going to the starting location");
     getRefreshRateManager().setRefreshRateRegime(RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE);
     _signInPending = false;
 }
@@ -5797,6 +5893,7 @@ void Application::tryToEnablePhysics() {
             myAvatar->getCharacterController()->setPhysicsEngine(_physicsEngine);
             _octreeProcessor.resetSafeLanding();
             _physicsEnabled = true;
+            StartupProfiler::instant("physics enabled: in the world");
             setIsInterstitialMode(false);
             myAvatar->updateMotionBehaviorFromMenu();
             qDebug() << "Physics enabled" << "(ghosting" << DependencyManager::get<EntityTreeRenderer>()->getGhostingAllowed()

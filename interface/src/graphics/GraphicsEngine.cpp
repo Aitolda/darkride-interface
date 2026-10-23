@@ -35,6 +35,8 @@
 
 #include "RenderEventHandler.h"
 
+#include <StartupProfiler.h>
+
 #include <gpu/Batch.h>
 #include <gpu/Context.h>
 #include <gpu/gl/GLBackend.h>
@@ -235,6 +237,9 @@ void GraphicsEngine::render_performFrame() {
     // Some plugins process message events, allowing paintGL to be called reentrantly.
 
     _renderFrameCount++;
+    if (_renderFrameCount == 1) {
+        StartupProfiler::instant("first frame rendered");
+    }
 
     auto lastPaintBegin = usecTimestampNow();
     PROFILE_RANGE_EX(render, __FUNCTION__, 0xff0000ff, (uint64_t)_renderFrameCount);

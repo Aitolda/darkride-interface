@@ -22,6 +22,7 @@
 
 #include <BuildInfo.h>
 #include <SharedUtil.h>
+#include <StartupProfiler.h>
 #include <NetworkAccessManager.h>
 #include <gl/GLHelpers.h>
 
@@ -38,6 +39,8 @@
 #endif
 
 int main(int argc, const char* argv[]) {
+    StartupProfiler::start();
+    StartupProfiler::phase("main: surface format, application name, command line");
 #ifdef Q_OS_MACOS
     auto format = getDefaultOpenGLSurfaceFormat();
     // Deal with some weirdness in the chromium context sharing on Mac.
@@ -106,6 +109,7 @@ int main(int argc, const char* argv[]) {
         Q_UNREACHABLE();
     }
 
+    StartupProfiler::phase("main: application path (a temporary QCoreApplication)");
     QString applicationPath;
     // A temporary application instance is needed to get the location of the running executable
     // Tests using high_resolution_clock show that this takes about 30-50 microseconds (on my machine, YMMV)
@@ -124,6 +128,7 @@ int main(int argc, const char* argv[]) {
 #endif
     }
     // Early check for --traceFile argument 
+    StartupProfiler::phase("main: tracer");
     auto tracer = DependencyManager::set<tracing::Tracer>();
     const char * traceFile = nullptr;
     const QString traceFileFlag("--traceFile");
@@ -146,12 +151,15 @@ int main(int argc, const char* argv[]) {
     QElapsedTimer startupTime;
     startupTime.start();
 
+    StartupProfiler::phase("main: settings (Setting::init)");
     Setting::init();
 
+    StartupProfiler::phase("main: crash handler");
     auto crashHandlerStarted = startCrashHandler(argv[0]);
     qDebug() << "Crash handler started:" << crashHandlerStarted;
 
 
+    StartupProfiler::phase("main: single-instance check, scripts path");
     const QString& applicationName = getInterfaceSharedMemoryName();
     bool instanceMightBeRunning = true;
 #ifdef Q_OS_WIN
@@ -222,6 +230,7 @@ int main(int argc, const char* argv[]) {
     }
 
 
+    StartupProfiler::phase("main: Application::initPlugins");
     // Oculus initialization MUST PRECEDE OpenGL context creation.
     // The nature of the Application constructor means this has to be either here,
     // or in the main window ctor, before GL startup.
@@ -229,6 +238,7 @@ int main(int argc, const char* argv[]) {
 
     int exitCode;
     {
+        StartupProfiler::phase("main: running marker, arguments");
         RunningMarker runningMarker(RUNNING_MARKER_FILENAME);
         bool runningMarkerExisted = runningMarker.fileExists();
         runningMarker.writeRunningMarkerFile();
@@ -243,9 +253,11 @@ int main(int argc, const char* argv[]) {
 
         PROFILE_SYNC_END(startup, "main startup", "");
         PROFILE_SYNC_BEGIN(startup, "app full ctor", "");
+        StartupProfiler::phase("Application: QApplication, main window, file logger");
         Application app(argcExtended, const_cast<char**>(argvExtended.data()), startupTime, runningMarkerExisted);
         PROFILE_SYNC_END(startup, "app full ctor", "");
 
+        StartupProfiler::phase("main: crash hook monitor, local server, system information, translator");
         startCrashHookMonitor(&app);
 
         QTimer exitTimer;
@@ -287,6 +299,7 @@ int main(int argc, const char* argv[]) {
         translator.load("i18n/interface_en");
         app.installTranslator(&translator);
         qCDebug(interfaceapp, "Created QT Application.");
+        StartupProfiler::logReport();
         exitCode = app.exec();
         server.close();
 
