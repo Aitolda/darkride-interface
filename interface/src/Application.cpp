@@ -892,9 +892,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
 #endif
     DependencyManager::set<DiscoverabilityManager>();
     DependencyManager::set<SceneScriptingInterface>();
-#if !defined(DISABLE_QML)
     DependencyManager::set<OffscreenUi>();
-#endif
     DependencyManager::set<PathUtils>();
     DependencyManager::set<InterfaceDynamicFactory>();
     DependencyManager::set<AudioInjectorManager>();
@@ -968,9 +966,7 @@ OffscreenGLCanvas* _qmlShareContext { nullptr };
 //
 // So instead we create a new offscreen context to share with the QGLWidget,
 // and manually set THAT to be the shared context for the Chromium helper
-#if !defined(DISABLE_QML)
 OffscreenGLCanvas* _chromiumShareContext { nullptr };
-#endif
 
 Q_GUI_EXPORT void qt_gl_set_global_share_context(QOpenGLContext *context);
 Q_GUI_EXPORT QOpenGLContext *qt_gl_global_share_context();
@@ -990,11 +986,7 @@ const bool DEFAULT_BYPASS_PRIORITY_SORTING = false;
 const bool DEFAULT_BYPASS_SCRIPT_THROTTLING = false;
 
 QSharedPointer<OffscreenUi> getOffscreenUI() {
-#if !defined(DISABLE_QML)
     return DependencyManager::get<OffscreenUi>();
-#else
-    return nullptr;
-#endif
 }
 
 Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bool runningMarkerExisted) :
@@ -1581,7 +1573,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     });
 
     connect(offscreenUi.data(), &OffscreenUi::keyboardFocusActive, [this]() {
-#if !defined(Q_OS_ANDROID) && !defined(DISABLE_QML)
+#if !defined(Q_OS_ANDROID)
         // Darkride starts on the sign-in screen: until someone signs in, or continues as the remembered account, the
         // avatar is hidden, no world is joined and no scripts run (pauseUntilLoginDetermined), and the screen covers
         // the window. A launcher passing --tokens has signed in for us.
@@ -1596,7 +1588,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 #endif
     });
 
-#if !defined(Q_OS_ANDROID) && !defined(DISABLE_QML)
+#if !defined(Q_OS_ANDROID)
     // Signing out of a running viewer goes back to the sign-in screen, as at the start: out of the world, the avatar
     // hidden, until someone signs in, and then on as at the start (resumeAfterLoginDialogActionTaken).
     if (arguments().indexOf("--tokens") == -1) {
@@ -2442,9 +2434,7 @@ void Application::onAboutToQuit() {
         _autoSwitchDisplayModeSupportedHMDPlugin->endSession();
     }
     // Hide Running Scripts dialog so that it gets destroyed in an orderly manner; prevents warnings at shutdown.
-#if !defined(DISABLE_QML)
     getOffscreenUI()->hide("RunningScripts");
-#endif
 
     _aboutToQuit = true;
 
@@ -2661,9 +2651,6 @@ Application::~Application() {
 void Application::initializeGL() {
     qCDebug(interfaceapp) << "Created Display Window.";
 
-#ifdef DISABLE_QML
-    setAttribute(Qt::AA_DontCheckOpenGLContextThreadAffinity);
-#endif
 
     // initialize glut for shape drawing; Qt apparently initializes it on OS X
     if (_isGLInitialized) {
@@ -2679,7 +2666,6 @@ void Application::initializeGL() {
     // global share context
     auto globalShareContext = qt_gl_global_share_context();
 
-#if !defined(DISABLE_QML)
     // Build a shared canvas / context for the Chromium processes
     if (!globalShareContext) {
         StartupProfiler::Scope step("initializeGL: Chromium share context");
@@ -2705,7 +2691,6 @@ void Application::initializeGL() {
             _chromiumShareContext->doneCurrent();
         }
     }
-#endif
 
 
     {
@@ -2720,7 +2705,6 @@ void Application::initializeGL() {
         gl::ContextInfo::get(true);
     }
 
-#if !defined(DISABLE_QML)
     QStringList chromiumFlags;
     // HACK: re-expose mic and camera to prevent crash on domain-change in chromium's media::FakeAudioInputStream::ReadAudioFromSource()
     // This isn't necessary because there's a permission popup when the webcam is requested 
@@ -2743,7 +2727,6 @@ void Application::initializeGL() {
     if (!chromiumFlags.empty()) {
         qputenv("QTWEBENGINE_CHROMIUM_FLAGS", chromiumFlags.join(' ').toLocal8Bit());
     }
-#endif
 
     if (!globalShareContext) {
         globalShareContext = _glWidget->qglContext();
@@ -2751,7 +2734,6 @@ void Application::initializeGL() {
     }
 
     // Build a shared canvas / context for the QML rendering
-#if !defined(DISABLE_QML)
     {
         StartupProfiler::Scope step("initializeGL: QML share context");
         _qmlShareContext = new OffscreenGLCanvas();
@@ -2766,7 +2748,6 @@ void Application::initializeGL() {
             qCWarning(interfaceapp, "Unable to make window context current");
         }
     }
-#endif
 
 
     // Build an offscreen GL context for the main thread.
@@ -2854,12 +2835,9 @@ void Application::initializeRenderEngine() {
 }
 
 extern void setupPreferences();
-#if !defined(DISABLE_QML)
 static void addDisplayPluginToMenu(const DisplayPluginPointer& displayPlugin, int index, bool active = false);
-#endif
 
 void Application::showLoginScreen() {
-#if !defined(DISABLE_QML)
     // Signed in or not, the sign-in screen comes first: a remembered account ("Remember me") gets "Continue as <name>"
     // there (LoginDialog/ContinueBody.qml), and goes in from it.
     auto dialogsManager = DependencyManager::get<DialogsManager>();
@@ -2873,9 +2851,6 @@ void Application::showLoginScreen() {
     StartupProfiler::instant("sign-in dialog opened");
     emit loginDialogFocusEnabled();
     _window->setWindowTitle(labelledTitle("Darkride"));
-#else
-    resumeAfterLoginDialogActionTaken();
-#endif
 }
 
 void Application::initializeUi() {
@@ -2928,7 +2903,6 @@ void Application::initializeUi() {
     connect(offscreenUi.data(), &hifi::qml::OffscreenSurface::rootItemCreated,
         this, &Application::onDesktopRootItemCreated);
 
-#if !defined(DISABLE_QML)
     offscreenUi->setProxyWindow(_window->windowHandle());
     // OffscreenUi is a subclass of OffscreenQmlSurface specifically designed to
     // support the window management and scripting proxies for VR use
@@ -2939,16 +2913,12 @@ void Application::initializeUi() {
     // FIXME either expose so that dialogs can set this themselves or
     // do better detection in the offscreen UI of what has focus
     offscreenUi->setNavigationFocused(false);
-#else
-    _window->setMenuBar(new Menu());
-#endif
 
     {
         StartupProfiler::Scope step("initializeUi: preferences");
         setupPreferences();
     }
 
-#if !defined(DISABLE_QML)
     _glWidget->installEventFilter(offscreenUi.data());
     offscreenUi->setMouseTranslator([=](const QPointF& pt) {
         QPointF result = pt;
@@ -2964,7 +2934,6 @@ void Application::initializeUi() {
     // BUGZ-1365 - the root context should explicitly default to being unable to load local HTML content
     ContextAwareProfile::restrictContext(offscreenUi->getSurfaceContext(), true);
     offscreenUi->resume();
-#endif
     connect(_window, &MainWindow::windowGeometryChanged, [this](const QRect& r){
         resizeGL();
         if (_touchscreenVirtualPadDevice) {
@@ -3002,7 +2971,6 @@ void Application::initializeUi() {
         }
     });
 
-#if !defined(DISABLE_QML)
     // Pre-create a couple of offscreen surfaces to speed up tablet UI
     auto offscreenSurfaceCache = DependencyManager::get<OffscreenQmlSurfaceCache>();
     offscreenSurfaceCache->setOnRootContextCreated([&](const QString& rootObject, QQmlContext* surfaceContext) {
@@ -3019,14 +2987,12 @@ void Application::initializeUi() {
         offscreenSurfaceCache->reserve(TabletScriptingInterface::QML, 1);
         offscreenSurfaceCache->reserve(render::entities::WebEntityRenderer::QML, 2);
     }
-#endif
 
     {
         StartupProfiler::Scope step("initializeUi: the menu (flushMenuUpdates)");
         flushMenuUpdates();
     }
 
-#if !defined(DISABLE_QML)
     // Now that the menu is instantiated, ensure the display plugin menu is properly updated
     {
         auto displayPlugins = PluginManager::getInstance()->getDisplayPlugins();
@@ -3044,7 +3010,6 @@ void Application::initializeUi() {
         auto parent = getPrimaryMenu()->getMenu(MenuOption::OutputMenu);
         parent->addSeparator();
     }
-#endif
 
     // The display plugins are created before the menu now, so we need to do this here to hide the menu bar
     // now that it exists
@@ -3560,9 +3525,7 @@ void Application::resizeGL() {
         _myCamera.loadViewFrustum(_viewFrustum);
     }
 
-#if !defined(DISABLE_QML)
     getOffscreenUI()->resize(fromGlm(displayPlugin->getRecommendedUiSize()));
-#endif
 }
 
 void Application::goToStartingLocation() {
@@ -3988,7 +3951,6 @@ bool Application::eventFilter(QObject* object, QEvent* event) {
     }
 
     if (event->type() == QEvent::ShortcutOverride) {
-#if !defined(DISABLE_QML)
         // The check passes untouched on its way to the overlay's focused item, below
         static bool forwardingToOverlay = false;
         if (forwardingToOverlay) {
@@ -4009,7 +3971,6 @@ bool Application::eventFilter(QObject* object, QEvent* event) {
             event->accept();
             return true;
         }
-#endif
 
         // Filter out captured keys before they're used for shortcut actions.
         if (_controllerScriptingInterface->isKeyCaptured(static_cast<QKeyEvent*>(event))) {
@@ -4331,13 +4292,9 @@ void Application::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
-#if !defined(DISABLE_QML)
     auto offscreenUi = getOffscreenUI();
     auto eventPosition = compositor.getMouseEventPosition(event);
     QPointF transformedPos = offscreenUi ? offscreenUi->mapToVirtualScreen(eventPosition) : QPointF();
-#else
-    QPointF transformedPos;
-#endif
     auto button = event->button();
     auto buttons = event->buttons();
     // Determine if the ReticleClick Action is 1 and if so, fake include the LeftMouseButton
@@ -4371,7 +4328,6 @@ void Application::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void Application::mousePressEvent(QMouseEvent* event) {
-#if !defined(DISABLE_QML)
     auto offscreenUi = getOffscreenUI();
     // If we get a mouse press event it means it wasn't consumed by the offscreen UI,
     // hence, we should defocus all of the offscreen UI windows, in order to allow
@@ -4381,9 +4337,6 @@ void Application::mousePressEvent(QMouseEvent* event) {
 
     auto eventPosition = getApplicationCompositor().getMouseEventPosition(event);
     QPointF transformedPos = offscreenUi->mapToVirtualScreen(eventPosition);
-#else
-    QPointF transformedPos;
-#endif
 
     // in build mode the viewport belongs to the editor: no entity clicks, no avatar input
     if (DependencyManager::get<Editor>()->handleMousePress(event)) {
@@ -4423,13 +4376,9 @@ void Application::mouseDoublePressEvent(QMouseEvent* event) {
     if (DependencyManager::get<Editor>()->handleMouseDoubleClick(event)) {
         return;
     }
-#if !defined(DISABLE_QML)
     auto offscreenUi = getOffscreenUI();
     auto eventPosition = getApplicationCompositor().getMouseEventPosition(event);
     QPointF transformedPos = offscreenUi->mapToVirtualScreen(eventPosition);
-#else
-    QPointF transformedPos;
-#endif
     QMouseEvent mappedEvent(event->type(),
         transformedPos,
         event->screenPos(), event->button(),
@@ -4446,13 +4395,9 @@ void Application::mouseDoublePressEvent(QMouseEvent* event) {
 
 void Application::mouseReleaseEvent(QMouseEvent* event) {
 
-#if !defined(DISABLE_QML)
     auto offscreenUi = getOffscreenUI();
     auto eventPosition = getApplicationCompositor().getMouseEventPosition(event);
     QPointF transformedPos = offscreenUi->mapToVirtualScreen(eventPosition);
-#else
-    QPointF transformedPos;
-#endif
     QMouseEvent mappedEvent(event->type(),
         transformedPos,
         event->screenPos(), event->button(),
@@ -4823,9 +4768,7 @@ void setupCpuMonitorThread() {
 void Application::idle() {
     PerformanceTimer perfTimer("idle");
 
-#if !defined(DISABLE_QML)
     auto offscreenUi = getOffscreenUI();
-#endif
 
 #ifdef Q_OS_WIN
     // If tracing is enabled then monitor the CPU in a separate thread
@@ -4842,7 +4785,6 @@ void Application::idle() {
 #endif
 
     auto displayPlugin = getActiveDisplayPlugin();
-#if !defined(DISABLE_QML)
     if (displayPlugin) {
         auto uiSize = displayPlugin->getRecommendedUiSize();
         // Bit of a hack since there's no device pixel ratio change event I can find.
@@ -4851,7 +4793,6 @@ void Application::idle() {
             offscreenUi->resize(fromGlm(uiSize));
         }
     }
-#endif
 
     if (displayPlugin) {
         PROFILE_COUNTER_IF_CHANGED(app, "present", float, displayPlugin->presentRate());
@@ -4869,7 +4810,6 @@ void Application::idle() {
     float secondsSinceLastUpdate = (float)_lastTimeUpdated.nsecsElapsed() / NSECS_PER_MSEC / MSECS_PER_SECOND;
     _lastTimeUpdated.start();
 
-#if !defined(DISABLE_QML)
     // If the offscreen Ui has something active that is NOT the root, then assume it has keyboard focus.
     if (offscreenUi && offscreenUi->getWindow()) {
         auto activeFocusItem = offscreenUi->getWindow()->activeFocusItem();
@@ -4881,11 +4821,9 @@ void Application::idle() {
             _keyboardDeviceHasFocus = true;
         }
     }
-#endif
     
     checkChangeCursor();
 
-#if !defined(DISABLE_QML)
     auto stats = Stats::getInstance();
     if (stats) {
         stats->updateStats();
@@ -4894,7 +4832,6 @@ void Application::idle() {
     if (animStats) {
         animStats->updateStats();
     }
-#endif
 
     // Normally we check PipelineWarnings, but since idle will often take more than 10ms we only show these idle timing
     // details if we're in ExtraDebugging mode. However, the ::update() and its subcomponents will show their timing
@@ -5184,9 +5121,7 @@ QVector<EntityItemID> Application::pasteEntities(const QString& entityHostType, 
 
 void Application::init() {
     // Make sure Login state is up to date
-#if !defined(DISABLE_QML)
     DependencyManager::get<DialogsManager>()->toggleLoginDialog();
-#endif
     {
         StartupProfiler::Scope step("init: avatar manager");
         DependencyManager::get<AvatarManager>()->init();
@@ -5330,7 +5265,6 @@ void Application::resumeAfterLoginDialogActionTaken() {
         return;
     }
 
-#if !defined(DISABLE_QML)
     if (!isHMDMode() && getDesktopTabletBecomesToolbarSetting()) {
         auto toolbar = DependencyManager::get<ToolbarScriptingInterface>()->getToolbar("com.highfidelity.interface.toolbar.system");
         toolbar->writeProperty("visible", true);
@@ -5340,7 +5274,6 @@ void Application::resumeAfterLoginDialogActionTaken() {
     }
 
     updateSystemTabletMode();
-#endif
 
     {
         auto userInputMapper = DependencyManager::get<UserInputMapper>();
@@ -6958,7 +6891,6 @@ void Application::nodeActivated(SharedNodePointer node) {
     if (node->getType() == NodeType::AssetServer) {
         // asset server just connected - check if we have the asset browser showing
 
-#if !defined(DISABLE_QML)
         auto offscreenUi = getOffscreenUI();
         if (offscreenUi) {
             auto nodeList = DependencyManager::get<NodeList>();
@@ -6974,7 +6906,6 @@ void Application::nodeActivated(SharedNodePointer node) {
                 offscreenUi->hide("AssetServer");
             }
         }
-#endif
     }
 
     // If we get a new EntityServer activated, reset lastQueried time
@@ -7042,7 +6973,6 @@ void Application::nodeKilled(SharedNodePointer node) {
         // asset server going away - check if we have the asset browser showing
         qDebug() << "*** ASSET SERVER LOST ***" << usecTimestampNow();
 
-#if !defined(DISABLE_QML)
         auto offscreenUi = getOffscreenUI();
         auto assetDialog = offscreenUi ? offscreenUi->getRootItem()->findChild<QQuickItem*>("AssetServer") : nullptr;
 
@@ -7050,7 +6980,6 @@ void Application::nodeKilled(SharedNodePointer node) {
             // call reload on the shown asset browser dialog
             QMetaObject::invokeMethod(assetDialog, "clear");
         }
-#endif
     }
 }
 
@@ -7151,7 +7080,6 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
 
     bool clientScript = scriptEngine->isClientScript();
 
-#if !defined(DISABLE_QML)
     scriptEngine->registerGlobalObject("OffscreenFlags", getOffscreenUI()->getFlags());
     if (clientScript) {
         scriptEngine->registerGlobalObject("Desktop", DependencyManager::get<DesktopScriptingInterface>().data());
@@ -7162,7 +7090,6 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
             desktopScriptingInterface->moveToThread(thread());
         }
     }
-#endif
 
     qScriptRegisterMetaType(scriptEngine.data(), wrapperToScriptValue<ToolbarProxy>, wrapperFromScriptValue<ToolbarProxy>);
     qScriptRegisterMetaType(scriptEngine.data(),
@@ -7187,16 +7114,14 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
                                        LocationScriptingInterface::locationSetter);
 
     scriptEngine->registerFunction("OverlayWindow", clientScript ? QmlWindowClass::constructor : QmlWindowClass::restricted_constructor);
-#if !defined(Q_OS_ANDROID) && !defined(DISABLE_QML)
+#if !defined(Q_OS_ANDROID)
     scriptEngine->registerFunction("OverlayWebWindow", clientScript ? QmlWebWindowClass::constructor : QmlWebWindowClass::restricted_constructor);
 #endif
     scriptEngine->registerFunction("QmlFragment", clientScript ? QmlFragmentClass::constructor : QmlFragmentClass::restricted_constructor);
 
     scriptEngine->registerGlobalObject("Menu", MenuScriptingInterface::getInstance());
     scriptEngine->registerGlobalObject("DesktopPreviewProvider", DependencyManager::get<DesktopPreviewProvider>().data());
-#if !defined(DISABLE_QML)
     scriptEngine->registerGlobalObject("Stats", Stats::getInstance());
-#endif
     scriptEngine->registerGlobalObject("Settings", SettingsScriptingInterface::getInstance());
     scriptEngine->registerGlobalObject("Snapshot", DependencyManager::get<Snapshot>().data());
     scriptEngine->registerGlobalObject("AudioStats", DependencyManager::get<AudioClient>()->getStats().data());
@@ -7393,9 +7318,6 @@ bool Application::askToSetAvatarUrl(const QString& url) {
 bool Application::askToLoadScript(const QString& scriptFilenameOrURL) {
     QUrl scriptURL { scriptFilenameOrURL };
 
-#ifdef DISABLE_QML
-    DependencyManager::get<ScriptEngines>()->loadScript(scriptFilenameOrURL);
-#else
     QString name = QFileInfo(scriptURL.path()).fileName();
     if (name.isEmpty()) {
         name = "this script";
@@ -7418,7 +7340,6 @@ bool Application::askToLoadScript(const QString& scriptFilenameOrURL) {
         }
         QObject::disconnect(dlg, &ModalDialogListener::response, this, nullptr);
     });
-#endif
     return true;
 }
 
@@ -7504,9 +7425,7 @@ void Application::showDialog(const QUrl& widgetUrl, const QUrl& tabletUrl, const
             toggleTabletUI(true);
         }
     } else {
-#if !defined(DISABLE_QML)
         getOffscreenUI()->show(widgetUrl, name);
-#endif
     }
 }
 
@@ -8507,7 +8426,6 @@ DisplayPluginPointer Application::getActiveDisplayPlugin() const {
 }
 
 
-#if !defined(DISABLE_QML)
 static const char* EXCLUSION_GROUP_KEY = "exclusionGroup";
 
 static void addDisplayPluginToMenu(const DisplayPluginPointer& displayPlugin, int index, bool active) {
@@ -8548,7 +8466,6 @@ static void addDisplayPluginToMenu(const DisplayPluginPointer& displayPlugin, in
     action->setProperty(EXCLUSION_GROUP_KEY, QVariant::fromValue(displayPluginGroup));
     Q_ASSERT(menu->menuItemExists(MenuOption::OutputMenu, name));
 }
-#endif
 
 void Application::updateDisplayMode() {
     // Unsafe to call this method from anything but the main thread
