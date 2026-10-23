@@ -1032,7 +1032,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     
     setProperty(hifi::properties::CRASHED, _previousSessionCrashed);
 
-    StartupProfiler::phase("constructor: log handler, test arguments, GPU identification, thread pool");
+    StartupProfiler::phase("constructor: log handler, test arguments");
 
     LogHandler::getInstance().moveToThread(thread());
     LogHandler::getInstance().setupRepeatedMessageFlusher();
@@ -1070,6 +1070,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         }
     }
 
+    StartupProfiler::phase("constructor: GPU identification (GPUIdent)");
     {
         // identify gpu as early as possible to help identify OpenGL initialization errors.
         auto gpuIdent = GPUIdent::getInstance();
@@ -1081,6 +1082,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         setCrashAnnotation("gpu_memory", std::to_string(gpuIdent->getMemory()));
     }
 
+    StartupProfiler::phase("constructor: debug draw, plug-in container, thread pool, controller interface, clipboard");
     // make sure the debug draw singleton is initialized on the main thread.
     DebugDraw::getInstance().removeMarker("");
 
@@ -1180,6 +1182,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     }
 
     StartupProfiler::phase("constructor: avatar manager space, account manager and keypair, version log");
+    int avatarSpaceStep = StartupProfiler::begin("avatar manager's workload space");
     // Set File Logger Session UUID
     auto avatarManager = DependencyManager::get<AvatarManager>();
     auto myAvatar = avatarManager ? avatarManager->getMyAvatar() : nullptr;
@@ -1187,14 +1190,20 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         workload::SpacePointer space = getEntities()->getWorkloadSpace();
         avatarManager->setSpace(space);
     }
+    StartupProfiler::end(avatarSpaceStep);
     auto accountManager = DependencyManager::get<AccountManager>();
 
     // set the account manager's root URL and trigger a login request if we don't have the access token
+    int authStep = StartupProfiler::begin("account manager: auth URL, saved account, profile request");
     accountManager->setIsAgent(true);
     accountManager->setAuthURL(NetworkingConstants::METAVERSE_SERVER_URL());
+    StartupProfiler::end(authStep);
+    int keypairStep = StartupProfiler::begin("keypair check (a new pair is generated on the pool)");
     if (!accountManager->hasKeyPair()) {
         accountManager->generateNewUserKeypair();
     }
+    StartupProfiler::end(keypairStep);
+    int sessionStep = StartupProfiler::begin("session id, crash annotations, version log");
 
 #ifndef Q_OS_ANDROID
     _logger->setSessionID(accountManager->getSessionID());
@@ -1216,6 +1225,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     updateHeartbeat();
 
+    StartupProfiler::end(sessionStep);
     StartupProfiler::phase("constructor: domain check-in timer, audio client thread");
     // setup a timer for domain-server check ins
     QTimer* domainCheckInTimer = new QTimer(this);
@@ -1485,13 +1495,17 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     // setDefaultFormat has no effect after the platform window has been created, so call it here.
     QSurfaceFormat::setDefaultFormat(getDefaultOpenGLSurfaceFormat());
 
+    int canvasStep = StartupProfiler::begin("GL canvas and viewport container");
     _glWidget = new GLCanvas();
     getApplicationCompositor().setRenderingWidget(_glWidget);
     // the GL view sits in a container that can hold its size while build mode's panels are dragged
     _window->setCentralWidget(new ViewportContainer(_glWidget, _window));
+    StartupProfiler::end(canvasStep);
+    int shownStep = StartupProfiler::begin("window geometry restored and shown");
 
     _window->restoreGeometry();
     _window->setVisible(true);
+    StartupProfiler::end(shownStep);
     // the window has been seen to end up at Qt's bare 640 x 480 after the start on macOS (2026-10-18), cause unknown:
     // where it is is logged once it has been shown and a little later, and a shrunk window is put back
     QTimer::singleShot(0, _window, [this] { _window->checkStartGeometry(); });
@@ -1508,7 +1522,10 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     // enable mouse tracking; otherwise, we only get drag events
     _glWidget->setMouseTracking(true);
     // Make sure the window is set to the correct size by processing the pending events
-    QCoreApplication::processEvents();
+    {
+        StartupProfiler::Scope step("pending events processed (the window's first layout)");
+        QCoreApplication::processEvents();
+    }
 
     StartupProfiler::phase("constructor: initializeGL");
     // Create the main thread context, the GPU backend

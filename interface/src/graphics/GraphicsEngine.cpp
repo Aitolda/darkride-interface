@@ -89,6 +89,7 @@ namespace {
 void GraphicsEngine::initializeRender() {
 
     // Set up the render engine
+    int graphStep = StartupProfiler::begin("initializeRender: the task graph");
     render::CullFunctor cullFunctor = LODManager::shouldRender;
     _renderEngine->addJob<UpdateSceneTask>("UpdateScene");
     // the terrain layer sets' slices due this frame, drawn before any view: their batch leaves its framebuffer and
@@ -102,7 +103,12 @@ void GraphicsEngine::initializeRender() {
     // the mirrors' pictures, drawn before the main view shows them
     _renderEngine->addJob<RenderMirrorsTask>("RenderMirrors", cullFunctor);
     _renderEngine->addJob<RenderViewTask>("RenderMainView", cullFunctor, render::ItemKey::TAG_BITS_0, render::ItemKey::TAG_BITS_0);
-    _renderEngine->load();
+    StartupProfiler::end(graphStep);
+    {
+        StartupProfiler::Scope step("initializeRender: load (every pipeline's shaders)");
+        _renderEngine->load();
+    }
+    int mirrorsStep = StartupProfiler::begin("initializeRender: the mirror views' configuration");
     // a mirror's view: no ambient occlusion, bloom, selection outline or HUD; no local light shadows (an atlas for
     // each would cost too much); a linear tone curve, since the picture is tone mapped again in the main view
     auto configuration = _renderEngine->getConfiguration();
@@ -139,10 +145,14 @@ void GraphicsEngine::initializeRender() {
         }
         Mirrors::instance().setSlotView(slot, configuration->getJobConfig("RenderMirrors.MirrorView" + std::to_string(slot)));
     }
+    StartupProfiler::end(mirrorsStep);
     _renderEngine->registerScene(_renderScene);
 
     // Now that OpenGL is initialized, we are sure we have a valid context and can create the various pipeline shaders with success.
-    DependencyManager::get<GeometryCache>()->initializeShapePipelines();
+    {
+        StartupProfiler::Scope step("initializeRender: the shape pipelines (GeometryCache)");
+        DependencyManager::get<GeometryCache>()->initializeShapePipelines();
+    }
 }
 
 void GraphicsEngine::startup() {
