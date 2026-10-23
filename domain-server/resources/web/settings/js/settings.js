@@ -1241,6 +1241,12 @@ $(document).ready(function(){
     // the overview's reminder links here to set one up
     if (qs["action"] === "sign-in") {
       showAdminSignInDialog(username, signInOn && passwordSet);
+      // only once: the page reloads after a save, and the address would open it again
+      delete qs["action"];
+      if (window.history.replaceState) {
+        var search = window.location.search.replace(/([?&])action=sign-in(&|$)/, "$1").replace(/[?&]$/, "");
+        window.history.replaceState(null, "", window.location.pathname + search + window.location.hash);
+      }
     }
     $('#remove-admin-password').on('click', function() {
       swalAreYouSure(
