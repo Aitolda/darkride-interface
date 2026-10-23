@@ -579,6 +579,17 @@ private slots:
 private:
     void init();
     void pauseUntilLoginDetermined();
+    // the constructor's stages, in order (ApplicationStartup.cpp); each groups the start-up profile's rows
+    void setupProcess();
+    void startServices();
+    void connectServices();
+    void openWindow();
+    void setupInterface();
+    void startEntityProcessing();
+    void setupInput();
+    void setupSettings();
+    void installOperators();
+    void finishStartup();
     void resumeAfterLoginDialogActionTaken();
     bool handleKeyEventForFocusedEntity(QEvent* event);
     bool handleFileOpenEvent(QFileOpenEvent* event);

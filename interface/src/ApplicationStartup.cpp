@@ -3,11 +3,12 @@
 //  interface/src
 //
 //  Application's start-up: setupEssentials (what runs before the members exist: the version switches, the crash
-//  check, the resources, the plug-in manager and the registrations) and the constructor (the client brought up in
-//  order: the process, the services and their connections, the window and the renderer, the interface, the entity
-//  processing, input, settings, the operators, then the sign-in screen), with the pieces only they use: the Qt
-//  message handler, the Windows native event filter, the settings' defaults. The members as they stood in
-//  Application.cpp (ARCHITECTURE.md §5.4 step 4).
+//  check, the resources, the plug-in manager and the registrations) and the constructor, which brings the client up
+//  in ten named stages (the process, the services and their connections, the window and the renderer, the
+//  interface, the entity processing, input, settings, the operators, then the sign-in screen), each a function
+//  here whose body is the constructor's former text between two of the start-up profile's phase marks. With the
+//  pieces only the start-up uses: the Qt message handler, the Windows native event filter, the settings' defaults
+//  (ARCHITECTURE.md §5.4 step 4).
 //
 //  Copyright 2026 Darkride.
 //
@@ -537,8 +538,25 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     _snapshotSound(nullptr),
     _sampleSound(nullptr)
 {
-    
     setProperty(hifi::properties::CRASHED, _previousSessionCrashed);
+
+    // The client comes up in ten stages, in this order; each is a function below and a group of rows in the start-up
+    // profile (the phase marks inside it). A stage reads what it needs from the DependencyManager rather than from a
+    // local of an earlier stage, so each one says what it depends on.
+    setupProcess();           // the log handler, test arguments, the GPU's identity, the plug-in container, the thread pool, fonts
+    startServices();          // the node list and address manager threads, the watchdog, the account manager, the domain check-in, the audio client
+    connectServices();        // the messages client, the domain handler's and node list's signals, discoverability, the script engine initializer
+    openWindow();             // the GL canvas and the window, the GL context, the display plug-ins, the audio scripting interface, the render engine
+    setupInterface();         // the overlays, the sign-in connections, initializeUi, init
+    startEntityProcessing();  // the octree processor and edit sender threads, the first update
+    setupInput();             // controller actions and the input devices
+    setupSettings();          // loadSettings, the settings thread, the audio interfaces, menu options
+    installOperators();       // the callbacks the entity, render and pick libraries make into the application
+    finishStartup();          // tablet sounds, the keyboard, URL handlers, the graphics engine, then the sign-in screen
+}
+
+// The log handler, test arguments, the GPU's identity, the plug-in container, the thread pool, fonts.
+void Application::setupProcess() {
     const ClientOptions& options = ClientOptions::get();
 
     StartupProfiler::phase("constructor: log handler, test arguments");
@@ -627,7 +645,12 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     QFontDatabase::addApplicationFont(PathUtils::resourcesPath() + "fonts/RobotoMono-Regular.ttf");
 
     QFontDatabase::addApplicationFont(PathUtils::resourcesPath() + "styles/Inconsolata.otf");
-    
+}
+
+// The node list and address manager threads, the watchdog, the account manager, the domain check-in, the audio client.
+void Application::startServices() {
+    const ClientOptions& options = ClientOptions::get();
+
     StartupProfiler::phase("constructor: node list thread, address manager");
     _window->setWindowTitle(labelledTitle("Darkride"));
 
@@ -733,6 +756,15 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     // Make sure we don't time out during slow operations at startup
     updateHeartbeat();
+}
+
+// The messages client, the domain handler's and node list's signals, discoverability, the script engine initializer.
+void Application::connectServices() {
+    const ClientOptions& options = ClientOptions::get();
+    auto nodeList = DependencyManager::get<NodeList>();
+    auto addressManager = DependencyManager::get<AddressManager>();
+    auto accountManager = DependencyManager::get<AccountManager>();
+    auto myAvatar = getMyAvatar();
 
     StartupProfiler::phase("constructor: messages client thread, domain handler connections");
     // Setup MessagesClient
@@ -951,6 +983,11 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         _avatarOverrideUrl = QUrl::fromUserInput(replaceURL);
         _saveAvatarOverrideUrl = true;
     }
+}
+
+// The GL canvas and the window, the GL context, the display plug-ins, the audio scripting interface, the render engine.
+void Application::openWindow() {
+    const ClientOptions& options = ClientOptions::get();
 
     StartupProfiler::phase("constructor: GL canvas, window restored and shown");
     // setDefaultFormat has no effect after the platform window has been created, so call it here.
@@ -1034,6 +1071,11 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     // GPU pipeline creation.
     initializeRenderEngine();
     qCDebug(interfaceapp, "Initialized Render Engine.");
+}
+
+// The overlays, the sign-in connections, initializeUi, init.
+void Application::setupInterface() {
+    const ClientOptions& options = ClientOptions::get();
 
     StartupProfiler::phase("constructor: overlays, sign-in connections");
     _overlays.init(); // do this before scripts load
@@ -1088,6 +1130,11 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     StartupProfiler::phase("constructor: init");
     init();
     qCDebug(interfaceapp, "init() complete.");
+}
+
+// The octree processor and edit sender threads, the first update.
+void Application::startEntityProcessing() {
+    auto myAvatar = getMyAvatar();
 
     StartupProfiler::phase("constructor: octree processor and edit sender threads, first update");
     // create thread for parsing of octree data independent of the main network and rendering threads
@@ -1122,6 +1169,11 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     // FIXME -- I'm a little concerned about this.
     connect(myAvatar->getSkeletonModel().get(), &SkeletonModel::skeletonLoaded,
         this, &Application::checkSkeleton, Qt::QueuedConnection);
+}
+
+// Controller actions and the input devices.
+void Application::setupInput() {
+    const ClientOptions& options = ClientOptions::get();
 
     StartupProfiler::phase("constructor: controller actions, input devices");
     // Setup the userInputMapper with the actions
@@ -1337,7 +1389,10 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     // Make sure we don't time out during slow operations at startup
     updateHeartbeat();
+}
 
+// loadSettings, the settings thread, the audio interfaces, menu options.
+void Application::setupSettings() {
     StartupProfiler::phase("constructor: loadSettings");
     loadSettings();
     // the menu has just replayed its saved state (which build mode ignored); from here on it may be entered
@@ -1395,6 +1450,12 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         MenuOption::MaterialProceduralShaders,
         MeshPartPayload::DEFAULT_ENABLE_MATERIAL_PROCEDURAL_SHADERS
     );
+}
+
+// The callbacks the entity, render and pick libraries make into the application.
+void Application::installOperators() {
+    auto myAvatar = getMyAvatar();
+    const DomainHandler& domainHandler = DependencyManager::get<NodeList>()->getDomainHandler();
 
     StartupProfiler::phase("constructor: pointer, entity and material operators");
     // If the user clicks on an object, we will check that it's a web surface, and if so, set the focus to it
@@ -1529,7 +1590,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     connect(this, &Application::applicationStateChanged, this, &Application::activeChanged);
     connect(_window, SIGNAL(windowMinimizedChanged(bool)), this, SLOT(windowMinimizedChanged(bool)));
-    qCDebug(interfaceapp, "Startup time: %4.2f seconds.", (double)startupTimer.elapsed() / 1000.0);
+    qCDebug(interfaceapp, "Startup time: %4.2f seconds.", (double)_sessionRunTimer.elapsed() / 1000.0);
     StartupProfiler::phase("constructor: fade function, snapshot sound, asset timers, picks, web-surface operators");
 
     EntityTreeRenderer::setEntitiesShouldFadeFunction([this]() {
@@ -1700,6 +1761,11 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         }
         webSurface.reset();
     });
+}
+
+// Tablet sounds, the keyboard, URL handlers, the graphics engine, then the sign-in screen.
+void Application::finishStartup() {
+    auto accountManager = DependencyManager::get<AccountManager>();
 
     StartupProfiler::phase("constructor: tablet sounds, keyboard, URL handlers, graphics engine start");
     // Preload Tablet sounds
