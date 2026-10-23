@@ -33,9 +33,10 @@ LoginDialog::LoginDialog(QQuickItem *parent) : OffscreenQmlDialog(parent) {
         this, &LoginDialog::handleLoginCompleted);
     connect(accountManager.data(), &AccountManager::loginFailed,
             this, &LoginDialog::handleLoginFailed);
-    connect(qApp, &Application::loginDialogFocusEnabled, this, &LoginDialog::focusEnabled);
-    connect(qApp, &Application::loginDialogFocusDisabled, this, &LoginDialog::focusDisabled);
-    connect(this, SIGNAL(dismissedLoginDialog()), qApp, SLOT(onDismissedLoginDialog()));
+    auto& signInGate = qApp->getSignInGate();
+    connect(&signInGate, &SignInGate::loginDialogFocusEnabled, this, &LoginDialog::focusEnabled);
+    connect(&signInGate, &SignInGate::loginDialogFocusDisabled, this, &LoginDialog::focusDisabled);
+    connect(this, &LoginDialog::dismissedLoginDialog, &signInGate, &SignInGate::onDismissedLoginDialog);
 #endif
 }
 
@@ -60,7 +61,7 @@ void LoginDialog::showWithSelection() {
         if (!qApp->getLoginDialogPoppedUp()) {
             tablet->initialScreen(TABLET_LOGIN_DIALOG_URL);
         } else {
-            qApp->createLoginDialog();
+            qApp->getSignInGate().createLoginDialog();
         }
     }
 

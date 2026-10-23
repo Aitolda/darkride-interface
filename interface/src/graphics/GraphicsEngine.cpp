@@ -334,7 +334,7 @@ void GraphicsEngine::render_performFrame() {
 
     // Until the viewer goes in (Application::isSignInPending), the window shows only Darkride's navy and the user
     // interface over it, where the sign-in screen is: no avatar in an empty world before that screen is up, at the start
-    // or after signing out. A headset still gets the 3D view, where its sign-in screen is (Application::createLoginDialog).
+    // or after signing out. A headset still gets the 3D view, where its sign-in screen is (SignInGate::createLoginDialog).
     const bool signInCover = qApp->isSignInPending() && !displayPlugin->isHmd();
     auto drawSignInNavy = [&](gpu::Batch& batch) {
         if (!_signInNavy) {

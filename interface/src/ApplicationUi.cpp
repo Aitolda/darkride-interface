@@ -2,17 +2,12 @@
 //  ApplicationUi.cpp
 //  interface/src
 //
-//  Application's user-interface bring-up and sign-in gate. The bring-up: the QML desktop, the system tablet, the
-//  menu and the preferences brought up in order (initializeUi); the tablet toggled, its toolbar mode and its entity
-//  ids (toggleTabletUI, updateSystemTabletMode, getTabletScreenID, getTabletHomeButtonID, getTabletFrameID,
-//  getTabletIDs); the overlays (toggleOverlays, setOverlaysVisible, centerUI); the controls reference (showHelp).
-//  The gate: the sign-in screen (showLoginScreen); the pause that hides the avatar, stops the movement mappings,
-//  disconnects the domain and hides the menus until an account is chosen (pauseUntilLoginDetermined); the resume
-//  that undoes it, loads the scripts and goes to the starting location (resumeAfterLoginDialogActionTaken); the
-//  headset's sign-in dialog as a web entity in front of the camera, kept there, and taken down
-//  (createLoginDialog, updateLoginDialogPosition, onDismissedLoginDialog); the avatar-inputs bar (createAvatarInputsBar,
-//  destroyAvatarInputsBar). The members as they stood in Application.cpp, in their order; a home of their own until
-//  an owner takes them (ARCHITECTURE.md §5.4 step 4).
+//  Application's user-interface bring-up: the QML desktop, the system tablet, the menu and the preferences brought up
+//  in order (initializeUi); the tablet toggled, its toolbar mode and its entity ids (toggleTabletUI,
+//  updateSystemTabletMode, getTabletScreenID, getTabletHomeButtonID, getTabletFrameID, getTabletIDs); the overlays
+//  (toggleOverlays, setOverlaysVisible, centerUI); the controls reference (showHelp). The members as they stood in
+//  Application.cpp, in their order; a home of their own until an owner takes them (ARCHITECTURE.md §5.4 step 4). The
+//  sign-in gate is a SignInGate (SignInGate.h).
 //
 //  Copyright 2026 Darkride.
 //
@@ -21,7 +16,6 @@
 
 #include "Application.h"
 #include "ApplicationConstants.h"
-#include "ClientOptions.h"
 #include "DeadlockWatchdog.h"
 #include <thread>
 #include <glm/glm.hpp>
@@ -29,20 +23,15 @@
 #include <shared/QtHelpers.h>
 #include <shared/GlobalAppProperties.h>
 #include <StartupProfiler.h>
-#include <AccountManager.h>
-#include <AddressManager.h>
 #include <EntityScriptingInterface.h>
 #include <ErrorDialog.h>
-#include <controllers/UserInputMapper.h>
 #include <MainWindow.h>
 #include <OffscreenUi.h>
 #include <ui/OffscreenQmlSurfaceCache.h>
 #include <PathUtils.h>
 #include <plugins/PluginManager.h>
 #include <plugins/PluginUtils.h>
-#include <ScriptEngines.h>
 #include <ui/TabletScriptingInterface.h>
-#include <ui/ToolbarScriptingInterface.h>
 #include <ui/types/ContextAwareProfile.h>
 #include <Tooltip.h>
 #include <Preferences.h>
@@ -75,14 +64,8 @@ QString labelledTitle(const QString& title);     // ApplicationDisplay.cpp's: a 
 extern void setupPreferences();                  // ui/PreferencesDialog.cpp's
 void addDisplayPluginToMenu(const DisplayPluginPointer& displayPlugin, int index, bool active = false);   // ApplicationDisplay.cpp's; initializeUi reads it
 
-// constants only this code reads; the sign-in dialog's setting (the shutdown clears it, ApplicationShutdown.cpp) and the
-// avatar-inputs bar's QML (declared in ApplicationConstants.h; the constructor reads it)
+// a constant only this code reads
 static const QString INFO_HELP_PATH = "html/tabletHelp.html";
-static const QString STANDARD_TO_ACTION_MAPPING_NAME = "Standard to Action";
-static const QString NO_MOVEMENT_MAPPING_NAME = "Standard to Action (No Movement)";
-static const QString NO_MOVEMENT_MAPPING_JSON = PathUtils::resourcesPath() + "/controllers/standard_nomovement.json";
-Setting::Handle<bool> loginDialogPoppedUp{"loginDialogPoppedUp", false};
-const QUrl AVATAR_INPUTS_BAR_QML = PathUtils::qmlUrl("AvatarInputsBar.qml");   // declared in ApplicationConstants.h
 
 void Application::toggleTabletUI(bool shouldOpen) const {
     auto hmd = DependencyManager::get<HMDScriptingInterface>();
@@ -97,22 +80,6 @@ void Application::toggleTabletUI(bool shouldOpen) const {
             tablet->unfocus();
         }
     }
-}
-
-void Application::showLoginScreen() {
-    // Signed in or not, the sign-in screen comes first: a remembered account ("Remember me") gets "Continue as <name>"
-    // there (LoginDialog/ContinueBody.qml), and goes in from it.
-    auto dialogsManager = DependencyManager::get<DialogsManager>();
-    if (!isHMDMode()) {
-        auto toolbar =  DependencyManager::get<ToolbarScriptingInterface>()->getToolbar("com.highfidelity.interface.toolbar.system");
-        toolbar->writeProperty("visible", false);
-    }
-    _loginDialogPoppedUp = true;
-    loginDialogPoppedUp.set(_loginDialogPoppedUp);
-    dialogsManager->showLoginDialog();
-    StartupProfiler::instant("sign-in dialog opened");
-    emit loginDialogFocusEnabled();
-    _window->setWindowTitle(labelledTitle("Darkride"));
 }
 
 void Application::initializeUi() {
@@ -327,141 +294,6 @@ void Application::showHelp() {
     DependencyManager::get<HMDScriptingInterface>()->openTablet();
 }
 
-void Application::pauseUntilLoginDetermined() {
-    if (QThread::currentThread() != qApp->thread()) {
-        QMetaObject::invokeMethod(this, "pauseUntilLoginDetermined");
-        return;
-    }
-
-    _signInPending = true;
-
-    auto myAvatar = getMyAvatar();
-    _previousAvatarTargetScale = myAvatar->getTargetScale();
-    _previousAvatarSkeletonModel = myAvatar->getSkeletonModelURL().toString();
-    myAvatar->setTargetScale(1.0f);
-    myAvatar->setSkeletonModelURLFromScript(myAvatar->defaultFullAvatarModelUrl().toString());
-    myAvatar->setEnableMeshVisible(false);
-
-    _controllerScriptingInterface->disableMapping(STANDARD_TO_ACTION_MAPPING_NAME);
-
-    {
-        auto userInputMapper = DependencyManager::get<UserInputMapper>();
-        if (userInputMapper->loadMapping(NO_MOVEMENT_MAPPING_JSON)) {
-            _controllerScriptingInterface->enableMapping(NO_MOVEMENT_MAPPING_NAME);
-        }
-    }
-
-    const auto& nodeList = DependencyManager::get<NodeList>();
-    // save interstitial mode setting until resuming.
-    _interstitialModeEnabled = nodeList->getDomainHandler().getInterstitialModeEnabled();
-    nodeList->getDomainHandler().setInterstitialModeEnabled(false);
-
-    auto menu = Menu::getInstance();
-    menu->getMenu("Edit")->setVisible(false);
-    menu->getMenu("View")->setVisible(false);
-    menu->getMenu("Navigate")->setVisible(false);
-    menu->getMenu("Settings")->setVisible(false);
-    _developerMenuVisible = menu->getMenu("Developer")->isVisible();
-    menu->setIsOptionChecked(MenuOption::Stats, false);
-    if (_developerMenuVisible) {
-        menu->getMenu("Developer")->setVisible(false);
-    }
-    _viewState.setModeKeepingPrevious(CAMERA_MODE_FIRST_PERSON_LOOK_AT);
-
-    // disconnect domain handler.
-    nodeList->getDomainHandler().disconnect("Pause until login determined");
-
-    // From now on, it's permissible to call resumeAfterLoginDialogActionTaken()
-    _resumeAfterLoginDialogActionTaken_SafeToRun = true;
-
-    if (_resumeAfterLoginDialogActionTaken_WasPostponed) {
-        // resumeAfterLoginDialogActionTaken() was already called, but it aborted. Now it's safe to call it again.
-        resumeAfterLoginDialogActionTaken();
-    }
-}
-
-void Application::resumeAfterLoginDialogActionTaken() {
-    if (QThread::currentThread() != qApp->thread()) {
-        QMetaObject::invokeMethod(this, "resumeAfterLoginDialogActionTaken");
-        return;
-    }
-
-    if (!_resumeAfterLoginDialogActionTaken_SafeToRun) {
-        _resumeAfterLoginDialogActionTaken_WasPostponed = true;
-        return;
-    }
-
-    if (!isHMDMode() && getDesktopTabletBecomesToolbarSetting()) {
-        auto toolbar = DependencyManager::get<ToolbarScriptingInterface>()->getToolbar("com.highfidelity.interface.toolbar.system");
-        toolbar->writeProperty("visible", true);
-    } else {
-        getApplicationCompositor().getReticleInterface()->setAllowMouseCapture(true);
-        getApplicationCompositor().getReticleInterface()->setVisible(true);
-    }
-
-    updateSystemTabletMode();
-
-    {
-        auto userInputMapper = DependencyManager::get<UserInputMapper>();
-        userInputMapper->unloadMapping(NO_MOVEMENT_MAPPING_JSON);
-        _controllerScriptingInterface->disableMapping(NO_MOVEMENT_MAPPING_NAME);
-    }
-
-    auto myAvatar = getMyAvatar();
-    myAvatar->setTargetScale(_previousAvatarTargetScale);
-    myAvatar->setSkeletonModelURLFromScript(_previousAvatarSkeletonModel);
-    myAvatar->setEnableMeshVisible(true);
-
-    _controllerScriptingInterface->enableMapping(STANDARD_TO_ACTION_MAPPING_NAME);
-
-    const auto& nodeList = DependencyManager::get<NodeList>();
-    nodeList->getDomainHandler().setInterstitialModeEnabled(_interstitialModeEnabled);
-    {
-        auto scriptEngines = DependencyManager::get<ScriptEngines>().data();
-        // this will force the model the look at the correct directory (weird order of operations issue)
-        scriptEngines->reloadLocalFiles();
-
-        // if the --scripts command-line argument was used.
-        if (_defaultScriptsLocation.exists() && !ClientOptions::get().scriptsPath.isEmpty()) {
-            scriptEngines->loadDefaultScripts();
-            scriptEngines->defaultScriptsLocationOverridden(true);
-        } else {
-            scriptEngines->loadScripts();
-        }
-    }
-
-    auto accountManager = DependencyManager::get<AccountManager>();
-    auto addressManager = DependencyManager::get<AddressManager>();
-
-    // restart domain handler.
-    nodeList->getDomainHandler().resetting();
-
-    QVariant testProperty = property(hifi::properties::TEST);
-    if (testProperty.isValid()) {
-        const auto testScript = property(hifi::properties::TEST).toUrl();
-        // Set last parameter to exit interface when the test script finishes, if so requested
-        DependencyManager::get<ScriptEngines>()->loadScript(testScript, false, false, false, false, quitWhenFinished);
-        // This is done so we don't get a "connection time-out" message when we haven't passed in a URL.
-        if (ClientOptions::get().hasUrl) {
-            QMetaObject::invokeMethod(this, "goToStartingLocation", Qt::QueuedConnection);
-        }
-    } else {
-        QMetaObject::invokeMethod(this, "goToStartingLocation", Qt::QueuedConnection);
-    }
-
-    auto menu = Menu::getInstance();
-    menu->getMenu("Edit")->setVisible(true);
-    menu->getMenu("View")->setVisible(true);
-    menu->getMenu("Navigate")->setVisible(true);
-    menu->getMenu("Settings")->setVisible(true);
-    menu->getMenu("Developer")->setVisible(_developerMenuVisible);
-    _viewState.restorePreviousMode();
-    _startUpFinished = true;
-    StartupProfiler::instant("signed in: scripts loading, going to the starting location");
-    getRefreshRateManager().setRefreshRateRegime(RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE);
-    _signInPending = false;
-}
-
 void Application::toggleOverlays() {
     auto menu = Menu::getInstance();
     menu->setIsOptionChecked(MenuOption::Overlays, !menu->isOptionChecked(MenuOption::Overlays));
@@ -474,140 +306,6 @@ void Application::setOverlaysVisible(bool visible) {
 
 void Application::centerUI() {
     _overlayConductor.centerUI();
-}
-
-void Application::createLoginDialog() {
-    const glm::vec3 LOGIN_DIMENSIONS { 0.89f, 0.5f, 0.01f };
-    const auto OFFSET = glm::vec2(0.7f, -0.1f);
-    auto cameraPosition = _viewState.camera().getPosition();
-    auto cameraOrientation = _viewState.camera().getOrientation();
-    auto upVec = getMyAvatar()->getWorldOrientation() * Vectors::UNIT_Y;
-    auto headLookVec = (cameraOrientation * Vectors::FRONT);
-    // DEFAULT_DPI / tablet scale percentage
-    const float DPI = 31.0f / (75.0f / 100.0f);
-    auto offset = headLookVec * OFFSET.x;
-    auto position = (cameraPosition + offset) + (upVec * OFFSET.y);
-
-    EntityItemProperties properties;
-    properties.setType(EntityTypes::Web);
-    properties.setName("LoginDialogEntity");
-    properties.setSourceUrl(LOGIN_DIALOG.toString());
-    properties.setPosition(position);
-    properties.setRotation(cameraOrientation);
-    properties.setDimensions(LOGIN_DIMENSIONS);
-    properties.setPrimitiveMode(PrimitiveMode::SOLID);
-    properties.getGrab().setGrabbable(false);
-    properties.setIgnorePickIntersection(false);
-    properties.setAlpha(1.0f);
-    properties.setDPI(DPI);
-    properties.setVisible(true);
-
-    auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
-    _loginDialogID = entityScriptingInterface->addEntityInternal(properties, entity::HostType::LOCAL);
-
-    auto keyboard = DependencyManager::get<Keyboard>().data();
-    if (!keyboard->getAnchorID().isNull() && !_loginDialogID.isNull()) {
-        auto keyboardLocalOffset = cameraOrientation * glm::vec3(-0.4f * getMyAvatar()->getSensorToWorldScale(), -0.3f, 0.2f);
-
-        EntityItemProperties properties;
-        properties.setPosition(position + keyboardLocalOffset);
-        properties.setRotation(cameraOrientation * Quaternions::Y_180);
-
-        entityScriptingInterface->editEntity(keyboard->getAnchorID(), properties);
-        keyboard->setResetKeyboardPositionOnRaise(false);
-    }
-    _keyboardFocus.setFocusedEntity(_loginDialogID);
-    emit loginDialogFocusEnabled();
-    getApplicationCompositor().getReticleInterface()->setAllowMouseCapture(false);
-    getApplicationCompositor().getReticleInterface()->setVisible(false);
-    if (!_loginStateManager.isSetUp()) {
-        _loginStateManager.setUp();
-    }
-}
-
-void Application::updateLoginDialogPosition() {
-    const float LOOK_AWAY_THRESHOLD_ANGLE = 70.0f;
-    const auto OFFSET = glm::vec2(0.7f, -0.1f);
-
-    auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
-    EntityPropertyFlags desiredProperties;
-    desiredProperties += PROP_POSITION;
-    auto properties = entityScriptingInterface->getEntityProperties(_loginDialogID, desiredProperties);
-    auto positionVec = properties.getPosition();
-    auto cameraPositionVec = _viewState.camera().getPosition();
-    auto cameraOrientation = cancelOutRollAndPitch(_viewState.camera().getOrientation());
-    auto headLookVec = (cameraOrientation * Vectors::FRONT);
-    auto entityToHeadVec = positionVec - cameraPositionVec;
-    auto pointAngle = (glm::acos(glm::dot(glm::normalize(entityToHeadVec), glm::normalize(headLookVec))) * 180.0f / PI);
-    auto upVec = getMyAvatar()->getWorldOrientation() * Vectors::UNIT_Y;
-    auto offset = headLookVec * OFFSET.x;
-    auto newPositionVec = (cameraPositionVec + offset) + (upVec * OFFSET.y);
-
-    bool outOfBounds = glm::distance(positionVec, cameraPositionVec) > 1.0f;
-
-    if (pointAngle > LOOK_AWAY_THRESHOLD_ANGLE || outOfBounds) {
-        {
-            EntityItemProperties properties;
-            properties.setPosition(newPositionVec);
-            properties.setRotation(cameraOrientation);
-            entityScriptingInterface->editEntity(_loginDialogID, properties);
-        }
-
-        {
-            glm::vec3 keyboardLocalOffset = cameraOrientation * glm::vec3(-0.4f * getMyAvatar()->getSensorToWorldScale(), -0.3f, 0.2f);
-            glm::quat keyboardOrientation = cameraOrientation * glm::quat(glm::radians(glm::vec3(-30.0f, 180.0f, 0.0f)));
-
-            EntityItemProperties properties;
-            properties.setPosition(newPositionVec + keyboardLocalOffset);
-            properties.setRotation(keyboardOrientation);
-            entityScriptingInterface->editEntity(DependencyManager::get<Keyboard>()->getAnchorID(), properties);
-        }
-    }
-}
-
-void Application::createAvatarInputsBar() {
-    const glm::vec3 LOCAL_POSITION { 0.0, 0.0, -1.0 };
-    // DEFAULT_DPI / tablet scale percentage
-    const float DPI = 31.0f / (75.0f / 100.0f);
-
-    EntityItemProperties properties;
-    properties.setType(EntityTypes::Web);
-    properties.setName("AvatarInputsBarEntity");
-    properties.setSourceUrl(AVATAR_INPUTS_BAR_QML.toString());
-    properties.setParentID(getMyAvatar()->getSelfID());
-    properties.setParentJointIndex(getMyAvatar()->getJointIndex("_CAMERA_MATRIX"));
-    properties.setPosition(LOCAL_POSITION);
-    properties.setLocalRotation(Quaternions::IDENTITY);
-    //properties.setDimensions(LOGIN_DIMENSIONS);
-    properties.setPrimitiveMode(PrimitiveMode::SOLID);
-    properties.getGrab().setGrabbable(false);
-    properties.setIgnorePickIntersection(false);
-    properties.setAlpha(1.0f);
-    properties.setDPI(DPI);
-    properties.setVisible(true);
-
-    auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
-    _avatarInputsBarID = entityScriptingInterface->addEntityInternal(properties, entity::HostType::LOCAL);
-}
-
-void Application::destroyAvatarInputsBar() {
-    auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
-    if (!_avatarInputsBarID.isNull()) {
-        entityScriptingInterface->deleteEntity(_avatarInputsBarID);
-    }
-}
-
-void Application::onDismissedLoginDialog() {
-    _loginDialogPoppedUp = false;
-    loginDialogPoppedUp.set(false);
-    auto keyboard = DependencyManager::get<Keyboard>().data();
-    keyboard->setResetKeyboardPositionOnRaise(true);
-    if (!_loginDialogID.isNull()) {
-        DependencyManager::get<EntityScriptingInterface>()->deleteEntity(_loginDialogID);
-        _loginDialogID = QUuid();
-        _loginStateManager.tearDown();
-    }
-    resumeAfterLoginDialogActionTaken();
 }
 
 void Application::updateSystemTabletMode() {

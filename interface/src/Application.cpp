@@ -33,6 +33,7 @@
 #include "AudioClient.h"
 #include <AddressManager.h>
 #include <NetworkingConstants.h>
+#include <PathUtils.h>
 #include "ui/Snapshot.h"
 
 #include "InterfaceLogging.h"
@@ -106,6 +107,7 @@ const std::vector<std::pair<QString, Application::AcceptURLMethod>> Application:
 
 
 const QString KEEP_ME_LOGGED_IN_SETTING_NAME = "keepMeLoggedIn";   // declared in ApplicationConstants.h
+const QUrl AVATAR_INPUTS_BAR_QML = PathUtils::qmlUrl("AvatarInputsBar.qml");   // declared in ApplicationConstants.h; the start-up's QML-surface operator reads it
 
 #if defined(Q_OS_ANDROID)
 #endif
@@ -200,7 +202,7 @@ void Application::updateHeartbeat() const {
 // The GL context and its share contexts, the display plug-ins and the render engine's start (initializeGL,
 // initializeDisplayPlugins, initializeRenderEngine) are in ApplicationDisplay.cpp.
 
-// The sign-in screen and the interface's bring-up (showLoginScreen, initializeUi) are in ApplicationUi.cpp.
+// The interface's bring-up (initializeUi) is in ApplicationUi.cpp.
 
 
 // The desktop's QML context (onDesktopRootContextCreated, onDesktopRootItemCreated) is in ApplicationScripting.cpp.
@@ -288,7 +290,8 @@ bool Application::acceptSnapshot(const QString& urlString) {
 // init (the avatar manager, the entity tree renderer, the physics engine, the entity simulation and the game workload
 // brought up; the interface stage calls it) is in ApplicationStartup.cpp.
 
-// The sign-in gate (pauseUntilLoginDetermined, resumeAfterLoginDialogActionTaken) is in ApplicationUi.cpp.
+// The sign-in gate is a SignInGate (SignInGate.h), the member _signInGate, reached by getSignInGate();
+// getLoginDialogPoppedUp() and isSignInPending() forward to it.
 
 // The avatar's scripts (loadAvatarScripts, unloadAvatarScripts) are in ApplicationAvatar.cpp.
 
@@ -447,12 +450,7 @@ void Application::setShowBulletConstraintLimits(bool value) {
     _physicsEngine->setShowBulletConstraintLimits(value);
 }
 
-// The headset's sign-in dialog and the avatar-inputs bar (createLoginDialog, updateLoginDialogPosition, createAvatarInputsBar,
-// destroyAvatarInputsBar) are in ApplicationUi.cpp.
-
 // hasRiftControllers and hasViveControllers are in ApplicationDisplay.cpp.
-
-// onDismissedLoginDialog is in ApplicationUi.cpp.
 
 void Application::setShowTrackedObjects(bool value) {
     _showTrackedObjects = value;

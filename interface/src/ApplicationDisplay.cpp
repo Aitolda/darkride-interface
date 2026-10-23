@@ -377,7 +377,7 @@ void Application::activeChanged(Qt::ApplicationState state) {
     switch (state) {
         case Qt::ApplicationActive:
             _isForeground = true;
-            if (!_aboutToQuit && _startUpFinished) {
+            if (!_aboutToQuit && _signInGate.startUpFinished()) {
                 getRefreshRateManager().setRefreshRateRegime(RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE);
             }
             break;
@@ -387,7 +387,7 @@ void Application::activeChanged(Qt::ApplicationState state) {
         case Qt::ApplicationHidden:
             break;
         case Qt::ApplicationInactive:
-            if (!_aboutToQuit && _startUpFinished) {
+            if (!_aboutToQuit && _signInGate.startUpFinished()) {
                 getRefreshRateManager().setRefreshRateRegime(RefreshRateManager::RefreshRateRegime::UNFOCUS);
             }
             break;

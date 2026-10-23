@@ -866,10 +866,7 @@ void Application::update(float deltaTime) {
 
     updateLOD(deltaTime);
 
-    if (!_loginDialogID.isNull()) {
-        _loginStateManager.update(getMyAvatar()->getDominantHand(), _loginDialogID);
-        updateLoginDialogPosition();
-    }
+    _signInGate.update();   // the headset's sign-in dialog, while it is up
 
     {
         PROFILE_RANGE_EX(app, "Overlays", 0xffff0000, (uint64_t)getActiveDisplayPlugin()->presentCount());

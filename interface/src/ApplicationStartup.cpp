@@ -436,7 +436,6 @@ void Application::setupProcess() {
         } else if (QFileInfo(testScriptPath).exists()) {
             setProperty(hifi::properties::TEST, QUrl::fromLocalFile(testScriptPath));
         }
-        quitWhenFinished = options.testQuitWhenFinished;
     }
     if (!options.testResultsLocation.isEmpty()) {
         // Set test snapshot location only if it is a writeable directory
@@ -752,24 +751,12 @@ void Application::connectServices() {
     });
     connect(this, &Application::activeDisplayPluginChanged, this, &Application::updateSystemTabletMode);
     connect(this, &Application::activeDisplayPluginChanged, this, [&](){
-        if (getLoginDialogPoppedUp()) {
-            auto dialogsManager = DependencyManager::get<DialogsManager>();
-            auto keyboard = DependencyManager::get<Keyboard>();
+        if (_signInGate.poppedUp()) {
             if (_firstRun.get()) {
                 // display mode changed.  Don't allow auto-switch to work after this session.
                 _firstRun.set(false);
             }
-            if (isHMDMode()) {
-                emit loginDialogFocusDisabled();
-                dialogsManager->hideLoginDialog();
-                createLoginDialog();
-            } else {
-                DependencyManager::get<EntityScriptingInterface>()->deleteEntity(_loginDialogID);
-                _loginDialogID = QUuid();
-                _loginStateManager.tearDown();
-                dialogsManager->showLoginDialog();
-                emit loginDialogFocusEnabled();
-            }
+            _signInGate.displayPluginChanged();
         }
     });
 
@@ -958,13 +945,13 @@ void Application::setupInterface() {
         // avatar is hidden, no world is joined and no scripts run (pauseUntilLoginDetermined), and the screen covers
         // the window. A launcher passing --tokens has signed in for us.
         if (ClientOptions::get().hasTokens) {
-            resumeAfterLoginDialogActionTaken();
+            _signInGate.resumeAfterLoginDialogActionTaken();
             return;
         }
 
-        showLoginScreen();
+        _signInGate.showLoginScreen();
 #else
-        resumeAfterLoginDialogActionTaken();
+        _signInGate.resumeAfterLoginDialogActionTaken();
 #endif
     });
 
@@ -976,8 +963,8 @@ void Application::setupInterface() {
             if (getLoginDialogPoppedUp()) {
                 return;
             }
-            pauseUntilLoginDetermined();
-            showLoginScreen();
+            _signInGate.pauseUntilLoginDetermined();
+            _signInGate.showLoginScreen();
         }, Qt::QueuedConnection);
     }
 #endif
@@ -1639,7 +1626,7 @@ void Application::finishStartup() {
     AndroidHelper::instance().notifyLoadComplete();
 #endif
     StartupProfiler::phase("constructor: pauseUntilLoginDetermined");
-    pauseUntilLoginDetermined();
+    _signInGate.pauseUntilLoginDetermined();
 }
 
 // init, which the interface stage (setupInterface) calls once the UI is up: the avatar manager, the entity tree

@@ -57,9 +57,9 @@ void KeyboardFocus::highlight(const glm::vec3& position, const glm::quat& rotati
 
 void KeyboardFocus::setFocusedEntity(const QUuid& id) {
     if (_focused.get() != id) {
-        if (qApp->getLoginDialogPoppedUp() && !qApp->getLoginDialogID().isNull()) {
-            if (id == qApp->getLoginDialogID()) {
-                emit qApp->loginDialogFocusEnabled();
+        if (qApp->getLoginDialogPoppedUp() && !qApp->getSignInGate().loginDialogID().isNull()) {
+            if (id == qApp->getSignInGate().loginDialogID()) {
+                emit qApp->getSignInGate().loginDialogFocusEnabled();
             } else if (!_waitingOnRenderable) {
                 // that's the only entity we want in focus;
                 return;

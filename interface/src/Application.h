@@ -57,13 +57,13 @@ class ClientOptions;
 #include "ViewState.h"
 #include "EntityClipboard.h"
 #include "AssetImport.h"
+#include "SignInGate.h"
 #include "ConnectionMonitor.h"
 #include "CursorManager.h"
 #include "WindowCursor.h"
 #include "SnapshotRequests.h"
 #include "KeyboardFocus.h"
 #include "gpu/Context.h"
-#include "LoginStateManager.h"
 #include "Menu.h"
 #include "PerformanceManager.h"
 #include "RefreshRateManager.h"
@@ -351,15 +351,12 @@ public:
     int getOtherAvatarsReplicaCount() { return DependencyManager::get<AvatarHashMap>()->getReplicaCount(); }
     void setOtherAvatarsReplicaCount(int count) { DependencyManager::get<AvatarHashMap>()->setReplicaCount(count); }
 
-    bool getLoginDialogPoppedUp() const { return _loginDialogPoppedUp; }
+    SignInGate& getSignInGate() { return _signInGate; }   // the sign-in screen, the pause until an account is chosen, the resume (SignInGate.h)
+    bool getLoginDialogPoppedUp() const { return _signInGate.poppedUp(); }
     // From the start, and again after signing out, until the viewer goes in (resumeAfterLoginDialogActionTaken): the
     // 3D view isn't drawn then, only Darkride's navy under the user interface (GraphicsEngine::render_performFrame)
-    bool isSignInPending() const { return _signInPending; }
-    void createLoginDialog();
-    void updateLoginDialogPosition();
-
-    void createAvatarInputsBar();
-    void destroyAvatarInputsBar();
+    bool isSignInPending() const { return _signInGate.signInPending(); }
+    const QDir& getDefaultScriptsLocation() const { return _defaultScriptsLocation; }   // --scripts, when given
 
     // Check if a headset is connected
     bool hasRiftControllers();
@@ -393,9 +390,6 @@ signals:
 
     void interstitialModeChanged(bool isInInterstitialMode);
 
-    void loginDialogFocusEnabled();
-    void loginDialogFocusDisabled();
-
     void miniTabletEnabledChanged(bool enabled);
     void awayStateWhenFocusLostInVRChanged(bool enabled);
 
@@ -403,6 +397,7 @@ public slots:
     void updateThreadPoolCount() const;
     void updateSystemTabletMode();
     void goToErrorDomainURL(QUrl errorDomainURL);
+    void goToStartingLocation();   // where the client goes first; the sign-in gate queues it when the viewer goes in
 
     Q_INVOKABLE void loadDialog();
     void importAvatarDialog();
@@ -415,8 +410,6 @@ public slots:
     Q_INVOKABLE SharedSoundPointer getSampleSound() const;
 
     void showDialog(const QUrl& widgetUrl, const QUrl& tabletUrl, const QString& name) const;
-
-    void showLoginScreen();
 
     void addAssetToWorldFromURL(QString url) { _assetImport.addAssetToWorldFromURL(url); }   // QML's ApplicationInterface.addAssetToWorldFromURL (the tablet and window roots, the web view)
 
@@ -458,7 +451,6 @@ public slots:
     static void runTests();
 
     KeyboardFocus& getKeyboardFocus() { return _keyboardFocus; }   // which entity has the keyboard, and its highlight (KeyboardFocus.h)
-    const QUuid& getLoginDialogID() const { return _loginDialogID; }   // the headset's sign-in dialog entity, null when there is none
     std::shared_ptr<KeyboardMouseDevice> getKeyboardMouseDevice() const { return _keyboardMouseDevice; }
 
     void loadLODToolsDialog();
@@ -522,7 +514,6 @@ private slots:
     void setDisplayPlugin(DisplayPluginPointer newPlugin);
     void domainConnectionRefused(const QString& reasonMessage, int reason, const QString& extraInfo);
 
-    void goToStartingLocation();
     void switchDisplayMode();
 
     void setShowBulletWireframe(bool value);
@@ -531,13 +522,10 @@ private slots:
     void setShowBulletConstraints(bool value);
     void setShowBulletConstraintLimits(bool value);
 
-    void onDismissedLoginDialog();
-
     void setShowTrackedObjects(bool value);
 
 private:
     void init();
-    void pauseUntilLoginDetermined();
     // the constructor's stages, in order (ApplicationStartup.cpp); each groups the start-up profile's rows
     void setupProcess();
     void startServices();
@@ -549,7 +537,6 @@ private:
     void setupSettings();
     void installOperators();
     void finishStartup();
-    void resumeAfterLoginDialogActionTaken();
     bool handleFileOpenEvent(QFileOpenEvent* event);
     void cleanupBeforeQuit();
 
@@ -706,17 +693,7 @@ private:
     glm::uvec2 _renderResolution;
 
     int _maxOctreePPS = DEFAULT_MAX_OCTREE_PPS;
-    bool _interstitialModeEnabled{ false };
-
-    bool _loginDialogPoppedUp{ false };
-    std::atomic<bool> _signInPending{ true };
-
-    bool _developerMenuVisible{ false };
-    QString _previousAvatarSkeletonModel;
-    float _previousAvatarTargetScale;
-    QUuid _loginDialogID;
-    QUuid _avatarInputsBarID;
-    LoginStateManager _loginStateManager;
+    SignInGate _signInGate;   // the sign-in screen and the pause and resume around it (SignInGate.h)
     PerformanceManager _performanceManager;
     RefreshRateManager _refreshRateManager;
 
@@ -781,14 +758,9 @@ private:
 
     std::atomic<bool> _pendingIdleEvent{ true };
 
-    bool quitWhenFinished{ false };
-
     bool _showTrackedObjects{ false };
     bool _prevShowTrackedObjects{ false };
 
-    bool _resumeAfterLoginDialogActionTaken_WasPostponed{ false };
-    bool _resumeAfterLoginDialogActionTaken_SafeToRun{ false };
-    bool _startUpFinished{ false };
     bool _overrideEntry{ false };
 
     VisionSqueeze _visionSqueeze;

@@ -70,7 +70,6 @@
 using namespace std;
 
 QSharedPointer<OffscreenUi> getOffscreenUI();      // Application.cpp's
-extern Setting::Handle<bool> loginDialogPoppedUp;  // ApplicationUi.cpp's
 extern QTimer locationUpdateTimer;                 // ApplicationStartup.cpp's; the constructor starts it
 
 void Application::onAboutToQuit() {
@@ -95,7 +94,7 @@ void Application::onAboutToQuit() {
     // so its persisted explicitly here
     Setting::Handle<QString>{ ACTIVE_DISPLAY_PLUGIN_SETTING_NAME }.set(getActiveDisplayPlugin()->getName());
 
-    loginDialogPoppedUp.set(false);
+    _signInGate.shutdown();   // the sign-in setting cleared
 
     getActiveDisplayPlugin()->deactivate();
     if (_autoSwitchDisplayModeSupportedHMDPlugin
