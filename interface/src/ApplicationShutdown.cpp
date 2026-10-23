@@ -54,7 +54,6 @@
 #include "scripting/Audio.h"
 #include "scripting/KeyboardScriptingInterface.h"
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-#include "SpeechRecognizer.h"
 #endif
 #include "ui/StandAloneJSConsole.h"
 #include "ui/Keyboard.h"

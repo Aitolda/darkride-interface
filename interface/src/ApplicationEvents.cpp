@@ -33,7 +33,6 @@
 #include "scripting/Audio.h"
 #include "editor/Editor.h"
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-#include "SpeechRecognizer.h"
 #endif
 #include "ui/StandAloneJSConsole.h"
 #if defined(Q_OS_ANDROID)

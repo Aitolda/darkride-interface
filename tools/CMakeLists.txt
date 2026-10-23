@@ -13,7 +13,6 @@ endfunction()
 
 if (BUILD_TOOLS)
     set(ALL_TOOLS 
-        vhacd-util
         ac-client
         auto-rig
         unity-avatar

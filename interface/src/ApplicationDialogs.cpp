@@ -36,7 +36,6 @@
 #include "ModelPackager.h"
 #include "scripting/HMDScriptingInterface.h"
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-#include "SpeechRecognizer.h"
 #endif
 #include "ui/DialogsManager.h"
 #if defined(Q_OS_WIN)
