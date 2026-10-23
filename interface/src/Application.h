@@ -51,6 +51,8 @@
 #include <shared/FileLogger.h>
 #include <RunningMarker.h>
 
+class ClientOptions;
+
 #include "avatar/MyAvatar.h"
 #include "FancyCamera.h"
 #include "ConnectionMonitor.h"
@@ -125,7 +127,7 @@ public:
     virtual DisplayPluginPointer getActiveDisplayPlugin() const override;
 
     // FIXME? Empty methods, do we still need them?
-    static void initPlugins(const QStringList& arguments);
+    static void initPlugins(const ClientOptions& options);
 
     Application(int& argc, char** argv, QElapsedTimer& startup_time, bool runningMarkerExisted);
     ~Application();
@@ -448,8 +450,9 @@ public slots:
 
     FileScriptingInterface* getFileDownloadInterface() { return _fileDownload; }
 
-    void handleLocalServerConnection() const;
-    void readArgumentsFromLocalSocket() const;
+    // the hand-offs of later launches (SingleInstance): raise this window, go to the address handed over
+    void raiseWindow() const;
+    void goToHandedOffUrl(const QString& url) const;
 
     static void packageModel();
 

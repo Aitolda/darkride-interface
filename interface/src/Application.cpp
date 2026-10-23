@@ -11,6 +11,7 @@
 
 
 #include "Application.h"
+#include "ClientOptions.h"
 
 #include <chrono>
 #include <thread>
@@ -36,7 +37,6 @@
 #include <QtGui/QWindow>
 #include <QtGui/QDesktopServices>
 
-#include <QtNetwork/QLocalSocket>
 #include <QtNetwork/QLocalServer>
 #include <QtQml/QQmlContext>
 #include <QtQml/QQmlEngine>
@@ -287,10 +287,9 @@ static bool DISABLE_WATCHDOG = nsightActive() || QProcessEnvironment::systemEnvi
 // Run Test") without a rebuild, release builds included, so Caity doesn't close one for her own (2026-10-22).
 static const QString& clientLabel() {
     static const QString label = []() -> QString {
-        const QStringList args = QCoreApplication::arguments();
-        const int i = args.indexOf("--clientLabel");
-        if (i != -1 && i + 1 < args.size()) {
-            return args.at(i + 1).trimmed();
+        const QString& fromCommandLine = ClientOptions::get().clientLabel;
+        if (!fromCommandLine.isEmpty()) {
+            return fromCommandLine;
         }
         const QString fromEnvironment = QProcessEnvironment::systemEnvironment().value("DARKRIDE_CLIENT_LABEL").trimmed();
         return fromEnvironment.isEmpty() ? BuildInfo::CLIENT_LABEL : fromEnvironment;
@@ -709,64 +708,37 @@ extern DisplayPluginList getDisplayPlugins();
 extern InputPluginList getInputPlugins();
 extern void saveInputPluginSettings(const InputPluginList& plugins);
 
-// Parameters used for running tests from teh command line
-const QString TEST_SCRIPT_COMMAND{ "--testScript" };
-const QString TEST_QUIT_WHEN_FINISHED_OPTION{ "quitWhenFinished" };
-const QString TEST_RESULTS_LOCATION_COMMAND{ "--testResultsLocation" };
-
-bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
-    const char** constArgv = const_cast<const char**>(argv);
+bool setupEssentials(bool runningMarkerExisted) {
+    const ClientOptions& options = ClientOptions::get();
 
     qInstallMessageHandler(messageHandler);
 
     StartupProfiler::phase("setupEssentials: version switches, crash check, resources");
 
-    // HRS: I could not figure out how to move these any earlier in startup, so when using this option, be sure to also supply
-    // --allowMultipleInstances
-    auto reportAndQuit = [&](const char* commandSwitch, std::function<void(FILE* fp)> report) {
-        const char* reportfile = getCmdOption(argc, constArgv, commandSwitch);
-        // Reports to the specified file, because stdout is set up to be captured for logging.
-        if (reportfile) {
-            FILE* fp = fopen(reportfile, "w");
-            if (fp) {
-                report(fp);
-                fclose(fp);
-                if (!runningMarkerExisted) { // don't leave ours around
-                    RunningMarker runingMarker(RUNNING_MARKER_FILENAME);
-                    runingMarker.deleteRunningMarkerFile(); // happens in deleter, but making the side-effect explicit.
-                }
-                _exit(0);
+    // --protocolVersion <file>: the protocol signature into that file, then out, before anything else is set up.
+    // It reports to a file because stdout is captured for the log. (A launcher asking this should also pass
+    // --allowMultipleInstances, since this runs after the single-instance check.)
+    if (!options.protocolVersionFile.isEmpty()) {
+        FILE* fp = fopen(options.protocolVersionFile.toLocal8Bit().constData(), "w");
+        if (fp) {
+            fputs(protocolVersionsSignatureBase64().toLatin1().data(), fp);
+            fclose(fp);
+            if (!runningMarkerExisted) { // don't leave ours around
+                RunningMarker runingMarker(RUNNING_MARKER_FILENAME);
+                runingMarker.deleteRunningMarkerFile(); // happens in deleter, but making the side-effect explicit.
             }
+            _exit(0);
         }
-    };
-    reportAndQuit("--protocolVersion", [&](FILE* fp) {
-        auto version = protocolVersionsSignatureBase64();
-        fputs(version.toLatin1().data(), fp);
-    });
-    reportAndQuit("--version", [&](FILE* fp) {
-        fputs(BuildInfo::VERSION.toLatin1().data(), fp);
-    });
+    }
 
-    const char* portStr = getCmdOption(argc, constArgv, "--listenPort");
-    const int listenPort = portStr ? atoi(portStr) : INVALID_PORT;
-
-    // static const auto SUPPRESS_SETTINGS_RESET = "--suppress-settings-reset";
-    // bool suppressPrompt = cmdOptionExists(argc, const_cast<const char**>(argv), SUPPRESS_SETTINGS_RESET);
+    const int listenPort = options.listenPort >= 0 ? options.listenPort : INVALID_PORT;
 
     // emulate standalone device
-    static const auto STANDALONE_ARG = "--standalone";
-    bool isStandalone = cmdOptionExists(argc, const_cast<const char**>(argv), STANDALONE_ARG);
+    bool isStandalone = options.standalone;
     qApp->setProperty(hifi::properties::STANDALONE, isStandalone);
 
     // Ignore any previous crashes if running from command line with a test script.
-    bool inTestMode { false };
-    for (int i = 0; i < argc; ++i) {
-        QString parameter(argv[i]);
-        if (parameter == TEST_SCRIPT_COMMAND) {
-            inTestMode = true;
-            break;
-        }
-    }
+    bool inTestMode = !options.testScript.isEmpty();
 
     bool previousSessionCrashed { false };
     if (!inTestMode) {
@@ -775,8 +747,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     }
 
     // get dir to use for cache
-    static const auto CACHE_SWITCH = "--cache";
-    QString cacheDir = getCmdOption(argc, const_cast<const char**>(argv), CACHE_SWITCH);
+    QString cacheDir = options.cacheDirectory;
     if (!cacheDir.isEmpty()) {
         qApp->setProperty(hifi::properties::APP_LOCAL_DATA_PATH, cacheDir);
     }
@@ -817,7 +788,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     QCoreApplication::addLibraryPath(audioDLLPath);
 #endif 
 
-    QString defaultScriptsOverrideOption = getCmdOption(argc, constArgv, "--defaultScriptsOverride");
+    QString defaultScriptsOverrideOption = options.defaultScriptsOverride;
 
     DependencyManager::registerInheritance<LimitedNodeList, NodeList>();
     DependencyManager::registerInheritance<AvatarHashMap, AvatarManager>();
@@ -936,7 +907,7 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     });
 
 
-    QString setBookmarkValue = getCmdOption(argc, constArgv, "--setBookmark");
+    QString setBookmarkValue = options.setBookmark;
     if (!setBookmarkValue.isEmpty()) {
         // Bookmarks are expected to be in a name=url form.
         // An `=` character in the name or url is unsupported.
@@ -996,7 +967,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 #ifndef Q_OS_ANDROID
     _logger(new FileLogger(this)),
 #endif
-    _previousSessionCrashed(setupEssentials(argc, argv, runningMarkerExisted)),
+    _previousSessionCrashed(setupEssentials(runningMarkerExisted)),
     _entitySimulation(new PhysicalEntitySimulation()),
     _physicsEngine(new PhysicsEngine(Vectors::ZERO)),
     _entityClipboard(new EntityTree()),
@@ -1031,42 +1002,30 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 {
     
     setProperty(hifi::properties::CRASHED, _previousSessionCrashed);
+    const ClientOptions& options = ClientOptions::get();
 
     StartupProfiler::phase("constructor: log handler, test arguments");
 
     LogHandler::getInstance().moveToThread(thread());
     LogHandler::getInstance().setupRepeatedMessageFlusher();
 
-    {
-        const QStringList args = arguments();
-
-        for (int i = 0; i < args.size() - 1; ++i) {
-            if (args.at(i) == TEST_SCRIPT_COMMAND && (i + 1) < args.size()) {
-                QString testScriptPath = args.at(i + 1);
-
-                // If the URL scheme is http(s) or ftp, then use as is, else - treat it as a local file
-                // This is done so as not break previous command line scripts
-                if (testScriptPath.left(HIFI_URL_SCHEME_HTTP.length()) == HIFI_URL_SCHEME_HTTP ||
-                    testScriptPath.left(HIFI_URL_SCHEME_FTP.length()) == HIFI_URL_SCHEME_FTP) {
-
-                    setProperty(hifi::properties::TEST, QUrl::fromUserInput(testScriptPath));
-                } else if (QFileInfo(testScriptPath).exists()) {
-                    setProperty(hifi::properties::TEST, QUrl::fromLocalFile(testScriptPath));
-                }
-
-                // quite when finished parameter must directly follow the test script
-                if ((i + 2) < args.size() && args.at(i + 2) == TEST_QUIT_WHEN_FINISHED_OPTION) {
-                    quitWhenFinished = true;
-                }
-            } else if (args.at(i) == TEST_RESULTS_LOCATION_COMMAND) {
-                // Set test snapshot location only if it is a writeable directory
-                QString path(args.at(i + 1));
-
-                QFileInfo fileInfo(path);
-                if (fileInfo.isDir() && fileInfo.isWritable()) {
-                    TestScriptingInterface::getInstance()->setTestResultsLocation(path);
-                }
-            }
+    if (!options.testScript.isEmpty()) {
+        const QString& testScriptPath = options.testScript;
+        // If the URL scheme is http(s) or ftp, then use as is, else - treat it as a local file
+        // This is done so as not break previous command line scripts
+        if (testScriptPath.left(HIFI_URL_SCHEME_HTTP.length()) == HIFI_URL_SCHEME_HTTP ||
+            testScriptPath.left(HIFI_URL_SCHEME_FTP.length()) == HIFI_URL_SCHEME_FTP) {
+            setProperty(hifi::properties::TEST, QUrl::fromUserInput(testScriptPath));
+        } else if (QFileInfo(testScriptPath).exists()) {
+            setProperty(hifi::properties::TEST, QUrl::fromLocalFile(testScriptPath));
+        }
+        quitWhenFinished = options.testQuitWhenFinished;
+    }
+    if (!options.testResultsLocation.isEmpty()) {
+        // Set test snapshot location only if it is a writeable directory
+        QFileInfo fileInfo(options.testResultsLocation);
+        if (fileInfo.isDir() && fileInfo.isWritable()) {
+            TestScriptingInterface::getInstance()->setTestResultsLocation(options.testResultsLocation);
         }
     }
 
@@ -1146,8 +1105,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     auto addressManager = DependencyManager::get<AddressManager>();
     addressManager->moveToThread(nodeList->thread());
 
-    const char** constArgv = const_cast<const char**>(argv);
-    if (cmdOptionExists(argc, constArgv, "--disableWatchdog")) {
+    if (options.disableWatchdog) {
         DISABLE_WATCHDOG = true;
     }
     StartupProfiler::phase("constructor: deadlock watchdog");
@@ -1469,23 +1427,18 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         << NodeType::PhysicsServer);
 
 
-    QString concurrentDownloadsStr = getCmdOption(argc, constArgv, "--concurrent-downloads");
-    bool success;
-    uint32_t concurrentDownloads = concurrentDownloadsStr.toUInt(&success);
-    if (!success) {
-        concurrentDownloads = MAX_CONCURRENT_RESOURCE_DOWNLOADS;
-    }
-    ResourceCache::setRequestLimit(concurrentDownloads);
+    ResourceCache::setRequestLimit(options.concurrentDownloads >= 0 ? (uint32_t)options.concurrentDownloads
+                                                                   : MAX_CONCURRENT_RESOURCE_DOWNLOADS);
 
     // perhaps override the avatar url.  Since we will test later for validity
     // we don't need to do so here.
-    QString avatarURL = getCmdOption(argc, constArgv, "--avatarURL");
+    QString avatarURL = options.avatarUrl;
     _avatarOverrideUrl = QUrl::fromUserInput(avatarURL);
 
     // If someone specifies both --avatarURL and --replaceAvatarURL,
     // the replaceAvatarURL wins.  So only set the _overrideUrl if this
     // does have a non-empty string.
-    QString replaceURL = getCmdOption(argc, constArgv, "--replaceAvatarURL");
+    QString replaceURL = options.replaceAvatarUrl;
     if (!replaceURL.isEmpty()) {
         _avatarOverrideUrl = QUrl::fromUserInput(replaceURL);
         _saveAvatarOverrideUrl = true;
@@ -1514,7 +1467,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     _glWidget->setFocusPolicy(Qt::StrongFocus);
     _glWidget->setFocus();
 
-    if (cmdOptionExists(argc, constArgv, "--system-cursor")) {
+    if (options.systemCursor) {
         _preferredCursor.set(Cursor::Manager::getIconName(Cursor::Icon::SYSTEM));
     }
     showCursor(Cursor::Manager::lookupIcon(_preferredCursor.get()));
@@ -1594,7 +1547,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         // Darkride starts on the sign-in screen: until someone signs in, or continues as the remembered account, the
         // avatar is hidden, no world is joined and no scripts run (pauseUntilLoginDetermined), and the screen covers
         // the window. A launcher passing --tokens has signed in for us.
-        if (arguments().indexOf("--tokens") != -1) {
+        if (ClientOptions::get().hasTokens) {
             resumeAfterLoginDialogActionTaken();
             return;
         }
@@ -1608,7 +1561,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 #if !defined(Q_OS_ANDROID)
     // Signing out of a running viewer goes back to the sign-in screen, as at the start: out of the world, the avatar
     // hidden, until someone signs in, and then on as at the start (resumeAfterLoginDialogActionTaken).
-    if (arguments().indexOf("--tokens") == -1) {
+    if (!options.hasTokens) {
         connect(DependencyManager::get<AccountManager>().data(), &AccountManager::logoutComplete, this, [this]() {
             if (getLoginDialogPoppedUp()) {
                 return;
@@ -1872,10 +1825,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         userInputMapper->registerDevice(_touchscreenVirtualPadDevice->getInputDevice());
     }
 
-    QString scriptsSwitch = QString("--").append(SCRIPTS_SWITCH);
-    _defaultScriptsLocation.setPath(
-        getCmdOption(argc, constArgv, scriptsSwitch.toStdString().c_str())
-    );
+    _defaultScriptsLocation.setPath(options.scriptsPath);
 
     // Make sure we don't time out during slow operations at startup
     updateHeartbeat();
@@ -5313,7 +5263,7 @@ void Application::resumeAfterLoginDialogActionTaken() {
         scriptEngines->reloadLocalFiles();
 
         // if the --scripts command-line argument was used.
-        if (_defaultScriptsLocation.exists() && (arguments().indexOf(QString("--").append(SCRIPTS_SWITCH))) != -1) {
+        if (_defaultScriptsLocation.exists() && !ClientOptions::get().scriptsPath.isEmpty()) {
             scriptEngines->loadDefaultScripts();
             scriptEngines->defaultScriptsLocationOverridden(true);
         } else {
@@ -5333,7 +5283,7 @@ void Application::resumeAfterLoginDialogActionTaken() {
         // Set last parameter to exit interface when the test script finishes, if so requested
         DependencyManager::get<ScriptEngines>()->loadScript(testScript, false, false, false, false, quitWhenFinished);
         // This is done so we don't get a "connection time-out" message when we haven't passed in a URL.
-        if (arguments().contains("--url")) {
+        if (ClientOptions::get().hasUrl) {
             QMetaObject::invokeMethod(this, "goToStartingLocation", Qt::QueuedConnection);
         }
     } else {
@@ -8287,45 +8237,18 @@ void Application::sendLambdaEvent(const std::function<void()>& f) {
     }
 }
 
-void Application::initPlugins(const QStringList& arguments) {
-    QCommandLineOption display("display", "Preferred displays", "displays");
-    QCommandLineOption disableDisplays("disable-displays", "Displays to disable", "displays");
-    QCommandLineOption disableInputs("disable-inputs", "Inputs to disable", "inputs");
-
-    QCommandLineParser parser;
-    parser.addOption(display);
-    parser.addOption(disableDisplays);
-    parser.addOption(disableInputs);
-    parser.parse(arguments);
-
-    if (parser.isSet(display)) {
-        #if (QT_VERSION < QT_VERSION_CHECK(5, 14, 0))
-        auto preferredDisplays = parser.value(display).split(',', QString::SkipEmptyParts);
-        #else
-        auto preferredDisplays = parser.value(display).split(',', Qt::SkipEmptyParts);
-        #endif
-        qInfo() << "Setting prefered display plugins:" << preferredDisplays;
-        PluginManager::getInstance()->setPreferredDisplayPlugins(preferredDisplays);
+void Application::initPlugins(const ClientOptions& options) {
+    if (!options.displays.isEmpty()) {
+        qInfo() << "Setting prefered display plugins:" << options.displays;
+        PluginManager::getInstance()->setPreferredDisplayPlugins(options.displays);
     }
-
-    if (parser.isSet(disableDisplays)) {
-        #if (QT_VERSION < QT_VERSION_CHECK(5, 14, 0))
-        auto disabledDisplays = parser.value(disableDisplays).split(',', QString::SkipEmptyParts);
-        #else
-        auto disabledDisplays = parser.value(disableDisplays).split(',', Qt::SkipEmptyParts);
-        #endif
-        qInfo() << "Disabling following display plugins:"  << disabledDisplays;
-        PluginManager::getInstance()->disableDisplays(disabledDisplays);
+    if (!options.disabledDisplays.isEmpty()) {
+        qInfo() << "Disabling following display plugins:"  << options.disabledDisplays;
+        PluginManager::getInstance()->disableDisplays(options.disabledDisplays);
     }
-
-    if (parser.isSet(disableInputs)) {
-        #if (QT_VERSION < QT_VERSION_CHECK(5, 14, 0))
-        auto disabledInputs = parser.value(disableInputs).split(',', QString::SkipEmptyParts);
-        #else
-        auto disabledInputs = parser.value(disableInputs).split(',', Qt::SkipEmptyParts);
-        #endif
-        qInfo() << "Disabling following input plugins:" << disabledInputs;
-        PluginManager::getInstance()->disableInputs(disabledInputs);
+    if (!options.disabledInputs.isEmpty()) {
+        qInfo() << "Disabling following input plugins:" << options.disabledInputs;
+        PluginManager::getInstance()->disableInputs(options.disabledInputs);
     }
 }
 
@@ -8869,37 +8792,15 @@ void Application::setActiveDisplayPlugin(const QString& pluginName) {
     }
 }
 
-void Application::handleLocalServerConnection() const {
-    auto server = qobject_cast<QLocalServer*>(sender());
-
-    qCDebug(interfaceapp) << "Got connection on local server from additional instance - waiting for parameters";
-
-    auto socket = server->nextPendingConnection();
-
-    connect(socket, &QLocalSocket::readyRead, this, &Application::readArgumentsFromLocalSocket);
-
+void Application::raiseWindow() const {
     qApp->getWindow()->raise();
     qApp->getWindow()->activateWindow();
 }
 
-void Application::readArgumentsFromLocalSocket() const {
-    auto socket = qobject_cast<QLocalSocket*>(sender());
-
-    auto message = socket->readAll();
-    socket->deleteLater();
-
-    qCDebug(interfaceapp) << "Read from connection: " << message;
-
-    // If we received a message, try to open it as a URL
-    if (message.length() > 0) {
-        if (
-            DependencyManager::get<AddressManager>()->handleLookupString(
-                QString::fromUtf8(message)
-            )
-        ) {
-            qApp->getWindow()->raise();
-            qApp->getWindow()->activateWindow();
-        }
+void Application::goToHandedOffUrl(const QString& url) const {
+    // a later launch's --url, handed over by SingleInstance: go there, as that launch would have
+    if (DependencyManager::get<AddressManager>()->handleLookupString(url)) {
+        raiseWindow();
     }
 }
 

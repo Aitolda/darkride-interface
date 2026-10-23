@@ -10,14 +10,8 @@
 
 #include <thread>
 
-#include <QCommandLineParser>
-#include <QtCore/QProcess>
 #include <QDebug>
 #include <QDir>
-#include <QFileInfo>
-#include <QLocalSocket>
-#include <QLocalServer>
-#include <QSharedMemory>
 #include <QTranslator>
 
 #include <BuildInfo.h>
@@ -28,9 +22,11 @@
 
 #include "AddressManager.h"
 #include "Application.h"
+#include "ClientOptions.h"
 #include "CrashHandler.h"
 #include "InterfaceLogging.h"
 #include "MainWindow.h"
+#include "SingleInstance.h"
 
 #include "Profile.h"
 
@@ -64,85 +60,12 @@ int main(int argc, const char* argv[]) {
 
     setupHifiApplication(BuildInfo::INTERFACE_NAME);
 
-    QStringList arguments;
-    for (int i = 0; i < argc; ++i) {
-        arguments << argv[i];
-    }
+    ClientOptions::parse(argc, argv);
+    const ClientOptions& options = ClientOptions::get();
 
-    QCommandLineParser parser;
-    parser.setApplicationDescription("Darkride");
-    QCommandLineOption versionOption = parser.addVersionOption();
-    QCommandLineOption helpOption = parser.addHelpOption();
-
-    QCommandLineOption urlOption("url", "", "value");
-    QCommandLineOption allowMultipleInstancesOption("allowMultipleInstances", "Allow multiple instances to run");
-    QCommandLineOption overrideAppLocalDataPathOption("cache", "set test cache <dir>", "dir");
-    QCommandLineOption overrideScriptsPathOption(SCRIPTS_SWITCH, "set scripts <path>", "path");
-    QCommandLineOption responseTokensOption("tokens", "set response tokens <json>", "json");
-    QCommandLineOption displayNameOption("displayName", "set user display name <string>", "string");
-    QCommandLineOption setBookmarkOption("setBookmark", "set bookmark key=value pair", "string");
-    QCommandLineOption defaultScriptOverrideOption("defaultScriptsOverride", "override defaultsScripts.js", "string");
-    // read by Application (clientLabel): listed here so --help shows it and the parser doesn't call it unknown
-    QCommandLineOption clientLabelOption("clientLabel", "set the window title's client label <text>", "text");
-
-    parser.addOption(urlOption);
-    parser.addOption(overrideAppLocalDataPathOption);
-    parser.addOption(overrideScriptsPathOption);
-    parser.addOption(allowMultipleInstancesOption);
-    parser.addOption(responseTokensOption);
-    parser.addOption(displayNameOption);
-    parser.addOption(setBookmarkOption);
-    parser.addOption(defaultScriptOverrideOption);
-    parser.addOption(clientLabelOption);
-
-    if (!parser.parse(arguments)) {
-        std::cout << parser.errorText().toStdString() << std::endl; // Avoid Qt log spam
-    }
-
-    if (parser.isSet(versionOption)) {
-        parser.showVersion();
-        Q_UNREACHABLE();
-    }
-    if (parser.isSet(helpOption)) {
-        QCoreApplication mockApp(argc, const_cast<char**>(argv)); // required for call to showHelp()
-        parser.showHelp();
-        Q_UNREACHABLE();
-    }
-
-    StartupProfiler::phase("main: application path (a temporary QCoreApplication)");
-    QString applicationPath;
-    // A temporary application instance is needed to get the location of the running executable
-    // Tests using high_resolution_clock show that this takes about 30-50 microseconds (on my machine, YMMV)
-    // If we wanted to avoid the QCoreApplication, we would need to write our own
-    // cross-platform implementation.
-    {
-        QCoreApplication tempApp(argc, const_cast<char**>(argv));
-#ifdef Q_OS_MACOS
-        if (QFileInfo::exists(QCoreApplication::applicationDirPath() + "/../../../config.json")) {
-            applicationPath = QCoreApplication::applicationDirPath() + "/../../../";
-        } else {
-            applicationPath = QCoreApplication::applicationDirPath();
-        }
-#else
-        applicationPath = QCoreApplication::applicationDirPath();
-#endif
-    }
-    // Early check for --traceFile argument 
     StartupProfiler::phase("main: tracer");
     auto tracer = DependencyManager::set<tracing::Tracer>();
-    const char * traceFile = nullptr;
-    const QString traceFileFlag("--traceFile");
-    float traceDuration = 0.0f;
-    for (int a = 1; a < argc; ++a) {
-        if (traceFileFlag == argv[a] && argc > a + 1) {
-            traceFile = argv[a + 1];
-            if (argc > a + 2) {
-                traceDuration = atof(argv[a + 2]);
-            }
-            break;
-        }
-    }
-    if (traceFile != nullptr) {
+    if (!options.traceFile.isEmpty()) {
         tracer->startTracing();
     }
    
@@ -160,81 +83,24 @@ int main(int argc, const char* argv[]) {
 
 
     StartupProfiler::phase("main: single-instance check, scripts path");
-    const QString& applicationName = getInterfaceSharedMemoryName();
-    bool instanceMightBeRunning = true;
-#ifdef Q_OS_WIN
-    // Try to create a shared memory block - if it can't be created, there is an instance of
-    // interface already running. We only do this on Windows for now because of the potential
-    // for crashed instances to leave behind shared memory instances on unix.
-    QSharedMemory sharedMemory{ applicationName };
-    instanceMightBeRunning = !sharedMemory.create(1, QSharedMemory::ReadOnly);
-#endif
-
-    // allow multiple interfaces to run if this environment variable is set.
-    bool allowMultipleInstances = parser.isSet(allowMultipleInstancesOption) ||
-                                  QProcessEnvironment::systemEnvironment().contains("HIFI_ALLOW_MULTIPLE_INSTANCES");
-    if (allowMultipleInstances) {
-        instanceMightBeRunning = false;
+    SingleInstance singleInstance(options.allowMultipleInstances, options.hasUrl, options.url);
+    if (singleInstance.anotherIsRunning()) {
+        return EXIT_SUCCESS;
     }
     // this needs to be done here in main, as the mechanism for setting the
     // scripts directory appears not to work.  See the bug report
     // https://highfidelity.fogbugz.com/f/cases/5759/Issues-changing-scripts-directory-in-ScriptsEngine
-    if (parser.isSet(overrideScriptsPathOption)) {
-        QDir scriptsPath(parser.value(overrideScriptsPathOption));
+    if (!options.scriptsPath.isEmpty()) {
+        QDir scriptsPath(options.scriptsPath);
         if (scriptsPath.exists()) {
             PathUtils::defaultScriptsLocation(scriptsPath.path());
         }
     }
 
-    if (instanceMightBeRunning) {
-        // Try to connect and send message to existing interface instance
-        QLocalSocket socket;
-
-        socket.connectToServer(applicationName);
-
-        static const int LOCAL_SERVER_TIMEOUT_MS = 500;
-
-        // Try to connect - if we can't connect, interface has probably just gone down
-        if (socket.waitForConnected(LOCAL_SERVER_TIMEOUT_MS)) {
-            if (parser.isSet(urlOption)) {
-                QUrl url = QUrl(parser.value(urlOption));
-                // disabled because we pass domain ids directly into --url
-                // if (
-                //     url.isValid() && 
-                //     (
-                //         url.scheme() == URL_SCHEME_HIFI || 
-                //         url.scheme() == URL_SCHEME_HIFIAPP ||
-                //         url.scheme() == HIFI_URL_SCHEME_HTTP ||
-                //         url.scheme() == HIFI_URL_SCHEME_HTTPS ||
-                //         url.scheme() == HIFI_URL_SCHEME_FILE
-                //     )
-                // ) {
-                qDebug() << "Writing URL to local socket";
-                socket.write(url.toString().toUtf8());
-                if (!socket.waitForBytesWritten(5000)) {
-                    qDebug() << "Error writing URL to local socket";
-                }
-                // }
-            }
-
-            socket.close();
-
-            qDebug() << "Interface instance appears to be running, exiting";
-
-            return EXIT_SUCCESS;
-        }
-
-#ifdef Q_OS_WIN
-        return EXIT_SUCCESS;
-#endif
-    }
-
 
     StartupProfiler::phase("main: Application::initPlugins");
-    // Oculus initialization MUST PRECEDE OpenGL context creation.
-    // The nature of the Application constructor means this has to be either here,
-    // or in the main window ctor, before GL startup.
-    Application::initPlugins(arguments);
+    // the preferred and disabled plug-ins, before the Application constructor creates the GL context and activates them
+    Application::initPlugins(options);
 
     int exitCode;
     {
@@ -246,9 +112,6 @@ int main(int argc, const char* argv[]) {
         // Extend argv to enable WebGL rendering
         std::vector<const char*> argvExtended(&argv[0], &argv[argc]);
         argvExtended.push_back("--ignore-gpu-blacklist");
-#ifdef Q_OS_ANDROID
-        // argvExtended.push_back("--suppress-settings-reset");
-#endif
         int argcExtended = (int)argvExtended.size();
 
         PROFILE_SYNC_END(startup, "main startup", "");
@@ -261,38 +124,28 @@ int main(int argc, const char* argv[]) {
         startCrashHookMonitor(&app);
 
         QTimer exitTimer;
-        if (traceDuration > 0.0f) {
+        if (options.traceDuration > 0.0f) {
             exitTimer.setSingleShot(true);
             QObject::connect(&exitTimer, &QTimer::timeout, &app, &Application::quit);
-            exitTimer.start(int(1000 * traceDuration));
+            exitTimer.start(int(1000 * options.traceDuration));
         }
 
 
-        // Setup local server
-        QLocalServer server { &app };
-
-        // We failed to connect to a local server, so we remove any existing servers.
-        server.removeServer(applicationName);
-        server.listen(applicationName);
-
-        QObject::connect(&server, &QLocalServer::newConnection,
-                         &app, &Application::handleLocalServerConnection, Qt::DirectConnection);
+        // later launches hand their address to this client (SingleInstance)
+        QObject::connect(&singleInstance, &SingleInstance::connected, &app, &Application::raiseWindow);
+        QObject::connect(&singleInstance, &SingleInstance::urlHandedOff, &app, &Application::goToHandedOffUrl);
+        singleInstance.listen();
 
         printSystemInformation();
 
-        auto appPointer = dynamic_cast<Application*>(&app);
-        if (appPointer) {
-            if (parser.isSet(urlOption)) {
-                appPointer->overrideEntry();
-            }
-            if (parser.isSet(displayNameOption)) {
-                QString displayName = QString(parser.value(displayNameOption));
-                appPointer->forceDisplayName(displayName);
-            }
-            if (parser.isSet(responseTokensOption)) {
-                QString tokens = QString(parser.value(responseTokensOption));
-                appPointer->forceLoginWithTokens(tokens);
-            }
+        if (options.hasUrl) {
+            app.overrideEntry();
+        }
+        if (!options.displayName.isEmpty()) {
+            app.forceDisplayName(options.displayName);
+        }
+        if (options.hasTokens) {
+            app.forceLoginWithTokens(options.tokens);
         }
 
         QTranslator translator;
@@ -301,11 +154,11 @@ int main(int argc, const char* argv[]) {
         qCDebug(interfaceapp, "Created QT Application.");
         StartupProfiler::logReport();
         exitCode = app.exec();
-        server.close();
+        singleInstance.close();
 
-        if (traceFile != nullptr) {
+        if (!options.traceFile.isEmpty()) {
             tracer->stopTracing();
-            tracer->serialize(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/" + traceFile);
+            tracer->serialize(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/" + options.traceFile);
         }
     }
 

@@ -10,6 +10,7 @@
 //
 
 #include "Menu.h"
+#include "ClientOptions.h"
 
 #include <gpu/Context.h>
 
@@ -110,7 +111,7 @@ Menu::Menu() {
     MenuWrapper* fileMenu = addMenu("File");
 
     // File > Login menu items
-    if (qApp->arguments().indexOf("--tokens") == -1) {
+    if (!ClientOptions::get().hasTokens) {
         addActionToQMenuAndActionHash(fileMenu, MenuOption::Login);
 
         // connect to the appropriate signal of the AccountManager so that we can change the Login/Logout menu item
