@@ -97,7 +97,14 @@ int PluginManager::instantiate() {
 #if defined(Q_OS_ANDROID)
         QString pluginPath = QCoreApplication::applicationDirPath() + "/";
 #elif defined(Q_OS_MACOS)
-        QString pluginPath = QCoreApplication::applicationDirPath() + "/../PlugIns/";
+        // An app bundle keeps its plug-ins in Contents/PlugIns; the servers are bare executables with theirs beside them
+        // in plugins/ (SetupHifiClientServerPlugin.cmake's SERVER_PLUGIN_PATH), as on the other platforms. Until 10-23
+        // every executable looked in ../PlugIns, which for a server in a build tree is the tree's own plugins/ folder
+        // (the file system ignores case), with no plug-in in it: an audio mixer on a Mac loaded no codec at all, and
+        // every client of it sent and got raw PCM.
+        const QString applicationDir = QCoreApplication::applicationDirPath();
+        QString pluginPath = applicationDir.endsWith("/Contents/MacOS") ? applicationDir + "/../PlugIns/"
+                                                                        : applicationDir + "/plugins/";
 #else
         QString pluginPath = QCoreApplication::applicationDirPath() + "/plugins/";
 #endif

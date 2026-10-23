@@ -25,7 +25,6 @@
 #include "AddressManager.h"
 #include "Application.h"
 #include "ClientOptions.h"
-#include "CrashHandler.h"
 #include "InterfaceLogging.h"
 #include "MainWindow.h"
 #include "SingleInstance.h"
@@ -85,9 +84,6 @@ int main(int argc, const char* argv[]) {
     // comes sooner waits on the backend's own lock.
     QThreadPool::globalInstance()->start([] { QSslConfiguration::defaultConfiguration(); });
 
-    StartupProfiler::phase("main: crash handler");
-    auto crashHandlerStarted = startCrashHandler(argv[0]);
-    qDebug() << "Crash handler started:" << crashHandlerStarted;
 
 
     StartupProfiler::phase("main: single-instance check, scripts path");
@@ -128,8 +124,7 @@ int main(int argc, const char* argv[]) {
         Application app(argcExtended, const_cast<char**>(argvExtended.data()), startupTime, runningMarkerExisted);
         PROFILE_SYNC_END(startup, "app full ctor", "");
 
-        StartupProfiler::phase("main: crash hook monitor, local server, system information, translator");
-        startCrashHookMonitor(&app);
+        StartupProfiler::phase("main: local server, system information, translator");
 
         QTimer exitTimer;
         if (options.traceDuration > 0.0f) {

@@ -27,9 +27,6 @@ HMDScriptingInterface::HMDScriptingInterface() {
     connect(qApp, &Application::activeDisplayPluginChanged, [this]{
         emit displayModeChanged(isHMDMode());
     });
-    connect(qApp, &Application::miniTabletEnabledChanged, [this](bool enabled) {
-        emit miniTabletEnabledChanged(enabled);
-    });
     connect(qApp, &Application::awayStateWhenFocusLostInVRChanged, [this](bool enabled) {
         emit awayStateWhenFocusLostInVRChanged(enabled);
     });
@@ -132,14 +129,6 @@ void HMDScriptingInterface::setShouldShowTablet(bool value) {
         _tabletContextualMode = false;
         emit showTabletChanged(value);
     }
-}
-
-void HMDScriptingInterface::setMiniTabletEnabled(bool enabled) {
-    qApp->setMiniTabletEnabled(enabled);
-}
-
-bool HMDScriptingInterface::getMiniTabletEnabled() {
-    return qApp->getMiniTabletEnabled();
 }
 
 void HMDScriptingInterface::setAwayStateWhenFocusLostInVREnabled(bool enabled) {

@@ -219,7 +219,7 @@ void Application::runTests() {
     runUnitTests();
 }
 
-// The preferences' setters (setFieldOfView to setMiniTabletEnabled) are in ApplicationSettings.cpp.
+// The preferences' setters (setFieldOfView to setAwayStateWhenFocusLostInVREnabled) are in ApplicationSettings.cpp.
 
 // showHelp (the controls reference on the tablet) is in ApplicationUi.cpp.
 

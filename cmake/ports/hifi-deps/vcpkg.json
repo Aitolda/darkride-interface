@@ -9,10 +9,6 @@
     "etc2comp",
     "glad",
     "glm",
-    {
-      "name": "hifi-audio-codec",
-      "platform": "!(osx & arm64)"
-    },
     "libsndfile",
     "nvtt",
     {
@@ -23,12 +19,10 @@
       "name": "openssl",
       "platform": "windows | osx"
     },
-    "polyvox",
     {
       "name": "tbb",
       "platform": "!android"
     },
-    "vhacd",
     {
       "name": "webrtc",
       "platform": "!android & !(osx & arm64)"

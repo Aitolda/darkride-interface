@@ -46,7 +46,6 @@
 #include "WebEntityItem.h"
 #include "ParticleEffectEntityItem.h"
 #include "LineEntityItem.h"
-#include "PolyVoxEntityItem.h"
 #include "GridEntityItem.h"
 #include "GizmoEntityItem.h"
 #include "LightEntityItem.h"
@@ -116,7 +115,6 @@ class EntityItemProperties {
     friend class ParticleEffectEntityItem;
     friend class LineEntityItem;
     friend class PolyLineEntityItem;
-    friend class PolyVoxEntityItem;
     friend class GridEntityItem;
     friend class GizmoEntityItem;
     friend class TrackEntityItem;
@@ -376,20 +374,6 @@ public:
     DEFINE_PROPERTY_REF_ENUM(PROP_TONE_MAPPING_MODE, ToneMappingMode, toneMappingMode, uint32_t, (uint32_t)TONE_MAPPING_INHERIT);
     DEFINE_PROPERTY_REF_ENUM(PROP_AVATAR_PRIORITY, AvatarPriority, avatarPriority, uint32_t, (uint32_t)COMPONENT_MODE_INHERIT);
 
-    // Polyvox
-    DEFINE_PROPERTY_REF(PROP_VOXEL_VOLUME_SIZE, VoxelVolumeSize, voxelVolumeSize, glm::vec3, PolyVoxEntityItem::DEFAULT_VOXEL_VOLUME_SIZE);
-    DEFINE_PROPERTY_REF(PROP_VOXEL_DATA, VoxelData, voxelData, QByteArray, PolyVoxEntityItem::DEFAULT_VOXEL_DATA);
-    DEFINE_PROPERTY_REF(PROP_VOXEL_SURFACE_STYLE, VoxelSurfaceStyle, voxelSurfaceStyle, uint16_t, PolyVoxEntityItem::DEFAULT_VOXEL_SURFACE_STYLE);
-    DEFINE_PROPERTY_REF(PROP_X_TEXTURE_URL, XTextureURL, xTextureURL, QString, "");
-    DEFINE_PROPERTY_REF(PROP_Y_TEXTURE_URL, YTextureURL, yTextureURL, QString, "");
-    DEFINE_PROPERTY_REF(PROP_Z_TEXTURE_URL, ZTextureURL, zTextureURL, QString, "");
-    DEFINE_PROPERTY_REF(PROP_X_N_NEIGHBOR_ID, XNNeighborID, xNNeighborID, EntityItemID, UNKNOWN_ENTITY_ID);
-    DEFINE_PROPERTY_REF(PROP_Y_N_NEIGHBOR_ID, YNNeighborID, yNNeighborID, EntityItemID, UNKNOWN_ENTITY_ID);
-    DEFINE_PROPERTY_REF(PROP_Z_N_NEIGHBOR_ID, ZNNeighborID, zNNeighborID, EntityItemID, UNKNOWN_ENTITY_ID);
-    DEFINE_PROPERTY_REF(PROP_X_P_NEIGHBOR_ID, XPNeighborID, xPNeighborID, EntityItemID, UNKNOWN_ENTITY_ID);
-    DEFINE_PROPERTY_REF(PROP_Y_P_NEIGHBOR_ID, YPNeighborID, yPNeighborID, EntityItemID, UNKNOWN_ENTITY_ID);
-    DEFINE_PROPERTY_REF(PROP_Z_P_NEIGHBOR_ID, ZPNeighborID, zPNeighborID, EntityItemID, UNKNOWN_ENTITY_ID);
-
     // Web
     DEFINE_PROPERTY_REF(PROP_SOURCE_URL, SourceUrl, sourceUrl, QString, WebEntityItem::DEFAULT_SOURCE_URL);
     DEFINE_PROPERTY_REF(PROP_DPI, DPI, dpi, uint16_t, ENTITY_ITEM_DEFAULT_DPI);
@@ -503,7 +487,6 @@ public:
 
     QString getSimulatorIDAsString() const { return _simulationOwner.getID().toString().mid(1,36).toUpper(); }
 
-    void setVoxelDataDirty() { _voxelDataChanged = true; }
 
     void setLinePointsDirty() {_linePointsChanged = true; }
 
@@ -739,9 +722,6 @@ inline QDebug operator<<(QDebug debug, const EntityItemProperties& properties) {
     DEBUG_PROPERTY_IF_CHANGED(debug, properties, CloneOriginID, cloneOriginID, "");
     DEBUG_PROPERTY_IF_CHANGED(debug, properties, CloneGrabbable, cloneGrabbable, "");
 
-    DEBUG_PROPERTY_IF_CHANGED(debug, properties, VoxelVolumeSize, voxelVolumeSize, "");
-    DEBUG_PROPERTY_IF_CHANGED(debug, properties, VoxelData, voxelData, "");
-    DEBUG_PROPERTY_IF_CHANGED(debug, properties, VoxelSurfaceStyle, voxelSurfaceStyle, "");
     DEBUG_PROPERTY_IF_CHANGED(debug, properties, Href, href, "");
     DEBUG_PROPERTY_IF_CHANGED(debug, properties, Description, description, "");    
     // DEBUG_PROPERTY_IF_CHANGED(debug, properties, EntityPriority, entityPriority, "");// TIVOLI tagging
@@ -749,15 +729,6 @@ inline QDebug operator<<(QDebug debug, const EntityItemProperties& properties) {
     if (properties.actionDataChanged()) {
         debug << " " << "actionData" << ":" << properties.getActionData().toHex() << "" << "\n";
     }
-    DEBUG_PROPERTY_IF_CHANGED(debug, properties, XTextureURL, xTextureURL, "");
-    DEBUG_PROPERTY_IF_CHANGED(debug, properties, YTextureURL, yTextureURL, "");
-    DEBUG_PROPERTY_IF_CHANGED(debug, properties, ZTextureURL, zTextureURL, "");
-    DEBUG_PROPERTY_IF_CHANGED(debug, properties, XNNeighborID, xNNeighborID, "");
-    DEBUG_PROPERTY_IF_CHANGED(debug, properties, YNNeighborID, yNNeighborID, "");
-    DEBUG_PROPERTY_IF_CHANGED(debug, properties, ZNNeighborID, zNNeighborID, "");
-    DEBUG_PROPERTY_IF_CHANGED(debug, properties, XPNeighborID, xPNeighborID, "");
-    DEBUG_PROPERTY_IF_CHANGED(debug, properties, YPNeighborID, yPNeighborID, "");
-    DEBUG_PROPERTY_IF_CHANGED(debug, properties, ZPNeighborID, zPNeighborID, "");
 
     DEBUG_PROPERTY_IF_CHANGED(debug, properties, ParentID, parentID, "");
     DEBUG_PROPERTY_IF_CHANGED(debug, properties, ParentJointIndex, parentJointIndex, "");

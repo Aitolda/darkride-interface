@@ -164,12 +164,6 @@ void setupPreferences() {
     }
 
     {
-        auto getter = []() -> bool { return qApp->getMiniTabletEnabled(); };
-        auto setter = [](bool value) { qApp->setMiniTabletEnabled(value); };
-        preferences->addPreference(new CheckPreference(UI_CATEGORY, "Use mini tablet", getter, setter));
-    }
-
-    {
         auto getter = []() -> int { return DependencyManager::get<Keyboard>()->getUse3DKeyboard(); };
         auto setter = [](int value) { DependencyManager::get<Keyboard>()->setUse3DKeyboard(value); };
         preferences->addPreference(new CheckPreference(UI_CATEGORY, "Use Virtual Keyboard", getter, setter));

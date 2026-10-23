@@ -20,7 +20,6 @@
 #include <NodeList.h>
 #include <UUID.h>
 
-#include "CrashHandler.h"
 #include "Menu.h"
 
 const Discoverability::Mode DEFAULT_DISCOVERABILITY_MODE = Discoverability::Connections;
@@ -115,10 +114,6 @@ void DiscoverabilityManager::updateLocation() {
                                    callbackParameters, QJsonDocument(rootObject).toJson());
 
     }
-
-    // Update the crash logger
-    QUrl currentAddress = addressManager->currentFacingPublicAddress();
-    setCrashAnnotation("address", currentAddress.toString().toStdString());
 }
 
 void DiscoverabilityManager::handleHeartbeatResponse(QNetworkReply* requestReply) {
