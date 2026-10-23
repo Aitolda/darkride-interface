@@ -248,7 +248,7 @@
 using namespace std;
 
 QSharedPointer<OffscreenUi> getOffscreenUI();                        // Application.cpp's
-float verticalFieldOfView(float horizontalFov, float aspectRatio);   // Application.cpp's; resizeGL reads it too
+float verticalFieldOfView(float horizontalFov, float aspectRatio);   // ApplicationDisplay.cpp's, beside resizeGL
 
 // Application.cpp's constants that only the frame loop reads
 static const float MIRROR_FULLSCREEN_DISTANCE = 0.789f;
