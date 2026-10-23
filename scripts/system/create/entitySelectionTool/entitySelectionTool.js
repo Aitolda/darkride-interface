@@ -1209,6 +1209,12 @@ SelectionDisplay = (function () {
 		isVisibleInSecondaryCamera: false
 	});
 
+	// With nothing selected the per-frame update hides the handles when the selection empties and then at most once a
+	// second (so a handle a tool showed late is still hidden), not every frame: each hide edits every overlay below,
+	// about 1,500 overlay edits a second in a client standing still (avatar-ai's idle profile, 10-23)
+	var HANDLES_REHIDE_MS = 1000;
+	var handlesHiddenAt = 0;   // when the handles were last hidden for an empty selection; 0 while there is one
+
 	var allOverlays = [
 		handleTranslateXCone,
 		handleTranslateXCylinder,
@@ -2128,10 +2134,15 @@ SelectionDisplay = (function () {
 		}
 
 		if (SelectionManager.selections.length === 0) {
-			that.setOverlaysVisible(false);
-			that.clearDebugPickPlane();
+			var now = Date.now();
+			if (handlesHiddenAt === 0 || now - handlesHiddenAt >= HANDLES_REHIDE_MS) {
+				that.setOverlaysVisible(false);
+				that.clearDebugPickPlane();
+				handlesHiddenAt = now;
+			}
 			return;
 		}
+		handlesHiddenAt = 0;
 
 		//ages.some(checkAdult)
 		if (SelectionManager.hasSelection()) {
