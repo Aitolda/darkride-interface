@@ -34,7 +34,6 @@
 #include "LODManager.h"
 #include "LocationBookmarks.h"
 #include <MessagesClient.h>
-#include <Model.h>
 #include <NodeList.h>
 #include <OffscreenUi.h>
 #include <PathUtils.h>
@@ -42,7 +41,6 @@
 #include <PointerManager.h>
 #include <Preferences.h>
 #include <RecordingScriptingInterface.h>
-#include <ResourceCache.h>
 #include <ResourceManager.h>
 #include <ResourceRequestObserver.h>
 #include <ResourceScriptingInterface.h>
@@ -68,8 +66,6 @@
 #include <recording/Deck.h>
 #include <recording/Recorder.h>
 #include <ui/OffscreenQmlSurfaceCache.h>
-#include <CursorManager.h>
-#include <VirtualPadManager.h>
 
 #include "Application.h"
 #include "ApplicationMeshProvider.h"
