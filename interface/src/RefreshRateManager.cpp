@@ -12,6 +12,8 @@
 
 #include "RefreshRateManager.h"
 
+#include "InterfaceLogging.h"
+
 #include <QtGui/QScreen>
 #include <QtGui/QWindow>
 
@@ -211,6 +213,14 @@ void RefreshRateManager::setRefreshRateRegime(RefreshRateManager::RefreshRateReg
 
 }
 
+void RefreshRateManager::setScreenCap(int maxRate) {
+    if (_screenCap != maxRate) {
+        _screenCap = maxRate;
+        qCDebug(interfaceapp) << "Screen cap:" << (maxRate > 0 ? QString::number(maxRate) + " Hz" : QString("none"));
+        updateRefreshRateController();
+    }
+}
+
 void RefreshRateManager::setUXMode(RefreshRateManager::UXMode uxMode) {
     if (isValidUXMode(uxMode) && (_uxMode != uxMode)) {
         _uxMode = uxMode;
@@ -241,6 +251,9 @@ void RefreshRateManager::updateRefreshRateController() const {
             if (targetRefreshRate < 60) {
                 targetRefreshRate = 60;
             }
+        }
+        if (_screenCap > 0 && _uxMode == UXMode::DESKTOP && targetRefreshRate > _screenCap) {
+            targetRefreshRate = _screenCap;
         }
 
         _refreshRateOperator(targetRefreshRate, displayRefreshRate);
