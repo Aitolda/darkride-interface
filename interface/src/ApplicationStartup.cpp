@@ -1330,9 +1330,9 @@ void Application::installOperators() {
         if (event.shouldFocus()) {
             auto keyboard = DependencyManager::get<Keyboard>();
             if (getEntities()->wantsKeyboardFocus(id)) {
-                setKeyboardFocusEntity(id);
+                _keyboardFocus.setFocusedEntity(id);
             } else if (!keyboard->containsID(id)) { // FIXME: this is a hack to make the keyboard work for now, since the keys would otherwise steal focus
-                setKeyboardFocusEntity(UNKNOWN_ENTITY_ID);
+                _keyboardFocus.setFocusedEntity(UNKNOWN_ENTITY_ID);
             }
         }
     };
@@ -1341,8 +1341,8 @@ void Application::installOperators() {
 
     auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
     connect(entityScriptingInterface.data(), &EntityScriptingInterface::deletingEntity, this, [this](const EntityItemID& entityItemID) {
-        if (entityItemID == _keyboardFocusedEntity.get()) {
-            setKeyboardFocusEntity(UNKNOWN_ENTITY_ID);
+        if (entityItemID == _keyboardFocus.focusedEntity()) {
+            _keyboardFocus.setFocusedEntity(UNKNOWN_ENTITY_ID);
         }
     }, Qt::QueuedConnection);
 
@@ -1444,7 +1444,7 @@ void Application::installOperators() {
     });
 
     connect(this, &Application::aboutToQuit, [this]() {
-        setKeyboardFocusEntity(UNKNOWN_ENTITY_ID);
+        _keyboardFocus.setFocusedEntity(UNKNOWN_ENTITY_ID);
     });
 
     // Make sure we don't time out during slow operations at startup

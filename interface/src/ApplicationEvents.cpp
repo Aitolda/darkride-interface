@@ -56,31 +56,6 @@ static inline bool isKeyEvent(QEvent::Type type) {
     return type == QEvent::KeyPress || type == QEvent::KeyRelease;
 }
 
-bool Application::handleKeyEventForFocusedEntity(QEvent* event) {
-    if (_keyboardFocusedEntity.get() != UNKNOWN_ENTITY_ID) {
-        switch (event->type()) {
-            case QEvent::KeyPress:
-            case QEvent::KeyRelease:
-                {
-                    auto eventHandler = getEntities()->getEventHandler(_keyboardFocusedEntity.get());
-                    if (eventHandler) {
-                        event->setAccepted(false);
-                        QCoreApplication::sendEvent(eventHandler, event);
-                        if (event->isAccepted()) {
-                            _lastAcceptedKeyPress = usecTimestampNow();
-                            return true;
-                        }
-                    }
-                    break;
-                }
-            default:
-                break;
-        }
-    }
-
-    return false;
-}
-
 bool Application::handleFileOpenEvent(QFileOpenEvent* fileEvent) {
     QUrl url = fileEvent->url();
     if (!url.isEmpty()) {
@@ -135,7 +110,7 @@ bool Application::event(QEvent* event) {
     }
 
     // Allow focused Entities to handle keyboard input
-    if (isKeyEvent(event->type()) && handleKeyEventForFocusedEntity(event)) {
+    if (isKeyEvent(event->type()) && _keyboardFocus.deliverKeyEvent(event)) {
         return true;
     }
 
@@ -667,7 +642,7 @@ void Application::mousePressEvent(QMouseEvent* event) {
 
     QMouseEvent mappedEvent(event->type(), transformedPos, event->screenPos(), event->button(), event->buttons(), event->modifiers());
     QUuid result = getEntities()->mousePressEvent(&mappedEvent);
-    setKeyboardFocusEntity(getEntities()->wantsKeyboardFocus(result) ? result : UNKNOWN_ENTITY_ID);
+    _keyboardFocus.setFocusedEntity(getEntities()->wantsKeyboardFocus(result) ? result : UNKNOWN_ENTITY_ID);
 
     _controllerScriptingInterface->emitMousePressEvent(&mappedEvent); // send events to any registered scripts
 

@@ -15,7 +15,6 @@
 
 #include "Application.h"
 #include "ApplicationConstants.h"
-#include "KeyboardFocusHighlight.h"
 #include <thread>
 #include <QtCore/QThreadPool>
 #include <QProcessEnvironment>
@@ -138,12 +137,7 @@ void Application::cleanupBeforeQuit() {
     // FIXME: once we move to shared pointer for the INputDevice we shoud remove this naked delete:
     _applicationStateDevice.reset();
 
-    {
-        if (_keyboardFocusHighlightID != UNKNOWN_ENTITY_ID) {
-            DependencyManager::get<EntityScriptingInterface>()->deleteEntity(_keyboardFocusHighlightID);
-            _keyboardFocusHighlightID = UNKNOWN_ENTITY_ID;
-        }
-    }
+    _keyboardFocus.deleteHighlight();
 
     {
         auto nodeList = DependencyManager::get<NodeList>();

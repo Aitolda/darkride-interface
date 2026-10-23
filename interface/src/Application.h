@@ -59,6 +59,7 @@ class ClientOptions;
 #include "CursorManager.h"
 #include "WindowCursor.h"
 #include "SnapshotRequests.h"
+#include "KeyboardFocus.h"
 #include "gpu/Context.h"
 #include "LoginStateManager.h"
 #include "Menu.h"
@@ -477,10 +478,9 @@ public slots:
 
     static void runTests();
 
-    void setKeyboardFocusHighlight(const glm::vec3& position, const glm::quat& rotation, const glm::vec3& dimensions);
-
-    QUuid getKeyboardFocusEntity() const;  // thread-safe
-    void setKeyboardFocusEntity(const QUuid& id);
+    KeyboardFocus& getKeyboardFocus() { return _keyboardFocus; }   // which entity has the keyboard, and its highlight (KeyboardFocus.h)
+    const QUuid& getLoginDialogID() const { return _loginDialogID; }   // the headset's sign-in dialog entity, null when there is none
+    std::shared_ptr<KeyboardMouseDevice> getKeyboardMouseDevice() const { return _keyboardMouseDevice; }
 
     void addAssetToWorldMessageClose();
 
@@ -581,7 +581,6 @@ private:
     void installOperators();
     void finishStartup();
     void resumeAfterLoginDialogActionTaken();
-    bool handleKeyEventForFocusedEntity(QEvent* event);
     bool handleFileOpenEvent(QFileOpenEvent* event);
     void cleanupBeforeQuit();
 
@@ -773,8 +772,7 @@ private:
 
     DialogsManagerScriptingInterface* _dialogsManagerScriptingInterface = new DialogsManagerScriptingInterface();
 
-    ThreadSafeValueCache<EntityItemID> _keyboardFocusedEntity;
-    quint64 _lastAcceptedKeyPress = 0;
+    KeyboardFocus _keyboardFocus;
     bool _isForeground = true;  // starts out assumed to be in foreground
     bool _isGLInitialized{ false };
     bool _physicsEnabled{ false };
@@ -782,7 +780,6 @@ private:
     bool _failedToConnectToEntityServer{ false };
 
     bool _reticleClickPressed{ false };
-    bool _keyboardFocusWaitingOnRenderable{ false };
 
     int _avatarAttachmentRequest = 0;
 

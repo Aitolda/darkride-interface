@@ -13,7 +13,6 @@
 #include "Application.h"
 #include "ImportExtensions.h"
 #include "ApplicationConstants.h"
-#include "KeyboardFocusHighlight.h"
 #include "LambdaEvent.h"
 #include "DeadlockWatchdog.h"
 
@@ -91,7 +90,6 @@ const QString KEEP_ME_LOGGED_IN_SETTING_NAME = "keepMeLoggedIn";   // declared i
 // setupEssentials (what runs before the members exist: the version switches, the crash check, the resources, the
 // plug-ins, the registrations) is in ApplicationStartup.cpp, with the statically provided plug-in lists it needs.
 
-// The keyboard-focus highlight's id and expansion factor (KeyboardFocusHighlight.h) are defined in ApplicationKeyboardFocus.cpp.
 
 
 // The settings' defaults are in ApplicationStartup.cpp, beside the constructor that reads them.
@@ -240,8 +238,8 @@ void Application::runTests() {
 
 // rotationModeChanged is in ApplicationCamera.cpp.
 
-// The keyboard focus and its highlight (setKeyboardFocusHighlight, getKeyboardFocusEntity, setKeyboardFocusEntity) are in
-// ApplicationKeyboardFocus.cpp.
+// The keyboard focus and its highlight are a KeyboardFocus (KeyboardFocus.h), the member _keyboardFocus, reached by
+// getKeyboardFocus().
 
 // The simulation step and what frames it (updateDialogs, updateSecondaryCameraViewFrustum, the physics gate
 // setArrivalWaitsForNearby/tryToEnablePhysics, update, updateRenderArgs) is in ApplicationFrame.cpp.

@@ -519,7 +519,7 @@ void Application::createLoginDialog() {
         entityScriptingInterface->editEntity(keyboard->getAnchorID(), properties);
         keyboard->setResetKeyboardPositionOnRaise(false);
     }
-    setKeyboardFocusEntity(_loginDialogID);
+    _keyboardFocus.setFocusedEntity(_loginDialogID);
     emit loginDialogFocusEnabled();
     getApplicationCompositor().getReticleInterface()->setAllowMouseCapture(false);
     getApplicationCompositor().getReticleInterface()->setVisible(false);

@@ -19,7 +19,6 @@
 #include "Application.h"
 #include <MainWindow.h>   // the window and the GL canvas handed to the cursor each frame
 #include "GLCanvas.h"
-#include "KeyboardFocusHighlight.h"
 #include <chrono>
 #include <thread>
 #include <glm/glm.hpp>
@@ -505,32 +504,7 @@ void Application::idle() {
         update(glm::clamp(secondsSinceLastUpdate, 0.0f, BIGGEST_DELTA_TIME_SECS));
     }
 
-    { // Update keyboard focus highlight
-        if (!_keyboardFocusedEntity.get().isInvalidID()) {
-            const quint64 LOSE_FOCUS_AFTER_ELAPSED_TIME = 30 * USECS_PER_SECOND; // if idle for 30 seconds, drop focus
-            quint64 elapsedSinceAcceptedKeyPress = usecTimestampNow() - _lastAcceptedKeyPress;
-            if (elapsedSinceAcceptedKeyPress > LOSE_FOCUS_AFTER_ELAPSED_TIME) {
-                setKeyboardFocusEntity(UNKNOWN_ENTITY_ID);
-            } else {
-                if (auto entity = getEntities()->getTree()->findEntityByID(_keyboardFocusedEntity.get())) {
-                    EntityItemProperties properties;
-                    properties.setPosition(entity->getWorldPosition());
-                    properties.setRotation(entity->getWorldOrientation());
-                    properties.setDimensions(entity->getScaledDimensions() * FOCUS_HIGHLIGHT_EXPANSION_FACTOR);
-                    DependencyManager::get<EntityScriptingInterface>()->editEntity(_keyboardFocusHighlightID, properties);
-                }
-            }
-        }
-    }
-
-    {
-        if (_keyboardFocusWaitingOnRenderable && getEntities()->renderableForEntityId(_keyboardFocusedEntity.get())) {
-            QUuid entityId = _keyboardFocusedEntity.get();
-            setKeyboardFocusEntity(UNKNOWN_ENTITY_ID);
-            _keyboardFocusWaitingOnRenderable = false;
-            setKeyboardFocusEntity(entityId);
-        }
-    }
+    _keyboardFocus.update();
 
     {
         PerformanceTimer perfTimer("pluginIdle");
