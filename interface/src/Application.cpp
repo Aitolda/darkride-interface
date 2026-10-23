@@ -5534,11 +5534,6 @@ void Application::requeryOctree() {
     _queryExpiry = now + MIN_PERIOD_BETWEEN_QUERIES;
 }
 
-// TO DO: Get this out of Application and create a proper tonemapping stage, move it there
-// or ToneMapAndResampleTask
-void Application::setTonemappingMode(int toneCurve, float exposure) {
-}
-
 void Application::resetPhysicsReadyInformation() {
     // we've changed domains or cleared out caches or something.  we no longer know enough about the
     // collision information of nearby entities to make running bullet be safe.

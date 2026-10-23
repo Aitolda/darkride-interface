@@ -294,14 +294,6 @@ public slots:
      */
     void setNametagsShowSelf(bool enabled);
 
-    // /**jsdoc
-    //  * Sets a tonemapping curve and exposure to be used in a given zone.
-    //  * @function Render.setTonemappingMode
-    //  * @param {int} curve - The tonemapping curve {0:RGB, 1:SRGB, 2:Reinhard, 3:Filmic} 
-    //  * @param {float} exposure - The exposure level affecting the tonemap -4 to 4
-    //  */
-    //  // void setToneMappingMode(int curve, float exposure);
-
     /**jsdoc
      * Gets the maxmium texture memory in MB.
      * @function Render.getMaximumTextureMemory

@@ -475,8 +475,6 @@ public slots:
 
     void reloadResourceCaches();
 
-    Q_INVOKABLE void setTonemappingMode(int toneCurve, float exposure);
-
     void updateHeartbeat() const;
 
     static void deadlockApplication();
