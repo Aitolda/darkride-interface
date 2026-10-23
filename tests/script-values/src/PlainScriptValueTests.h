@@ -25,6 +25,7 @@ private slots:
     void testArrays();
     void testSharing();
     void testCbor();
+    void testFromVariant();
 };
 
 #endif // hifi_PlainScriptValueTests_h

@@ -80,6 +80,12 @@ public:
     /// A value from CBOR: a map an object with its keys in the map's order (a key that is not text is skipped,
     /// but for an integer, which is used as text), a byte string the text of its base64.
     static PlainScriptValue fromCbor(const QCborValue& value);
+    /// A value from a QVariant, with the rules of variantToScriptValue (VariantMapToScriptValue.h), which makes
+    /// a QScriptValue from one for a world file or avatar-entity data: a boolean, an int, a double, text (a URL
+    /// as its text), a map an object with the map's keys in the map's order, a list an array, any other value
+    /// that converts to a float (an unsigned or 64-bit integer, a float) as that number, and the rest invalid,
+    /// so that a null and a value of any other type are left out of the object or array.
+    static PlainScriptValue fromVariant(const QVariant& value);
 
     /// JavaScript's text of a number ("1", "1.5", "1e+21", "NaN"), as a script engine's toString gives it.
     static QString numberToString(double value);

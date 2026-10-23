@@ -13,11 +13,18 @@
 
 #include <QtCore/QCborArray>
 #include <QtCore/QCborMap>
+#include <QtCore/QDateTime>
+#include <QtCore/QPoint>
+#include <QtCore/QUrl>
+#include <QtCore/QUuid>
 #include <QtScript/QScriptEngine>
 #include <QtScript/QScriptValue>
 #include <QtScript/QScriptValueIterator>
 
 #include <PlainScriptValue.h>
+#include <PlainScriptValueConversions.h>
+#include <RegisteredMetaTypes.h>
+#include <VariantMapToScriptValue.h>
 
 #include "SameVariant.h"
 
@@ -321,4 +328,82 @@ void PlainScriptValueTests::testCbor() {
     QVERIFY(received.property("none").isUndefined());
     QCOMPARE(received.property("7").toString(), QString("seven"));
     QCOMPARE(received.propertyNames(), QStringList({ "id", "bytes", "huge", "none", "7" }));
+}
+
+void PlainScriptValueTests::testFromVariant() {
+    QScriptEngine engine;
+    // Every kind of QVariant a world file, avatar-entity data or an overlay's properties hold, and some that
+    // none should, through variantToScriptValue, which the QtScript callers outside scripting use, and through
+    // fromVariant: the same variant back, the same members in the same order, the same members left out
+    QVariantMap nested;
+    nested.insert("x", 1.0);
+    nested.insert("y", 2.5);
+    nested.insert("z", -3);
+    const QVariantList list { 1, 2.5, "three", true, QVariantMap(), QVariantList(), nested };
+    const QVariantList holes { 1, QVariant(), 3, QVariant::fromValue(QPoint(1, 2)), QVariant() };
+    QVariantMap map;
+    map.insert("bool", true);
+    map.insert("int", 7);
+    map.insert("double", 2.5);
+    map.insert("integral", 3.0);
+    map.insert("negativeZero", -0.0);
+    map.insert("huge", 1e21);
+    map.insert("float", QVariant::fromValue(0.1f));
+    map.insert("uint", QVariant::fromValue(3000000000u));
+    map.insert("longLong", QVariant::fromValue(qint64(123456789012345)));
+    map.insert("uLongLong", QVariant::fromValue(quint64(18446744073709551615ULL)));
+    map.insert("string", "text");
+    map.insert("url", QUrl("https://example.invalid/a?b=c"));
+    map.insert("bytes", QByteArray("12.5"));
+    map.insert("letters", QByteArray("abc"));
+    map.insert("char", QChar('A'));
+    map.insert("uuid", QUuid("{1a2b3c4d-0000-0000-0000-000000000001}"));
+    map.insert("dateTime", QDateTime::currentDateTime());
+    map.insert("point", QPoint(1, 2));
+    map.insert("null", QVariant());
+    map.insert("nested", nested);
+    map.insert("list", list);
+    map.insert("holes", holes);
+    map.insert("empty", QVariantMap());
+
+    QVariant variant(map);
+    const QScriptValue script = variantToScriptValue(variant, engine);
+    const PlainScriptValue plain = PlainScriptValue::fromVariant(map);
+    QString where;
+    QVERIFY2(sameVariant(script.toVariant(), plain.toVariant(), where), qPrintable(where));
+    QStringList scriptNames;
+    QScriptValueIterator it(script);
+    while (it.hasNext()) {
+        it.next();
+        scriptNames.append(it.name());
+    }
+    QCOMPARE(plain.propertyNames(), scriptNames);
+    for (const QString& name : map.keys()) {
+        QVERIFY2(plain.property(name).isValid() == script.property(name).isValid(), qPrintable(name));
+    }
+    QVERIFY(!plain.property("null").isValid());
+    QVERIFY(!plain.property("point").isValid());
+    QCOMPARE(plain.property("uint").toNumber(), 3000000000.0);
+    QCOMPARE(plain.property("url").toString(), QString("https://example.invalid/a?b=c"));
+    QVERIFY(plain.property("list").isArray());
+    QCOMPARE(plain.property("list").property("length").toInteger(), script.property("list").property("length").toInteger());
+    QCOMPARE(plain.property("holes").property("length").toInteger(), script.property("holes").property("length").toInteger());
+    QCOMPARE(plain.property("holes").property("length").toInteger(), 3.0);  // the elements never set do not count
+    QVERIFY(!plain.property("holes").property(1).isValid());
+
+    // Overlays.cpp read a PolyLine's points and widths through QScriptEngine::newVariant: a variant object, not
+    // an array, whose length is undefined, so both lists always read as empty. The plain path reads them.
+    const QVariantList points { nested, nested };
+    const QVariantList widths { 0.1, 0.2 };
+    const QScriptValue wrappedPoints = engine.newVariant(QVariant(points));
+    QVERIFY(wrappedPoints.isVariant());
+    QVERIFY(!wrappedPoints.isArray());
+    QVERIFY(!wrappedPoints.property("length").isValid());
+    QCOMPARE(qVectorVec3FromScriptValue(wrappedPoints).size(), 0);
+    QCOMPARE(qVectorFloatFromScriptValue(engine.newVariant(QVariant(widths))).size(), 0);
+    QVariant pointsVariant(points);
+    QCOMPARE(qVectorVec3FromScriptValue(variantToScriptValue(pointsVariant, engine)).size(), 2);
+    QCOMPARE(qVectorVec3FromScriptValue(PlainScriptValue::fromVariant(points)).size(), 2);
+    QCOMPARE(qVectorVec3FromScriptValue(PlainScriptValue::fromVariant(points)).at(1), glm::vec3(1.0f, 2.5f, -3.0f));
+    QCOMPARE(qVectorFloatFromScriptValue(PlainScriptValue::fromVariant(widths)), QVector<float>({ 0.1f, 0.2f }));
 }

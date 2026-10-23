@@ -23,6 +23,7 @@ private slots:
     void testValuesWritten();
     void testReadingEdgeCases();
     void testReadingWorldEntities();
+    void testReadingVariantMaps();
     void testRoundTrip();
 };
 

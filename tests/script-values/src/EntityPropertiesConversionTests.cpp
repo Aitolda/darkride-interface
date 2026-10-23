@@ -23,6 +23,7 @@
 #include <EntityTypes.h>
 #include <PlainScriptValue.h>
 #include <SharedUtil.h>
+#include <VariantMapToScriptValue.h>
 
 #include "SameVariant.h"
 
@@ -199,6 +200,38 @@ bool sameReading(const QString& json, bool honorReadOnly, QString& where) {
     return true;
 }
 
+// A map read as the callers outside scripting read one (a world file's entity, avatar-entity data, an avatar
+// bookmark, an overlay's properties): through variantMapToScriptValue on QtScript and fromVariant on the plain
+// path, compared as sameReading compares
+bool sameVariantReading(const QVariantMap& map, bool honorReadOnly, QString& where) {
+    QScriptEngine engine;
+    QVariantMap input = map;
+    const QScriptValue scriptInput = variantMapToScriptValue(input, engine);
+    const PlainScriptValue plainInput = PlainScriptValue::fromVariant(map);
+
+    EntityItemProperties fromScript;
+    EntityItemProperties fromPlain;
+    fromScript.copyFromScriptValue(scriptInput, honorReadOnly);
+    fromPlain.copyFromScriptValue(plainInput, honorReadOnly);
+    fromPlain.setLastEdited(fromScript.getLastEdited());
+
+    QVariantMap a = fromScript.copyToScriptValue(&engine, false, true).toVariant().toMap();
+    QVariantMap b = fromPlain.copyToScriptValue(&engine, false, true).toVariant().toMap();
+    stripClock(a);
+    stripClock(b);
+    if (!sameVariant(a, b, where)) {
+        return false;
+    }
+    PlainScriptEngine plainEngine;
+    QVariantMap c = fromPlain.copyToScriptValue(&plainEngine, false, true).toVariant().toMap();
+    stripClock(c);
+    if (!sameVariant(a, c, where)) {
+        where = "plain writing of the plain reading: " + where;
+        return false;
+    }
+    return true;
+}
+
 EntityItemProperties sampleProperties(EntityTypes::EntityType type) {
     EntityItemProperties properties;
     properties.setType(type);
@@ -339,6 +372,59 @@ void EntityPropertiesConversionTests::testReadingWorldEntities() {
         const QString json = QString::fromUtf8(QJsonDocument(entity.toObject()).toJson(QJsonDocument::Compact));
         QString where;
         QVERIFY2(sameReading(json, true, where), qPrintable(json.left(80) + ": " + where));
+    }
+}
+
+void EntityPropertiesConversionTests::testReadingVariantMaps() {
+    // what an avatar bookmark stores and reads back, and what the overlay conversion starts from: a full
+    // property map as toVariant() gives it, for every entity type
+    for (int type = EntityTypes::Box; type < EntityTypes::NUM_TYPES; ++type) {
+        QScriptEngine engine;
+        const QVariantMap written = sampleProperties((EntityTypes::EntityType)type).copyToScriptValue(&engine, false).toVariant().toMap();
+        const QString name = EntityTypes::getEntityTypeName((EntityTypes::EntityType)type);
+        QString where;
+        QVERIFY2(sameVariantReading(written, false, where), qPrintable(name + ": " + where));
+        QVERIFY2(sameVariantReading(written, true, where), qPrintable(name + " (read-only honoured): " + where));
+    }
+
+    // an overlay's properties as the Overlays API gets them from a script: ints and doubles, maps for the vectors
+    // and the colour, lists, a null, text
+    QVariantMap overlay;
+    overlay["type"] = "Shape";
+    overlay["shape"] = "Cube";
+    overlay["name"] = "an overlay";
+    overlay["position"] = QVariantMap({ { "x", 1 }, { "y", 2.5 }, { "z", -3 } });
+    overlay["dimensions"] = QVariantMap({ { "x", 1 }, { "y", 1 }, { "z", 0.25 } });
+    overlay["rotation"] = QVariantMap({ { "x", 0 }, { "y", 0.7071 }, { "z", 0 }, { "w", 0.7071 } });
+    overlay["color"] = QVariantMap({ { "red", 255 }, { "green", 128 }, { "blue", 0 } });
+    overlay["alpha"] = 0.5;
+    overlay["visible"] = true;
+    overlay["lifetime"] = -1;
+    overlay["parentID"] = "{1a2b3c4d-0000-0000-0000-000000000001}";
+    overlay["parentJointIndex"] = 65535;
+    overlay["renderLayer"] = "hud";
+    overlay["primitiveMode"] = "lines";
+    overlay["ignorePickIntersection"] = false;
+    overlay["linePoints"] = QVariantList({ QVariantMap({ { "x", 0 }, { "y", 0 }, { "z", 0 } }), QVariantMap({ { "x", 1 }, { "y", 1 }, { "z", 1 } }) });
+    overlay["strokeWidths"] = QVariantList({ 0.1, 0.2 });
+    overlay["textures"] = "{\"tex\": \"https://example.invalid/t.png\"}";
+    overlay["userData"] = QVariant();
+    overlay["url"] = QUrl("https://example.invalid/model.glb");
+    QString where;
+    QVERIFY2(sameVariantReading(overlay, true, where), qPrintable("overlay: " + where));
+    overlay["type"] = "PolyLine";
+    QVERIFY2(sameVariantReading(overlay, true, where), qPrintable("polyline overlay: " + where));
+
+    // the world file's entities as EntityTree::readFromMap gets them: QJsonDocument's variants, every number a double
+    const QString path = QFileInfo(__FILE__).dir().filePath("../../../tests-manual/wasm-scripting/world.json");
+    QFile file(path);
+    QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable("no test world at " + path));
+    const QVariantList entities = QJsonDocument::fromJson(file.readAll()).toVariant().toMap().value("Entities").toList();
+    QVERIFY(!entities.isEmpty());
+    for (const QVariant& entity : entities) {
+        const QVariantMap map = entity.toMap();
+        QVERIFY2(sameVariantReading(map, true, where), qPrintable(map.value("id").toString() + ": " + where));
+        QVERIFY2(sameVariantReading(map, false, where), qPrintable(map.value("id").toString() + " (read-only ignored): " + where));
     }
 }
 

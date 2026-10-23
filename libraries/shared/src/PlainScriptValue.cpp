@@ -484,6 +484,41 @@ PlainScriptValue PlainScriptValue::fromCbor(const QCborValue& value) {
     return undefinedValue();
 }
 
+PlainScriptValue PlainScriptValue::fromVariant(const QVariant& value) {
+    switch (value.type()) {
+        case QVariant::Bool:
+            return PlainScriptValue(value.toBool());
+        case QVariant::Int:
+            return PlainScriptValue(value.toInt());
+        case QVariant::Double:
+            return PlainScriptValue(value.toDouble());
+        case QVariant::String:
+        case QVariant::Url:
+            return PlainScriptValue(value.toString());
+        case QVariant::Map: {
+            PlainScriptValue object = newObject();
+            const QVariantMap map = value.toMap();
+            for (auto it = map.begin(); it != map.end(); ++it) {
+                object.setProperty(it.key(), fromVariant(it.value()));
+            }
+            return object;
+        }
+        case QVariant::List: {
+            PlainScriptValue array = newArray();
+            const QVariantList list = value.toList();
+            for (int i = 0; i < list.size(); ++i) {
+                array.setProperty(static_cast<quint32>(i), fromVariant(list.at(i)));
+            }
+            return array;
+        }
+        default:
+            if (value.canConvert<float>()) {
+                return PlainScriptValue(static_cast<double>(value.toFloat()));
+            }
+            return PlainScriptValue();
+    }
+}
+
 // Number::toString of the language specification: the shortest digits that read back as the number, written as
 // an integer up to 10^21, with a decimal point down to 10^-6, and with an exponent beyond
 QString PlainScriptValue::numberToString(double value) {
