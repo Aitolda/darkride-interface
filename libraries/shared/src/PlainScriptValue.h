@@ -90,11 +90,19 @@ public:
     /// JavaScript's text of a number ("1", "1.5", "1e+21", "NaN"), as a script engine's toString gives it.
     static QString numberToString(double value);
 
+    /// The value as JSON text with JSON.stringify's rules: an object's properties in their order, numbers in
+    /// JavaScript's format (a NaN or an infinity as null), an undefined property left out and an undefined
+    /// element null, text escaped as JSON.stringify escapes it; with an indent, the layout of
+    /// JSON.stringify(value, null, indent). The entity server's world file is written this way.
+    QString toJson(const QString& indent = QString()) const;
+
 private:
     enum class Kind { Invalid, Undefined, Null, Bool, Number, String, Array, Object };
     struct Container;
 
     PlainScriptValue(Kind kind) : _kind(kind) {}
+
+    void appendJson(QString& out, const QString& indent, const QString& current) const;
 
     Kind _kind { Kind::Invalid };
     QVariant _primitive;                    // the boolean, the int or the double, or the text

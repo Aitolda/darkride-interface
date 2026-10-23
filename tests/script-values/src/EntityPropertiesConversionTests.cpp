@@ -428,6 +428,64 @@ void EntityPropertiesConversionTests::testReadingVariantMaps() {
     }
 }
 
+namespace {
+
+// An entity's text in the entity server's world file: JSON.stringify(properties, null, '    ') of what
+// copyToScriptValue writes, which RecurseOctreeToJSONOperator had QtScript's own JSON.stringify produce; age
+// and ageAsText come from the clock and are taken out on both sides
+bool sameWorldFileText(const EntityItemProperties& properties, bool skipDefaults, QString& where) {
+    QScriptEngine engine;
+    PlainScriptEngine plainEngine;
+    QScriptValue script = properties.copyToScriptValue(&engine, skipDefaults);
+    PlainScriptValue plain = properties.copyToScriptValue(&plainEngine, skipDefaults);
+    for (const QString& name : { QString("age"), QString("ageAsText") }) {
+        script.setProperty(name, QScriptValue());
+        plain.setProperty(name, PlainScriptValue());
+    }
+    QScriptValue json = engine.globalObject().property("JSON");
+    const QString expected = json.property("stringify").call(json, QScriptValueList() << script << QScriptValue(QScriptValue::NullValue) << QScriptValue("    ")).toString();
+    const QString actual = plain.toJson("    ");
+    if (actual != expected) {
+        int at = 0;
+        while (at < actual.size() && at < expected.size() && actual.at(at) == expected.at(at)) {
+            ++at;
+        }
+        where = QString("differs at %1: ...%2... vs ...%3...").arg(at).arg(actual.mid(qMax(0, at - 40), 80)).arg(expected.mid(qMax(0, at - 40), 80));
+        return false;
+    }
+    if (expected.size() < 100) {
+        where = "too short to be an entity: " + expected;
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+void EntityPropertiesConversionTests::testWorldFileText() {
+    for (int type = EntityTypes::Box; type < EntityTypes::NUM_TYPES; ++type) {
+        const QString name = EntityTypes::getEntityTypeName((EntityTypes::EntityType)type);
+        QString where;
+        QVERIFY2(sameWorldFileText(sampleProperties((EntityTypes::EntityType)type), true, where), qPrintable(name + ": " + where));
+        QVERIFY2(sameWorldFileText(sampleProperties((EntityTypes::EntityType)type), false, where), qPrintable(name + " (defaults too): " + where));
+    }
+    // the test world's entities, as read for a load and written again as a live entity's are (one has a
+    // creation time; properties without one write nothing)
+    const QString path = QFileInfo(__FILE__).dir().filePath("../../../tests-manual/wasm-scripting/world.json");
+    QFile file(path);
+    QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable("no test world at " + path));
+    const QVariantList entities = QJsonDocument::fromJson(file.readAll()).toVariant().toMap().value("Entities").toList();
+    QVERIFY(!entities.isEmpty());
+    for (const QVariant& entity : entities) {
+        EntityItemProperties properties;
+        properties.copyFromScriptValue(PlainScriptValue::fromVariant(entity.toMap()), false);
+        properties.setCreated(usecTimestampNow() - USECS_PER_SECOND);
+        QString where;
+        QVERIFY2(sameWorldFileText(properties, true, where), qPrintable(entity.toMap().value("id").toString() + ": " + where));
+        QVERIFY2(sameWorldFileText(properties, false, where), qPrintable(entity.toMap().value("id").toString() + " (defaults too): " + where));
+    }
+}
+
 void EntityPropertiesConversionTests::testRoundTrip() {
     // what QtScript writes for an entity with values, read back both ways, as a script's full property map is
     for (EntityTypes::EntityType type : { EntityTypes::Model, EntityTypes::Image, EntityTypes::Zone, EntityTypes::Text, EntityTypes::Shape }) {

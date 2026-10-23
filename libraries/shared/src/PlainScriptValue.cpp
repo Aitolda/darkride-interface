@@ -519,6 +519,132 @@ PlainScriptValue PlainScriptValue::fromVariant(const QVariant& value) {
     }
 }
 
+namespace {
+
+// The Quote operation of JSON.stringify: the two quote marks, the five named escapes, the rest of the control
+// characters as \u00xx, and every other character as it is
+void appendQuoted(QString& out, const QString& text) {
+    out += QLatin1Char('"');
+    for (const QChar c : text) {
+        switch (c.unicode()) {
+            case '"':
+                out += QLatin1String("\\\"");
+                break;
+            case '\\':
+                out += QLatin1String("\\\\");
+                break;
+            case '\b':
+                out += QLatin1String("\\b");
+                break;
+            case '\f':
+                out += QLatin1String("\\f");
+                break;
+            case '\n':
+                out += QLatin1String("\\n");
+                break;
+            case '\r':
+                out += QLatin1String("\\r");
+                break;
+            case '\t':
+                out += QLatin1String("\\t");
+                break;
+            default:
+                if (c.unicode() < 0x20) {
+                    out += QLatin1String("\\u") + QString::number(c.unicode(), 16).rightJustified(4, QLatin1Char('0'));
+                } else {
+                    out += c;
+                }
+        }
+    }
+    out += QLatin1Char('"');
+}
+
+}  // namespace
+
+QString PlainScriptValue::toJson(const QString& indent) const {
+    QString out;
+    appendJson(out, indent, QString());
+    return out;
+}
+
+// JSON.stringify(value, null, indent): `current` is the indentation of the value's own line; an undefined value
+// (or an invalid one, a hole) writes nothing, which an object leaves out and an array writes as null
+void PlainScriptValue::appendJson(QString& out, const QString& indent, const QString& current) const {
+    switch (_kind) {
+        case Kind::Invalid:
+        case Kind::Undefined:
+            return;
+        case Kind::Null:
+            out += QLatin1String("null");
+            return;
+        case Kind::Bool:
+            out += _primitive.toBool() ? QLatin1String("true") : QLatin1String("false");
+            return;
+        case Kind::Number: {
+            const double number = _primitive.toDouble();
+            out += std::isfinite(number) ? numberToString(number) : QStringLiteral("null");
+            return;
+        }
+        case Kind::String:
+            appendQuoted(out, _primitive.toString());
+            return;
+        case Kind::Array: {
+            if (_container->values.isEmpty()) {
+                out += QLatin1String("[]");
+                return;
+            }
+            const QString inner = current + indent;
+            out += QLatin1Char('[');
+            for (int i = 0; i < _container->values.size(); ++i) {
+                if (i > 0) {
+                    out += QLatin1Char(',');
+                }
+                if (!indent.isEmpty()) {
+                    out += QLatin1Char('\n') + inner;
+                }
+                const PlainScriptValue& element = _container->values.at(i);
+                if (element.isValid() && !element.isUndefined()) {
+                    element.appendJson(out, indent, inner);
+                } else {
+                    out += QLatin1String("null");
+                }
+            }
+            if (!indent.isEmpty()) {
+                out += QLatin1Char('\n') + current;
+            }
+            out += QLatin1Char(']');
+            return;
+        }
+        case Kind::Object: {
+            const QString inner = current + indent;
+            bool any = false;
+            for (int i = 0; i < _container->names.size(); ++i) {
+                const PlainScriptValue& value = _container->values.at(i);
+                if (!value.isValid() || value.isUndefined()) {
+                    continue;
+                }
+                out += any ? QLatin1String(",") : QLatin1String("{");
+                any = true;
+                if (!indent.isEmpty()) {
+                    out += QLatin1Char('\n') + inner;
+                }
+                appendQuoted(out, _container->names.at(i));
+                out += indent.isEmpty() ? QLatin1String(":") : QLatin1String(": ");
+                value.appendJson(out, indent, inner);
+            }
+            if (!any) {
+                out += QLatin1String("{}");
+                return;
+            }
+            if (!indent.isEmpty()) {
+                out += QLatin1Char('\n') + current;
+            }
+            out += QLatin1Char('}');
+            return;
+        }
+    }
+}
+
 // Number::toString of the language specification: the shortest digits that read back as the number, written as
 // an integer up to 10^21, with a decimal point down to 10^-6, and with an exponent beyond
 QString PlainScriptValue::numberToString(double value) {

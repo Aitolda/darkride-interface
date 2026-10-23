@@ -407,3 +407,109 @@ void PlainScriptValueTests::testFromVariant() {
     QCOMPARE(qVectorVec3FromScriptValue(PlainScriptValue::fromVariant(points)).at(1), glm::vec3(1.0f, 2.5f, -3.0f));
     QCOMPARE(qVectorFloatFromScriptValue(PlainScriptValue::fromVariant(widths)), QVector<float>({ 0.1f, 0.2f }));
 }
+
+namespace {
+
+// The same value on QtScript, kind for kind and in the same order
+QScriptValue mirror(QScriptEngine& engine, const PlainScriptValue& plain) {
+    if (plain.isUndefined() || !plain.isValid()) {
+        return QScriptValue(QScriptValue::UndefinedValue);
+    }
+    if (plain.isNull()) {
+        return QScriptValue(QScriptValue::NullValue);
+    }
+    if (plain.isBool()) {
+        return QScriptValue(plain.toBool());
+    }
+    if (plain.isNumber()) {
+        return QScriptValue(plain.toNumber());
+    }
+    if (plain.isString()) {
+        return QScriptValue(plain.toString());
+    }
+    if (plain.isArray()) {
+        QScriptValue array = engine.newArray();
+        const quint32 length = plain.property("length").toUInt32();
+        for (quint32 i = 0; i < length; ++i) {
+            if (plain.property(i).isValid()) {
+                array.setProperty(i, mirror(engine, plain.property(i)));
+            }
+        }
+        array.setProperty("length", QScriptValue(length));
+        return array;
+    }
+    QScriptValue object = engine.newObject();
+    for (const QString& name : plain.propertyNames()) {
+        object.setProperty(name, mirror(engine, plain.property(name)));
+    }
+    return object;
+}
+
+QString stringify(QScriptEngine& engine, const QScriptValue& value, const QString& indent) {
+    QScriptValue json = engine.globalObject().property("JSON");
+    QScriptValue text = json.property("stringify").call(json, QScriptValueList() << value << QScriptValue(QScriptValue::NullValue) << QScriptValue(indent));
+    return text.isUndefined() ? QString("undefined") : text.toString();
+}
+
+}  // namespace
+
+void PlainScriptValueTests::testJson() {
+    QScriptEngine engine;
+    PlainScriptValue object = PlainScriptValue::newObject();
+    object.setProperty("id", "{1a2b3c4d-0000-0000-0000-000000000001}");
+    object.setProperty("type", "Box");
+    object.setProperty("lastEdited", 1792340679910596.0);
+    object.setProperty("name", "quotes \" and backslash \\ and slash / and tab \t newline \n cr \r bs \b ff \f bell \x07 esc \x1b del \x7f");
+    object.setProperty("accents", QString::fromUtf8("caf\xc3\xa9 \xe2\x80\xa8 \xf0\x9f\x8c\xb4 \xe2\x82\xac"));
+    object.setProperty("empty", "");
+    PlainScriptValue position = PlainScriptValue::newObject();
+    position.setProperty("x", -2.9272141456604004);
+    position.setProperty("y", 0.20000000298023224);
+    position.setProperty("z", -0.0000152587890625);
+    object.setProperty("position", position);
+    PlainScriptValue numbers = PlainScriptValue::newArray();
+    const QList<double> values { 0.0, -0.0, 1.0, -1.0, 1.5, 100.0, 2147483648.0, 1e21, 1e-7, 0.000001, 1e100, 5e-324,
+        std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity() };
+    for (int i = 0; i < values.size(); ++i) {
+        numbers.setProperty(i, values.at(i));
+    }
+    object.setProperty("numbers", numbers);
+    PlainScriptValue mixed = PlainScriptValue::newArray();
+    mixed.setProperty(0, true);
+    mixed.setProperty(1, PlainScriptValue::nullValue());
+    mixed.setProperty(2, PlainScriptValue::undefinedValue());
+    mixed.setProperty(4, "after a hole");
+    mixed.setProperty(5, PlainScriptValue::newObject());
+    mixed.setProperty(6, PlainScriptValue::newArray());
+    object.setProperty("mixed", mixed);
+    object.setProperty("undefinedProperty", PlainScriptValue::undefinedValue());
+    object.setProperty("nullProperty", PlainScriptValue::nullValue());
+    object.setProperty("false", false);
+    object.setProperty("emptyObject", PlainScriptValue::newObject());
+    object.setProperty("emptyArray", PlainScriptValue::newArray());
+    PlainScriptValue nested = PlainScriptValue::newObject();
+    PlainScriptValue deeper = PlainScriptValue::newArray();
+    deeper.setProperty(0, PlainScriptValue::newObject());
+    deeper.property(0).setProperty("k", "v");
+    nested.setProperty("list", deeper);
+    nested.setProperty("gone", PlainScriptValue::undefinedValue());
+    object.setProperty("nested", nested);
+    object.setProperty("key with \"quotes\"", 1);
+
+    const QScriptValue script = mirror(engine, object);
+    for (const QString& indent : { QString(), QString("    "), QString("\t"), QString("  ") }) {
+        const QString expected = stringify(engine, script, indent);
+        const QString actual = object.toJson(indent);
+        QVERIFY2(actual == expected, qPrintable("indent '" + indent + "':\n" + actual + "\nvs QtScript\n" + expected));
+    }
+    // the parts on their own
+    QCOMPARE(PlainScriptValue("a\"b").toJson(), QString("\"a\\\"b\""));
+    QCOMPARE(PlainScriptValue(1e21).toJson(), QString("1e+21"));
+    QCOMPARE(PlainScriptValue(-0.0).toJson(), QString("0"));
+    QCOMPARE(PlainScriptValue(std::numeric_limits<double>::quiet_NaN()).toJson(), QString("null"));
+    QCOMPARE(PlainScriptValue::nullValue().toJson(), QString("null"));
+    QCOMPARE(PlainScriptValue::undefinedValue().toJson(), QString());
+    QCOMPARE(PlainScriptValue::newObject().toJson("    "), QString("{}"));
+    QCOMPARE(PlainScriptValue::newArray().toJson("    "), QString("[]"));
+    QCOMPARE(stringify(engine, mirror(engine, PlainScriptValue::undefinedValue()), QString()), QString("undefined"));
+}

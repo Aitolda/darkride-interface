@@ -24,6 +24,7 @@ private slots:
     void testReadingEdgeCases();
     void testReadingWorldEntities();
     void testReadingVariantMaps();
+    void testWorldFileText();
     void testRoundTrip();
 };
 
