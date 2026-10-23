@@ -601,13 +601,7 @@ Windows.ScrollingWindow {
                 id: nameColumn
                 title: "Name:"
                 role: "name"
-                width: treeView.width - bakedColumn.width;
-            }
-            TableViewColumn {
-                id: bakedColumn
-                title: "Use Baked?"
-                role: "baked"
-                width: 170
+                width: treeView.width;
             }
 
             onSortIndicatorOrderChanged: {
@@ -626,16 +620,7 @@ Windows.ScrollingWindow {
                 }
 
                 function convertToGlyph(text) {
-                    switch (text) {
-                        case "Not Baked":
-                            return hifi.glyphs.circleSlash;
-                        case "Baked":
-                            return hifi.glyphs.checkmark;
-                        case "Error":
-                            return hifi.glyphs.alert;
-                        default:
-                            return "";
-                    }
+                    return "";   // the glyph column (the baking status) is gone
                 }
 
                 function getComponent() {
@@ -857,12 +842,7 @@ Windows.ScrollingWindow {
                 anchors.verticalCenter: parent.verticalCenter
 
                 function makeText() {
-                    var numPendingBakes = assetMappingsModel.numPendingBakes;
-                    if (selectedItemCount > 1 || numPendingBakes === 0) {
-                        return selectedItemCount + " items selected";
-                    } else {
-                        return numPendingBakes + " bakes pending"
-                    }
+                    return selectedItemCount + " items selected";
                 }
 
                 size: hifi.fontSizes.sectionName
@@ -871,96 +851,6 @@ Windows.ScrollingWindow {
                 color: hifi.colors.lightGrayText
             }
 
-            HifiControls.HorizontalSpacer { }
-
-            HifiControls.CheckBox {
-                id: bakingCheckbox
-                anchors.leftMargin: 2 * hifi.dimensions.contentSpacing.x
-                anchors.verticalCenter: parent.verticalCenter
-
-                text: " Use baked version"
-                colorScheme: root.colorScheme
-                enabled: isEnabled()
-                checked: isChecked()
-                onClicked: {
-                    var mappings = [];
-                    for (var i in treeView.selection.selectedIndexes) {
-                        var index = treeView.selection.selectedIndexes[i];
-                        var path = assetProxyModel.data(index, 0x100);
-                        mappings.push(path);
-                    }
-                    print("Setting baking enabled:" + mappings + " " + checked);
-                    Assets.setBakingEnabled(mappings, checked, function() {
-                        reload();
-                    });
-
-                    checked = Qt.binding(isChecked);
-                }
-
-                function getStatus() {
-                    // kind of hack for ensuring getStatus() will be re-evaluated on updatesCount changes
-                    return updatesCount, assetProxyModel.data(treeView.selection.currentIndex, 0x105);
-                }
-                
-                function isEnabled() {
-                    if (!treeView.selection.hasSelection) {
-                        return false;
-                    }
-
-                    var status = getStatus();
-                    if (status === "--") {
-                        return false;
-                    }
-                    var bakingEnabled = status !== "Not Baked";
-
-                    for (var i in treeView.selection.selectedIndexes) {
-                        var thisStatus = assetProxyModel.data(treeView.selection.selectedIndexes[i], 0x105);
-                        if (thisStatus === "--") {
-                            return false;
-                        }
-                        var thisBakingEnalbed = (thisStatus !== "Not Baked");
-
-                        if (bakingEnabled !== thisBakingEnalbed) {
-                            return false;
-                        }
-                    }
-
-                    return true;
-                }
-                function isChecked() {
-                    if (!treeView.selection.hasSelection) {
-                        return false;
-                    }
-
-                    var status = getStatus();
-                    return isEnabled() && status !== "Not Baked"; 
-                }  
-            }
-
-            Item {
-                anchors.verticalCenter: parent.verticalCenter
-                width: infoGlyph.size;
-                height: infoGlyph.size;
-
-                HiFiGlyphs {
-                    id: infoGlyph;
-                    anchors.fill: parent;
-                    horizontalAlignment: Text.AlignHCenter;
-                    verticalAlignment: Text.AlignVCenter;
-                    text: hifi.glyphs.question;
-                    size: 35;
-                    color:  hifi.colors.lightGrayText;
-                }
-                MouseArea {
-                    anchors.fill: parent;
-                    hoverEnabled: true;
-                    onEntered: infoGlyph.color = hifi.colors.blueHighlight;
-                    onExited: infoGlyph.color =  hifi.colors.lightGrayText;
-                    onClicked: letterbox(hifi.glyphs.question,
-                                            "What is baking?",
-                                            "Baking compresses and optimizes files for faster network transfer and display. We recommend you bake your content to reduce initial load times for your visitors.");
-                    }
-            }
         }// End_OF( infoRow )
 
         HifiControls.ContentSection {

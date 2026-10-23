@@ -225,7 +225,6 @@ elif program == "server":
 	    build_dir,
 	    "cp assignment-client/assignment-client server.AppDir/usr/bin"
 	)
-	run(build_dir, "cp tools/oven/oven server.AppDir/usr/bin")
 	if os.path.isdir(plugins_dir):
 		run(build_dir, "cp -r assignment-client/plugins server.AppDir/usr/bin")
 		for p in deferred_plugins:
@@ -242,7 +241,6 @@ elif program == "server":
 	    "server.AppDir/usr/bin/domain-server",
 	    "-unsupported-allow-new-glibc",
 	    "-executable=server.AppDir/usr/bin/assignment-client",
-	    "-executable=server.AppDir/usr/bin/oven",
 	    "-unsupported-allow-new-glibc",
 	    "-qmake=" + qt_path + "/bin/qmake",
 	    "-exclude-libs=" + ",".join(server_exclude_libs),
@@ -266,7 +264,6 @@ elif program == "server":
 
 	run(appdir, "ln -s usr/bin/domain-server domain-server")
 	run(appdir, "ln -s usr/bin/assignment-client assignment-client")
-	run(appdir, "ln -s usr/bin/oven oven")
 
 	# add final plugins in
 	for plugin in deferred_plugins:

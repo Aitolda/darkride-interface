@@ -17,7 +17,6 @@ if (BUILD_TOOLS)
         auto-rig
         unity-avatar
         atp-client
-        oven
     )
 
     # Allow different tools for stable builds
