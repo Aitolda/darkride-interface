@@ -28,6 +28,7 @@
 #include "HTTPResourceRequest.h"
 #include "NetworkAccessManager.h"
 #include "NetworkLogging.h"
+#include "RedirectCache.h"
 
 ResourceManager::ResourceManager(bool atpSupportEnabled) : _atpSupportEnabled(atpSupportEnabled) {
     _thread.setObjectName("Resource Manager Thread");
@@ -134,6 +135,7 @@ QUrl ResourceManager::normalizeURL(const QUrl& originalUrl) {
 }
 
 void ResourceManager::cleanup() {
+    RedirectCache::save();
     // cleanup the AssetClient thread
     DependencyManager::destroy<AssetClient>();
     _thread.quit();

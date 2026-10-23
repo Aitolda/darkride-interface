@@ -22,6 +22,7 @@
 #include <Brotli.h>
 
 #include "NetworkAccessManager.h"
+#include "RedirectCache.h"
 #include "NetworkLogging.h"
 
 HTTPResourceRequest::~HTTPResourceRequest() {
@@ -54,8 +55,22 @@ void HTTPResourceRequest::cleanupTimer() {
 void HTTPResourceRequest::doSend() {
     DependencyManager::get<StatTracker>()->incrementStat(STAT_HTTP_REQUEST_STARTED);
 
-    QNetworkRequest networkRequest(_url);
+    // a URL whose redirect an earlier request followed is asked where it led (RedirectCache); if that fails, the
+    // original URL is asked once more (onRequestFinished)
+    _requestUrl = _url;
+    _viaRedirectCache = false;
+    if (!_triedOriginal) {
+        QUrl remembered = RedirectCache::target(_url);
+        if (!remembered.isEmpty()) {
+            _requestUrl = remembered;
+            _viaRedirectCache = true;
+        }
+    }
+
+    QNetworkRequest networkRequest(_requestUrl);
     networkRequest.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+    // not HTTP/2: Qt 5.15's implementation made cold loads slower on this link, with 64 KB windows and with 32 MB
+    // ones (measured 10-23, ARCHITECTURE.md §6 phase 2b); six HTTP/1.1 connections per host it is
     networkRequest.setHeader(QNetworkRequest::UserAgentHeader, TIVOLI_CLOUD_VR_USER_AGENT);
 
     if (_cacheEnabled) {
@@ -232,6 +247,26 @@ void HTTPResourceRequest::onRequestFinished() {
             _result = Error;
             break;
     }
+
+    // where the request ended, after the redirects Qt followed, is remembered for the next request of this URL; a
+    // remembered target that failed is forgotten and the original URL asked once more, in this same request
+    const QUrl finalUrl = _reply->url();
+    if (_result == Success) {
+        if (finalUrl != _url) {
+            RedirectCache::remember(_url, finalUrl);
+        }
+    } else if (_viaRedirectCache && !_triedOriginal) {
+        qCDebug(networking) << "The remembered redirect target failed; asking the original URL:" << _url.toString();
+        RedirectCache::forget(_url);
+        _reply->disconnect(this);
+        _reply->deleteLater();
+        _reply = nullptr;
+        _triedOriginal = true;
+        DependencyManager::get<StatTracker>()->incrementStat(STAT_HTTP_REQUEST_FAILED);
+        doSend();
+        return;
+    }
+
     _reply->disconnect(this);
     _reply->deleteLater();
     _reply = nullptr;
@@ -263,7 +298,7 @@ void HTTPResourceRequest::onDownloadProgress(qint64 bytesReceived, qint64 bytesT
 }
 
 void HTTPResourceRequest::onTimeout() {
-    qDebug() << "Timeout: " << _reply->isFinished();
+    qCDebug(networking) << "Timeout, no data for 10 s:" << _requestUrl.toString();
     Q_ASSERT(_state == InProgress);
     _reply->disconnect(this);
     _reply->abort();
