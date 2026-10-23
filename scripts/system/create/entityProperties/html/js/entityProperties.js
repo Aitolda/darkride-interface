@@ -1833,7 +1833,6 @@ const GROUPS_PER_TYPE = {
 		"physics"
 	],
 	PolyLine: ["base", "spatial", "behavior", "collision", "physics"],
-	PolyVox: ["base", "spatial", "behavior", "collision", "physics"],
 	Grid: ["base", "grid", "spatial", "behavior", "physics"],
 	Multiple: ["base", "spatial", "behavior", "collision", "physics"]
 };

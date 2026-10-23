@@ -145,7 +145,6 @@ const FILTER_TYPES = [
 	"Material",
 	"ParticleEffect",
 	"PolyLine",
-	"PolyVox",
 	"Text",
 	"Grid"
 ];
