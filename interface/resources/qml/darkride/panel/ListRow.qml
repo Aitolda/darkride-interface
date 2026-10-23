@@ -21,6 +21,7 @@ Item {
 
     property string label: ""
     property string detail: ""
+    property url icon: ""          // a small picture left of the label (an avatar menu's control)
     // the control fills the room beside the label (a slider, a text field) rather than sitting at the right
     property bool fill: false
     // a fixed width for the label, so the controls of neighbouring rows line up (0: the words' own width)
@@ -41,6 +42,8 @@ Item {
     property bool destructive: false
     property bool clickable: action
     signal clicked()
+    signal pressed()               // a clickable row's press and release, for a button held while pressed
+    signal released()
 
     width: parent ? parent.width : 0
     // from the parts themselves, not the grid's own implicit height, which changes with the layout it feeds
@@ -112,6 +115,9 @@ Item {
         anchors.fill: parent
         enabled: row.clickable && row.enabled
         onClicked: row.clicked()
+        onPressed: row.pressed()
+        onReleased: row.released()
+        onCanceled: row.released()
     }
 
     GridLayout {
@@ -125,66 +131,82 @@ Item {
         columnSpacing: Theme.gap
         rowSpacing: 8 * Theme.unit
 
-        Column {
+        Row {
             id: labelColumn
             Layout.alignment: Qt.AlignLeft | Qt.AlignVCenter
             Layout.preferredWidth: row.labelWidth > 0 && !row.stacked ? row.labelWidth : implicitWidth
             visible: row.label !== ""
+            spacing: 10 * Theme.unit
 
-            Text {
-                id: labelText
-                text: row.label
-                color: row.action ? (row.destructive ? Theme.destructive : Theme.tint) : Theme.text
-                opacity: row.enabled ? 1 : 0.4
-                font.pixelSize: Theme.bodySize
-
-                MouseArea {
-                    id: scrubArea
-                    // a little wider and taller than the words, so the label is easy to catch
-                    anchors.fill: parent
-                    anchors.margins: -4 * Theme.unit
-                    enabled: row.scrubbable && row.enabled
-                    cursorShape: enabled ? Qt.SizeHorCursor : Qt.ArrowCursor
-                    preventStealing: true
-
-                    property real pressX: 0
-                    property real lastX: 0
-                    property real accumulated: 0
-                    property bool scrubbing: false
-
-                    onPressed: {
-                        pressX = lastX = mouse.x;
-                        scrubbing = false;
-                    }
-                    onPositionChanged: {
-                        if (!scrubbing) {
-                            if (Math.abs(mouse.x - pressX) < Theme.scrubSlop) {
-                                return;
-                            }
-                            scrubbing = true;
-                            lastX = mouse.x;
-                            accumulated = row.scrubValue;
-                            return;
-                        }
-                        var step = row.scrubStep;
-                        if (mouse.modifiers & Qt.ShiftModifier) {
-                            step *= Theme.scrubCoarse;
-                        } else if (mouse.modifiers & Qt.AltModifier) {
-                            step *= Theme.scrubFine;
-                        }
-                        accumulated = Math.max(row.scrubFrom, Math.min(row.scrubTo, accumulated + (mouse.x - lastX) * step));
-                        lastX = mouse.x;
-                        row.scrubbed(accumulated);
-                    }
-                    onReleased: scrubbing = false
-                }
+            Image {
+                visible: row.icon.toString() !== ""
+                anchors.verticalCenter: parent.verticalCenter
+                width: 26 * Theme.unit
+                height: width
+                sourceSize.width: width * 2
+                sourceSize.height: height * 2
+                fillMode: Image.PreserveAspectFit
+                source: row.icon
             }
 
-            Text {
-                visible: row.detail !== ""
-                text: row.detail
-                color: Theme.secondaryText
-                font.pixelSize: Theme.detailSize
+            Column {
+                anchors.verticalCenter: parent.verticalCenter
+
+                Text {
+                    id: labelText
+                    text: row.label
+                    color: row.action ? (row.destructive ? Theme.destructive : Theme.tint) : Theme.text
+                    opacity: row.enabled ? 1 : 0.4
+                    font.pixelSize: Theme.bodySize
+
+                    MouseArea {
+                        id: scrubArea
+                        // a little wider and taller than the words, so the label is easy to catch
+                        anchors.fill: parent
+                        anchors.margins: -4 * Theme.unit
+                        enabled: row.scrubbable && row.enabled
+                        cursorShape: enabled ? Qt.SizeHorCursor : Qt.ArrowCursor
+                        preventStealing: true
+
+                        property real pressX: 0
+                        property real lastX: 0
+                        property real accumulated: 0
+                        property bool scrubbing: false
+
+                        onPressed: {
+                            pressX = lastX = mouse.x;
+                            scrubbing = false;
+                        }
+                        onPositionChanged: {
+                            if (!scrubbing) {
+                                if (Math.abs(mouse.x - pressX) < Theme.scrubSlop) {
+                                    return;
+                                }
+                                scrubbing = true;
+                                lastX = mouse.x;
+                                accumulated = row.scrubValue;
+                                return;
+                            }
+                            var step = row.scrubStep;
+                            if (mouse.modifiers & Qt.ShiftModifier) {
+                                step *= Theme.scrubCoarse;
+                            } else if (mouse.modifiers & Qt.AltModifier) {
+                                step *= Theme.scrubFine;
+                            }
+                            accumulated = Math.max(row.scrubFrom, Math.min(row.scrubTo, accumulated + (mouse.x - lastX) * step));
+                            lastX = mouse.x;
+                            row.scrubbed(accumulated);
+                        }
+                        onReleased: scrubbing = false
+                    }
+                }
+
+                Text {
+                    visible: row.detail !== ""
+                    text: row.detail
+                    color: Theme.secondaryText
+                    font.pixelSize: Theme.detailSize
+                }
             }
         }
 

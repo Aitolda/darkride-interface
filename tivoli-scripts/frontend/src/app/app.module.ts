@@ -11,11 +11,6 @@ const routes: Routes = [
 		loadChildren: () =>
 			import("./explore/explore.module").then(m => m.ExploreModule),
 	},
-	{
-		path: "avatar",
-		loadChildren: () =>
-			import("./avatar/avatar.module").then(m => m.AvatarModule),
-	},
 	// {
 	// 	path: "market",
 	// 	loadChildren: () =>

@@ -3,13 +3,13 @@
 //  qml/darkride
 //
 //  Darkride's Settings panel, in the panels' iOS look (darkride/panel), with four tabs named as Apple's System Settings
-//  names them (Caity, 10-23): General (start-up, privacy, controls, statistics, the nametag for now, the cache),
+//  names them (Caity, 10-23): General (start-up, privacy, controls, statistics, the cache),
 //  Displays (quality, rendering with Forward+ and MSAA, the view, nametags), Sound (devices, the microphone, volumes)
 //  and Appearance (the panels' theme, built in or loaded from a file). The bar's Settings button opens it in a window
 //  on the desktop and on the tablet in a headset (tivoli-scripts' ButtonManager.addQmlButton). It reads and sets the
 //  engine's own values through its context properties (Render, Performance, LODManager, AudioScriptingInterface,
-//  MyAvatar, Users, AccountServices, MenuInterface, DiskCache), the nametag through the metaverse's API
-//  (MetaverseRequests) and the theme through PanelTheme. Every number scrubs from its label, as in the build tools.
+//  MyAvatar, Users, AccountServices, MenuInterface, DiskCache) and the theme through PanelTheme; the nametag is the
+//  Avatar panel's (AvatarPanel.qml). Every number scrubs from its label, as in the build tools.
 //  It replaces the web page of the same name (ARCHITECTURE.md §5.2.1: the first of Darkride's panels in QML).
 //
 //  Copyright 2026 Darkride.
@@ -44,7 +44,6 @@ Page {
         if (visible) {
             general.refresh();
             cache.refresh();
-            nametag.load();
         }
     }
 
@@ -185,73 +184,6 @@ Page {
                     checked: general.statistics
                     onToggled: { MenuInterface.setIsOptionChecked("Show Statistics", checked); general.refresh(); }
                 }
-            }
-        }
-
-        // the nametag's editor stays here until the Avatar panel takes it (Caity, 10-23)
-        Section {
-            title: "Nametag"
-            footer: nametag.signedIn ? nametag.status : "Sign in to set the name and pronoun others see above your head."
-
-            Item {
-                visible: nametag.signedIn && picture.status === Image.Ready
-                width: parent ? parent.width : 0
-                height: visible ? picture.height + 2 * Theme.cardPadding : 0
-
-                Image {
-                    id: picture
-                    anchors.centerIn: parent
-                    width: Math.min(sourceSize.width, parent.width - 2 * Theme.cardPadding)
-                    height: width * sourceSize.height / Math.max(1, sourceSize.width)
-                    fillMode: Image.PreserveAspectFit
-                    cache: false
-                    source: nametag.signedIn && nametag.username !== ""
-                        ? MetaverseRequests.metaverseUrl() + "/api/user/" + nametag.username.toLowerCase()
-                          + "/nametag?" + nametag.pictureStamp
-                        : ""
-                }
-            }
-            ListRow {
-                visible: nametag.signedIn
-                label: "Display name"
-                fill: true
-                Field {
-                    id: displayNameField
-                    Layout.fillWidth: true
-                    enabled: !nametag.busy
-                    placeholderText: nametag.username
-                }
-            }
-            ListRow {
-                visible: nametag.signedIn
-                label: "Pronoun"
-                Segmented {
-                    id: pronounChoices
-                    enabled: !nametag.busy
-                    current: ""
-                    model: [{ text: "None", value: "" }, { text: "She/Her", value: "she/her" },
-                            { text: "He/Him", value: "he/him" }, { text: "They/Them", value: "they/them" }]
-                    onChosen: current = value
-                }
-            }
-            ListRow {
-                visible: nametag.signedIn
-                action: true
-                label: "Save"
-                enabled: !nametag.busy
-                onClicked: nametag.save()
-            }
-            ListRow {
-                visible: nametag.signedIn && nametag.rejoinNeeded
-                action: true
-                label: "Rejoin the World"
-                onClicked: nametag.rejoin()
-            }
-            ListRow {
-                visible: nametag.signedIn
-                action: true
-                label: "Change Picture…"
-                onClicked: Qt.openUrlExternally(MetaverseRequests.metaverseUrl() + "/user/settings")
             }
         }
 
@@ -825,71 +757,7 @@ Page {
         }
     }
 
-    // ==== the nametag and the cache, shared by the tabs above ========================================================
-
-    QtObject {
-        id: nametag
-
-        readonly property bool signedIn: AccountServices.loggedIn
-        readonly property string username: AccountServices.username
-        property bool busy: false
-        property string status: ""
-        property bool rejoinNeeded: false
-        property string pictureStamp: ""
-
-        function load() {
-            if (!signedIn || busy) {   // a first desktop opening asks twice: on creation, then on showing
-                return;
-            }
-            busy = true;
-            MetaverseRequests.send("GET", "/api/user/nametag-details", null, function (error, code, data) {
-                busy = false;
-                if (error) {
-                    status = "Couldn't read your nametag: " + error + ".";
-                    return;
-                }
-                displayNameField.text = data && data.displayName ? data.displayName : "";
-                pronounChoices.current = data && data.genderPronoun ? data.genderPronoun : "";
-                status = "";
-            });
-            pictureStamp = String(Date.now());
-        }
-
-        function save() {
-            busy = true;
-            status = "Saving…";
-            MetaverseRequests.send("POST", "/api/user/nametag-details",
-                                   { displayName: displayNameField.text, genderPronoun: pronounChoices.current },
-                                   function (error, code, data) {
-                busy = false;
-                if (error) {
-                    status = "Not saved: " + error + ".";
-                    return;
-                }
-                status = "Saved. Others see it after you rejoin the world.";
-                rejoinNeeded = true;
-                pictureStamp = String(Date.now());
-            });
-        }
-
-        function rejoin() {
-            rejoinTimer.target = String(AddressManager.href);
-            AddressManager.handleLookupString("file:///");
-            rejoinTimer.start();
-            rejoinNeeded = false;
-            status = "";
-        }
-
-        Component.onCompleted: load()
-        onSignedInChanged: load()
-    }
-
-    Timer {
-        id: rejoinTimer
-        property string target: ""
-        interval: 1000
-        onTriggered: AddressManager.handleLookupString(target)
-    }
+    // ==== the cache, read by General =================================================================================
 
     QtObject {
         id: cache

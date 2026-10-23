@@ -1,6 +1,5 @@
 import { SignalManager } from "../lib/signal-manager";
 import { ButtonManager } from "./button-manager";
-import { AvatarHandler } from "./web-event-handlers/avatar";
 import { ExploreHandler } from "./web-event-handlers/explore";
 import { MarketHandler } from "./web-event-handlers/market";
 
@@ -25,11 +24,6 @@ export class Buttons {
 		// 	console.log("clicked");
 		// });
 
-		// TODO: the web event handling system doesn't let you share handlers
-		// right now the market button uses the AvatarHandler and on the
-		// frontend, it does emit("explore", "[avatar handler key]")
-		// its confusing and weird and needs redesigning
-
 		// settings: Darkride's own QML panel (qml/darkride/SettingsPanel.qml), the first of the web pages moved to QML
 		const settings = this.buttonManager.addQmlButton(
 			"Settings",
@@ -40,14 +34,14 @@ export class Buttons {
 			"small",
 		);
 
-		// avatar
-		const avatar = this.buttonManager.addWebButton(
+		// avatar: Darkride's Avatar panel (qml/darkride/AvatarPanel.qml): the avatar, its own menu, the nametag
+		const avatar = this.buttonManager.addQmlButton(
 			"Avatar",
 			'data:image/svg;xml,<svg fill="#fff" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path d="M41 12c-5.22 1.4-11.34 2-17 2s-11.78-.6-17-2l-1 4c3.72 1 8 1.66 12 2v26h4V32h4v12h4V18c4-.34 8.28-1 12-2l-1-4zm-17 0c2.2 0 4-1.8 4-4s-1.8-4-4-4-4 1.8-4 4 1.8 4 4 4z"/></svg>',
 			"#3f51b5", // indigo 500
 			6,
-			"false",
-			AvatarHandler,
+			Script.resourcesPath() + "qml/darkride/AvatarPanel.qml",
+			"small",
 		);
 
 		// explore
