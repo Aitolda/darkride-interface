@@ -210,11 +210,10 @@ void Application::runTests() {
 
 // The frame loop's tick (idle, with the Windows CPU monitor it starts) is in ApplicationFrame.cpp.
 
-// exportEntities (both forms) is in ApplicationImport.cpp.
+// The entities' clipboard (export, import, paste) is an EntityClipboard (EntityClipboard.h), the member _entityClipboard,
+// reached by getEntityClipboard().
 
 // loadSettings and saveSettings are in ApplicationSettings.cpp.
-
-// importEntities and pasteEntities are in ApplicationImport.cpp.
 
 // init (the avatar manager, the entity tree renderer, the physics engine, the entity simulation and the game workload
 // brought up; the interface stage calls it) is in ApplicationStartup.cpp.

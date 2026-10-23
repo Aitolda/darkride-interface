@@ -374,7 +374,6 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     _previousSessionCrashed(setupEssentials(runningMarkerExisted)),
     _entitySimulation(new PhysicalEntitySimulation()),
     _physicsEngine(new PhysicsEngine(Vectors::ZERO)),
-    _entityClipboard(new EntityTree()),
     _previousScriptLocation("LastScriptLocation", DESKTOP_LOCATION),
     _fieldOfView("fieldOfView", DEFAULT_FIELD_OF_VIEW_DEGREES),
     _farClip("farClip", DEFAULT_FAR_CLIP),
@@ -480,8 +479,6 @@ void Application::setupProcess() {
     EntityTree::setEntityClicksCapturedOperator([this] {
         return _controllerScriptingInterface->areEntityClicksCaptured();
     });
-
-    _entityClipboard->createRootElement();
 
 #ifdef Q_OS_WIN
     installNativeEventFilter(&MyNativeEventFilter::getInstance());
@@ -1017,7 +1014,7 @@ void Application::startEntityProcessing() {
 
     // The entity octree will have to know about MyAvatar for the parentJointName import
     getEntities()->getTree()->setMyAvatar(myAvatar);
-    _entityClipboard->setMyAvatar(myAvatar);
+    _entityClipboard.tree()->setMyAvatar(myAvatar);
 
     // For now we're going to set the PPS for outbound packets to be super high, this is
     // probably not the right long term solution. But for now, we're going to do this to

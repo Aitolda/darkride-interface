@@ -55,6 +55,7 @@ class ClientOptions;
 
 #include "avatar/MyAvatar.h"
 #include "ViewState.h"
+#include "EntityClipboard.h"
 #include "ConnectionMonitor.h"
 #include "CursorManager.h"
 #include "WindowCursor.h"
@@ -182,7 +183,7 @@ public:
     QSharedPointer<EntityTreeRenderer> getEntities() const { return DependencyManager::get<EntityTreeRenderer>(); }
     GraphicsEngine& getGraphicsEngine() { return _graphicsEngine; }
     MainWindow* getWindow() const { return _window; }
-    EntityTreePointer getEntityClipboard() const { return _entityClipboard; }
+    EntityClipboard& getEntityClipboard() { return _entityClipboard; }   // the entities' clipboard: export, import, paste (EntityClipboard.h)
     EntityEditPacketSender* getEntityEditPacketSender() { return &_entityEditSender; }
 
     ApplicationOverlay& getApplicationOverlay() { return _applicationOverlay; }
@@ -397,10 +398,6 @@ signals:
     void awayStateWhenFocusLostInVRChanged(bool enabled);
 
 public slots:
-    QVector<EntityItemID> pasteEntities(const QString& entityHostType, float x, float y, float z);
-    bool exportEntities(const QString& filename, const QVector<QUuid>& entityIDs, const glm::vec3* givenOffset = nullptr);
-    bool exportEntities(const QString& filename, float x, float y, float z, float scale);
-    bool importEntities(const QString& url, const bool isObservable = true, const qint64 callerId = -1);
     void updateThreadPoolCount() const;
     void updateSystemTabletMode();
     void goToErrorDomainURL(QUrl errorDomainURL);
@@ -653,7 +650,7 @@ private:
     PhysicalEntitySimulationPointer _entitySimulation;
     PhysicsEnginePointer _physicsEngine;
 
-    EntityTreePointer _entityClipboard;
+    EntityClipboard _entityClipboard;   // the entities' clipboard (EntityClipboard.h)
 
     ViewState _viewState;   // the camera, the view frustums and the conical views (ViewState.h)
     ConicalViewFrustums _lastQueriedViews;  // last views used to query servers

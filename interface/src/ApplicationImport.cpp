@@ -2,14 +2,13 @@
 //  ApplicationImport.cpp
 //  interface/src
 //
-//  Application's content in and out: a model, image or zip from a URL or a drop becomes an asset on the domain's
-//  asset server (the download, the unzip, the upload, the mapping) and then an entity, with the size check and the
-//  info and error boxes along the way (addAssetToWorld and its steps); the URL dispatch (canAcceptURL, acceptURL and
-//  the table of importers by extension, with the extensions ImportExtensions.h declares); the import wrappers for a
-//  dropped or opened file (importJSONFromURL, importSVOFromURL, importFromZIP, importImage, acceptSnapshot); and the
-//  entities' export, import and paste (exportEntities, importEntities, pasteEntities). The members as they stood in
-//  Application.cpp, in their order, with the one helper they share; a home of their own until an owner takes them
-//  (ARCHITECTURE.md §5.4 step 4).
+//  Application's content in: a model, image or zip from a URL or a drop becomes an asset on the domain's asset server
+//  (the download, the unzip, the upload, the mapping) and then an entity, with the size check and the info and error
+//  boxes along the way (addAssetToWorld and its steps); the URL dispatch (canAcceptURL, acceptURL and the table of
+//  importers by extension, with the extensions ImportExtensions.h declares); and the import wrappers for a dropped or
+//  opened file (importJSONFromURL, importSVOFromURL, importFromZIP, importImage, acceptSnapshot). The members as they
+//  stood in Application.cpp, in their order, with the one helper they share; a home of their own until an owner takes
+//  them (ARCHITECTURE.md §5.4 step 4). The entities' clipboard is an EntityClipboard (EntityClipboard.h).
 //
 //  Copyright 2026 Darkride.
 //
@@ -24,7 +23,6 @@
 #include <AssetClient.h>
 #include <AssetUpload.h>
 #include <EntityScriptingInterface.h>
-#include <MainWindow.h>
 #include <MappingRequest.h>
 #include <OffscreenUi.h>
 #include <ResourceRequest.h>
@@ -531,8 +529,8 @@ void Application::handleUnzip(QString zipFile, QStringList unzipFile, bool autoA
     }
 }
 
-// The URL dispatch and the entities' export, import and paste, after the import steps above: the extensions
-// ImportExtensions.h declares and the table of importers by extension first, then the members in Application.cpp's order.
+// The URL dispatch, after the import steps above: the extensions ImportExtensions.h declares and the table of importers
+// by extension first, then the members in Application.cpp's order.
 const QString SNAPSHOT_EXTENSION = ".jpg";
 const QString JPG_EXTENSION = ".jpg";
 const QString PNG_EXTENSION = ".png";
@@ -603,109 +601,6 @@ bool Application::acceptSnapshot(const QString& urlString) {
                              snapshotPath + "\nTry dragging in a Darkride Snap saved on this computer.");
     }
     return true;
-}
-
-bool Application::exportEntities(const QString& filename,
-                                 const QVector<QUuid>& entityIDs,
-                                 const glm::vec3* givenOffset) {
-    QHash<EntityItemID, EntityItemPointer> entities;
-
-    auto nodeList = DependencyManager::get<NodeList>();
-    const QUuid myAvatarID = nodeList->getSessionUUID();
-
-    auto entityTree = getEntities()->getTree();
-    auto exportTree = std::make_shared<EntityTree>();
-    exportTree->setMyAvatar(getMyAvatar());
-    exportTree->createRootElement();
-    glm::vec3 root(TREE_SCALE, TREE_SCALE, TREE_SCALE);
-    bool success = true;
-    entityTree->withReadLock([entityIDs, entityTree, givenOffset, myAvatarID, &root, &entities, &success, &exportTree] {
-        for (auto entityID : entityIDs) { // Gather entities and properties.
-            auto entityItem = entityTree->findEntityByEntityItemID(entityID);
-            if (!entityItem) {
-                qCWarning(interfaceapp) << "Skipping export of" << entityID << "that is not in scene.";
-                continue;
-            }
-
-            if (!givenOffset) {
-                EntityItemID parentID = entityItem->getParentID();
-                bool parentIsAvatar = (parentID == AVATAR_SELF_ID || parentID == myAvatarID);
-                if (!parentIsAvatar && (parentID.isInvalidID() ||
-                                        !entityIDs.contains(parentID) ||
-                                        !entityTree->findEntityByEntityItemID(parentID))) {
-                    // If parent wasn't selected, we want absolute position, which isn't in properties.
-                    auto position = entityItem->getWorldPosition();
-                    root.x = glm::min(root.x, position.x);
-                    root.y = glm::min(root.y, position.y);
-                    root.z = glm::min(root.z, position.z);
-                }
-            }
-            entities[entityID] = entityItem;
-        }
-
-        if (entities.size() == 0) {
-            success = false;
-            return;
-        }
-
-        if (givenOffset) {
-            root = *givenOffset;
-        }
-        for (EntityItemPointer& entityDatum : entities) {
-            auto properties = entityDatum->getProperties();
-            EntityItemID parentID = properties.getParentID();
-            bool parentIsAvatar = (parentID == AVATAR_SELF_ID || parentID == myAvatarID);
-            if (parentIsAvatar) {
-                properties.setParentID(AVATAR_SELF_ID);
-            } else {
-                if (parentID.isInvalidID()) {
-                    properties.setPosition(properties.getPosition() - root);
-                } else if (!entities.contains(parentID)) {
-                    entityDatum->globalizeProperties(properties, "Parent %3 of %2 %1 is not selected for export.", -root);
-                } // else valid parent -- don't offset
-            }
-            exportTree->addEntity(entityDatum->getEntityItemID(), properties);
-        }
-    });
-    if (success) {
-        success = exportTree->writeToJSONFile(filename.toLocal8Bit().constData());
-
-        // restore the main window's active state
-        _window->activateWindow();
-    }
-    return success;
-}
-
-bool Application::exportEntities(const QString& filename, float x, float y, float z, float scale) {
-    glm::vec3 center(x, y, z);
-    glm::vec3 minCorner = center - vec3(scale);
-    float cubeSize = scale * 2;
-    AACube boundingCube(minCorner, cubeSize);
-    QVector<QUuid> entities;
-    auto entityTree = getEntities()->getTree();
-    entityTree->withReadLock([&] {
-        entityTree->evalEntitiesInCube(boundingCube, PickFilter(), entities);
-    });
-    return exportEntities(filename, entities, &center);
-}
-
-bool Application::importEntities(const QString& urlOrFilename, const bool isObservable, const qint64 callerId) {
-    bool success = false;
-    _entityClipboard->withWriteLock([&] {
-        _entityClipboard->eraseAllOctreeElements();
-
-        // FIXME: readFromURL() can take over the main event loop which may cause problems, especially if downloading the JSON 
-        // from the Web.
-        success = _entityClipboard->readFromURL(urlOrFilename, isObservable, callerId, true);
-        if (success) {
-            _entityClipboard->reaverageOctreeElements();
-        }
-    });
-    return success;
-}
-
-QVector<EntityItemID> Application::pasteEntities(const QString& entityHostType, float x, float y, float z) {
-    return _entityClipboard->sendEntities(&_entityEditSender, getEntities()->getTree(), entityHostType, x, y, z);
 }
 
 bool Application::canAcceptURL(const QString& urlString) const {

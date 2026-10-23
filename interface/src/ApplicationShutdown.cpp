@@ -250,8 +250,7 @@ Application::~Application() {
     DependencyManager::destroy<Preferences>();
     PlatformHelper::shutdown();
 
-    _entityClipboard->eraseAllOctreeElements();
-    _entityClipboard.reset();
+    _entityClipboard.shutdown();
 
     _octreeProcessor.terminate();
     _entityEditSender.terminate();
