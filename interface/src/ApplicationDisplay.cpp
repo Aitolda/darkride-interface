@@ -714,7 +714,7 @@ DisplayPluginPointer Application::getActiveDisplayPlugin() const {
 
 static const char* EXCLUSION_GROUP_KEY = "exclusionGroup";
 
-void addDisplayPluginToMenu(const DisplayPluginPointer& displayPlugin, int index, bool active) {   // initializeUi (Application.cpp) reads it too
+void addDisplayPluginToMenu(const DisplayPluginPointer& displayPlugin, int index, bool active) {   // initializeUi (ApplicationUi.cpp) reads it too
     auto menu = Menu::getInstance();
     QString name = displayPlugin->getName();
     auto grouping = displayPlugin->getGrouping();

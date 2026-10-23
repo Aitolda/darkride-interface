@@ -245,7 +245,7 @@
 using namespace std;
 
 QSharedPointer<OffscreenUi> getOffscreenUI();      // Application.cpp's
-extern Setting::Handle<bool> loginDialogPoppedUp;  // Application.cpp's
+extern Setting::Handle<bool> loginDialogPoppedUp;  // ApplicationUi.cpp's
 extern QTimer locationUpdateTimer;                 // ApplicationStartup.cpp's; the constructor starts it
 
 void Application::onAboutToQuit() {
