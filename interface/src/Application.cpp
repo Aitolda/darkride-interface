@@ -308,8 +308,6 @@ const int MIN_PROCESSING_THREAD_POOL_SIZE = 2;   // declared in ApplicationConst
 
 const QString KEEP_ME_LOGGED_IN_SETTING_NAME = "keepMeLoggedIn";   // declared in ApplicationConstants.h
 
-const float FOCUS_HIGHLIGHT_EXPANSION_FACTOR = 1.05f;   // declared in KeyboardFocusHighlight.h
-
 #if defined(Q_OS_ANDROID)
 #endif
 
@@ -323,10 +321,7 @@ const float FOCUS_HIGHLIGHT_EXPANSION_FACTOR = 1.05f;   // declared in KeyboardF
 // setupEssentials (what runs before the members exist: the version switches, the crash check, the resources, the
 // plug-ins, the registrations) is in ApplicationStartup.cpp, with the statically provided plug-in lists it needs.
 
-// FIXME move to header, or better yet, design some kind of UI manager
-// to take care of highlighting keyboard focused items, rather than
-// continuing to overburden Application.cpp
-QUuid _keyboardFocusHighlightID;   // declared in KeyboardFocusHighlight.h
+// The keyboard-focus highlight's id and expansion factor (KeyboardFocusHighlight.h) are defined in ApplicationKeyboardFocus.cpp.
 
 
 // The settings' defaults are in ApplicationStartup.cpp, beside the constructor that reads them.
@@ -396,43 +391,7 @@ QString Application::getUserAgent() {
 
 // toggleTabletUI is in ApplicationUi.cpp.
 
-void Application::checkChangeCursor() {
-    QMutexLocker locker(&_changeCursorLock);
-    if (_cursorNeedsChanging) {
-#ifdef Q_OS_MACOS
-        auto cursorTarget = _window; // macOS doesn't seem to provide for hiding the cursor only on the GL widget
-#else
-        // On windows and linux, hiding the top level cursor also means it's invisible when hovering over the
-        // window menu, which is a pain, so only hide it for the GL surface
-        auto cursorTarget = _glWidget;
-#endif
-        cursorTarget->setCursor(_desiredCursor);
-
-        _cursorNeedsChanging = false;
-    }
-}
-
-void Application::showCursor(const Cursor::Icon& cursor) {
-    QMutexLocker locker(&_changeCursorLock);
-
-    auto managedCursor = Cursor::Manager::instance().getCursor();
-    auto curIcon = managedCursor->getIcon();
-    if (curIcon != cursor) {
-        managedCursor->setIcon(cursor);
-        curIcon = cursor;
-    }
-    _desiredCursor = cursor == Cursor::Icon::SYSTEM ? Qt::ArrowCursor : Qt::BlankCursor;
-    _cursorNeedsChanging = true;
-}
-
-void Application::updateSystemCursor(const Qt::CursorShape cursor) {
-    QMutexLocker locker(&_changeCursorLock);
-
-    if (_desiredCursor != Qt::BlankCursor && _desiredCursor != cursor) {
-        _desiredCursor = cursor;
-        _cursorNeedsChanging = true;
-    }
-}
+// The cursor (checkChangeCursor, showCursor, updateSystemCursor) is in ApplicationCursor.cpp.
 
 void Application::updateHeartbeat() const {
     DeadlockWatchdogThread::updateHeartbeat();
@@ -637,87 +596,8 @@ void Application::reloadResourceCaches() {
 
 // rotationModeChanged is in ApplicationCamera.cpp.
 
-void Application::setKeyboardFocusHighlight(const glm::vec3& position, const glm::quat& rotation, const glm::vec3& dimensions) {
-    if (qApp->getLoginDialogPoppedUp()) {
-        return;
-    }
-
-    auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
-    if (_keyboardFocusHighlightID == UNKNOWN_ENTITY_ID || !entityScriptingInterface->isAddedEntity(_keyboardFocusHighlightID)) {
-        EntityItemProperties properties;
-        properties.setType(EntityTypes::Box);
-        properties.setAlpha(1.0f);
-        properties.setColor({ 0xFF, 0xEF, 0x00 });
-        properties.setPrimitiveMode(PrimitiveMode::LINES);
-        properties.getPulse().setMin(0.5);
-        properties.getPulse().setMax(1.0f);
-        properties.getPulse().setColorMode(PulseMode::IN_PHASE);
-        properties.setIgnorePickIntersection(true);
-        _keyboardFocusHighlightID = entityScriptingInterface->addEntityInternal(properties, entity::HostType::LOCAL);
-    }
-
-    // Position focus
-    EntityItemProperties properties;
-    properties.setPosition(position);
-    properties.setRotation(rotation);
-    properties.setDimensions(dimensions);
-    properties.setVisible(true);
-    entityScriptingInterface->editEntity(_keyboardFocusHighlightID, properties);
-}
-
-QUuid Application::getKeyboardFocusEntity() const {
-    return _keyboardFocusedEntity.get();
-}
-
-void Application::setKeyboardFocusEntity(const QUuid& id) {
-    if (_keyboardFocusedEntity.get() != id) {
-        if (qApp->getLoginDialogPoppedUp() && !_loginDialogID.isNull()) {
-            if (id == _loginDialogID) {
-                emit loginDialogFocusEnabled();
-            } else if (!_keyboardFocusWaitingOnRenderable) {
-                // that's the only entity we want in focus;
-                return;
-            }
-        }
-
-        _keyboardFocusedEntity.set(id);
-
-        auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
-        if (id != UNKNOWN_ENTITY_ID) {
-            EntityPropertyFlags desiredProperties;
-            desiredProperties += PROP_VISIBLE;
-            desiredProperties += PROP_LOCALLY_VISIBLE; // TIVOLI new
-            desiredProperties += PROP_SHOW_KEYBOARD_FOCUS_HIGHLIGHT;
-            auto properties = entityScriptingInterface->getEntityProperties(id);
-            if (properties.getVisible()) {
-                auto entities = getEntities();
-                auto entityId = _keyboardFocusedEntity.get();
-                auto entityItemRenderable = entities->renderableForEntityId(entityId);
-                if (!entityItemRenderable) {
-                    _keyboardFocusWaitingOnRenderable = true;
-                } else if (entityItemRenderable->wantsKeyboardFocus()) {
-                    entities->setProxyWindow(entityId, _window->windowHandle());
-                    if (_keyboardMouseDevice->isActive()) {
-                        _keyboardMouseDevice->pluginFocusOutEvent();
-                    }
-                    _lastAcceptedKeyPress = usecTimestampNow();
-
-                    if (properties.getShowKeyboardFocusHighlight()) {
-                        if (auto entity = entities->getEntity(entityId)) {
-                            setKeyboardFocusHighlight(entity->getWorldPosition(), entity->getWorldOrientation(),
-                                entity->getScaledDimensions() * FOCUS_HIGHLIGHT_EXPANSION_FACTOR);
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-
-        EntityItemProperties properties;
-        properties.setVisible(false);
-        entityScriptingInterface->editEntity(_keyboardFocusHighlightID, properties);
-    }
-}
+// The keyboard focus and its highlight (setKeyboardFocusHighlight, getKeyboardFocusEntity, setKeyboardFocusEntity) are in
+// ApplicationKeyboardFocus.cpp.
 
 // The simulation step and what frames it (updateDialogs, updateSecondaryCameraViewFrustum, the physics gate
 // setArrivalWaitsForNearby/tryToEnablePhysics, update, updateRenderArgs) is in ApplicationFrame.cpp.
@@ -808,61 +688,8 @@ void Application::updateWindowTitle() const {
 // loadScriptURLDialog, getSampleSound, the LOD tools, entity statistics and domain connection dialogs, the log windows) are
 // in ApplicationDialogs.cpp.
 
-void Application::addSnapshotOperator(const SnapshotOperator& snapshotOperator) {
-    std::lock_guard<std::mutex> lock(_snapshotMutex);
-    _snapshotOperators.push(snapshotOperator);
-    _hasPrimarySnapshot = _hasPrimarySnapshot || std::get<2>(snapshotOperator);
-}
-
-bool Application::takeSnapshotOperators(std::queue<SnapshotOperator>& snapshotOperators) {
-    std::lock_guard<std::mutex> lock(_snapshotMutex);
-    bool hasPrimarySnapshot = _hasPrimarySnapshot;
-    _hasPrimarySnapshot = false;
-    _snapshotOperators.swap(snapshotOperators);
-    return hasPrimarySnapshot;
-}
-
-void Application::takeSnapshot(bool notify, bool includeAnimated, float aspectRatio, const QString& filename) {
-    addSnapshotOperator(std::make_tuple([notify, includeAnimated, aspectRatio, filename](const QImage& snapshot) {
-        qApp->postLambdaEvent([snapshot, notify, includeAnimated, aspectRatio, filename] {
-            QString path = DependencyManager::get<Snapshot>()->saveSnapshot(snapshot, filename, TestScriptingInterface::getInstance()->getTestResultsLocation());
-
-            // If we're not doing an animated snapshot as well...
-            if (!includeAnimated) {
-                if (!path.isEmpty()) {
-                    // Tell the dependency manager that the capture of the still snapshot has taken place.
-                    emit DependencyManager::get<WindowScriptingInterface>()->stillSnapshotTaken(path, notify);
-                }
-            } else if (!SnapshotAnimated::isAlreadyTakingSnapshotAnimated()) {
-                // Get an animated GIF snapshot and save it
-                SnapshotAnimated::saveSnapshotAnimated(path, aspectRatio, DependencyManager::get<WindowScriptingInterface>());
-            }
-        });
-    }, aspectRatio, true));
-}
-
-void Application::takeSecondaryCameraSnapshot(const bool& notify, const QString& filename) {
-    addSnapshotOperator(std::make_tuple([notify, filename](const QImage& snapshot) {
-        qApp->postLambdaEvent([snapshot, notify, filename] {
-            QString snapshotPath = DependencyManager::get<Snapshot>()->saveSnapshot(snapshot, filename, TestScriptingInterface::getInstance()->getTestResultsLocation());
-
-            emit DependencyManager::get<WindowScriptingInterface>()->stillSnapshotTaken(snapshotPath, notify);
-        });
-    }, 0.0f, false));
-}
-
-void Application::takeSecondaryCamera360Snapshot(const glm::vec3& cameraPosition, const bool& cubemapOutputFormat, const bool& notify, const QString& filename) {
-    postLambdaEvent([notify, filename, cubemapOutputFormat, cameraPosition] {
-        DependencyManager::get<Snapshot>()->save360Snapshot(cameraPosition, cubemapOutputFormat, notify, filename);
-    });
-}
-
-void Application::shareSnapshot(const QString& path, const QUrl& href) {
-    postLambdaEvent([path, href] {
-        // not much to do here, everything is done in snapshot code...
-        DependencyManager::get<Snapshot>()->uploadSnapshot(path, href);
-    });
-}
+// Snapshots (addSnapshotOperator, takeSnapshotOperators, takeSnapshot, takeSecondaryCameraSnapshot,
+// takeSecondaryCamera360Snapshot, shareSnapshot) are in ApplicationSnapshots.cpp.
 
 // getRenderResolutionScale is in ApplicationDisplay.cpp.
 
