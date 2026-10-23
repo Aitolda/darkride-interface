@@ -14,6 +14,7 @@
 #include <QtCore/QCborArray>
 #include <QtCore/QCborMap>
 #include <QtCore/QDateTime>
+#include <QtCore/QJsonDocument>
 #include <QtCore/QPoint>
 #include <QtCore/QUrl>
 #include <QtCore/QUuid>
@@ -383,6 +384,14 @@ void PlainScriptValueTests::testFromVariant() {
     }
     QVERIFY(!plain.property("null").isValid());
     QVERIFY(!plain.property("point").isValid());
+    // a 64-bit integer goes through a float on both paths (variantToScriptValue's rule for any other type), and
+    // QJsonDocument gives one for a whole number: an entity's creation time loses its low bits on a world load
+    QCOMPARE(plain.property("longLong").toNumber(), (double)(float)123456789012345);
+    const QVariantMap fromJson = QJsonDocument::fromJson("{\"created\": 1792340679910596}").toVariant().toMap();
+    QCOMPARE(fromJson.value("created").userType(), (int)QMetaType::LongLong);
+    QVariant createdVariant = fromJson.value("created");
+    QCOMPARE(variantToScriptValue(createdVariant, engine).toNumber(), (double)(float)1792340679910596);
+    QCOMPARE(PlainScriptValue::fromVariant(createdVariant).toNumber(), (double)(float)1792340679910596);
     QCOMPARE(plain.property("uint").toNumber(), 3000000000.0);
     QCOMPARE(plain.property("url").toString(), QString("https://example.invalid/a?b=c"));
     QVERIFY(plain.property("list").isArray());
