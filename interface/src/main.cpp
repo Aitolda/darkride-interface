@@ -30,7 +30,6 @@
 #include "Application.h"
 #include "CrashHandler.h"
 #include "InterfaceLogging.h"
-#include "UserActivityLogger.h"
 #include "MainWindow.h"
 
 #include "Profile.h"
@@ -210,24 +209,8 @@ int main(int argc, const char* argv[]) {
 
     Setting::init();
 
-    // Instance UserActivityLogger now that the settings are loaded
-    auto& ual = UserActivityLogger::getInstance();
-    // once the settings have been loaded, check if we need to flip the default for UserActivityLogger
-    if (!ual.isDisabledSettingSet()) {
-        // the user activity logger is opt-out for Interface
-        // but it's defaulted to disabled for other targets
-        // so we need to enable it here if it has never been disabled by the user
-        ual.disable(false);
-    }
-    qDebug() << "UserActivityLogger is enabled:" << ual.isEnabled();
-
-    // TODO: user activity logger dumps way too much data for analytics
-    // which needs to be ripped out. crash handler is crutial to the
-    // stability of interface
-    // if (ual.isEnabled()) {
     auto crashHandlerStarted = startCrashHandler(argv[0]);
     qDebug() << "Crash handler started:" << crashHandlerStarted;
-    // }
 
 
     const QString& applicationName = getInterfaceSharedMemoryName();
@@ -402,23 +385,6 @@ int main(int argc, const char* argv[]) {
             exitTimer.start(int(1000 * traceDuration));
         }
 
-#if 0
-        // If we failed the OpenGLVersion check, log it.
-        if (overrideGLcheck) {
-            auto accountManager = DependencyManager::get<AccountManager>();
-            if (accountManager->isLoggedIn()) {
-                UserActivityLogger::getInstance().insufficientGLVersion(glData);
-            } else {
-                QObject::connect(accountManager.data(), &AccountManager::loginComplete, [glData](){
-                    static bool loggedInsufficientGL = false;
-                    if (!loggedInsufficientGL) {
-                        UserActivityLogger::getInstance().insufficientGLVersion(glData);
-                        loggedInsufficientGL = true;
-                    }
-                });
-            }
-        }
-#endif
 
         // Setup local server
         QLocalServer server { &app };

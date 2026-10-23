@@ -553,7 +553,6 @@ function takeSnapshot() {
             Window.takeSnapshot(false, includeAnimated, 1.91);
         }, Math.max(SNAPSHOT_DELAY, DOUBLE_RENDER_TIME_TO_MS / Rates.render ));
     }, FINISH_SOUND_DELAY);
-    UserActivityLogger.logAction("snaphshot_taken", { location: location.href });
 }
     
 function isDomainOpen(id, callback) {

@@ -20,7 +20,7 @@ import controlsUit 1.0 as HifiControlsUit
 import "../controls" as HifiControls
 import "qrc:////qml//hifi//models" as HifiModels  // Absolute path so the same code works everywhere.
 
-// references HMD, Users, UserActivityLogger from root context
+// references HMD, Users from root context
 
 Rectangle {
     id: pal;
@@ -105,7 +105,6 @@ Rectangle {
     }
     function popupComboDialogCallback(availability) {
         GlobalServices.findableBy = availability;
-        UserActivityLogger.palAction("set_availability", availability);
         print('Setting availability:', JSON.stringify(GlobalServices.findableBy));
     }
     function popupComboDialog(dialogTitleText, optionTitleText, optionBodyText, optionValues) {
@@ -556,7 +555,6 @@ Rectangle {
                             nearbyUserModel.setProperty(model.userIndex, "personalMute", newValue);
                             nearbyUserModelData[model.userIndex]["personalMute"] = newValue; // Defensive programming
                             Users["personalMute"](model.sessionId, newValue);
-                            UserActivityLogger["palAction"](newValue ? "personalMute" : "un-personalMute", model.sessionId);
                         }
                     }
                 }
@@ -581,7 +579,6 @@ Rectangle {
                         nearbyUserModel.setProperty(model.userIndex, styleData.role, newValue);
                         nearbyUserModelData[model.userIndex][styleData.role] = newValue; // Defensive programming
                         Users[styleData.role](model.sessionId, newValue);
-                        UserActivityLogger["palAction"](newValue ? styleData.role : "un-" + styleData.role, model.sessionId);
                         if (styleData.role === "ignore") {
                             nearbyUserModel.setProperty(model.userIndex, "personalMute", newValue);
                             nearbyUserModelData[model.userIndex]["personalMute"] = newValue; // Defensive programming
@@ -610,7 +607,6 @@ Rectangle {
                     height: 32;
                     onClicked: {
                         Users[styleData.role](model.sessionId);
-                        UserActivityLogger["palAction"](styleData.role, model.sessionId);
                         if (styleData.role === "kick") {
                             nearbyUserModelData.splice(model.userIndex, 1);
                             nearbyUserModel.remove(model.userIndex); // after changing nearbyUserModelData, b/c ListModel can frob the data
@@ -887,7 +883,6 @@ Rectangle {
                         enabled: connectionsNameCard.selected && pal.activeTab == "connectionsTab"
                         onClicked: {
                             AddressManager.goToUser(model.userName, false);
-                            UserActivityLogger.palAction("go_to_user", model.userName);
                         }
                         onEntered: connectionsLocationData.color = hifi.colors.blueHighlight;
                         onExited: connectionsLocationData.color = hifi.colors.blueAccent;
@@ -908,7 +903,6 @@ Rectangle {
                     onClicked: {
                         pal.sendToScript({method: checked ? 'addFriend' : 'removeFriend', params: model.userName});
 
-                        UserActivityLogger["palAction"](checked ? styleData.role : "un-" + styleData.role, model.sessionId);
                     }
                 }
             }

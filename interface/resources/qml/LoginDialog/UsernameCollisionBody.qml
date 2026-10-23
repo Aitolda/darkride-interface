@@ -265,20 +265,8 @@ Item {
         function onHandleCreateCompleted() {
             console.log("Create Succeeded");
             if (usernameCollisionBody.withOculus) {
-                if (usernameCollisionBody.loginDialogPoppedUp) {
-                    var data = {
-                        "action": "user created a profile with Oculus successfully in the username collision screen"
-                    }
-                    UserActivityLogger.logAction("encourageLoginDialog", data);
-                }
                 loginDialog.loginThroughOculus();
             } else if (usernameCollisionBody.withSteam) {
-                if (usernameCollisionBody.loginDialogPoppedUp) {
-                    var data = {
-                        "action": "user created a profile with Steam successfully in the username collision screen"
-                    }
-                    UserActivityLogger.logAction("encourageLoginDialog", data);
-                }
                 loginDialog.loginThroughSteam();
             }
             bodyLoader.setSource("LoggingInBody.qml", { "loginDialog": loginDialog, "root": root, "bodyLoader": bodyLoader, "withSteam": usernameCollisionBody.withSteam,
@@ -286,13 +274,6 @@ Item {
         }
         function onHandleCreateFailed() {
             console.log("Create Failed: " + error)
-            if (usernameCollisionBody.loginDialogPoppedUp) {
-                var data = {
-                    "action": "user failed to create account from the username collision screen"
-                }
-                UserActivityLogger.logAction("encourageLoginDialog", data);
-            }
-
 
             mainTextContainer.visible = true
             mainTextContainer.text = "\"" + textField.text + qsTr("\" is invalid or already taken.");
@@ -300,11 +281,6 @@ Item {
         function onHandleLoginCompleted() {
             console.log("Login Succeeded");
             if (usernameCollisionBody.loginDialogPoppedUp) {
-                var data = {
-                    "action": "user logged in successfully from the username collision screen"
-                }
-                UserActivityLogger.logAction("encourageLoginDialog", data);
-
                 loginDialog.dismissLoginDialog();
             }
             root.tryDestroy();
@@ -312,13 +288,6 @@ Item {
 
         function onHandleLoginFailed() {
             console.log("Login Failed")
-            if (usernameCollisionBody.loginDialogPoppedUp) {
-                var data = {
-                    "action": "user failed to log in from the username collision screen"
-                }
-                UserActivityLogger.logAction("encourageLoginDialog", data);
-            }
-
             mainTextContainer.text = "Login Failed";
         }
 

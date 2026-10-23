@@ -5,7 +5,7 @@
 //
 
 /* global Script, SelectionDisplay, LightOverlayManager, CameraManager, Grid, GridTool, EntityListTool, Vec3, SelectionManager,
-   Overlays, OverlayWebWindow, UserActivityLogger, Settings, Entities, Tablet, Toolbars, Messages, Menu, Camera,
+   Overlays, OverlayWebWindow, Settings, Entities, Tablet, Toolbars, Messages, Menu, Camera,
    progressDialog, tooltip, MyAvatar, Quat, Controller, Clipboard, HMD, UndoStack, OverlaySystemWindow,
    keyUpEventFromUIWindow:true */
 
@@ -1191,7 +1191,6 @@
 					// make other apps inactive while in desktop mode
 					tablet.gotoHomeScreen();
 				}
-				UserActivityLogger.enabledEdit();
 				entityListTool.setVisible(true);
 				entityListTool.sendUpdate();
 				gridTool.setVisible(true);

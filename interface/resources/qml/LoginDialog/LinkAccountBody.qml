@@ -71,19 +71,6 @@ Item {
 
     function login() {
         loginDialog.login(emailField.text, passwordField.text);
-        if (linkAccountBody.loginDialogPoppedUp) {
-            var data;
-            if (linkAccountBody.linkSteam) {
-                data = {
-                    "action": "user linking hifi account with Steam"
-                };
-            } else {
-                data = {
-                    "action": "user logging in"
-                };
-            }
-            UserActivityLogger.logAction("encourageLoginDialog", data);
-        }
         bodyLoader.setSource("LoggingInBody.qml", { "loginDialog": loginDialog, "root": root, "bodyLoader": bodyLoader, "withSteam": linkAccountBody.withSteam,
             "withOculus": linkAccountBody.withOculus, "linkSteam": linkAccountBody.linkSteam, "linkOculus": linkAccountBody.linkOculus });
     }
@@ -317,12 +304,6 @@ Item {
                     topMargin: hifi.dimensions.contentSpacing.y
                 }
                 onClicked: {
-                    if (linkAccountBody.loginDialogPoppedUp) {
-                        var data = {
-                            "action": "user clicked cancel at link account screen"
-                        };
-                        UserActivityLogger.logAction("encourageLoginDialog", data);
-                    }
                     bodyLoader.setSource("CompleteProfileBody.qml", { "loginDialog": loginDialog, "root": root, "bodyLoader": bodyLoader, "withSteam": linkAccountBody.withSteam,
                         "withOculus": linkAccountBody.withOculus, "errorString": "" });
                 }
@@ -377,12 +358,6 @@ Item {
                         lightboxPopup.visible = false;
                     }
                     lightboxPopup.visible = true;
-                    if (linkAccountBody.loginDialogPoppedUp) {
-                        var data = {
-                            "action": "user clicked can't access account"
-                        };
-                        UserActivityLogger.logAction("encourageLoginDialog", data);
-                    }
                 }
             }
             HifiControlsUit.Button {
@@ -410,19 +385,6 @@ Item {
                     if (loginDialog.isSteamRunning()) {
                         linkAccountBody.withSteam = true;
                         loginDialog.loginThroughSteam();
-                    }
-                    if (linkAccountBody.loginDialogPoppedUp) {
-                        var data;
-                        if (linkAccountBody.withOculus) {
-                            data = {
-                                "action": "user clicked login through Oculus"
-                            };
-                        } else if (linkAccountBody.withSteam) {
-                            data = {
-                                "action": "user clicked login through Steam"
-                            };
-                        }
-                        UserActivityLogger.logAction("encourageLoginDialog", data);
                     }
 
                     bodyLoader.setSource("LoggingInBody.qml", { "loginDialog": loginDialog, "root": root, "bodyLoader": bodyLoader,
@@ -482,12 +444,6 @@ Item {
                 linkColor: hifi.colors.blueAccent
                 onLinkActivated: {
                     Tablet.playSound(TabletEnums.ButtonClick);
-                    if (linkAccountBody.loginDialogPoppedUp) {
-                        var data = {
-                            "action": "user clicked sign up button"
-                        };
-                        UserActivityLogger.logAction("encourageLoginDialog", data);
-                    }
                     Window.openUrl(link);
                 }
             }

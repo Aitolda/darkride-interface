@@ -318,13 +318,6 @@ Item {
                     fontSize: completeProfileBody.fontSize
                     fontBold: completeProfileBody.fontBold
                     onClicked: {
-                        if (completeProfileBody.loginDialogPoppedUp) {
-                            var data = {
-                                "action": "user clicked cancel on the complete profile screen"
-                            }
-                            UserActivityLogger.logAction("encourageLoginDialog", data);
-                        }
-
                         bodyLoader.setSource("LinkAccountBody.qml", { "loginDialog": loginDialog, "root": root, "bodyLoader": bodyLoader });
                     }
                 }
@@ -344,12 +337,6 @@ Item {
                     fontSize: completeProfileBody.fontSize
                     fontBold: completeProfileBody.fontBold
                     onClicked: {
-                        if (completeProfileBody.loginDialogPoppedUp) {
-                            var data = {
-                                "action": "user clicked create profile"
-                            }
-                            UserActivityLogger.logAction("encourageLoginDialog", data);
-                        }
                         loginErrorMessage.visible = false;
                         if (completeProfileBody.withOculus) {
                             loginDialog.createAccountFromOculus(emailField.text, usernameField.text, passwordField.text);
@@ -495,12 +482,6 @@ Item {
         function onHandleCreateCompleted() {
             console.log("Create Succeeded");
             if (completeProfileBody.withSteam) {
-                if (completeProfileBody.loginDialogPoppedUp) {
-                    var data = {
-                        "action": "user created a profile with Steam successfully from the complete profile screen"
-                    }
-                    UserActivityLogger.logAction("encourageLoginDialog", data);
-                }
                 loginDialog.loginThroughSteam();
             }
             bodyLoader.setSource("LoggingInBody.qml", { "loginDialog": loginDialog, "root": root, "bodyLoader": bodyLoader, "withSteam": completeProfileBody.withSteam, "linkSteam": false,
@@ -508,15 +489,6 @@ Item {
         }
         function onHandleCreateFailed() {
             console.log("Create Failed: " + error);
-            if (completeProfileBody.withSteam || completeProfileBody.withOculus) {
-                if (completeProfileBody.loginDialogPoppedUp) {
-                    var action = completeProfileBody.withSteam ? "Steam" : "Oculus";
-                    var data = {
-                        "action": "user failed to create a profile with " + action + " from the complete profile screen"
-                    }
-                    UserActivityLogger.logAction("encourageLoginDialog", data);
-                }
-            }
             if (!completeProfileBody.withOculus) {
                 bodyLoader.setSource("UsernameCollisionBody.qml", { "loginDialog": loginDialog, "root": root, "bodyLoader": bodyLoader, "withSteam": completeProfileBody.withSteam,
                     "withOculus": completeProfileBody.withOculus });

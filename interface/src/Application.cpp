@@ -98,7 +98,6 @@
 #include <controllers/InputRecorder.h>
 #include <controllers/ScriptingInterface.h>
 #include <controllers/StateController.h>
-#include <UserActivityLoggerScriptingInterface.h>
 #include <LogHandler.h>
 #include "LocationBookmarks.h"
 #include <LocationScriptingInterface.h>
@@ -145,7 +144,6 @@
 #include <FileDialogHelper.h>
 #include <Tooltip.h>
 #include <udt/PacketHeaders.h>
-#include <UserActivityLogger.h>
 #include <UsersScriptingInterface.h>
 #include <recording/ClipCache.h>
 #include <recording/Deck.h>
@@ -180,7 +178,6 @@
 #include "LODManager.h"
 #include "ModelPackager.h"
 #include "scripting/Audio.h"
-#include "networking/CloseEventSender.h"
 #include "scripting/TestScriptingInterface.h"
 #include "scripting/PlatformInfoScriptingInterface.h"
 #include "scripting/AssetMappingsScriptingInterface.h"
@@ -374,7 +371,6 @@ static const QString KEEP_ME_LOGGED_IN_SETTING_NAME = "keepMeLoggedIn";
 static const float FOCUS_HIGHLIGHT_EXPANSION_FACTOR = 1.05f;
 
 #if defined(Q_OS_ANDROID)
-static const QString TESTER_FILE = "/sdcard/_hifi_test_device.txt";
 #endif
 const std::vector<std::pair<QString, Application::AcceptURLMethod>> Application::_acceptedExtensions {
     { SVO_EXTENSION, &Application::importSVOFromURL },
@@ -913,7 +909,6 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     DependencyManager::set<TabletScriptingInterface>();
     DependencyManager::set<InputConfiguration>();
     DependencyManager::set<ToolbarScriptingInterface>();
-    DependencyManager::set<UserActivityLoggerScriptingInterface>();
     DependencyManager::set<AssetMappingsScriptingInterface>();
     DependencyManager::set<DomainConnectionModel>();
 
@@ -948,7 +943,6 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     DependencyManager::set<AvatarBookmarks>();
     DependencyManager::set<LocationBookmarks>();
     DependencyManager::set<Snapshot>();
-    DependencyManager::set<CloseEventSender>();
     DependencyManager::set<ResourceManager>();
     DependencyManager::set<SelectionScriptingInterface>();
     DependencyManager::set<Editor>();
@@ -1007,7 +1001,6 @@ OffscreenGLCanvas* _chromiumShareContext { nullptr };
 Q_GUI_EXPORT void qt_gl_set_global_share_context(QOpenGLContext *context);
 Q_GUI_EXPORT QOpenGLContext *qt_gl_global_share_context();
 
-Setting::Handle<int> sessionRunTime{ "sessionRunTime", 0 };
 
 const float DEFAULT_HMD_TABLET_SCALE_PERCENT = 100.0f;
 const float DEFAULT_DESKTOP_TABLET_SCALE_PERCENT = 75.0f;
@@ -1664,111 +1657,6 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     // Make sure we don't time out during slow operations at startup
     updateHeartbeat();
 
-    static const QString TESTER = "HIFI_TESTER";
-     bool isTester = false;
-#if defined (Q_OS_ANDROID)
-    // Since we cannot set environment variables in Android we use a file presence
-    // to denote that this is a testing device
-    QFileInfo check_tester_file(TESTER_FILE);
-    isTester = check_tester_file.exists() && check_tester_file.isFile();
-#endif
-
-    constexpr auto INSTALLER_INI_NAME = "installer.ini";
-    auto iniPath = QDir(applicationDirPath()).filePath(INSTALLER_INI_NAME);
-    QFile installerFile { iniPath };
-    std::unordered_map<QString, QString> installerKeyValues;
-    if (installerFile.open(QIODevice::ReadOnly)) {
-        while (!installerFile.atEnd()) {
-            auto line = installerFile.readLine();
-            if (!line.isEmpty()) {
-                auto index = line.indexOf("=");
-                if (index >= 0) {
-                    installerKeyValues[line.mid(0, index).trimmed()] = line.mid(index + 1).trimmed();
-                }
-            }
-        }
-    }
-
-    // In practice we shouldn't run across installs that don't have a known installer type.
-    // Client or Client+Server installs should always have the installer.ini next to their
-    // respective interface.exe, and Steam installs will be detected as such. If a user were
-    // to delete the installer.ini, though, and as an example, we won't know the context of the
-    // original install.
-    constexpr auto INSTALLER_KEY_TYPE = "type";
-    constexpr auto INSTALLER_KEY_CAMPAIGN = "campaign";
-    constexpr auto INSTALLER_TYPE_UNKNOWN = "unknown";
-    constexpr auto INSTALLER_TYPE_STEAM = "steam";
-
-    auto typeIt = installerKeyValues.find(INSTALLER_KEY_TYPE);
-    QString installerType = INSTALLER_TYPE_UNKNOWN;
-    if (typeIt == installerKeyValues.end()) {
-        if (property(hifi::properties::STEAM).toBool()) {
-            installerType = INSTALLER_TYPE_STEAM;
-        }
-    } else {
-        installerType = typeIt->second;
-    }
-
-    auto campaignIt = installerKeyValues.find(INSTALLER_KEY_CAMPAIGN);
-    QString installerCampaign = campaignIt != installerKeyValues.end() ? campaignIt->second : "";
-
-    auto& userActivityLogger = UserActivityLogger::getInstance();
-    if (userActivityLogger.isEnabled()) {
-        // sessionRunTime will be reset soon by loadSettings. Grab it now to get previous session value.
-        // The value will be 0 if the user blew away settings this session, which is both a feature and a bug.
-        static const QString TESTER = "HIFI_TESTER";
-        auto gpuIdent = GPUIdent::getInstance();
-        auto glContextData = gl::ContextInfo::get();
-        QJsonObject properties = {
-            { "version", applicationVersion() },
-            { "tester", QProcessEnvironment::systemEnvironment().contains(TESTER) || isTester },
-            { "installer_campaign", installerCampaign },
-            { "installer_type", installerType },
-            { "build_type", BuildInfo::BUILD_TYPE_STRING },
-            { "previousSessionCrashed", _previousSessionCrashed },
-            { "previousSessionRuntime", sessionRunTime.get() },
-            { "cpu_architecture", QSysInfo::currentCpuArchitecture() },
-            { "kernel_type", QSysInfo::kernelType() },
-            { "kernel_version", QSysInfo::kernelVersion() },
-            { "os_type", QSysInfo::productType() },
-            { "os_version", QSysInfo::productVersion() },
-            { "gpu_name", gpuIdent->getName() },
-            { "gpu_driver", gpuIdent->getDriver() },
-            { "gpu_memory", static_cast<qint64>(gpuIdent->getMemory()) },
-            { "gl_version_int", glVersionToInteger(glContextData.version.c_str()) },
-            { "gl_version", glContextData.version.c_str() },
-            { "gl_vender", glContextData.vendor.c_str() },
-            { "gl_sl_version", glContextData.shadingLanguageVersion.c_str() },
-            { "gl_renderer", glContextData.renderer.c_str() },
-            { "ideal_thread_count", QThread::idealThreadCount() }
-        };
-        auto macVersion = QSysInfo::macVersion();
-        if (macVersion != QSysInfo::MV_None) {
-            properties["os_osx_version"] = QSysInfo::macVersion();
-        }
-        auto windowsVersion = QSysInfo::windowsVersion();
-        if (windowsVersion != QSysInfo::WV_None) {
-            properties["os_win_version"] = QSysInfo::windowsVersion();
-        }
-
-        ProcessorInfo procInfo;
-        if (getProcessorInfo(procInfo)) {
-            properties["processor_core_count"] = procInfo.numProcessorCores;
-            properties["logical_processor_count"] = procInfo.numLogicalProcessors;
-            properties["processor_l1_cache_count"] = procInfo.numProcessorCachesL1;
-            properties["processor_l2_cache_count"] = procInfo.numProcessorCachesL2;
-            properties["processor_l3_cache_count"] = procInfo.numProcessorCachesL3;
-        }
-
-        properties["first_run"] = _firstRun.get();
-
-        // add the user's machine ID to the launch event
-        QString machineFingerPrint = uuidStringWithoutCurlyBraces(FingerprintUtils::getMachineFingerprint());
-        properties["machine_fingerprint"] = machineFingerPrint;
-
-        userActivityLogger.logAction("launch", properties);
-    }
-
     _entityEditSender.setMyAvatar(myAvatar.get());
 
     // The entity octree will have to know about MyAvatar for the parentJointName import
@@ -2210,248 +2098,6 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         setKeyboardFocusEntity(UNKNOWN_ENTITY_ID);
     });
 
-    // Add periodic checks to send user activity data
-    static int CHECK_NEARBY_AVATARS_INTERVAL_MS = 10000;
-    static int NEARBY_AVATAR_RADIUS_METERS = 10;
-
-    // setup the stats interval depending on if the 1s faster hearbeat was requested
-    static const QString FAST_STATS_ARG = "--fast-heartbeat";
-    static int SEND_STATS_INTERVAL_MS = arguments().indexOf(FAST_STATS_ARG) != -1 ? 1000 : 10000;
-
-    static glm::vec3 lastAvatarPosition = myAvatar->getWorldPosition();
-    static glm::mat4 lastHMDHeadPose = getHMDSensorPose();
-    static controller::Pose lastLeftHandPose = myAvatar->getLeftHandPose();
-    static controller::Pose lastRightHandPose = myAvatar->getRightHandPose();
-
-    // Periodically send fps as a user activity event
-    QTimer* sendStatsTimer = new QTimer(this);
-    sendStatsTimer->setInterval(SEND_STATS_INTERVAL_MS);  // 10s, Qt::CoarseTimer acceptable
-    connect(sendStatsTimer, &QTimer::timeout, this, [this]() {
-
-        QJsonObject properties = {};
-        MemoryInfo memInfo;
-        if (getMemoryInfo(memInfo)) {
-            properties["system_memory_total"] = static_cast<qint64>(memInfo.totalMemoryBytes);
-            properties["system_memory_used"] = static_cast<qint64>(memInfo.usedMemoryBytes);
-            properties["process_memory_used"] = static_cast<qint64>(memInfo.processUsedMemoryBytes);
-        }
-
-        // content location and build info - useful for filtering stats
-        auto addressManager = DependencyManager::get<AddressManager>();
-        auto currentDomain = addressManager->currentShareableAddress(true).toString(); // domain only
-        auto currentPath = addressManager->currentPath(true); // with orientation
-        properties["current_domain"] = currentDomain;
-        properties["current_path"] = currentPath;
-        properties["build_version"] = BuildInfo::VERSION;
-
-        auto displayPlugin = qApp->getActiveDisplayPlugin();
-
-        properties["render_rate"] = getRenderLoopRate();
-        properties["target_render_rate"] = getTargetRenderFrameRate();
-        properties["present_rate"] = displayPlugin->presentRate();
-        properties["new_frame_present_rate"] = displayPlugin->newFramePresentRate();
-        properties["dropped_frame_rate"] = displayPlugin->droppedFrameRate();
-        properties["stutter_rate"] = displayPlugin->stutterRate();
-        properties["game_rate"] = getGameLoopRate();
-        properties["has_async_reprojection"] = displayPlugin->hasAsyncReprojection();
-        properties["hardware_stats"] = displayPlugin->getHardwareStats();
-
-        // deadlock watchdog related stats
-        properties["deadlock_watchdog_maxElapsed"] = (int)DeadlockWatchdogThread::_maxElapsed;
-        properties["deadlock_watchdog_maxElapsedAverage"] = (int)DeadlockWatchdogThread::_maxElapsedAverage;
-
-        auto nodeList = DependencyManager::get<NodeList>();
-        properties["packet_rate_in"] = nodeList->getInboundPPS();
-        properties["packet_rate_out"] = nodeList->getOutboundPPS();
-        properties["kbps_in"] = nodeList->getInboundKbps();
-        properties["kbps_out"] = nodeList->getOutboundKbps();
-
-        SharedNodePointer entityServerNode = nodeList->soloNodeOfType(NodeType::EntityServer);
-        SharedNodePointer audioMixerNode = nodeList->soloNodeOfType(NodeType::AudioMixer);
-        SharedNodePointer avatarMixerNode = nodeList->soloNodeOfType(NodeType::AvatarMixer);
-        SharedNodePointer assetServerNode = nodeList->soloNodeOfType(NodeType::AssetServer);
-        SharedNodePointer messagesMixerNode = nodeList->soloNodeOfType(NodeType::MessagesMixer);
-        properties["entity_ping"] = entityServerNode ? entityServerNode->getPingMs() : -1;
-        properties["audio_ping"] = audioMixerNode ? audioMixerNode->getPingMs() : -1;
-        properties["avatar_ping"] = avatarMixerNode ? avatarMixerNode->getPingMs() : -1;
-        properties["asset_ping"] = assetServerNode ? assetServerNode->getPingMs() : -1;
-        properties["messages_ping"] = messagesMixerNode ? messagesMixerNode->getPingMs() : -1;
-        properties["atp_in_kbps"] = assetServerNode ? assetServerNode->getInboundKbps() : 0.0f;
-
-        auto loadingRequests = ResourceCache::getLoadingRequests();
-
-        QJsonArray loadingRequestsStats;
-        for (const auto& request : loadingRequests) {
-            QJsonObject requestStats;
-            requestStats["filename"] = request->getURL().fileName();
-            requestStats["received"] = request->getBytesReceived();
-            requestStats["total"] = request->getBytesTotal();
-            requestStats["attempts"] = (int)request->getDownloadAttempts();
-            loadingRequestsStats.append(requestStats);
-        }
-
-        properties["active_downloads"] = loadingRequests.size();
-        properties["pending_downloads"] = (int)ResourceCache::getPendingRequestCount();
-        properties["active_downloads_details"] = loadingRequestsStats;
-
-        auto statTracker = DependencyManager::get<StatTracker>();
-
-        properties["processing_resources"] = statTracker->getStat("Processing").toInt();
-        properties["pending_processing_resources"] = statTracker->getStat("PendingProcessing").toInt();
-
-        QJsonObject startedRequests;
-        startedRequests["atp"] = statTracker->getStat(STAT_ATP_REQUEST_STARTED).toInt();
-        startedRequests["http"] = statTracker->getStat(STAT_HTTP_REQUEST_STARTED).toInt();
-        startedRequests["file"] = statTracker->getStat(STAT_FILE_REQUEST_STARTED).toInt();
-        startedRequests["tea"] = statTracker->getStat(STAT_TEA_REQUEST_STARTED).toInt();
-        startedRequests["total"] = (
-            startedRequests["atp"].toInt() +
-            startedRequests["http"].toInt() +
-            startedRequests["file"].toInt() +
-            startedRequests["tea"].toInt()
-        );
-        properties["started_requests"] = startedRequests;
-
-        QJsonObject successfulRequests;
-        successfulRequests["atp"] = statTracker->getStat(STAT_ATP_REQUEST_SUCCESS).toInt();
-        successfulRequests["http"] = statTracker->getStat(STAT_HTTP_REQUEST_SUCCESS).toInt();
-        successfulRequests["file"] = statTracker->getStat(STAT_FILE_REQUEST_SUCCESS).toInt();
-        successfulRequests["tea"] = statTracker->getStat(STAT_TEA_REQUEST_SUCCESS).toInt();
-        successfulRequests["total"] = (
-            successfulRequests["atp"].toInt() +
-            successfulRequests["http"].toInt() +
-            successfulRequests["file"].toInt() +
-            successfulRequests["tea"].toInt()
-        );
-        properties["successful_requests"] = successfulRequests;
-
-        QJsonObject failedRequests;
-        failedRequests["atp"] = statTracker->getStat(STAT_ATP_REQUEST_FAILED).toInt();
-        failedRequests["http"] = statTracker->getStat(STAT_HTTP_REQUEST_FAILED).toInt();
-        failedRequests["file"] = statTracker->getStat(STAT_FILE_REQUEST_FAILED).toInt();
-        failedRequests["tea"] = statTracker->getStat(STAT_TEA_REQUEST_FAILED).toInt();
-        failedRequests["total"] = (
-            failedRequests["atp"].toInt() +
-            failedRequests["http"].toInt() +
-            failedRequests["file"].toInt() +
-            failedRequests["tea"].toInt()
-        );
-        properties["failed_requests"] = failedRequests;
-
-        QJsonObject cacheRequests;
-        cacheRequests["atp"] = statTracker->getStat(STAT_ATP_REQUEST_CACHE).toInt();
-        cacheRequests["http"] = statTracker->getStat(STAT_HTTP_REQUEST_CACHE).toInt();
-        cacheRequests["tea"] = statTracker->getStat(STAT_TEA_REQUEST_CACHE).toInt();
-        cacheRequests["total"] = (
-            cacheRequests["atp"].toInt() +
-            cacheRequests["http"].toInt() +
-            cacheRequests["tea"].toInt()
-        );
-        properties["cache_requests"] = cacheRequests;
-
-        QJsonObject atpMappingRequests;
-        atpMappingRequests["started"] = statTracker->getStat(STAT_ATP_MAPPING_REQUEST_STARTED).toInt();
-        atpMappingRequests["failed"] = statTracker->getStat(STAT_ATP_MAPPING_REQUEST_FAILED).toInt();
-        atpMappingRequests["successful"] = statTracker->getStat(STAT_ATP_MAPPING_REQUEST_SUCCESS).toInt();
-        properties["atp_mapping_requests"] = atpMappingRequests;
-
-        properties["throttled"] = _displayPlugin ? _displayPlugin->isThrottled() : false;
-
-        QJsonObject bytesDownloaded;
-        auto atpBytes = statTracker->getStat(STAT_ATP_RESOURCE_TOTAL_BYTES).toLongLong();
-        auto httpBytes = statTracker->getStat(STAT_HTTP_RESOURCE_TOTAL_BYTES).toLongLong();
-        auto fileBytes = statTracker->getStat(STAT_FILE_RESOURCE_TOTAL_BYTES).toLongLong();
-        auto teaBytes = statTracker->getStat(STAT_TEA_RESOURCE_TOTAL_BYTES).toLongLong();
-        bytesDownloaded["atp"] = atpBytes;
-        bytesDownloaded["http"] = httpBytes;
-        bytesDownloaded["file"] = fileBytes;
-        bytesDownloaded["tea"] = teaBytes;
-        bytesDownloaded["total"] = atpBytes + httpBytes + fileBytes + teaBytes;
-        properties["bytes_downloaded"] = bytesDownloaded;
-
-        auto myAvatar = getMyAvatar();
-        glm::vec3 avatarPosition = myAvatar->getWorldPosition();
-        properties["avatar_has_moved"] = lastAvatarPosition != avatarPosition;
-        lastAvatarPosition = avatarPosition;
-
-        auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
-        auto entityActivityTracking = entityScriptingInterface->getActivityTracking();
-        entityScriptingInterface->resetActivityTracking();
-        properties["added_entity_cnt"] = entityActivityTracking.addedEntityCount;
-        properties["deleted_entity_cnt"] = entityActivityTracking.deletedEntityCount;
-        properties["edited_entity_cnt"] = entityActivityTracking.editedEntityCount;
-
-        NodeToOctreeSceneStats* octreeServerSceneStats = getOcteeSceneStats();
-        unsigned long totalServerOctreeElements = 0;
-        for (NodeToOctreeSceneStatsIterator i = octreeServerSceneStats->begin(); i != octreeServerSceneStats->end(); i++) {
-            totalServerOctreeElements += i->second.getTotalElements();
-        }
-
-        properties["local_octree_elements"] = (qint64) OctreeElement::getInternalNodeCount();
-        properties["server_octree_elements"] = (qint64) totalServerOctreeElements;
-
-        properties["active_display_plugin"] = getActiveDisplayPlugin()->getName();
-        properties["using_hmd"] = isHMDMode();
-
-        auto contextInfo = gl::ContextInfo::get();
-        properties["gl_info"] = QJsonObject{
-            { "version", contextInfo.version.c_str() },
-            { "sl_version", contextInfo.shadingLanguageVersion.c_str() },
-            { "vendor", contextInfo.vendor.c_str() },
-            { "renderer", contextInfo.renderer.c_str() },
-        };
-        properties["gpu_used_memory"] = (int)BYTES_TO_MB(gpu::Context::getUsedGPUMemSize());
-        properties["gpu_free_memory"] = (int)BYTES_TO_MB(gpu::Context::getFreeGPUMemSize());
-        properties["gpu_frame_time"] = (float)(qApp->getGPUContext()->getFrameTimerGPUAverage());
-        properties["batch_frame_time"] = (float)(qApp->getGPUContext()->getFrameTimerBatchAverage());
-        properties["ideal_thread_count"] = QThread::idealThreadCount();
-
-        auto hmdHeadPose = getHMDSensorPose();
-        properties["hmd_head_pose_changed"] = isHMDMode() && (hmdHeadPose != lastHMDHeadPose);
-        lastHMDHeadPose = hmdHeadPose;
-
-        auto leftHandPose = myAvatar->getLeftHandPose();
-        auto rightHandPose = myAvatar->getRightHandPose();
-        // controller::Pose considers two poses to be different if either are invalid. In our case, we actually
-        // want to consider the pose to be unchanged if it was invalid and still is invalid, so we check that first.
-        properties["hand_pose_changed"] =
-            ((leftHandPose.valid || lastLeftHandPose.valid) && (leftHandPose != lastLeftHandPose))
-            || ((rightHandPose.valid || lastRightHandPose.valid) && (rightHandPose != lastRightHandPose));
-        lastLeftHandPose = leftHandPose;
-        lastRightHandPose = rightHandPose;
-
-        UserActivityLogger::getInstance().logAction("stats", properties);
-    });
-    sendStatsTimer->start();
-
-    // Periodically check for count of nearby avatars
-    static int lastCountOfNearbyAvatars = -1;
-    QTimer* checkNearbyAvatarsTimer = new QTimer(this);
-    checkNearbyAvatarsTimer->setInterval(CHECK_NEARBY_AVATARS_INTERVAL_MS); // 10 seconds, Qt::CoarseTimer ok
-    connect(checkNearbyAvatarsTimer, &QTimer::timeout, this, []() {
-        auto avatarManager = DependencyManager::get<AvatarManager>();
-        int nearbyAvatars = avatarManager->numberOfAvatarsInRange(avatarManager->getMyAvatar()->getWorldPosition(),
-                                                                  NEARBY_AVATAR_RADIUS_METERS) - 1;
-        if (nearbyAvatars != lastCountOfNearbyAvatars) {
-            lastCountOfNearbyAvatars = nearbyAvatars;
-            UserActivityLogger::getInstance().logAction("nearby_avatars", { { "count", nearbyAvatars } });
-        }
-    });
-    checkNearbyAvatarsTimer->start();
-
-    // Track user activity event when we receive a mute packet
-    auto onMutedByMixer = []() {
-        UserActivityLogger::getInstance().logAction("received_mute_packet");
-    };
-    connect(DependencyManager::get<AudioClient>().data(), &AudioClient::mutedByMixer, this, onMutedByMixer);
-
-    // Track when the address bar is opened
-    auto onAddressBarShown = [this]() {
-        // Record time
-        UserActivityLogger::getInstance().logAction("opened_address_bar", { { "uptime_ms", _sessionRunTimer.elapsed() } });
-    };
-    connect(DependencyManager::get<DialogsManager>().data(), &DialogsManager::addressBarShown, this, onAddressBarShown);
-
     // Make sure we don't time out during slow operations at startup
     updateHeartbeat();
 
@@ -2837,9 +2483,6 @@ void Application::onAboutToQuit() {
         && _autoSwitchDisplayModeSupportedHMDPlugin->isSessionActive()) {
         _autoSwitchDisplayModeSupportedHMDPlugin->endSession();
     }
-    // use the CloseEventSender via a QThread to send an event that says the user asked for the app to close
-    DependencyManager::get<CloseEventSender>()->startThread();
-
     // Hide Running Scripts dialog so that it gets destroyed in an orderly manner; prevents warnings at shutdown.
 #if !defined(DISABLE_QML)
     getOffscreenUI()->hide("RunningScripts");
@@ -3049,15 +2692,6 @@ Application::~Application() {
     _window->setMenuBar(nullptr);
 
     _window->deleteLater();
-
-    // make sure that the quit event has finished sending before we take the application down
-    auto closeEventSender = DependencyManager::get<CloseEventSender>();
-    while (!closeEventSender->hasFinishedQuitEvent() && !closeEventSender->hasTimedOutQuitEvent()) {
-        // sleep a little so we're not spinning at 100%
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    // quit the thread used by the closure event sender
-    closeEventSender->thread()->quit();
 
     // Can't log to file past this point, FileLogger about to be deleted
     qInstallMessageHandler(LogHandler::verboseMessageHandler);
@@ -3300,9 +2934,6 @@ void Application::showLoginScreen() {
     loginDialogPoppedUp.set(_loginDialogPoppedUp);
     dialogsManager->showLoginDialog();
     emit loginDialogFocusEnabled();
-    QJsonObject loginData = {};
-    loginData["action"] = "login dialog popped up";
-    UserActivityLogger::getInstance().logAction("encourageLoginDialog", loginData);
     _window->setWindowTitle(labelledTitle("Darkride"));
 #else
     resumeAfterLoginDialogActionTaken();
@@ -3516,7 +3147,6 @@ void Application::onDesktopRootContextCreated(QQmlContext* surfaceContext) {
     surfaceContext->setContextProperty("AvatarList", DependencyManager::get<AvatarManager>().data());
     surfaceContext->setContextProperty("Users", DependencyManager::get<UsersScriptingInterface>().data());
 
-    surfaceContext->setContextProperty("UserActivityLogger", DependencyManager::get<UserActivityLoggerScriptingInterface>().data());
     surfaceContext->setContextProperty("Camera", &_myCamera);
 
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
@@ -3625,7 +3255,6 @@ void Application::userKickConfirmation(const QUuid& nodeID) {
 void Application::setupQmlSurface(QQmlContext* surfaceContext, bool setAdditionalContextProperties) {
     surfaceContext->setContextProperty("Users", DependencyManager::get<UsersScriptingInterface>().data());
     surfaceContext->setContextProperty("HMD", DependencyManager::get<HMDScriptingInterface>().data());
-    surfaceContext->setContextProperty("UserActivityLogger", DependencyManager::get<UserActivityLoggerScriptingInterface>().data());
     surfaceContext->setContextProperty("Preferences", DependencyManager::get<Preferences>().data());
     surfaceContext->setContextProperty("Vec3", new Vec3());
     surfaceContext->setContextProperty("Quat", new Quat());
@@ -4002,28 +3631,6 @@ void Application::resizeGL() {
 void Application::handleSandboxStatus(QNetworkReply* reply) {
     PROFILE_RANGE(render, __FUNCTION__);
 
-    bool sandboxIsRunning = SandboxUtils::readStatus(reply->readAll());
-
-    enum HandControllerType {
-        Vive,
-        Oculus
-    };
-    static const std::map<HandControllerType, int> MIN_CONTENT_VERSION = {
-        { Vive, 1 },
-        { Oculus, 27 }
-    };
-
-    // Get sandbox content set version
-    auto acDirPath = PathUtils::getAppDataPath() + "../../" + BuildInfo::MODIFIED_ORGANIZATION + "/assignment-client/";
-    auto contentVersionPath = acDirPath + "content-version.txt";
-    qCDebug(interfaceapp) << "Checking " << contentVersionPath << " for content version";
-    int contentVersion = 0;
-    QFile contentVersionFile(contentVersionPath);
-    if (contentVersionFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QString line = contentVersionFile.readAll();
-        contentVersion = line.toInt(); // returns 0 if conversion fails
-    }
-
     // Get controller availability
 #ifdef ANDROID_APP_QUEST_INTERFACE
     bool hasHandControllers = true;
@@ -4057,19 +3664,12 @@ void Application::handleSandboxStatus(QNetworkReply* reply) {
         }
     }
 
-    static const QString SENT_TO_PREVIOUS_LOCATION = "previous_location";
-    static const QString SENT_TO_ENTRY = "entry";
-
-    QString sentTo;
-
     // If this is a first run we short-circuit the address passed in
     if (_firstRun.get()) {
         if (!_overrideEntry) {
             DependencyManager::get<AddressManager>()->goToEntry();
-            sentTo = SENT_TO_ENTRY;
         } else {
             DependencyManager::get<AddressManager>()->loadSettings(addressLookupString);
-            sentTo = SENT_TO_PREVIOUS_LOCATION;
         }
        _firstRun.set(false);
     } else {
@@ -4085,19 +3685,8 @@ void Application::handleSandboxStatus(QNetworkReply* reply) {
         }
         qCDebug(interfaceapp) << "Not first run... going to" << qPrintable(!goingTo.isEmpty() ? goingTo : addressLookupString);
         DependencyManager::get<AddressManager>()->loadSettings(addressLookupString);
-        sentTo = SENT_TO_PREVIOUS_LOCATION;
     }
     
-    UserActivityLogger::getInstance().logAction("startup_sent_to", {
-        { "sent_to", sentTo },
-        { "sandbox_is_running", sandboxIsRunning },
-        { "has_hmd", hasHMD },
-        { "has_hand_controllers", hasHandControllers },
-        { "is_using_hmd", isUsingHMD },
-        { "is_using_hmd_and_hand_controllers", isUsingHMDAndHandControllers },
-        { "content_version", contentVersion }
-    });
-
     _connectionMonitor.init();
 }
 
@@ -5576,7 +5165,6 @@ bool Application::exportEntities(const QString& filename, float x, float y, floa
 
 void Application::loadSettings() {
 
-    sessionRunTime.set(0); // Just clean living. We're about to saveSettings, which will update value.
     DependencyManager::get<AudioClient>()->loadSettings();
     DependencyManager::get<LODManager>()->loadSettings();
 
@@ -5681,7 +5269,6 @@ void Application::loadSettings() {
 }
 
 void Application::saveSettings() const {
-    sessionRunTime.set(_sessionRunTimer.elapsed() / MSECS_PER_SECOND);
     DependencyManager::get<AudioClient>()->saveSettings();
     DependencyManager::get<LODManager>()->saveSettings();
 
@@ -7810,7 +7397,6 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
     scriptEngine->registerGlobalObject("ScriptDiscoveryService", DependencyManager::get<ScriptEngines>().data());
     scriptEngine->registerGlobalObject("Reticle", getApplicationCompositor().getReticleInterface());
 
-    scriptEngine->registerGlobalObject("UserActivityLogger", DependencyManager::get<UserActivityLoggerScriptingInterface>().data());
     scriptEngine->registerGlobalObject("Users", DependencyManager::get<UsersScriptingInterface>().data());
 
     scriptEngine->registerGlobalObject("GooglePoly", DependencyManager::get<GooglePolyScriptingInterface>().data());
@@ -9239,12 +8825,7 @@ void Application::setDisplayPlugin(DisplayPluginPointer newDisplayPlugin) {
     bool isHmd = _displayPlugin->isHmd();
     qCDebug(interfaceapp) << "Entering into" << (isHmd ? "HMD" : "Desktop") << "Mode";
 
-    // Only log/emit after a successful change
-    UserActivityLogger::getInstance().logAction("changed_display_mode", {
-        { "previous_display_mode", _displayPlugin ? _displayPlugin->getName() : "" },
-        { "display_mode", newDisplayPlugin ? newDisplayPlugin->getName() : "" },
-        { "hmd", isHmd }
-    });
+    // Only emit after a successful change
     emit activeDisplayPluginChanged();
 
     // reset the avatar, to set head and hand palms back to a reasonable default pose.

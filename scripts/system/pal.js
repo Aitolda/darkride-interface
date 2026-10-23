@@ -2,7 +2,7 @@
 /* jslint vars:true, plusplus:true, forin:true */
 /* global Tablet, Settings, Script, AvatarList, Users, Entities,
     MyAvatar, Camera, Overlays, Vec3, Quat, HMD, Controller, Account,
-    UserActivityLogger, Messages, Window, XMLHttpRequest, print, location, getControllerWorldLocation
+    Messages, Window, XMLHttpRequest, print, location, getControllerWorldLocation
 */
 /* eslint indent: ["error", 4, { "outerIIFEBody": 0 }] */
 //
@@ -127,8 +127,6 @@ ExtendedOverlay.prototype.select = function (selected) {
     if (this.selected === selected) {
         return;
     }
-
-    UserActivityLogger.palAction(selected ? "avatar_selected" : "avatar_deselected", this.key);
 
     this.editOverlay({color: color(selected, this.hovering, this.audioLevel)});
     if (this.model) {
@@ -268,11 +266,9 @@ function fromQml(message) { // messages are {method, params}, like json-rpc. See
             Settings.setValue('pal/filtered', !!message.params.filter);
         }
         populateNearbyUserList(message.params.selected, data);
-        UserActivityLogger.palAction("refresh_nearby", "");
         break;
     case 'refreshConnections':
         print('Refreshing Connections...');
-        UserActivityLogger.palAction("refresh_connections", "");
         break;
     case 'removeConnection':
         connectionUserName = message.params;

@@ -30,7 +30,6 @@
 #include <display-plugins/DisplayPlugin.h>
 #include <PathUtils.h>
 #include <SettingHandle.h>
-#include <UserActivityLogger.h>
 #include <VrMenu.h>
 #include <ScriptEngines.h>
 #include <WasmScriptEngine.h>
@@ -858,12 +857,6 @@ Menu::Menu() {
         Setting::Handle<int>(KTXCache::SETTING_VERSION_NAME, KTXCache::INVALID_VERSION).set(KTXCache::INVALID_VERSION);
     });
 
-    addCheckableActionToQMenuAndActionHash(networkMenu,
-        MenuOption::DisableActivityLogger,
-        0,
-        false,
-        &UserActivityLogger::getInstance(),
-        SLOT(disable(bool)));
     addActionToQMenuAndActionHash(networkMenu, MenuOption::ShowDSConnectTable, 0,
         qApp, SLOT(loadDomainConnectionDialog()));
 

@@ -38,7 +38,6 @@
 #include "udt/PacketHeaders.h"
 #include "RSAKeypairGenerator.h"
 #include "SharedUtil.h"
-#include "UserActivityLogger.h"
 
 
 const bool VERBOSE_HTTP_REQUEST_DEBUGGING = false;

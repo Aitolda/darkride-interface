@@ -21,7 +21,6 @@
 #include <plugins/OculusPlatformPlugin.h>
 #include <shared/GlobalAppProperties.h>
 #include <ui/TabletScriptingInterface.h>
-#include <UserActivityLogger.h>
 
 #include "AccountManager.h"
 #include "DependencyManager.h"

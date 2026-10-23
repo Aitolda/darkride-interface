@@ -20,7 +20,6 @@
 #include <NodeList.h>
 #include <plugins/PluginManager.h>
 #include <plugins/SteamClientPlugin.h>
-#include <UserActivityLogger.h>
 #include <UUID.h>
 
 #include "CrashHandler.h"
@@ -117,15 +116,6 @@ void DiscoverabilityManager::updateLocation() {
                                    QNetworkAccessManager::PutOperation,
                                    callbackParameters, QJsonDocument(rootObject).toJson());
 
-    } else if (UserActivityLogger::getInstance().isEnabled()) {
-        // we still send a heartbeat to the metaverse server for stats collection
-
-        JSONCallbackParameters callbackParameters;
-        callbackParameters.callbackReceiver = this;
-        callbackParameters.jsonCallbackMethod = "handleHeartbeatResponse";
-
-        accountManager->sendRequest(API_USER_HEARTBEAT_PATH, AccountManagerAuth::Optional,
-                                   QNetworkAccessManager::PutOperation, callbackParameters);
     }
 
     // Update Steam and crash logger

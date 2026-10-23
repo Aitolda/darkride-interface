@@ -346,12 +346,6 @@ Item {
                 fontSize: signUpBody.fontSize
                 fontBold: signUpBody.fontBold
                 onClicked: {
-                    if (signUpBody.loginDialogPoppedUp) {
-                        var data = {
-                            "action": "user clicked cancel button at sign up screen"
-                        }
-                        UserActivityLogger.logAction("encourageLoginDialog", data);
-                    }
                     bodyLoader.setSource("LinkAccountBody.qml", { "loginDialog": loginDialog, "root": root, "bodyLoader": bodyLoader, "linkSteam": false });
                 }
             }
@@ -370,12 +364,6 @@ Item {
                 }
 
                 onClicked: {
-                    if (signUpBody.loginDialogPoppedUp) {
-                        var data = {
-                            "action": "user clicked sign up button"
-                        }
-                        UserActivityLogger.logAction("encourageLoginDialog", data);
-                    }
                     signUpBody.signup();
                 }
             }
@@ -458,25 +446,11 @@ Item {
         function onHandleSignupCompleted() {
             console.log("Sign Up Completed");
 
-            if (signUpBody.loginDialogPoppedUp) {
-                var data = {
-                    "action": "user signed up successfully"
-                }
-                UserActivityLogger.logAction("encourageLoginDialog", data);
-            }
-
             loginDialog.login(usernameField.text, passwordField.text);
             bodyLoader.setSource("LoggingInBody.qml", { "loginDialog": loginDialog, "root": root, "bodyLoader": bodyLoader, "withSteam": false, "linkSteam": false });
         }
         function onHandleSignupFailed() {
             console.log("Sign Up Failed")
-
-            if (signUpBody.loginDialogPoppedUp) {
-                var data = {
-                    "action": "user signed up unsuccessfully"
-                }
-                UserActivityLogger.logAction("encourageLoginDialog", data);
-            }
 
             if (errorString !== "") {
                 loginErrorMessage.visible = true;

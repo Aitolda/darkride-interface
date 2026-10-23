@@ -99,7 +99,6 @@ namespace MenuOption {
     const QString DeleteAvatarBookmark = "Delete Avatar Bookmark...";
     const QString DeleteAvatarEntitiesBookmark = "Delete Avatar Entities Bookmark";
     const QString DeleteBookmark = "Delete Bookmark...";
-    const QString DisableActivityLogger = "Disable Activity Logger";
     const QString DisableEyelidAdjustment = "Disable Eyelid Adjustment";
     const QString DisableLightEntities = "Disable Light Entities";
     const QString DisplayCrashOptions = "Display Crash Options";

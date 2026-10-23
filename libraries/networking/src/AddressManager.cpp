@@ -27,7 +27,6 @@
 
 #include "NodeList.h"
 #include "NetworkLogging.h"
-#include "UserActivityLogger.h"
 #include "udt/PacketHeaders.h"
 
 const QString DEFAULT_HIFI_ADDRESS = "7def9d04-b4a4-47b2-892f-43f7eb82caf7"; // squirrel nut cafe
@@ -237,10 +236,6 @@ const JSONCallbackParameters& AddressManager::apiCallbackParameters() {
 }
 
 bool AddressManager::handleUrl(const QUrl& lookupUrlIn, LookupTrigger trigger) {
-    static QString URL_TYPE_USER = "user";
-    static QString URL_TYPE_DOMAIN_ID = "domain_id";
-    static QString URL_TYPE_PLACE = "place";
-    static QString URL_TYPE_NETWORK_ADDRESS = "network_address";
 
     QUrl lookupUrl = lookupUrlIn;
 
@@ -285,8 +280,6 @@ bool AddressManager::handleUrl(const QUrl& lookupUrlIn, LookupTrigger trigger) {
         if (handleUsername(lookupUrl.authority())) {
             // handled a username for lookup
 
-            UserActivityLogger::getInstance().wentTo(trigger, URL_TYPE_USER, lookupUrl.toString());
-
             // save the last visited domain URL.
             _lastVisitedURL = lookupUrl;
 
@@ -299,8 +292,6 @@ bool AddressManager::handleUrl(const QUrl& lookupUrlIn, LookupTrigger trigger) {
             bool hostChanged;
             if (handleNetworkAddress(lookupUrl.host()
                                      + (lookupUrl.port() == -1 ? "" : ":" + QString::number(lookupUrl.port())), trigger, hostChanged)) {
-
-                UserActivityLogger::getInstance().wentTo(trigger, URL_TYPE_NETWORK_ADDRESS, lookupUrl.toString());
 
                 // save the last visited domain URL.
                 _lastVisitedURL = lookupUrl;
@@ -328,8 +319,6 @@ bool AddressManager::handleUrl(const QUrl& lookupUrlIn, LookupTrigger trigger) {
                 // we may have a path that defines a relative viewpoint - if so we should jump to that now
                 handlePath(path, trigger);
             } else if (handleDomainID(lookupUrl.host())){
-                UserActivityLogger::getInstance().wentTo(trigger, URL_TYPE_DOMAIN_ID, lookupUrl.toString());
-
                 // save the last visited domain URL.
                 _lastVisitedURL = lookupUrl;
 
@@ -340,8 +329,6 @@ bool AddressManager::handleUrl(const QUrl& lookupUrlIn, LookupTrigger trigger) {
                 // try to look up the domain ID on the metaverse API
                 attemptDomainIDLookup(lookupUrl.host(), lookupUrl.path(), trigger);
             } else {
-                UserActivityLogger::getInstance().wentTo(trigger, URL_TYPE_PLACE, lookupUrl.toString());
-
                 // save the last visited domain URL.
                 _lastVisitedURL = lookupUrl;
 

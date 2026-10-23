@@ -43,7 +43,6 @@
 #include <ModelEntityItem.h>
 #include <GLMHelpers.h>
 #include <TextRenderer3D.h>
-#include <UserActivityLogger.h>
 #include <AnimDebugDraw.h>
 #include <AnimClip.h>
 #include <AnimInverseKinematics.h>
@@ -2694,7 +2693,6 @@ void MyAvatar::useFullAvatarURL(const QUrl& fullAvatarURL, const QString& modelN
     const QString& urlString = fullAvatarURL.toString();
     if (urlString.isEmpty() || (fullAvatarURL != getSkeletonModelURL())) {
         setSkeletonModelURL(fullAvatarURL);
-        UserActivityLogger::getInstance().changedModel("skeleton", urlString);
     } else {
         emit onLoadComplete();
     }
