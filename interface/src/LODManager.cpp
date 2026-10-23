@@ -15,7 +15,6 @@
 
 #include <SettingHandle.h>
 #include <Util.h>
-#include <shared/GlobalAppProperties.h>
 #include <shared/QtHelpers.h>
 #include <EntityTreeRenderer.h>
 #include <ImpostorSwitch.h>
@@ -460,11 +459,6 @@ QString LODManager::getLODFeedbackText() {
 void LODManager::loadSettings() {
     auto desktopQuality = static_cast<WorldDetailQuality>(desktopWorldDetailQuality.get());
     auto hmdQuality = static_cast<WorldDetailQuality>(hmdWorldDetailQuality.get());
-
-    Setting::Handle<bool> firstRun{ Settings::firstRun, true };
-    if (qApp->property(hifi::properties::OCULUS_STORE).toBool() && firstRun.get()) {
-        hmdQuality = WORLD_DETAIL_HIGH;
-    }
 
     setWorldDetailQuality(desktopQuality, false);
     setWorldDetailQuality(hmdQuality, true);

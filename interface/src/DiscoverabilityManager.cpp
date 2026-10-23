@@ -18,8 +18,6 @@
 #include <AddressManager.h>
 #include <DomainHandler.h>
 #include <NodeList.h>
-#include <plugins/PluginManager.h>
-#include <plugins/SteamClientPlugin.h>
 #include <UUID.h>
 
 #include "CrashHandler.h"
@@ -118,11 +116,8 @@ void DiscoverabilityManager::updateLocation() {
 
     }
 
-    // Update Steam and crash logger
+    // Update the crash logger
     QUrl currentAddress = addressManager->currentFacingPublicAddress();
-    if (auto steamClient = PluginManager::getInstance()->getSteamClientPlugin()) {
-        steamClient->updateLocation(domainHandler.getHostname(), currentAddress);
-    }
     setCrashAnnotation("address", currentAddress.toString().toStdString());
 }
 

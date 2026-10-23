@@ -995,7 +995,7 @@ void AddressManager::lookupShareableNameForDomainID(const QUuid& domainID) {
     // and not by other clients on the LAN or Internet
 
     // to work around this we use the ID to lookup the default place name, and if it exists we
-    // then use that for Steam join/invite or copiable address
+    // then use that for the copiable address
 
     // it only makes sense to lookup a shareable default name if we don't have a place name
     if (getPlaceName().isEmpty()) {

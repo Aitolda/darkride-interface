@@ -111,8 +111,6 @@ public slots:
     void requestAccessToken(const QString& login, const QString& password);
     // an AI resident's body: its username and its connection key (the client-credentials grant)
     void requestAccessTokenWithKey(const QString& username, const QString& key);
-    void requestAccessTokenWithSteam(QByteArray authSessionTicket);
-    void requestAccessTokenWithOculus(const QString& nonce, const QString& oculusID);
     void requestAccessTokenWithAuthCode(const QString& authCode,
                                         const QString& clientId,
                                         const QString& clientSecret,

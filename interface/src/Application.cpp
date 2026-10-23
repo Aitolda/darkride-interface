@@ -121,8 +121,6 @@
 #include <plugins/CodecPlugin.h>
 #include <plugins/PluginManager.h>
 #include <plugins/PluginUtils.h>
-#include <plugins/SteamClientPlugin.h>
-#include <plugins/OculusPlatformPlugin.h>
 #include <plugins/InputConfiguration.h>
 #include <RecordingScriptingInterface.h>
 #include <render/EngineStats.h>
@@ -752,11 +750,6 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     // static const auto SUPPRESS_SETTINGS_RESET = "--suppress-settings-reset";
     // bool suppressPrompt = cmdOptionExists(argc, const_cast<const char**>(argv), SUPPRESS_SETTINGS_RESET);
 
-    // set the OCULUS_STORE property so the oculus plugin can know if we ran from the Oculus Store
-    static const auto OCULUS_STORE_ARG = "--oculus-store";
-    bool isStore = cmdOptionExists(argc, const_cast<const char**>(argv), OCULUS_STORE_ARG);
-    qApp->setProperty(hifi::properties::OCULUS_STORE, isStore);
-
     // emulate standalone device
     static const auto STANDALONE_ARG = "--standalone";
     bool isStandalone = cmdOptionExists(argc, const_cast<const char**>(argv), STANDALONE_ARG);
@@ -802,12 +795,10 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     pluginManager->setInputPluginProvider([] { return getInputPlugins(); });
     pluginManager->setDisplayPluginProvider([] { return getDisplayPlugins(); });
     pluginManager->setInputPluginSettingsPersister([](const InputPluginList& plugins) { saveInputPluginSettings(plugins); });
-    if (auto steamClient = pluginManager->getSteamClientPlugin()) {
-        steamClient->init();
-    }
-    if (auto oculusPlatform = pluginManager->getOculusPlatformPlugin()) {
-        oculusPlatform->init();
-    }
+    // The runtime plug-ins load here, on the main thread, before the audio client exists: left to the first lookup,
+    // the audio client's codec search would load them from its own thread and the plug-ins' objects (the MIDI
+    // plug-in's among them) would live there. The Steam and Oculus init that stood here did this load as a side effect.
+    pluginManager->loadPlugins();
 
     PROFILE_SET_THREAD_NAME("Main Thread");
 
@@ -1041,8 +1032,6 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     _sampleSound(nullptr)
 {
     
-    auto steamClient = PluginManager::getInstance()->getSteamClientPlugin();
-    setProperty(hifi::properties::STEAM, (steamClient && steamClient->isRunning()));
     setProperty(hifi::properties::CRASHED, _previousSessionCrashed);
 
     LogHandler::getInstance().moveToThread(thread());
@@ -1209,11 +1198,6 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
     setCrashAnnotation("metaverse_session_id", accountManager->getSessionID().toString().toStdString());
     setCrashAnnotation("main_thread_id", std::to_string((size_t)QThread::currentThreadId()));
-
-    if (steamClient) {
-        qCDebug(interfaceapp) << "[VERSION] SteamVR buildID:" << steamClient->getSteamVRBuildID();
-    }
-    setCrashAnnotation("steam", property(hifi::properties::STEAM).toBool() ? "1" : "0");
 
     qCDebug(interfaceapp) << "[VERSION] Build sequence:" << qPrintable(applicationVersion());
     qCDebug(interfaceapp) << "[VERSION] MODIFIED_ORGANIZATION:" << BuildInfo::MODIFIED_ORGANIZATION;
@@ -2587,14 +2571,6 @@ Application::~Application() {
     _octreeProcessor.terminate();
     _entityEditSender.terminate();
 
-    if (auto steamClient = PluginManager::getInstance()->getSteamClientPlugin()) {
-        steamClient->shutdown();
-    }
-
-    if (auto oculusPlatform = PluginManager::getInstance()->getOculusPlatformPlugin()) {
-        oculusPlatform->shutdown();
-    }
-
     DependencyManager::destroy<PluginManager>();
 
     DependencyManager::destroy<CompositorHelper>(); // must be destroyed before the FramebufferCache
@@ -3099,10 +3075,6 @@ void Application::onDesktopRootContextCreated(QQmlContext* surfaceContext) {
     surfaceContext->setContextProperty("Selection", DependencyManager::get<SelectionScriptingInterface>().data());
     surfaceContext->setContextProperty("About", AboutUtil::getInstance());
     surfaceContext->setContextProperty("ResourceRequestObserver", DependencyManager::get<ResourceRequestObserver>().data());
-
-    if (auto steamClient = PluginManager::getInstance()->getSteamClientPlugin()) {
-        surfaceContext->setContextProperty("Steam", new SteamScriptingInterface(engine, steamClient.get()));
-    }
 
     _window->setMenuBar(new Menu());
 }
@@ -4834,14 +4806,6 @@ void Application::idle() {
 
     PROFILE_RANGE(app, __FUNCTION__);
 
-    if (auto steamClient = PluginManager::getInstance()->getSteamClientPlugin()) {
-        steamClient->runCallbacks();
-    }
-
-    if (auto oculusPlugin = PluginManager::getInstance()->getOculusPlatformPlugin()) {
-        oculusPlugin->handleOVREvents();
-    }
-
     float secondsSinceLastUpdate = (float)_lastTimeUpdated.nsecsElapsed() / NSECS_PER_MSEC / MSECS_PER_SECOND;
     _lastTimeUpdated.start();
 
@@ -5146,17 +5110,6 @@ void Application::init() {
     DependencyManager::get<AvatarManager>()->init();
 
     _lastTimeUpdated.start();
-
-    if (auto steamClient = PluginManager::getInstance()->getSteamClientPlugin()) {
-        // when +connect_lobby in command line, join steam lobby
-        const QString STEAM_LOBBY_COMMAND_LINE_KEY = "+connect_lobby";
-        int lobbyIndex = arguments().indexOf(STEAM_LOBBY_COMMAND_LINE_KEY);
-        if (lobbyIndex != -1) {
-            QString lobbyId = arguments().value(lobbyIndex + 1);
-            steamClient->joinLobby(lobbyId);
-        }
-    }
-
 
     qCDebug(interfaceapp) << "Loaded settings";
 
@@ -7203,10 +7156,6 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
 
     scriptEngine->registerGlobalObject("Users", DependencyManager::get<UsersScriptingInterface>().data());
 
-
-    if (auto steamClient = PluginManager::getInstance()->getSteamClientPlugin()) {
-        scriptEngine->registerGlobalObject("Steam", new SteamScriptingInterface(scriptEngine.data(), steamClient.get()));
-    }
     auto scriptingInterface = DependencyManager::get<controller::ScriptingInterface>();
     scriptEngine->registerGlobalObject("Controller", scriptingInterface.data());
     UserInputMapper::registerControllerTypes(scriptEngine.data());

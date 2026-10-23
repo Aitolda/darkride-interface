@@ -190,38 +190,6 @@ const CodecPluginList& PluginManager::getCodecPlugins() {
     return codecPlugins;
 }
 
-const SteamClientPluginPointer PluginManager::getSteamClientPlugin() {
-    static SteamClientPluginPointer steamClientPlugin;
-    static std::once_flag once;
-    std::call_once(once, [&] {
-        // Now grab the dynamic plugins
-        for (auto loader : getLoadedPlugins()) {
-            SteamClientProvider* steamClientProvider = qobject_cast<SteamClientProvider*>(loader->instance());
-            if (steamClientProvider) {
-                steamClientPlugin = steamClientProvider->getSteamClientPlugin();
-                break;
-            }
-        }
-    });
-    return steamClientPlugin;
-}
-
-const OculusPlatformPluginPointer PluginManager::getOculusPlatformPlugin() {
-    static OculusPlatformPluginPointer oculusPlatformPlugin;
-    static std::once_flag once;
-    std::call_once(once, [&] {
-        // Now grab the dynamic plugins
-        for (auto loader : getLoadedPlugins()) {
-            OculusPlatformProvider* oculusPlatformProvider = qobject_cast<OculusPlatformProvider*>(loader->instance());
-            if (oculusPlatformProvider) {
-                oculusPlatformPlugin = oculusPlatformProvider->getOculusPlatformPlugin();
-                break;
-            }
-        }
-    });
-    return oculusPlatformPlugin;
-}
-
 const TeaProtocolPluginPointer PluginManager::getTeaProtocolPlugin() {
     static TeaProtocolPluginPointer teaProtocolPlugin;
     static std::once_flag once;
