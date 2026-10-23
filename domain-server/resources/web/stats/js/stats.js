@@ -558,7 +558,7 @@ $(document).ready(function(){
     var key = path[path.length - 1];
     var unit = keyUnit(key);
     var chartModal = bootbox.dialog({
-      title: pathTitle(path),
+      title: escapeHTML(pathTitle(path)),
       message: "<div id='highchart-container'></div><p class='help-block'>Updates every second, while this is open.</p>",
       buttons: {},
       onEscape: true,
