@@ -40,9 +40,6 @@ public:
     const QString& getDiscourseApiKey() const { return _discourseApiKey; }
     void setDiscourseApiKey(const QString& discourseApiKey);
     
-    const QUuid& getWalletID() const { return _walletID; }
-    void setWalletID(const QUuid& walletID);
-
     QByteArray getUsernameSignature(const QUuid& connectionToken);
     bool hasPrivateKey() const { return !_privateKey.isEmpty(); }
     void setPrivateKey(const QByteArray& privateKey) { _privateKey = privateKey; }
@@ -69,7 +66,6 @@ private:
     QString _username;
     QString _xmppPassword;
     QString _discourseApiKey;
-    QUuid _walletID;
     QUuid _domainID;
     QUuid _temporaryDomainID;
     QString _temporaryDomainApiKey;
