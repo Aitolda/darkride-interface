@@ -217,6 +217,10 @@ bool Display::isHMDMode() const {
 
 float Display::getTargetRenderFrameRate() const { return getActiveDisplayPlugin()->getTargetFrameRate(); }
 
+float Display::getPresentPeriod() const {
+    return _displayPlugin ? _displayPlugin->getPresentPeriod() : 0.0f;
+}
+
 float Display::getRenderResolutionScale() const {
     return RenderScriptingInterface::getInstance()->getViewportResolutionScale();
 }
@@ -561,6 +565,7 @@ void Display::setDisplayPlugin(DisplayPluginPointer newDisplayPlugin) {
             RefreshRateManager::UXMode::DESKTOP;
 
         refreshRateManager.setUXMode(uxMode);
+        followScreenRefreshRate();
     }
 
     bool isHmd = _displayPlugin->isHmd();
@@ -590,6 +595,24 @@ void Display::setDisplayPlugin(DisplayPluginPointer newDisplayPlugin) {
     }
 
     Q_ASSERT_X(_displayPlugin, "Display::updateDisplayMode", "could not find an activated display plugin");
+}
+
+void Display::followScreenRefreshRate() {
+    QWindow* handle = qApp->getWindow() ? qApp->getWindow()->windowHandle() : nullptr;
+    if (!handle || _screenChangedConnection) {
+        return;
+    }
+    auto followScreen = [this, handle] {
+        QObject::disconnect(_screenRateConnection);
+        if (QScreen* screen = handle->screen()) {
+            _screenRateConnection = connect(screen, &QScreen::refreshRateChanged, this, [](qreal) {
+                qApp->getRefreshRateManager().updateRefreshRateController();
+            });
+        }
+        qApp->getRefreshRateManager().updateRefreshRateController();
+    };
+    _screenChangedConnection = connect(handle, &QWindow::screenChanged, this, [followScreen](QScreen*) { followScreen(); });
+    followScreen();
 }
 
 void Display::startHMDStandBySession() {

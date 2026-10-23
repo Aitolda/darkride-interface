@@ -636,6 +636,7 @@ void Application::connectServices() {
         setCrashAnnotation("domain", domainURL.toString().toStdString());
     });
     connect(&domainHandler, &DomainHandler::resetting, &_domainSession, &DomainSession::resettingDomain);
+    connect(&_domainSession, &DomainSession::worldLoadingChanged, this, &Application::worldLoadingChanged);   // relayed likewise
     connect(&_domainSession, &DomainSession::interstitialModeChanged, this, &Application::interstitialModeChanged);   // relayed: the Window scripting interface connects to Application in the essentials stage, before the session exists
     connect(&domainHandler, &DomainHandler::connectedToDomain, &_display, &Display::updateWindowTitle);
     connect(&domainHandler, &DomainHandler::connectedToDomain, this, [] { StartupProfiler::instant("connected to a domain"); });
@@ -718,6 +719,23 @@ void Application::connectServices() {
     });
 
     connect(addressManager.data(), &AddressManager::hostChanged, &_display, &Display::updateWindowTitle);
+
+    // a hop to a place or a person the metaverse doesn't find goes nowhere: say why. It finds a world by its address (a
+    // world's name is no address), and for a person it answers the same whether they are offline, out of sight or unknown
+    connect(addressManager.data(), &AddressManager::lookupResultIsNotFound, this, [](const QString& lookedUp, bool isUser) {
+        const QString name = lookedUp.trimmed();
+        if (isUser) {
+            OffscreenUi::asyncWarning(QString("Couldn't join %1").arg(name).trimmed(), "They're offline, or somewhere you can't join.");
+        } else {
+            OffscreenUi::asyncWarning(name.isEmpty() ? QString("Couldn't find that world")
+                                                     : QString::fromUtf8("Couldn't find “%1”").arg(name),
+                                      "Check the address, or choose a world in Explore.");
+        }
+    });
+    connect(addressManager.data(), &AddressManager::lookupResultIsOffline, this, [](const QString& lookedUp) {
+        const QString name = lookedUp.trimmed();
+        OffscreenUi::asyncWarning((name.isEmpty() ? QString("That world") : name) + " is offline", "Try again later.");
+    });
     connect(this, &QCoreApplication::aboutToQuit, addressManager.data(), &AddressManager::storeCurrentAddress);
 
     connect(this, &Application::activeDisplayPluginChanged, this, &Application::updateThreadPoolCount);

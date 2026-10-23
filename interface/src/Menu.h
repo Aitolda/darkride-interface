@@ -229,6 +229,7 @@ namespace MenuOption {
     const QString HMDTabletToToolbar = "HMD Tablet Becomes Toolbar";
     const QString Shadows = "Shadows";
     const QString GpuInstancing = "GPU Instancing";
+    const QString Vsync = "Vsync";
     const QString RenderForward = "Forward Rendering";
     const QString RenderMsaaMenu = "MSAA (Forward)";
     const QString RenderMsaaOff = "No MSAA";

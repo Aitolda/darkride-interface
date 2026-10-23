@@ -12,6 +12,9 @@
 
 #include "RefreshRateManager.h"
 
+#include <QtGui/QScreen>
+#include <QtGui/QWindow>
+
 #include <array>
 
 #include "Application.h"
@@ -226,16 +229,21 @@ int RefreshRateManager::queryRefreshRateTarget(RefreshRateProfile profile, Refre
 void RefreshRateManager::updateRefreshRateController() const {
     if (_refreshRateOperator) {
         int targetRefreshRate = queryRefreshRateTarget(_refreshRateProfile, _refreshRateRegime, _uxMode);
-        
+        // rounded, not truncated: a panel reporting 143.98 Hz is a 144 Hz one (truncated to 143, the pacing repeated a
+        // frame about once a second, 10-21 review); 0 while the window has no screen yet
+        QWindow* handle = qApp->getWindow() ? qApp->getWindow()->windowHandle() : nullptr;
+        QScreen* screen = handle ? handle->screen() : nullptr;
+        int displayRefreshRate = screen ? qRound(screen->refreshRate()) : 0;
+
         if (targetRefreshRate >= 900) {
-            targetRefreshRate = (int)qApp->getWindow()->windowHandle()->screen()->refreshRate();
+            targetRefreshRate = displayRefreshRate;
             // incase refreshRate() is incorrect
             if (targetRefreshRate < 60) {
                 targetRefreshRate = 60;
             }
         }
 
-        _refreshRateOperator(targetRefreshRate);
+        _refreshRateOperator(targetRefreshRate, displayRefreshRate);
         _activeRefreshRate = targetRefreshRate;
     }
 }

@@ -310,6 +310,7 @@ public:
     void updateMyAvatarLookAtPosition(float deltaTime);
 
     float getGameLoopRate() const { return _gameLoopCounter.rate(); }
+    float getPresentPeriod() const { return _display.getPresentPeriod(); }   // the period the presents are paced at, in seconds; 0 while they are not
 
     SnapshotRequests& getSnapshotRequests() { return _snapshotRequests; }   // the snapshots asked of the next frame (SnapshotRequests.h)
 
@@ -330,6 +331,10 @@ public:
 
     bool isServerlessMode() const { return _domainSession.isServerlessMode(); }
     bool isInterstitialMode() const { return _domainSession.isInterstitialMode(); }
+    // whole-world loading (the domain asks for a loading screen until the whole world is in): the domain session's
+    bool isWorldLoading() const { return _domainSession.isWorldLoading(); }
+    QVariantMap getWorldLoadingState() { return _domainSession.getWorldLoadingState(); }
+    void showWorldNow() { _domainSession.showWorldNow(); }
 
     void loadAvatarScripts(const QVector<QString>& urls);
     void unloadAvatarScripts();
@@ -377,6 +382,7 @@ signals:
     void uploadRequest(QString path);
 
     void interstitialModeChanged(bool isInInterstitialMode);   // the domain session's, relayed: the Window scripting interface connects here before the session exists
+    void worldLoadingChanged(bool isWorldLoading);   // the domain session's, relayed likewise
 
     void miniTabletEnabledChanged(bool enabled);
     void awayStateWhenFocusLostInVRChanged(bool enabled);
@@ -385,7 +391,7 @@ public slots:
     void updateThreadPoolCount() const;
     void updateSystemTabletMode();
     void updateWindowTitle() const { _display.updateWindowTitle(); }   // the domain session and the start-up call it
-    void onPresent(quint32 frameCount);   // the display plug-in's present callback, on its thread: the next idle and render events posted
+    void onPresent(quint32 frameCount, quint64 presentSlot);   // the display plug-in's present callback, on its thread: the present's slot noted, the next idle and render events posted
 
     Q_INVOKABLE void loadDialog();
     void importAvatarDialog();
@@ -634,6 +640,20 @@ private:
     KeyboardFocus _keyboardFocus;
     bool _isGLInitialized{ false };
 
+    // Whole-world loading, per arrival (reset with the physics-ready information). The choice is the domain's
+    // ("loading.whole_world" and "loading.time_limit" in its settings, sent to the client when it connects).
+    struct WorldLoading {
+        bool settingsKnown { false };   // the domain's settings have arrived, or we stopped waiting for them
+        bool active { false };          // the loading screen is up and the entity query asks for the whole world
+        bool skipRequested { false };   // "Show me now"
+        quint64 waitStart { 0 };        // since when we are connected and waiting for the domain's settings
+        quint64 started { 0 };
+        quint64 deadline { 0 };
+        int timeLimit { 0 };            // seconds
+        float radius { 0.0f };          // metres round the avatar whose models are waited for; 0 for all
+        quint64 lastQuery { 0 };
+    } _worldLoading;
+
     bool _reticleClickPressed{ false };
 
     int _avatarAttachmentRequest = 0;
@@ -658,6 +678,10 @@ private:
     bool _saveAvatarOverrideUrl{ false };
 
     std::atomic<bool> _pendingIdleEvent{ true };
+    // the slot (the paced refresh interval) of the latest present, from the present thread (onPresent), and the
+    // one the last update was for: the simulation advances by the intervals between them (update)
+    std::atomic<uint64_t> _presentSlot{ 0 };
+    uint64_t _lastUpdateSlot{ 0 };
 
     bool _showTrackedObjects{ false };
     bool _prevShowTrackedObjects{ false };

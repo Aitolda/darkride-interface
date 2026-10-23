@@ -12,8 +12,6 @@ PORT=${2:-serverless}
 R=${3:-"$D/results/edit-parked-$PORT"}
 BIN="$APP/Contents/MacOS/$(basename "$APP" .app)"   # Darkride.app, or interface.app before the rename
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
-SANDBOX=/Users/thistlequell/tivoli-sandboxes/physics
-DOMAIN_SANDBOX=/Users/thistlequell/git/tivolicloud/domain-sandbox.sh
 mkdir -p "$R" "$R/driver"   # Test.saveObject writes into the results location only when it exists
 . "$D/harness.sh"
 HTTP_PORT=42180

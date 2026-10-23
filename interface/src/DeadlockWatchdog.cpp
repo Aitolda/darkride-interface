@@ -12,12 +12,16 @@
 
 #include "DeadlockWatchdog.h"
 
+#include <chrono>
 #include <string>
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QEvent>
 #include <QtCore/QProcessEnvironment>
 #include <QtCore/QTimer>
 
+#include <display-plugins/OpenGLDisplayPlugin.h>
+#include <gl/GLHelpers.h>
 #include <shared/NsightHelpers.h>
 #include <shared/PlatformHelper.h>
 
@@ -87,9 +91,42 @@ void DeadlockWatchdogThread::deadlockDetectionCrash() {
     *crashTrigger = 0xDEAD10CC;
 }
 
+void DeadlockWatchdogThread::reportPresentStall() {
+    using namespace std::chrono;
+    const auto STALL = milliseconds(1000);
+    const auto REPORT_EVERY = seconds(5);
+    auto now = steady_clock::now();
+    uint64_t presents = OpenGLDisplayPlugin::getPresentsDone();
+    if (presents != _presentsSeen || presents == 0) {
+        _presentsSeen = presents;
+        _presentsMoved = now;
+        return;
+    }
+    if (OpenGLDisplayPlugin::isPresentLoopIdle() || now - _presentsMoved < STALL
+        || (_stallReported != steady_clock::time_point() && now - _stallReported < REPORT_EVERY)) {
+        return;
+    }
+    _stallReported = now;
+    auto view = gl::viewChangeState();
+    const char* lastChange = "the editor";
+    switch (view.lastEventType) {
+        case QEvent::LayoutRequest: lastChange = "a layout pass"; break;
+        case QEvent::Resize: lastChange = "a resize"; break;
+        case QEvent::Move: lastChange = "a move"; break;
+        case QEvent::MouseButtonRelease: lastChange = "a mouse button release"; break;
+        case QEvent::MouseMove: lastChange = "a drag"; break;
+        default: break;
+    }
+    qCWarning(interfaceapp).nospace() << "Presents stopped " << duration_cast<milliseconds>(now - _presentsMoved).count()
+        << " ms ago: the present loop is " << OpenGLDisplayPlugin::getPresentLoopStage()
+        << "; presentation paused " << gl::isPresentationPaused() << " (" << view.pauseLeftMs << " ms left); "
+        << view.guards << " view changes so far, the last from " << lastChange;
+}
+
 void DeadlockWatchdogThread::run() {
     while (!_quit) {
         QThread::sleep(HEARTBEAT_UPDATE_INTERVAL_SECS);
+        reportPresentStall();
         // Don't do heartbeat detection under nsight
         if (_paused) {
             continue;

@@ -428,6 +428,9 @@ void AddressManager::handleAPIResponse(QNetworkReply* requestReply) {
 
 const char OVERRIDE_PATH_KEY[] = "override_path";
 const char LOOKUP_TRIGGER_KEY[] = "lookup_trigger";
+// what a lookup asks for, kept with the request so that a failure can say what it couldn't find
+const char LOOKUP_NAME_KEY[] = "lookup_name";
+const char LOOKUP_IS_USER_KEY[] = "lookup_is_user";
 
 void AddressManager::goToAddressFromObject(const QVariantMap& dataObject, const QNetworkReply* reply) {
 
@@ -574,7 +577,8 @@ void AddressManager::goToAddressFromObject(const QVariantMap& dataObject, const 
             }
         } else {
             // we've been told that this result exists but is offline, emit our signal so the application can handle
-            emit lookupResultIsOffline();
+            emit lookupResultIsOffline(reply ? reply->property(LOOKUP_NAME_KEY).toString() : QString(),
+                                       reply && reply->property(LOOKUP_IS_USER_KEY).toBool());
         }
     } else {
         qCDebug(networking) << "Received an address manager API response with no location key or place key. Cannot parse.";
@@ -589,7 +593,8 @@ void AddressManager::handleAPIError(QNetworkReply* errorReply) {
         // if this is a lookup that has no result, don't keep re-trying it
         _previousAPILookup.clear();
 
-        emit lookupResultIsNotFound();
+        emit lookupResultIsNotFound(errorReply->property(LOOKUP_NAME_KEY).toString(),
+                                    errorReply->property(LOOKUP_IS_USER_KEY).toBool());
     }
 
     emit lookupResultsFinished();
@@ -600,6 +605,7 @@ void AddressManager::attemptPlaceNameLookup(const QString& lookupString, const Q
     QString placeName = QUrl::toPercentEncoding(lookupString);
 
     QVariantMap requestParams;
+    requestParams.insert(LOOKUP_NAME_KEY, lookupString);
 
     // if the user asked for a specific path with this lookup then keep it with the request so we can use it later
     if (!overridePath.isEmpty()) {
@@ -908,6 +914,8 @@ void AddressManager::goToUser(const QString& username, bool shouldMatchOrientati
     requestParams.insert(LOOKUP_TRIGGER_KEY, static_cast<int>(
         shouldMatchOrientation ? LookupTrigger::UserInput : LookupTrigger::VisitUserFromPAL
     ));
+    requestParams.insert(LOOKUP_NAME_KEY, username);
+    requestParams.insert(LOOKUP_IS_USER_KEY, true);
     // this is a username - pull the captured name and lookup that user's location
     DependencyManager::get<AccountManager>()->sendRequest(GET_USER_LOCATION.arg(formattedUsername),
                                               AccountManagerAuth::Optional,

@@ -20,6 +20,7 @@
 #include "graphics/RenderEventHandler.h"
 #include <MainWindow.h>   // the window and the GL canvas handed to the cursor each frame
 #include "GLCanvas.h"
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include <glm/glm.hpp>
@@ -688,6 +689,19 @@ void Application::update(float deltaTime) {
             }
         }
 
+        // Frame pacing (PHYSICS.md "The driver's stutter"): the presents are paced at the display's period, one a
+        // refresh interval, and this update is posted at each; the physics' paced clock advances by the intervals
+        // between the present that posted this update and the one that posted the last (one as a rule; two when a
+        // present lost a refresh or this thread missed a present's update), never by a wall clock this thread's own
+        // lateness disturbs (an update run late and the next on time are 2 ms apart, yet each shows for a refresh)
+        {
+            uint64_t slot = _presentSlot.load();
+            const uint64_t MAX_PERIODS = 16;
+            int periods = (_lastUpdateSlot != 0 && slot > _lastUpdateSlot) ? (int)std::min(slot - _lastUpdateSlot, MAX_PERIODS) : 1;
+            _lastUpdateSlot = slot;
+            _physicsEngine->setPresentPeriod(getPresentPeriod(), periods);
+        }
+
         if (isPhysicsEnabled()) {
             {
                 PROFILE_RANGE(simulation_physics, "PrepareActions");
@@ -1007,7 +1021,8 @@ void Application::updateRenderArgs(float deltaTime) {
 
 // The display plug-in's present callback, on its thread: the next idle event posted when none is pending, the next
 // render event when the graphics engine has one waiting.
-void Application::onPresent(quint32 frameCount) {
+void Application::onPresent(quint32 frameCount, quint64 presentSlot) {
+    _presentSlot = presentSlot;
     bool expected = false;
     if (_pendingIdleEvent.compare_exchange_strong(expected, true)) {
         postEvent(this, new QEvent((QEvent::Type)ApplicationEvent::Idle), Qt::HighEventPriority);

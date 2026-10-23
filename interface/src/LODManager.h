@@ -361,7 +361,8 @@ public:
      *     <code>ownerID</code>, <code>ownerName</code>, <code>showing</code> ("card", "model", "dissolving" or "loading"),
      *     <code>standIn</code> (the card stands in for models not here yet), <code>angleDeg</code> (how wide its sphere
      *     looks), <code>switchAngleDeg</code> and <code>enabled</code>; <code>mesh</code>, for a model entity: "waiting"
-     *     (behind its card, not fetched), "loading" or "loaded"; <code>lods</code>, for a loaded model: <code>parts</code>, one per mesh part, each with <code>full</code>
+     *     (behind its card, not fetched), "loading" or "loaded"; <code>textures</code>, for a loaded model: "loading" or
+     *     "loaded"; <code>lods</code>, for a loaded model: <code>parts</code>, one per mesh part, each with <code>full</code>
      *     (its triangles), <code>levels</code> (each level's triangles) and <code>shown</code> (the level the main view
      *     draws, 0 for full detail), and <code>enabled</code>.
      */

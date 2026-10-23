@@ -47,6 +47,7 @@ public:
     const DisplayPluginPointer& plugin() const { return _displayPlugin; }   // as it is: no lock, nothing made current (the main thread's quick reads)
     bool isHMDMode() const;
     float getTargetRenderFrameRate() const;   // frames/second
+    float getPresentPeriod() const;           // the period the presents are paced at, in seconds; 0 while they are not (DisplayPlugin::getPresentPeriod)
     float getRenderResolutionScale() const;
     bool isThrottleRendering() const;
     glm::uvec2 getCanvasSize() const;
@@ -96,6 +97,12 @@ private:
     glm::uvec2 _renderResolution;
     bool _isForeground{ true };   // starts out assumed to be in foreground
     QTimer _minimizedWindowTimer;
+
+    // the window's screen, followed: moved to another screen, or the screen's rate changed, the pacing takes the new
+    // rate (until the 10-21 review it was read only when the profile or the regime changed)
+    void followScreenRefreshRate();
+    QMetaObject::Connection _screenChangedConnection;
+    QMetaObject::Connection _screenRateConnection;
 };
 
 #endif // hifi_Display_h

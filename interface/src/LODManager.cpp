@@ -310,6 +310,8 @@ QVariantMap LODManager::describeEntity(const QUuid& entityID) const {
             : ((model && model->isLoaded()) ? "loaded" : "loading");
     }
     if (model && model->isLoaded()) {
+        // its textures, as the model cache has them (the renderer's own flag follows on its next update)
+        result["textures"] = (model->getNetworkModel() && model->getNetworkModel()->areTexturesLoaded()) ? "loaded" : "loading";
         QVariantList parts;
         for (const auto& part : model->getPartLods()) {
             QVariantMap entry;

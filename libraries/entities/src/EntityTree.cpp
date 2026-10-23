@@ -12,6 +12,8 @@
 #include "EntityTree.h"
 #include <QtCore/QDateTime>
 #include <QtCore/QQueue>
+
+#include <unordered_set>
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -1883,6 +1885,7 @@ void EntityTree::entityChanged(EntityItemPointer entity) {
 
 void EntityTree::fixupNeedsParentFixups() {
     MovingEntitiesOperator moveOperator;
+    std::unordered_set<EntityItemPointer> grownAncestors;   // the ancestors of entities found a parent below
     QVector<EntityItemWeakPointer> entitiesToFixup;
     {
         QWriteLocker locker(&_needsParentFixupLock);
@@ -1953,6 +1956,20 @@ void EntityTree::fixupNeedsParentFixups() {
             auto parent = entity->getParentPointer(success);
             if (success && parent) {
                 parent->updateQueryAACube();
+                // the parent's query cube encloses its children's, so it (and each ancestor's) may have grown out of
+                // the element that holds it: those move below
+                SpatiallyNestablePointer ancestor = parent;
+                const int MAX_ANCESTORS = 30;   // as SpatiallyNestable's MAX_PARENTING_CHAIN_SIZE: a loop ends too
+                for (int depth = 0; ancestor && depth < MAX_ANCESTORS; ++depth) {
+                    if (ancestor->getNestableType() == NestableType::Entity) {
+                        grownAncestors.insert(std::static_pointer_cast<EntityItem>(ancestor));
+                    }
+                    bool ancestorSuccess = false;
+                    ancestor = ancestor->getParentPointer(ancestorSuccess);
+                    if (!ancestorSuccess) {
+                        break;
+                    }
+                }
             }
 
             entity->postParentFixup();
@@ -1984,6 +2001,26 @@ void EntityTree::fixupNeedsParentFixups() {
     if (moveOperator.hasMovingEntities()) {
         PerformanceTimer perfTimer("recurseTreeWithOperator");
         recurseTreeWithOperator(&moveOperator);
+    }
+
+    // An ancestor whose query cube grew around a child found here moves to the element that holds its cube now, as a
+    // client's updateEntityQueryAACubeWorker moves it. An entity is reached only through its element, so a parent left
+    // in an element sized for itself alone (a group's 1 mm box, filed before its children were found) was judged by
+    // that element and sent only to a viewer within a few metres of it, and its children waited on it. After the moves
+    // above, which may have placed an ancestor that was itself found a parent here
+    if (!grownAncestors.empty()) {
+        MovingEntitiesOperator ancestorMoveOperator;
+        for (const auto& ancestor : grownAncestors) {
+            bool success = false;
+            AACube queryCube = ancestor->getQueryAACube(success);
+            if (success) {
+                ancestorMoveOperator.addEntityToMoveList(ancestor, queryCube);   // only when its element is no best fit
+            }
+        }
+        if (ancestorMoveOperator.hasMovingEntities()) {
+            PerformanceTimer perfTimer("recurseTreeWithOperator");
+            recurseTreeWithOperator(&ancestorMoveOperator);
+        }
     }
 
     {
@@ -2677,6 +2714,43 @@ void convertGrabUserDataToProperties(EntityItemProperties& properties) {
 }
 
 
+// The entities of a saved world in an order where each comes after its parent (when its parent is among them), the
+// file's order otherwise. A child added before its parent cannot place itself: its position is relative to a parent
+// the tree does not hold yet, and the entity server takes a parent it does not hold for an avatar's and stops looking
+// for it (fixupNeedsParentFixups). Tivoli Town's cottage fire, a particle effect whose query cube is worked out again
+// as it is made, came 2,000 entities before its cottage, was filed by an empty cube in a 0.24 mm element at the
+// origin and was never sent.
+static QVariantList parentsBeforeChildren(const QVariantList& entities) {
+    const int count = entities.size();
+    QHash<QUuid, int> indexByID;
+    indexByID.reserve(count);
+    QVector<QUuid> parentIDs(count);
+    for (int i = 0; i < count; ++i) {
+        QVariantMap entity = entities[i].toMap();
+        indexByID.insert(QUuid(entity.value("id").toString()), i);
+        parentIDs[i] = QUuid(entity.value("parentID").toString());
+    }
+    const char UNPLACED = 0, ON_THE_WAY_UP = 1, PLACED = 2;
+    QVector<char> state(count, UNPLACED);
+    QVariantList ordered;
+    ordered.reserve(count);
+    std::vector<int> chain;
+    for (int i = 0; i < count; ++i) {
+        // up to the first ancestor already placed (or not in the file), then down again, the eldest first; a parenting
+        // loop stops where it comes back to itself
+        chain.clear();
+        for (int j = i; j >= 0 && state[j] == UNPLACED; j = parentIDs[j].isNull() ? -1 : indexByID.value(parentIDs[j], -1)) {
+            state[j] = ON_THE_WAY_UP;
+            chain.push_back(j);
+        }
+        for (auto j = chain.rbegin(); j != chain.rend(); ++j) {
+            ordered.push_back(entities[*j]);
+            state[*j] = PLACED;
+        }
+    }
+    return ordered;
+}
+
 bool EntityTree::readFromMap(QVariantMap& map, const bool isImport) {
     // These are needed to deal with older content (before adding inheritance modes)
     int contentVersion = map["Version"].toInt();
@@ -2703,7 +2777,7 @@ bool EntityTree::readFromMap(QVariantMap& map, const bool isImport) {
     // and iterated over.  Each member of this list is converted to a QVariantMap, then
     // to a QScriptValue, and then to EntityItemProperties.  These properties are used
     // to add the new entity to the EntityTree.
-    QVariantList entitiesQList = map["Entities"].toList();
+    QVariantList entitiesQList = parentsBeforeChildren(map["Entities"].toList());
     QScriptEngine scriptEngine;
 
     if (entitiesQList.length() == 0) {

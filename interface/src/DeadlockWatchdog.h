@@ -18,6 +18,7 @@
 #define hifi_DeadlockWatchdog_h
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 
 #include <QtCore/QThread>
@@ -81,6 +82,13 @@ public:
 
     void run() override;
 
+    // When presents stop while the present loop has a display plugin: one line saying where the loop is, once they
+    // have been gone a second and at most every 5 s. Release-1.1's Windows run of 10-21 lost presents and new frames
+    // for 45 s with nothing logged; this names the branch next time. Silent while presents flow, before the first, and
+    // while the loop has no plugin on purpose (minimized, quitting). Its own thread, so it reports whichever of the
+    // main and present threads is stuck.
+    void reportPresentStall();
+
     static std::atomic<bool> _paused;
     static std::atomic<uint64_t> _heartbeat;
     static std::atomic<uint64_t> _maxElapsed;
@@ -90,6 +98,11 @@ public:
     bool _quit { false };
 
     Qt::HANDLE _mainThreadID = nullptr;
+
+    // reportPresentStall's: the present count last seen, when it last moved, the last report
+    uint64_t _presentsSeen { 0 };
+    std::chrono::steady_clock::time_point _presentsMoved;
+    std::chrono::steady_clock::time_point _stallReported;
 };
 
 #endif // hifi_DeadlockWatchdog_h

@@ -89,7 +89,7 @@ bool Application::notify(QObject * object, QEvent * event) {
                     break;
             }
             if (changesView) {
-                gl::ViewChangeGuard guard;
+                gl::ViewChangeGuard guard(event->type());
                 return QApplication::notify(object, event);
             }
         }

@@ -13,6 +13,7 @@
 #define hifi_ResourceCache_h
 
 #include <atomic>
+#include <cmath>
 #include <mutex>
 
 #include <QtCore/QHash>
@@ -453,6 +454,10 @@ public:
 
     /// Returns the highest load priority across all owners.
     float getLoadPriority();
+
+    /// The load priority as a QThreadPool priority, for the work done on the resource once it has arrived (reading,
+    /// decoding), so the nearest and most wanted are also processed first
+    int getThreadPoolPriority() { return (int)std::lround(10.0f * getLoadPriority()); }
 
     /// Checks whether the resource has loaded.
     virtual bool isLoaded() const { return _loaded; }

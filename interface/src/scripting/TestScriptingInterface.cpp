@@ -25,6 +25,9 @@
 
 #include "Application.h"
 #include <QtGui/QPixmap>
+#include <plugins/DisplayPlugin.h>
+#include <display-plugins/DisplayLink.h>
+#include <display-plugins/OpenGLDisplayPlugin.h>
 
 #include "editor/Editor.h"
 #include "graphics/GraphicsEngine.h"
@@ -290,6 +293,75 @@ bool TestScriptingInterface::saveInspectorPicture(const QString& path) {
     return !picture.isNull() && picture.save(path);
 }
 
+void TestScriptingInterface::setPresentLoad(int microseconds) {
+    OpenGLDisplayPlugin::setPresentLoad(microseconds);
+}
+
+float TestScriptingInterface::getPresentPeriod() {
+    return qApp->getPresentPeriod();
+}
+
+void TestScriptingInterface::holdPresents(int milliseconds) {
+    OpenGLDisplayPlugin::holdPresents(milliseconds);
+}
+
+void TestScriptingInterface::chooseTrackPoint(int index) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "chooseTrackPoint", Q_ARG(int, index));
+        return;
+    }
+    DependencyManager::get<Editor>()->chooseTrackPoint(index, false);
+}
+
+int TestScriptingInterface::chosenTrackPoint() {
+    if (QThread::currentThread() != thread()) {
+        int result = -1;
+        BLOCKING_INVOKE_METHOD(this, "chosenTrackPoint", Q_RETURN_ARG(int, result));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->chosenTrackPoint();
+}
+
+void TestScriptingInterface::insertTrackPoint(float arcLength) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "insertTrackPoint", Q_ARG(float, arcLength));
+        return;
+    }
+    DependencyManager::get<Editor>()->insertTrackPoint(arcLength);
+}
+
+void TestScriptingInterface::deleteTrackPoint() {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "deleteTrackPoint");
+        return;
+    }
+    DependencyManager::get<Editor>()->deleteTrackPoint();
+}
+
+void TestScriptingInterface::setBuildMode(bool on) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "setBuildMode", Q_ARG(bool, on));
+        return;
+    }
+    DependencyManager::get<Editor>()->setActive(on);
+}
+
+void TestScriptingInterface::commitInspectorEdit(const QString& key, const QVariant& value) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "commitInspectorEdit", Q_ARG(QString, key), Q_ARG(QVariant, value));
+        return;
+    }
+    DependencyManager::get<Editor>()->testInspectorEdit(key, value);
+}
+
+void TestScriptingInterface::editorUndo() {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "editorUndo");
+        return;
+    }
+    DependencyManager::get<Editor>()->undo();
+}
+
 bool TestScriptingInterface::saveWindowPicture(const QString& path) {
     if (QThread::currentThread() != thread()) {
         bool result = false;
@@ -330,9 +402,53 @@ QVariantList TestScriptingInterface::takeRenderTrace() {
     QVariantList list;
     for (const auto& sample : qApp->getGraphicsEngine().takeRenderTrace()) {
         list << QVariant(QVariantList { (double)sample.time * 1.0e-3, (double)sample.camera.x, (double)sample.camera.y, (double)sample.camera.z,
-                                        (double)sample.item.x, (double)sample.item.y, (double)sample.item.z });
+                                        (double)sample.item.x, (double)sample.item.y, (double)sample.item.z, (double)sample.frameIndex });
     }
     return list;
+}
+
+void TestScriptingInterface::tracePresents(bool on) {
+    auto displayPlugin = qApp->getActiveDisplayPlugin();
+    if (displayPlugin) {
+        displayPlugin->setPresentTracing(on);
+    }
+}
+
+QVariantList TestScriptingInterface::takePresentTrace() {
+    QVariantList list;
+    auto displayPlugin = qApp->getActiveDisplayPlugin();
+    if (displayPlugin) {
+        for (const auto& sample : displayPlugin->takePresentTrace()) {
+            list << QVariant(QVariantList { (double)sample.time * 1.0e-3, (double)sample.frameIndex, sample.newFrame ? 1.0 : 0.0,
+                                            (double)sample.presentUsecs * 1.0e-3, (double)sample.swapUsecs * 1.0e-3, (double)sample.gpuMs });
+        }
+    }
+    return list;
+}
+
+void TestScriptingInterface::traceRefreshes(bool on) {
+    DisplayLink::instance().setTracing(on);
+}
+
+QVariantList TestScriptingInterface::takeRefreshTrace() {
+    QVariantList list;
+    for (uint64_t time : DisplayLink::instance().takeTrace()) {
+        list << QVariant((double)time * 1.0e-3);
+    }
+    return list;
+}
+
+float TestScriptingInterface::getDisplayRefreshRate() {
+    auto window = qApp->getWindow();
+    if (!window || !window->windowHandle() || !window->windowHandle()->screen()) {
+        return 0.0f;
+    }
+    return (float)window->windowHandle()->screen()->refreshRate();
+}
+
+bool TestScriptingInterface::isVsyncEnabled() {
+    auto displayPlugin = qApp->getActiveDisplayPlugin();
+    return displayPlugin && displayPlugin->isVsyncEnabled();
 }
 
 void TestScriptingInterface::editorDrag(const glm::vec3& delta, float yawDegrees, float rollDegrees, bool begin, bool final) {

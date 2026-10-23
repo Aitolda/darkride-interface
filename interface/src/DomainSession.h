@@ -41,6 +41,7 @@
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtCore/QUuid>
+#include <QtCore/QVariantMap>
 
 #include <Node.h>
 #include <OctreeConstants.h>
@@ -62,6 +63,11 @@ public:
     bool isServerlessMode() const;                                   // a world from a file, with no domain server
     bool isInterstitialMode() const { return _interstitialMode; }    // the loading screen is up: audio and avatar packets paused
     bool isPhysicsEnabled() const { return _physicsEnabled; }        // the arrival is complete: physics runs
+    // whole-world loading: the domain's settings ask for a loading screen until the whole world is in (the models and
+    // textures within a radius of the avatar loaded), with a time limit and "Show me now"
+    bool isWorldLoading() const { return _worldLoading.active; }
+    QVariantMap getWorldLoadingState();   // for the loading screen: received, ready, the server done, the seconds, the limit, the radius
+    void showWorldNow();                  // "Show me now": physics at the next frame, the screen down
     bool isMissingSequenceNumbers() const { return _isMissingSequenceNumbers; }
     OctreePacketProcessor& octreeProcessor() { return _octreeProcessor; }               // the incoming octree packets' thread
     const OctreePacketProcessor& octreeProcessor() const { return _octreeProcessor; }
@@ -112,11 +118,15 @@ public:
 
 signals:
     void interstitialModeChanged(bool isInInterstitialMode);
+    void worldLoadingChanged(bool isWorldLoading);
 
 private:
     void setFailedToConnectToEntityServer();
     std::map<QString, QString> prepareServerlessDomainContents(QUrl domainURL, QByteArray data);
-    void tryToEnablePhysics();
+    void tryToEnablePhysics(bool skipTextureCheck = false);
+    void updateWorldLoading();   // the domain's settings read once they arrive; the whole-world load started when they ask for it
+    void startWorldLoading(int timeLimitSeconds, float radius);
+    void endWorldLoading();
     void queryOctree(NodeType_t serverType, PacketType packetType, QJsonObject jsonParameters);
     void queryAvatars();
     int sendNackPackets();
@@ -150,6 +160,20 @@ private:
     qint64 _gpuTextureMemSizeAtLastCheck{ 0 };
     int _minimumGPUTextureMemSizeStabilityCount{ 30 };
     bool _domainLoadingInProgress{ false };   // the "Scene Loading" profile range is open
+
+    // Whole-world loading, per arrival (reset with the physics-ready information). The choice is the domain's
+    // ("loading.whole_world" and "loading.time_limit" in its settings, sent to the client when it connects).
+    struct WorldLoading {
+        bool settingsKnown { false };   // the domain's settings have arrived, or we stopped waiting for them
+        bool active { false };          // the loading screen is up and the entity query asks for the whole world
+        bool skipRequested { false };   // "Show me now"
+        quint64 waitStart { 0 };        // since when we are connected and waiting for the domain's settings
+        quint64 started { 0 };
+        quint64 deadline { 0 };
+        int timeLimit { 0 };            // seconds
+        float radius { 0.0f };          // metres round the avatar whose models are waited for; 0 for all
+        quint64 lastQuery { 0 };
+    } _worldLoading;
 };
 
 #endif // hifi_DomainSession_h

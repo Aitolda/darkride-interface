@@ -599,6 +599,20 @@ Menu::Menu() {
         action->setChecked(RenderScriptingInterface::getInstance()->getRenderMethod() == RenderScriptingInterface::RenderMethod::FORWARD);
     });
 
+    // Developer > Render > Vsync: the swap waits for the display's refresh. Off by default: the frames are paced at the
+    // display's rate without a wait and the compositor shows the newest at each refresh, which is even; on macOS the
+    // GL swap's wait was measured at two refreshes with the odd frame queued at once, a ragged 72 Hz on a 144 Hz
+    // panel (PHYSICS.md "The driver's stutter"). The setting is Render.vsyncEnabled; TIVOLI_VSYNC in the environment
+    // forces it.
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::Vsync, 0,
+        RenderScriptingInterface::getInstance()->getVsyncEnabled());
+    connect(action, &QAction::triggered, [action] {
+        RenderScriptingInterface::getInstance()->setVsyncEnabled(action->isChecked());
+    });
+    connect(RenderScriptingInterface::getInstance(), &RenderScriptingInterface::settingsChanged, action, [action] {
+        action->setChecked(RenderScriptingInterface::getInstance()->getVsyncEnabled());
+    });
+
     // Developer > Render > MSAA (Forward): the forward path's multisampling, 1, 2, 4 or 8 samples a pixel (the
     // graphics presets set it: Potato 1, Low 2, Medium and High 4); the setting behind it is Render.msaaSamples
     {
