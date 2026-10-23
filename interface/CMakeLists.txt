@@ -214,7 +214,7 @@ link_hifi_libraries(
   pointers recording hfm fbx networking material-networking
   model-networking model-baker entities avatars
   audio audio-client animation script-engine wasm-scripting physics vehicles
-  render-utils entities-renderer avatars-renderer ui qml auto-updater midi terrain
+  render-utils entities-renderer avatars-renderer ui qml midi terrain
   controllers plugins image platform auto-rigging unity-import
   ui-plugins display-plugins input-plugins
   # Platform specific GL libraries

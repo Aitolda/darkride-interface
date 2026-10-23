@@ -20,7 +20,6 @@
 
 #include "../QmlWindowClass.h"
 #include "../OffscreenUi.h"
-#include "../InfoView.h"
 #include "ToolbarScriptingInterface.h"
 #include "Logging.h"
 

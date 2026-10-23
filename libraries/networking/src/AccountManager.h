@@ -104,8 +104,6 @@ public:
     void removeAccountFromFile();
 
     void setAccessTokens(const QString& response);
-    void setConfigFileURL(const QString& fileURL) { _configFileURL = fileURL; }
-    void saveLoginStatus(bool isLoggedIn);
 
     AccountSettings& getAccountSettings() { return _settings; }
 
@@ -180,7 +178,6 @@ private:
 
     QUuid _sessionID { QUuid::createUuid() };
 
-    QString _configFileURL;
 
     bool _accountSettingsEnabled { false };
     AccountSettings _settings;

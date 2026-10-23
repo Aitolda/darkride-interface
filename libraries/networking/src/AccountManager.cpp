@@ -122,7 +122,6 @@ void AccountManager::logout() {
 
     // remove this account from the account settings file
     removeAccountFromFile();
-    saveLoginStatus(false);
 
     emit logoutComplete();
     // the username has changed to blank
@@ -736,7 +735,6 @@ void AccountManager::setAccessTokens(const QString& response) {
             emit loginComplete(rootURL);
 
             persistAccountToFile();
-            saveLoginStatus(true);
             requestProfile();
         }
     } else {
@@ -1113,37 +1111,6 @@ void AccountManager::handleKeypairGenerationError() {
 
     // reset our waiting state for keypair response
     _isWaitingForKeypairResponse = false;
-}
-
-void AccountManager::saveLoginStatus(bool isLoggedIn) {
-    if (!_configFileURL.isEmpty()) {
-        QFile configFile(_configFileURL);
-        configFile.open(QIODevice::ReadOnly | QIODevice::Text);
-        QJsonParseError error;
-        QJsonDocument jsonDocument = QJsonDocument::fromJson(configFile.readAll(), &error);
-        configFile.close();
-        QString launcherPath;
-        if (error.error == QJsonParseError::NoError) {
-            QJsonObject rootObject = jsonDocument.object();
-            if (rootObject.contains("launcherPath")) {
-                launcherPath = rootObject["launcherPath"].toString();
-            }
-            if (rootObject.contains("loggedIn")) {
-                rootObject["loggedIn"] = isLoggedIn;
-            }
-            jsonDocument = QJsonDocument(rootObject);
-
-        }
-        configFile.open(QFile::WriteOnly | QFile::Text | QFile::Truncate);
-        configFile.write(jsonDocument.toJson());
-        configFile.close();
-        if (!isLoggedIn && !launcherPath.isEmpty()) {
-            QProcess launcher;
-            launcher.setProgram(launcherPath);
-            launcher.startDetached();
-            QMetaObject::invokeMethod(qApp, "quit", Qt::QueuedConnection);
-        }
-    }
 }
 
 bool AccountManager::hasKeyPair() const {

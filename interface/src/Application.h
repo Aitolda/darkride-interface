@@ -394,7 +394,6 @@ public:
     void overrideEntry();
     void forceDisplayName(const QString& displayName);
     void forceLoginWithTokens(const QString& tokens);
-    void setConfigFileURL(const QString& fileUrl);
 
     // used by preferences and HMDScriptingInterface...
     VisionSqueeze& getVisionSqueeze() { return _visionSqueeze; }
@@ -572,7 +571,7 @@ private slots:
     void addAssetToWorldInfoTimeout();
     void addAssetToWorldErrorTimeout();
 
-    void handleSandboxStatus(QNetworkReply* reply);
+    void goToStartingLocation();
     void switchDisplayMode();
 
     void setShowBulletWireframe(bool value);

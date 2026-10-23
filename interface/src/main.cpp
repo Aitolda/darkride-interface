@@ -21,7 +21,6 @@
 #include <QTranslator>
 
 #include <BuildInfo.h>
-#include <SandboxUtils.h>
 #include <SharedUtil.h>
 #include <NetworkAccessManager.h>
 #include <gl/GLHelpers.h>
@@ -36,9 +35,6 @@
 
 #ifdef Q_OS_WIN
 #include <Windows.h>
-extern "C" {
-    typedef int(__stdcall * CHECKMINSPECPROC) ();
-}
 #endif
 
 int main(int argc, const char* argv[]) {
@@ -76,11 +72,6 @@ int main(int argc, const char* argv[]) {
     QCommandLineOption helpOption = parser.addHelpOption();
 
     QCommandLineOption urlOption("url", "", "value");
-    // QCommandLineOption noLauncherOption("no-launcher", "Do not execute the launcher");
-    // QCommandLineOption noUpdaterOption("no-updater", "Do not show auto-updater");
-    QCommandLineOption checkMinSpecOption("checkMinSpec", "Check if machine meets minimum specifications");
-    QCommandLineOption runServerOption("runServer", "Whether to run the server");
-    QCommandLineOption serverContentPathOption("serverContentPath", "Where to find server content <path>", "serverContentPath");
     QCommandLineOption allowMultipleInstancesOption("allowMultipleInstances", "Allow multiple instances to run");
     QCommandLineOption overrideAppLocalDataPathOption("cache", "set test cache <dir>", "dir");
     QCommandLineOption overrideScriptsPathOption(SCRIPTS_SWITCH, "set scripts <path>", "path");
@@ -92,11 +83,6 @@ int main(int argc, const char* argv[]) {
     QCommandLineOption clientLabelOption("clientLabel", "set the window title's client label <text>", "text");
 
     parser.addOption(urlOption);
-    // parser.addOption(noLauncherOption);
-    // parser.addOption(noUpdaterOption);
-    parser.addOption(checkMinSpecOption);
-    parser.addOption(runServerOption);
-    parser.addOption(serverContentPathOption);
     parser.addOption(overrideAppLocalDataPathOption);
     parser.addOption(overrideScriptsPathOption);
     parser.addOption(allowMultipleInstancesOption);
@@ -137,41 +123,6 @@ int main(int argc, const char* argv[]) {
         applicationPath = QCoreApplication::applicationDirPath();
 #endif
     }
-    static const QString APPLICATION_CONFIG_FILENAME = "config.json";
-    QDir applicationDir(applicationPath);
-    QString configFileName = applicationDir.filePath(APPLICATION_CONFIG_FILENAME);
-    QFile configFile(configFileName);
-    QString launcherPath;
-    if (configFile.exists()) {
-        if (!configFile.open(QIODevice::ReadOnly)) {
-            qWarning() << "Found application config, but could not open it";
-        } else {
-            auto contents = configFile.readAll();
-            QJsonParseError error;
-
-            auto doc = QJsonDocument::fromJson(contents, &error);
-            if (error.error) {
-                qWarning() << "Found application config, but could not parse it: " << error.errorString();
-            } else {
-                static const QString LAUNCHER_PATH_KEY = "launcherPath";
-                launcherPath = doc.object()[LAUNCHER_PATH_KEY].toString();
-                if (!launcherPath.isEmpty()) {
-                    // if (!parser.isSet(noLauncherOption)) {
-                    //     qDebug() << "Found a launcherPath in application config. Starting launcher.";
-                    //     QProcess launcher;
-                    //     launcher.setProgram(launcherPath);
-                    //     launcher.startDetached();
-                    //     return 0;
-                    // } else {
-                        qDebug() << "Found a launcherPath in application config, but the launcher"
-                                    " has been suppressed. Continuing normal execution.";
-                    // }
-                    configFile.close();
-                }
-            }
-        }
-    }
-
     // Early check for --traceFile argument 
     auto tracer = DependencyManager::set<tracing::Tracer>();
     const char * traceFile = nullptr;
@@ -326,42 +277,11 @@ int main(int argc, const char* argv[]) {
     // or in the main window ctor, before GL startup.
     Application::initPlugins(arguments);
 
-#ifdef Q_OS_WIN
-    // If we're running in steam mode, we need to do an explicit check to ensure we're up to the required min spec
-    if (parser.isSet(checkMinSpecOption)) {
-        QString appPath;
-        {
-            char filename[MAX_PATH];
-            GetModuleFileName(NULL, filename, MAX_PATH);
-            QFileInfo appInfo(filename);
-            appPath = appInfo.absolutePath();
-        }
-        QString openvrDllPath = appPath + "/plugins/openvr.dll";
-        HMODULE openvrDll;
-        CHECKMINSPECPROC checkMinSpecPtr;
-        if ((openvrDll = LoadLibrary(openvrDllPath.toLocal8Bit().data())) &&
-            (checkMinSpecPtr = (CHECKMINSPECPROC)GetProcAddress(openvrDll, "CheckMinSpec"))) {
-            if (!checkMinSpecPtr()) {
-                return -1;
-            }
-        }
-    }
-#endif
-
     int exitCode;
     {
         RunningMarker runningMarker(RUNNING_MARKER_FILENAME);
         bool runningMarkerExisted = runningMarker.fileExists();
         runningMarker.writeRunningMarkerFile();
-
-        // bool noUpdater = parser.isSet(noUpdaterOption);
-        bool runServer = parser.isSet(runServerOption);
-        bool serverContentPathOptionIsSet = parser.isSet(serverContentPathOption);
-        QString serverContentPath = serverContentPathOptionIsSet ? parser.value(serverContentPathOption) : QString();
-        if (runServer) {
-            // SandboxUtils::runLocalSandbox(serverContentPath, true, noUpdater);
-            SandboxUtils::runLocalSandbox(serverContentPath, true, true);
-        }
 
         // Extend argv to enable WebGL rendering
         std::vector<const char*> argvExtended(&argv[0], &argv[argc]);
@@ -406,9 +326,6 @@ int main(int argc, const char* argv[]) {
             if (parser.isSet(displayNameOption)) {
                 QString displayName = QString(parser.value(displayNameOption));
                 appPointer->forceDisplayName(displayName);
-            }
-            if (!launcherPath.isEmpty()) {
-                appPointer->setConfigFileURL(configFileName);
             }
             if (parser.isSet(responseTokensOption)) {
                 QString tokens = QString(parser.value(responseTokensOption));

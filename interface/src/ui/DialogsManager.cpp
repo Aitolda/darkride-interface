@@ -27,7 +27,6 @@
 #include "LoginDialog.h"
 #include "OctreeStatsDialog.h"
 #include "PreferencesDialog.h"
-#include "UpdateDialog.h"
 
 #include "scripting/HMDScriptingInterface.h"
 
@@ -119,10 +118,6 @@ void DialogsManager::showLoginDialog() {
 
 void DialogsManager::hideLoginDialog() {
     LoginDialog::hide();
-}
-
-void DialogsManager::showUpdateDialog() {
-    UpdateDialog::show();
 }
 
 void DialogsManager::octreeStatsDetails() {

@@ -72,7 +72,6 @@
 #include <AnimationCacheScriptingInterface.h>
 #include <AssetClient.h>
 #include <AssetUpload.h>
-#include <AutoUpdater.h>
 #include <Midi.h>
 #include <AudioInjectorManager.h>
 #include <AvatarBookmarks.h>
@@ -92,7 +91,6 @@
 #include <FramebufferCache.h>
 #include <gpu/Batch.h>
 #include <gpu/Context.h>
-#include <InfoView.h>
 #include <input-plugins/InputPlugin.h>
 #include <controllers/UserInputMapper.h>
 #include <controllers/InputRecorder.h>
@@ -132,7 +130,6 @@
 #include <SecondaryCamera.h>
 #include <ResourceCache.h>
 #include <ResourceRequest.h>
-#include <SandboxUtils.h>
 #include <SceneScriptingInterface.h>
 #include <ScriptEngines.h>
 #include <ScriptCache.h>
@@ -215,7 +212,6 @@
 #include "ui/StandAloneJSConsole.h"
 #include "ui/Stats.h"
 #include "ui/AnimStats.h"
-#include "ui/UpdateDialog.h"
 #include "ui/DomainConnectionModel.h"
 #include "ui/Keyboard.h"
 #include "ui/InteractiveWindow.h"
@@ -227,7 +223,6 @@
 
 #include <GPUIdent.h>
 #include <gl/GLHelpers.h>
-#include <src/scripting/GooglePolyScriptingInterface.h>
 #include <EntityScriptClient.h>
 #include <ModelScriptingInterface.h>
 
@@ -938,7 +933,6 @@ bool setupEssentials(int& argc, char** argv, bool runningMarkerExisted) {
     DependencyManager::set<OffscreenQmlSurfaceCache>();
     DependencyManager::set<EntityScriptClient>();
     DependencyManager::set<EntityScriptServerLogClient>();
-    DependencyManager::set<GooglePolyScriptingInterface>();
     DependencyManager::set<OctreeStatsProvider>(nullptr, qApp->getOcteeSceneStats());
     DependencyManager::set<AvatarBookmarks>();
     DependencyManager::set<LocationBookmarks>();
@@ -1944,25 +1938,6 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     this->installEventFilter(this);
 
 
-    // If launched from Steam, let it handle updates
-    // const QString HIFI_NO_UPDATER_COMMAND_LINE_KEY = "--no-updater";
-    // bool noUpdater = arguments().indexOf(HIFI_NO_UPDATER_COMMAND_LINE_KEY) != -1;
-    // bool buildCanUpdate = BuildInfo::BUILD_TYPE == BuildInfo::BuildType::Stable
-    //     || BuildInfo::BUILD_TYPE == BuildInfo::BuildType::Master;
-    // if (!noUpdater && buildCanUpdate) {
-    //     constexpr auto INSTALLER_TYPE_CLIENT_ONLY = "client_only";
-
-    //     auto applicationUpdater = DependencyManager::set<AutoUpdater>();
-
-    //     AutoUpdater::InstallerType type = installerType == INSTALLER_TYPE_CLIENT_ONLY
-    //         ? AutoUpdater::InstallerType::CLIENT_ONLY : AutoUpdater::InstallerType::FULL;
-
-    //     applicationUpdater->setInstallerType(type);
-    //     applicationUpdater->setInstallerCampaign(installerCampaign);
-    //     connect(applicationUpdater.data(), &AutoUpdater::newVersionIsAvailable, dialogsManager.data(), &DialogsManager::showUpdateDialog);
-    //     applicationUpdater->checkForUpdate();
-    // }
-
     Menu::getInstance()->setIsOptionChecked(MenuOption::ActionMotorControl, true);
     Menu::getInstance()->setIsOptionChecked(
         MenuOption::MaterialProceduralShaders,
@@ -2958,7 +2933,6 @@ void Application::initializeUi() {
     ErrorDialog::registerType();
     LoginDialog::registerType();
     Tooltip::registerType();
-    UpdateDialog::registerType();
     QmlContextCallback platformInfoCallback = [](QQmlContext* context) {
         context->setContextProperty("PlatformInfo", new PlatformInfoScriptingInterface());
     };
@@ -3572,7 +3546,6 @@ void Application::showHelp() {
     TabletProxy* tablet = dynamic_cast<TabletProxy*>(DependencyManager::get<TabletScriptingInterface>()->getTablet(SYSTEM_TABLET));
     tablet->gotoWebScreen(PathUtils::resourcesUrl() + INFO_HELP_PATH + "?" + queryString.toString());
     DependencyManager::get<HMDScriptingInterface>()->openTablet();
-    //InfoView::show(INFO_HELP_PATH, false, queryString.toString());
 }
 
 void Application::resizeEvent(QResizeEvent* event) {
@@ -3628,7 +3601,7 @@ void Application::resizeGL() {
 #endif
 }
 
-void Application::handleSandboxStatus(QNetworkReply* reply) {
+void Application::goToStartingLocation() {
     PROFILE_RANGE(render, __FUNCTION__);
 
     // Get controller availability
@@ -3706,12 +3679,7 @@ bool Application::importSVOFromURL(const QString& urlString) {
 bool Application::importFromZIP(const QString& filePath) {
     qDebug() << "A zip file has been dropped in: " << filePath;
     QUrl empty;
-    // handle Blocks download from Marketplace
-    if (filePath.contains("poly.google.com/downloads")) {
-        addAssetToWorldFromURL(filePath);
-    } else {
-        qApp->getFileDownloadInterface()->runUnzip(filePath, empty, true, true, false);
-    }
+    qApp->getFileDownloadInterface()->runUnzip(filePath, empty, true, true, false);
     return true;
 }
 
@@ -5500,12 +5468,10 @@ void Application::resumeAfterLoginDialogActionTaken() {
         DependencyManager::get<ScriptEngines>()->loadScript(testScript, false, false, false, false, quitWhenFinished);
         // This is done so we don't get a "connection time-out" message when we haven't passed in a URL.
         if (arguments().contains("--url")) {
-            auto reply = SandboxUtils::getStatus();
-            connect(reply, &QNetworkReply::finished, this, [this, reply] { handleSandboxStatus(reply); });
+            QMetaObject::invokeMethod(this, "goToStartingLocation", Qt::QueuedConnection);
         }
     } else {
-        auto reply = SandboxUtils::getStatus();
-        connect(reply, &QNetworkReply::finished, this, [this, reply] { handleSandboxStatus(reply); });
+        QMetaObject::invokeMethod(this, "goToStartingLocation", Qt::QueuedConnection);
     }
 
     auto menu = Menu::getInstance();
@@ -7399,7 +7365,6 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
 
     scriptEngine->registerGlobalObject("Users", DependencyManager::get<UsersScriptingInterface>().data());
 
-    scriptEngine->registerGlobalObject("GooglePoly", DependencyManager::get<GooglePolyScriptingInterface>().data());
 
     if (auto steamClient = PluginManager::getInstance()->getSteamClientPlugin()) {
         scriptEngine->registerGlobalObject("Steam", new SteamScriptingInterface(scriptEngine.data(), steamClient.get()));
@@ -9310,9 +9275,6 @@ void Application::forceDisplayName(const QString& displayName) {
 void Application::forceLoginWithTokens(const QString& tokens) {
     DependencyManager::get<AccountManager>()->setAccessTokens(tokens);
     Setting::Handle<bool>(KEEP_ME_LOGGED_IN_SETTING_NAME, true).set(true);
-}
-void Application::setConfigFileURL(const QString& fileUrl) {
-    DependencyManager::get<AccountManager>()->setConfigFileURL(fileUrl);
 }
 
 #if defined(Q_OS_ANDROID)
