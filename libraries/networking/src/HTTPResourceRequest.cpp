@@ -216,9 +216,11 @@ void HTTPResourceRequest::onRequestFinished() {
             _result = AccessDenied;
             break;
 
+        case QNetworkReply::HostNotFoundError:      // Script.include('http://foo.bar.highfidelity.io')
+            _result = HostNotFound;
+            break;
         case QNetworkReply::RemoteHostClosedError:  // Script.include('http://127.0.0.1:22')
         case QNetworkReply::ConnectionRefusedError: // Script.include(http://127.0.0.1:1')
-        case QNetworkReply::HostNotFoundError:      // Script.include('http://foo.bar.highfidelity.io')
         case QNetworkReply::ServiceUnavailableError: // Script.include('QUrl("https://httpbin.org/status/503")')
             _result = ServerUnavailable;
             break;

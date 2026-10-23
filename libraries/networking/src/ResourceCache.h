@@ -224,6 +224,12 @@ public:
     Q_INVOKABLE QVariantList getResourceList();
 
     static void setRequestLimit(uint32_t limit);
+
+    // The hosts whose names did not resolve, dead for DEAD_HOST_MSECS from the failure: a link to one fails at once,
+    // with no request (Resource::makeRequest). Old worlds carry hundreds of links to hosts that are gone.
+    static bool isHostDead(const QString& host);
+    static void markHostDead(const QString& host);
+    static const qint64 DEAD_HOST_MSECS = 2 * 60 * 1000;
     static uint32_t getRequestLimit() { return DependencyManager::get<ResourceCacheSharedItems>()->getRequestLimit(); }
     
     void setUnusedResourceCacheSize(qint64 unusedResourcesMaxSize);
