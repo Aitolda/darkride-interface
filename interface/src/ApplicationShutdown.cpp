@@ -16,7 +16,7 @@
 #include "Application.h"
 #include "ApplicationServices.h"
 #include "ImportExtensions.h"
-#include "ApplicationSettingNames.h"
+#include "ApplicationConstants.h"
 #include "KeyboardFocusHighlight.h"
 #include "LambdaEvent.h"
 #include "ClientOptions.h"
@@ -246,7 +246,7 @@ using namespace std;
 
 QSharedPointer<OffscreenUi> getOffscreenUI();      // Application.cpp's
 extern Setting::Handle<bool> loginDialogPoppedUp;  // Application.cpp's
-extern QTimer locationUpdateTimer;                 // Application.cpp's; the constructor starts it
+extern QTimer locationUpdateTimer;                 // ApplicationStartup.cpp's; the constructor starts it
 
 void Application::onAboutToQuit() {
     setCrashAnnotation("shutdown", "1");

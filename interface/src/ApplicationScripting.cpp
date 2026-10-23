@@ -17,7 +17,7 @@
 #include "Application.h"
 #include "ApplicationServices.h"
 #include "ImportExtensions.h"
-#include "ApplicationSettingNames.h"
+#include "ApplicationConstants.h"
 #include "LambdaEvent.h"
 #include "ClientOptions.h"
 #include "DeadlockWatchdog.h"
