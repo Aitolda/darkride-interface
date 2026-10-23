@@ -1283,6 +1283,8 @@ $(document).ready(function(){
             var error = "";
             if (!newUsername) {
               error = "Choose a username: the browser asks for one with the password.";
+            } else if (newUsername.indexOf(":") !== -1 || password.indexOf(":") !== -1) {
+              error = "The username and password can't have a colon (:) in them.";
             } else if (!password && !passwordSet) {
               error = "Choose a password.";
             } else if (password !== again) {
