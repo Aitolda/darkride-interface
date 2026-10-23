@@ -687,3 +687,62 @@ void EntityPropertiesConversionTests::testWorldFiles() {
         qInfo().noquote() << path << "-" << entities.size() << "entities, the same on both paths:" << counts.join(", ");
     }
 }
+
+void EntityPropertiesConversionTests::benchmarkOverlayConversions_data() {
+    QTest::addColumn<bool>("edit");
+    QTest::addColumn<int>("way");
+    QTest::newRow("an overlay edit, QtScript, an engine made per call") << true << 0;
+    QTest::newRow("an overlay edit, QtScript, one engine kept") << true << 1;
+    QTest::newRow("an overlay edit, plain values") << true << 2;
+    QTest::newRow("an overlay read, QtScript, an engine made per call") << false << 0;
+    QTest::newRow("an overlay read, QtScript, one engine kept") << false << 1;
+    QTest::newRow("an overlay read, plain values") << false << 2;
+}
+
+void EntityPropertiesConversionTests::benchmarkOverlayConversions() {
+    // the cost of what Overlays does for every addOverlay and editOverlay (an overlay's properties to an entity's)
+    // and every getProperty (an entity's to an overlay's), in each of the three ways it has had: a QScriptEngine
+    // made for each call, one kept per thread, and plain values with no engine
+    QFETCH(bool, edit);
+    QFETCH(int, way);
+    QVariantMap overlay;
+    overlay["type"] = "Shape";
+    overlay["shape"] = "Cube";
+    overlay["position"] = QVariantMap({ { "x", 1 }, { "y", 2.5 }, { "z", -3 } });
+    overlay["rotation"] = QVariantMap({ { "x", 0 }, { "y", 0.7071 }, { "z", 0 }, { "w", 0.7071 } });
+    overlay["dimensions"] = QVariantMap({ { "x", 0.1 }, { "y", 0.1 }, { "z", 0.1 } });
+    overlay["color"] = QVariantMap({ { "red", 255 }, { "green", 128 }, { "blue", 0 } });
+    overlay["alpha"] = 0.5;
+    overlay["visible"] = true;
+    overlay["ignorePickIntersection"] = true;
+    overlay["parentID"] = "{1a2b3c4d-0000-0000-0000-000000000001}";
+    const EntityItemProperties entity = sampleProperties(EntityTypes::Shape);
+    QScriptEngine kept;
+    int written = 0;
+    QBENCHMARK {
+        if (edit) {
+            EntityItemProperties properties;
+            if (way == 2) {
+                properties.copyFromScriptValue(PlainScriptValue::fromVariant(overlay), true);
+            } else {
+                QScriptEngine perCall;
+                QScriptEngine& engine = way == 1 ? kept : perCall;
+                QVariantMap input = overlay;
+                EntityItemPropertiesFromScriptValueHonorReadOnly(variantMapToScriptValue(input, engine), properties);
+            }
+            written += properties.getVisible() ? 1 : 0;
+        } else {
+            QVariantMap map;
+            if (way == 2) {
+                PlainScriptEngine plainEngine;
+                map = entity.copyToScriptValue(&plainEngine, false).toVariant().toMap();
+            } else {
+                QScriptEngine perCall;
+                QScriptEngine& engine = way == 1 ? kept : perCall;
+                map = EntityItemPropertiesToScriptValue(&engine, entity).toVariant().toMap();
+            }
+            written += map.size();
+        }
+    }
+    QVERIFY(written > 0);
+}

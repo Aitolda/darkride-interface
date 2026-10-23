@@ -28,6 +28,8 @@ private slots:
     void testRoundTrip();
     void testVehiclesAndTracks();
     void testWorldFiles();
+    void benchmarkOverlayConversions_data();
+    void benchmarkOverlayConversions();
 };
 
 #endif // hifi_EntityPropertiesConversionTests_h
