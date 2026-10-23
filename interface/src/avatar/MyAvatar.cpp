@@ -43,7 +43,6 @@
 #include <ModelEntityItem.h>
 #include <GLMHelpers.h>
 #include <TextRenderer3D.h>
-#include <UserActivityLogger.h>
 #include <AnimDebugDraw.h>
 #include <AnimClip.h>
 #include <AnimInverseKinematics.h>
@@ -2272,7 +2271,7 @@ void MyAvatar::snapOtherAvatarLookAtTargetsToMe(const AvatarHash& hash) {
                 glm::vec3 gazeOffset = lookAtPosition - getHead()->getEyePosition();
 
                  ViewFrustum viewFrustum;
-                 qApp->copyViewFrustum(viewFrustum);
+                 qApp->getViewState().copyViewFrustum(viewFrustum);
 
                  glm::vec3 viewPosition = viewFrustum.getPosition();
 #if DEBUG_ALWAYS_LOOKAT_EYES_NOT_CAMERA
@@ -2694,7 +2693,6 @@ void MyAvatar::useFullAvatarURL(const QUrl& fullAvatarURL, const QString& modelN
     const QString& urlString = fullAvatarURL.toString();
     if (urlString.isEmpty() || (fullAvatarURL != getSkeletonModelURL())) {
         setSkeletonModelURL(fullAvatarURL);
-        UserActivityLogger::getInstance().changedModel("skeleton", urlString);
     } else {
         emit onLoadComplete();
     }
@@ -4190,7 +4188,7 @@ void MyAvatar::updateActionMotor(float deltaTime) {
 
     // May need to change view if boom length has changed
     if (previousBoomLength != _boomLength) {
-        qApp->changeViewAsNeeded(_boomLength);
+        qApp->getViewState().changeViewAsNeeded(_boomLength);
     }
 }
 
@@ -4231,7 +4229,7 @@ void MyAvatar::updateViewBoom() {
 
     // May need to change view if boom length has changed
     if (previousBoomLength != _boomLength) {
-        qApp->changeViewAsNeeded(_boomLength);
+        qApp->getViewState().changeViewAsNeeded(_boomLength);
     }
 }
 

@@ -37,8 +37,7 @@ const char* LOCAL_MODELS_PERSIST_FILE = "resources/models.svo";
 
 EntityServer::EntityServer(ReceivedMessage& message) :
     OctreeServer(message),
-    _entitySimulation(nullptr),
-    _dynamicDomainVerificationTimer(this)
+    _entitySimulation(nullptr)
 {
     DependencyManager::set<ResourceManager>();
     DependencyManager::set<ResourceCacheSharedItems>();
@@ -55,15 +54,9 @@ EntityServer::EntityServer(ReceivedMessage& message) :
         PacketType::EntityClone,
         PacketType::EntityEdit,
         PacketType::EntityErase,
-        PacketType::EntityPhysics,
-        PacketType::ChallengeOwnership,
-        PacketType::ChallengeOwnershipRequest,
-        PacketType::ChallengeOwnershipReply },
+        PacketType::EntityPhysics },
         this,
         "handleEntityPacket");
-
-    connect(&_dynamicDomainVerificationTimer, &QTimer::timeout, this, &EntityServer::startDynamicDomainVerification);
-    _dynamicDomainVerificationTimer.setSingleShot(true);
 }
 
 EntityServer::~EntityServer() {
@@ -121,9 +114,6 @@ void EntityServer::beforeRun() {
     connect(_pruneDeletedEntitiesTimer, SIGNAL(timeout()), this, SLOT(pruneDeletedEntities()));
     const int PRUNE_DELETED_MODELS_INTERVAL_MSECS = 1 * 1000; // once every second
     _pruneDeletedEntitiesTimer->start(PRUNE_DELETED_MODELS_INTERVAL_MSECS);
-
-    DomainHandler& domainHandler = DependencyManager::get<NodeList>()->getDomainHandler();
-    connect(&domainHandler, &DomainHandler::settingsReceiveFail, this, &EntityServer::domainSettingsRequestFailed);
 }
 
 void EntityServer::entityCreated(const EntityItem& newEntity, const SharedNodePointer& senderNode) {
@@ -325,18 +315,6 @@ void EntityServer::readAdditionalConfiguration(const QJsonObject& settingsSectio
         tree->setEntityMaxTmpLifetime(EntityTree::DEFAULT_MAX_TMP_ENTITY_LIFETIME);
     }
 
-    int minTime;
-    if (readOptionInt("dynamicDomainVerificationTimeMin", settingsSectionObject, minTime)) {
-        _MINIMUM_DYNAMIC_DOMAIN_VERIFICATION_TIMER_MS = minTime * 1000;
-    }
-
-    int maxTime;
-    if (readOptionInt("dynamicDomainVerificationTimeMax", settingsSectionObject, maxTime)) {
-        _MAXIMUM_DYNAMIC_DOMAIN_VERIFICATION_TIMER_MS = maxTime * 1000;
-    }
-
-    startDynamicDomainVerification();
-
     tree->setWantEditLogging(wantEditLogging);
     tree->setWantTerseEditLogging(wantTerseEditLogging);
 
@@ -459,24 +437,4 @@ QString EntityServer::serverSubclassStats() {
     statsString += "\r\n\r\n";
 
     return statsString;
-}
-
-void EntityServer::domainSettingsRequestFailed() {
-    auto nodeList = DependencyManager::get<NodeList>();
-    qCDebug(entities) << "The EntityServer couldn't get the Domain Settings. Starting dynamic domain verification with default values...";
-
-    _MINIMUM_DYNAMIC_DOMAIN_VERIFICATION_TIMER_MS = DEFAULT_MINIMUM_DYNAMIC_DOMAIN_VERIFICATION_TIMER_MS;
-    _MAXIMUM_DYNAMIC_DOMAIN_VERIFICATION_TIMER_MS = DEFAULT_MAXIMUM_DYNAMIC_DOMAIN_VERIFICATION_TIMER_MS;
-    startDynamicDomainVerification();
-}
-
-void EntityServer::startDynamicDomainVerification() {
-    qCDebug(entities) << "Starting Dynamic Domain Verification...";
-
-    EntityTreePointer tree = std::static_pointer_cast<EntityTree>(_tree);
-    tree->startDynamicDomainVerificationOnServer((float) _MAXIMUM_DYNAMIC_DOMAIN_VERIFICATION_TIMER_MS / MSECS_PER_SECOND);
-
-    int nextInterval = QRandomGenerator::global()->bounded((_MAXIMUM_DYNAMIC_DOMAIN_VERIFICATION_TIMER_MS + 1) - _MINIMUM_DYNAMIC_DOMAIN_VERIFICATION_TIMER_MS) + _MINIMUM_DYNAMIC_DOMAIN_VERIFICATION_TIMER_MS;
-    qCDebug(entities) << "Restarting Dynamic Domain Verification timer for" << nextInterval / 1000 << "seconds";
-    _dynamicDomainVerificationTimer.start(nextInterval);
 }

@@ -28,7 +28,6 @@
 #include "MainWindow.h"
 #include "Menu.h"
 #include "OffscreenUi.h"
-#include "commerce/QmlCommerce.h"
 
 static const QString DESKTOP_LOCATION = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
 static const QString LAST_BROWSE_LOCATION_SETTING = "LastBrowseLocation";
@@ -165,8 +164,6 @@ void WindowScriptingInterface::openUrl(const QUrl& url) {
         auto scheme = url.scheme();
         if (scheme == URL_SCHEME_HIFI) {
             DependencyManager::get<AddressManager>()->handleLookupString(url.toString());
-        } else if (scheme == URL_SCHEME_HIFIAPP) {
-            DependencyManager::get<QmlCommerce>()->openSystemApp(url.path());
         } else {
 #if defined(Q_OS_ANDROID)
             QMap<QString, QString> args;
@@ -491,19 +488,19 @@ bool WindowScriptingInterface::setDisplayTexture(const QString& name) {
 }
 
 void WindowScriptingInterface::takeSnapshot(bool notify, bool includeAnimated, float aspectRatio, const QString& filename) {
-    qApp->takeSnapshot(notify, includeAnimated, aspectRatio, filename);
+    qApp->getSnapshotRequests().takeSnapshot(notify, includeAnimated, aspectRatio, filename);
 }
 
 void WindowScriptingInterface::takeSecondaryCameraSnapshot(const bool& notify, const QString& filename) {
-    qApp->takeSecondaryCameraSnapshot(notify, filename);
+    qApp->getSnapshotRequests().takeSecondaryCameraSnapshot(notify, filename);
 }
 
 void WindowScriptingInterface::takeSecondaryCamera360Snapshot(const glm::vec3& cameraPosition, const bool& cubemapOutputFormat, const bool& notify, const QString& filename) {
-    qApp->takeSecondaryCamera360Snapshot(cameraPosition, cubemapOutputFormat, notify, filename);
+    qApp->getSnapshotRequests().takeSecondaryCamera360Snapshot(cameraPosition, cubemapOutputFormat, notify, filename);
 }
 
 void WindowScriptingInterface::shareSnapshot(const QString& path, const QUrl& href) {
-    qApp->shareSnapshot(path, href);
+    qApp->getSnapshotRequests().shareSnapshot(path, href);
 }
 
 void WindowScriptingInterface::makeConnection(bool success, const QString& userNameOrError) {

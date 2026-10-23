@@ -10,6 +10,7 @@
 //
 
 #include "Menu.h"
+#include "ClientOptions.h"
 
 #include <gpu/Context.h>
 
@@ -30,7 +31,6 @@
 #include <display-plugins/DisplayPlugin.h>
 #include <PathUtils.h>
 #include <SettingHandle.h>
-#include <UserActivityLogger.h>
 #include <VrMenu.h>
 #include <ScriptEngines.h>
 #include <WasmScriptEngine.h>
@@ -47,7 +47,6 @@
 #include "assets/ATPAssetMigrator.h"
 #include "audio/AudioScope.h"
 #include "avatar/AvatarManager.h"
-#include "avatar/AvatarPackager.h"
 #include "AvatarBookmarks.h"
 #include "editor/Editor.h"
 #include "editor/EditorCreate.h"
@@ -112,7 +111,7 @@ Menu::Menu() {
     MenuWrapper* fileMenu = addMenu("File");
 
     // File > Login menu items
-    if (qApp->arguments().indexOf("--tokens") == -1) {
+    if (!ClientOptions::get().hasTokens) {
         addActionToQMenuAndActionHash(fileMenu, MenuOption::Login);
 
         // connect to the appropriate signal of the AccountManager so that we can change the Login/Logout menu item
@@ -189,15 +188,6 @@ Menu::Menu() {
         QObject::connect(nodeList.data(), &NodeList::canWriteAssetsChanged, assetServerAction, &QAction::setEnabled);
         assetServerAction->setEnabled(nodeList->getThisNodeCanWriteAssets());
     }
-    /*
-    // Edit > Avatar Packager
-#ifndef Q_OS_ANDROID
-    action = addActionToQMenuAndActionHash(editMenu, MenuOption::AvatarPackager);
-    connect(action, &QAction::triggered, [] {
-        DependencyManager::get<AvatarPackager>()->open();
-    });
-#endif
-*/
     // Edit > Reload All Content and clear caches
     addActionToQMenuAndActionHash(editMenu, MenuOption::ReloadContent, 0, qApp, SLOT(reloadResourceCaches()));    
 
@@ -882,12 +872,6 @@ Menu::Menu() {
         Setting::Handle<int>(KTXCache::SETTING_VERSION_NAME, KTXCache::INVALID_VERSION).set(KTXCache::INVALID_VERSION);
     });
 
-    addCheckableActionToQMenuAndActionHash(networkMenu,
-        MenuOption::DisableActivityLogger,
-        0,
-        false,
-        &UserActivityLogger::getInstance(),
-        SLOT(disable(bool)));
     addActionToQMenuAndActionHash(networkMenu, MenuOption::ShowDSConnectTable, 0,
         qApp, SLOT(loadDomainConnectionDialog()));
 

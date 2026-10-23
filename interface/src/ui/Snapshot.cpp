@@ -271,7 +271,7 @@ void Snapshot::takeNextSnapshot() {
     if (_taking360Snapshot) {
         if (!_waitingOnSnapshot) {
             _waitingOnSnapshot = true;
-            qApp->addSnapshotOperator(std::make_tuple([this](const QImage& snapshot) {
+            qApp->getSnapshotRequests().add(std::make_tuple([this](const QImage& snapshot) {
                 // Order is:
                 // 0. Down
                 // 1. Front

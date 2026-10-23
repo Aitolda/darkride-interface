@@ -11,12 +11,9 @@
 
 	"system/snapshot.js",
 	"system/pal.js",
-	// "system/avatarapp.js",
 	// "system/makeUserConnection.js",
 	// "system/tablet-goto.js",
-	// "system/marketplaces/marketplaces.js",
 	// "system/notifications.js",
-	// "system/commerce/wallet.js",
 	"system/tablet-ui/tabletUI.js",
 	"system/emote.js",
 	"system/vehicles.js", // sit in and drive vehicles (PHYSICS.md round 6)

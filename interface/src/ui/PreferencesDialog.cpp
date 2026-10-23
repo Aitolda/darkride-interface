@@ -23,7 +23,6 @@
 #include "Menu.h"
 #include "Snapshot.h"
 #include "SnapshotAnimated.h"
-#include "UserActivityLogger.h"
 #include "ui/Keyboard.h"
 
 void setupPreferences() {
@@ -245,15 +244,6 @@ void setupPreferences() {
         preference->setMax(5);
         preference->setStep(1);
         preferences->addPreference(preference);
-    }
-
-    {
-        auto getter = []() -> bool { return !Menu::getInstance()->isOptionChecked(MenuOption::DisableActivityLogger); };
-        auto setter = [](bool value) { Menu::getInstance()->setIsOptionChecked(MenuOption::DisableActivityLogger, !value); };
-        preferences->addPreference(new CheckPreference("Privacy",
-                                                       "Send data - Allow Darkride to collect "
-                                                       "information to improve the product. ",
-                                                       getter, setter));
     }
 
     static const QString AVATAR_TUNING{ "Avatar Tuning" };
