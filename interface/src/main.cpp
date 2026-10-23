@@ -143,18 +143,6 @@ int main(int argc, const char* argv[]) {
    
     PROFILE_SYNC_BEGIN(startup, "main startup", "");
 
-#ifdef Q_OS_LINUX
-    QApplication::setAttribute(Qt::AA_DontUseNativeMenuBar);
-#endif
-
-#if defined(USE_GLES) && defined(Q_OS_WIN)
-    // When using GLES on Windows, we can't create normal GL context in Qt, so 
-    // we force Qt to use angle.  This will cause the QML to be unable to be used 
-    // in the output window, so QML should be disabled.
-    qputenv("QT_ANGLE_PLATFORM", "d3d11");
-    QCoreApplication::setAttribute(Qt::AA_UseOpenGLES);
-#endif
-
     QElapsedTimer startupTime;
     startupTime.start();
 
@@ -234,44 +222,6 @@ int main(int argc, const char* argv[]) {
     }
 
 
-    // FIXME this method of checking the OpenGL version screws up the `QOpenGLContext::globalShareContext()` value, which in turn
-    // leads to crashes when creating the real OpenGL instance.  Disabling for now until we come up with a better way of checking
-    // the GL version on the system without resorting to creating a full Qt application
-#if 0
-    // Check OpenGL version.
-    // This is done separately from the main Application so that start-up and shut-down logic within the main Application is
-    // not made more complicated than it already is.
-    bool overrideGLCheck = false;
-
-    QJsonObject glData;
-    {
-        OpenGLVersionChecker openGLVersionChecker(argc, const_cast<char**>(argv));
-        bool valid = true;
-        glData = openGLVersionChecker.checkVersion(valid, overrideGLCheck);
-        if (!valid) {
-            if (overrideGLCheck) {
-                auto glVersion = glData["version"].toString();
-                qCWarning(interfaceapp, "Running on insufficient OpenGL version: %s.", glVersion.toStdString().c_str());
-            } else {
-                qCWarning(interfaceapp, "Early exit due to OpenGL version.");
-                return 0;
-            }
-        }
-    }
-#endif
-
-
-    // Debug option to demonstrate that the client's local time does not
-    // need to be in sync with any other network node. This forces clock
-    // skew for the individual client
-    const char* CLOCK_SKEW = "--clockSkew";
-    const char* clockSkewOption = getCmdOption(argc, argv, CLOCK_SKEW);
-    if (clockSkewOption) {
-        qint64 clockSkew = atoll(clockSkewOption);
-        usecTimestampNowForceClockSkew(clockSkew);
-        qCDebug(interfaceapp) << "clockSkewOption=" << clockSkewOption << "clockSkew=" << clockSkew;
-    }
-
     // Oculus initialization MUST PRECEDE OpenGL context creation.
     // The nature of the Application constructor means this has to be either here,
     // or in the main window ctor, before GL startup.
@@ -345,8 +295,6 @@ int main(int argc, const char* argv[]) {
             tracer->serialize(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/" + traceFile);
         }
     }
-
-    Application::shutdownPlugins();
 
     qCDebug(interfaceapp, "Normal exit.");
 #if !defined(DEBUG) && !defined(Q_OS_LINUX)

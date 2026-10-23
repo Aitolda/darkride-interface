@@ -121,13 +121,11 @@ public:
     virtual QOpenGLContext* getPrimaryContext() override;
     virtual bool makeRenderingContextCurrent() override;
     virtual bool isForeground() const override;
-    void speakText(QString speakText);
 
     virtual DisplayPluginPointer getActiveDisplayPlugin() const override;
 
     // FIXME? Empty methods, do we still need them?
     static void initPlugins(const QStringList& arguments);
-    static void shutdownPlugins();
 
     Application(int& argc, char** argv, QElapsedTimer& startup_time, bool runningMarkerExisted);
     ~Application();
@@ -145,7 +143,6 @@ public:
     void initializeDisplayPlugins();
     void initializeRenderEngine();
     void initializeUi();
-    void speakThis();
     void updateSecondaryCameraViewFrustum();
 
     void updateCamera(RenderArgs& renderArgs, float deltaTime);
@@ -236,7 +233,6 @@ public:
     // TODO: Add this as an option to domain settings and switch on when you visit a domain
     // TODO: Make sure loading screen works
     bool getLoadCompleteEntityTreeSetting() { return _loadCompleteEntityTreeSetting.get(); }
-    void setLoadCompleteEntityTreeSetting(bool value);
 
     // Shortcircuits the code that does priority sorting in EntityTreeRenderer for faster
     // load and batch operations like zone culling all at once
@@ -298,7 +294,6 @@ public:
     // and drawn (as interstitial mode does), even where the zone allows moving at once (ghosting).
     void setArrivalWaitsForNearby(bool wait);
     PhysicsEnginePointer getPhysicsEngine() { return _physicsEngine; }
-    bool isEditMode() const;
 
     // the isHMDMode is true whenever we use the interface from an HMD and not a standard flat display
     // rendering of several elements depend on that
@@ -433,7 +428,6 @@ public slots:
     void recreateLogWindow(int);
     void toggleEntityScriptServerLogDialog();
     Q_INVOKABLE void showAssetServerWidget(QString filePath = "");
-    Q_INVOKABLE void loadAddAvatarBookmarkDialog() const;
     Q_INVOKABLE SharedSoundPointer getSampleSound() const;
 
     void showDialog(const QUrl& widgetUrl, const QUrl& tabletUrl, const QString& name) const;
@@ -461,7 +455,6 @@ public slots:
 
     void resetSensors(bool andReload = false);
 
-    void hmdVisibleChanged(bool visible);
 
 #if (PR_BUILD || DEV_BUILD)
     void sendWrongProtocolVersionsSignature(bool checked) { ::sendWrongProtocolVersionsSignature(checked); }
@@ -530,7 +523,6 @@ public slots:
 private slots:
     void onDesktopRootItemCreated(QQuickItem* qmlContext);
     void onDesktopRootContextCreated(QQmlContext* qmlContext);
-    void showDesktop();
     void clearDomainOctreeDetails(bool clearAll = true);
     void onAboutToQuit();
     void onPresent(quint32 frameCount);
@@ -560,7 +552,6 @@ private slots:
     void nodeAdded(SharedNodePointer node);
     void nodeActivated(SharedNodePointer node);
     void nodeKilled(SharedNodePointer node);
-    static void packetSent(quint64 length);
     void updateDisplayMode();
     void setDisplayPlugin(DisplayPluginPointer newPlugin);
     void domainConnectionRefused(const QString& reasonMessage, int reason, const QString& extraInfo);
@@ -610,7 +601,6 @@ private:
 
     void checkSkeleton() const;
 
-    void initializeAcceptedFiles();
 
     bool importJSONFromURL(const QString& urlString);
     bool importSVOFromURL(const QString& urlString);
@@ -627,7 +617,6 @@ private:
 
     void focusOutEvent(QFocusEvent* event);
     void synthesizeKeyReleasEvents();
-    void focusInEvent(QFocusEvent* event);
 
     void mouseMoveEvent(QMouseEvent* event);
     void mousePressEvent(QMouseEvent* event);
@@ -660,17 +649,13 @@ private:
     bool _previousSessionCrashed;
 
     DisplayPluginPointer _displayPlugin;
-    QMetaObject::Connection _displayPluginPresentConnection;
     mutable std::mutex _displayPluginLock;
-    InputPluginList _activeInputPlugins;
 
-    bool _activatingDisplayPlugin{ false };
 
     // Frame Rate Measurement
     RateCounter<500> _gameLoopCounter;
 
     QTimer _minimizedWindowTimer;
-    QElapsedTimer _timerStart;
     QElapsedTimer _lastTimeUpdated;
 
     int _minimumGPUTextureMemSizeStabilityCount{ 30 };
@@ -700,9 +685,6 @@ private:
         _keyboardMouseDevice;  // Default input device, the good old keyboard mouse and maybe touchpad
     std::shared_ptr<TouchscreenDevice> _touchscreenDevice;  // the good old touchscreen
     std::shared_ptr<TouchscreenVirtualPadDevice> _touchscreenVirtualPadDevice;
-    SimpleMovingAverage _avatarSimsPerSecond{ 10 };
-    int _avatarSimsPerSecondReport{ 0 };
-    quint64 _lastAvatarSimsPerSecondUpdate{ 0 };
     FancyCamera _myCamera;  // My view onto the world
 
     Setting::Handle<QString> _previousScriptLocation;
@@ -739,7 +721,6 @@ private:
     EntityEditPacketSender _entityEditSender;
 
     StDev _idleLoopStdev;
-    float _idleLoopMeasuredJitter;
 
     NodeToOctreeSceneStats _octreeServerSceneStats;
     ControllerScriptingInterface* _controllerScriptingInterface{ nullptr };
@@ -768,7 +749,6 @@ private:
 
     bool _loginDialogPoppedUp{ false };
     std::atomic<bool> _signInPending{ true };
-    bool _desktopRootItemCreated{ false };
 
     bool _developerMenuVisible{ false };
     QString _previousAvatarSkeletonModel;
@@ -806,7 +786,6 @@ private:
 
     bool _settingsLoaded{ false };
 
-    bool _fakedMouseEvent{ false };
 
     bool _isMissingSequenceNumbers{ false };
 
@@ -844,7 +823,6 @@ private:
     mutable QTimer _entityServerConnectionTimer;
 
     FileScriptingInterface* _fileDownload;
-    AudioInjectorPointer _snapshotSoundInjector;
     SharedSoundPointer _snapshotSound;
     SharedSoundPointer _sampleSound;
     std::mutex _snapshotMutex;

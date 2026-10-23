@@ -1058,10 +1058,6 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
     _sampleSound(nullptr)
 {
     
-#if defined(Q_OS_LINUX)
-    _window->setWindowIcon(QIcon(PathUtils::resourcesPath() + "images/darkride-logo.png"));
-#endif
-
     auto steamClient = PluginManager::getInstance()->getSteamClientPlugin();
     setProperty(hifi::properties::STEAM, (steamClient && steamClient->isRunning()));
     setProperty(hifi::properties::CRASHED, _previousSessionCrashed);
@@ -1474,11 +1470,6 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
             getEntities()->reloadEntityScripts();
             loadAvatarScripts(getMyAvatar()->getScriptUrls());
         }, Qt::QueuedConnection);
-
-        connect(scriptEngines, &ScriptEngines::scriptLoadError,
-            this, [](const QString& filename, const QString& error) {
-           // OffscreenUi::asyncWarning(nullptr, "Error Loading Script", filename + " failed to load.");
-        }, Qt::QueuedConnection);
     }
 
 #ifdef _WIN32
@@ -1491,8 +1482,6 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         << NodeType::EntityServer << NodeType::AssetServer << NodeType::MessagesMixer << NodeType::EntityScriptServer
         << NodeType::PhysicsServer);
 
-    // connect to the packet sent signal of the _entityEditSender
-    connect(&_entityEditSender, &EntityEditPacketSender::packetSent, this, &Application::packetSent);
 
     QString concurrentDownloadsStr = getCmdOption(argc, constArgv, "--concurrent-downloads");
     bool success;
@@ -1943,12 +1932,6 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
         MenuOption::MaterialProceduralShaders,
         MeshPartPayload::DEFAULT_ENABLE_MATERIAL_PROCEDURAL_SHADERS
     );
-
-// FIXME spacemouse code still needs cleanup
-#if 0
-    // the 3Dconnexion device wants to be initialized after a window is displayed.
-    SpacemouseManager::getInstance().init();
-#endif
 
     // If the user clicks on an object, we will check that it's a web surface, and if so, set the focus to it
     auto pointerManager = DependencyManager::get<PointerManager>();
@@ -2572,8 +2555,6 @@ void Application::cleanupBeforeQuit() {
 
     DependencyManager::destroy<OffscreenQmlSurfaceCache>();
 
-    _snapshotSoundInjector = nullptr;
-
     // destroy Audio so it and its threads have a chance to go down safely
     // this must happen after QML, as there are unexplained audio crashes originating in qtwebengine
     AudioInjector::setLocalAudioInterface(nullptr);
@@ -2659,10 +2640,6 @@ Application::~Application() {
 
     // remove the NodeList from the DependencyManager
     DependencyManager::destroy<NodeList>();
-
-#if 0
-    ConnexionClient::getInstance().destroy();
-#endif
     // The window takes ownership of the menu, so this has the side effect of destroying it.
     _window->setMenuBar(nullptr);
 
@@ -2686,15 +2663,6 @@ Application::~Application() {
     // (B) It seems likely that a bunch of potential event handlers are dependent on Application
     // and other common dependencies to be available and not destroyed or in the middle of being
     // destroyed.
-
-
-    // Clear the event queue before application is totally destructed.
-    // This will drain the messasge queue of pending "deleteLaters" queued up
-    // during shutdown of the script engines.
-    // We do this here because there is a possiblty that [NSApplication terminate:]
-    // will be called during processEvents which will invoke all static destructors.
-    // We want to postpone this utill the last possible moment.
-    //QCoreApplication::processEvents();
 #endif
 }
 
@@ -2769,23 +2737,11 @@ void Application::initializeGL() {
         chromiumFlags << "--disable-distance-field-text";
     }
 
-    #if defined(Q_OS_LINUX)
-        // Fixes "seccomp-bpf failure in syscall 0230" on Arch Linux
-        // CHECK THIS
-        chromiumFlags << "--disable-seccomp-filter-sandbox";
-    #endif
-
     // Enable autoplay
     chromiumFlags << "--autoplay-policy=no-user-gesture-required";
 
     // Enable this for debugging chromium
     // chromiumFlags << "--enable-logging" << "--log-level=0" << "--v=1";
-
-    // Fixes QtWebEngineCore::DisplayGLOutputSurface::swapBuffersOnGpuThread SIGSEGV
-    // https://bugreports.qt.io/browse/QTBUG-86599
-    #if (QT_VERSION == QT_VERSION_CHECK(5, 15, 0) || QT_VERSION == QT_VERSION_CHECK(5, 15, 1))
-        chromiumFlags << "--disable-gpu-compositing";
-    #endif
 
     // Ensure all Qt webengine processes launched from us have the appropriate command line flags
     if (!chromiumFlags.empty()) {
@@ -2855,7 +2811,6 @@ void Application::initializeDisplayPlugins() {
             auto hmdDisplayPlugin = dynamic_cast<HmdDisplayPlugin*>(displayPlugin.get());
             QObject::connect(hmdDisplayPlugin, &HmdDisplayPlugin::hmdMountedChanged,
                 DependencyManager::get<HMDScriptingInterface>().data(), &HMDScriptingInterface::mountedChanged);
-            QObject::connect(hmdDisplayPlugin, &HmdDisplayPlugin::hmdVisibleChanged, this, &Application::hmdVisibleChanged);
         }
     }
 
@@ -3005,7 +2960,6 @@ void Application::initializeUi() {
     });
 
     // This will set up the input plugins UI
-    _activeInputPlugins.clear();
     foreach(auto inputPlugin, PluginManager::getInstance()->getInputPlugins()) {
         if (KeyboardMouseDevice::NAME == inputPlugin->getName()) {
             _keyboardMouseDevice = std::dynamic_pointer_cast<KeyboardMouseDevice>(inputPlugin);
@@ -3080,10 +3034,6 @@ void Application::initializeUi() {
     }
 
     setIsInterstitialMode(true);
-
-#if defined(DISABLE_QML) && defined(Q_OS_LINUX)
-    resumeAfterLoginDialogActionTaken();
-#endif
 }
 
 
@@ -3189,7 +3139,6 @@ void Application::onDesktopRootItemCreated(QQuickItem* rootItem) {
     // build mode's scene gizmo and view strip; hidden until build mode is on
     offscreenUi->show(PathUtils::qmlUrl("editor/ViewportOverlay.qml"), "EditorViewportOverlay");
 #endif
-    _desktopRootItemCreated = true;
 }
 
 void Application::userKickConfirmation(const QUuid& nodeID) {
@@ -4189,9 +4138,6 @@ void Application::keyPressEvent(QKeyEvent* event) {
                 if (isShifted && isControlOrCommand) {
                     auto offscreenUi = getOffscreenUI();
                     offscreenUi->togglePinned();
-                    //offscreenUi->getSurfaceContext()->engine()->clearComponentCache();
-                    //OffscreenUi::information("Debugging", "Component cache cleared");
-                    // placeholder for dialogs being converted to QML.
                 }
                 break;
 
@@ -4206,14 +4152,6 @@ void Application::keyPressEvent(QKeyEvent* event) {
                     controller::InputRecorder* inputRecorder = controller::InputRecorder::getInstance();
                     inputRecorder->stopPlayback();
                 }
-                break;
-
-            case Qt::Key_L:
-                // TODO: remove old goto first
-                // if (isControlOrCommand) {
-                //     auto dialogsManager = DependencyManager::get<DialogsManager>();
-                //     dialogsManager->toggleAddressBar();
-                // }
                 break;
 
             case Qt::Key_R:
@@ -4324,13 +4262,6 @@ void Application::focusOutEvent(QFocusEvent* event) {
             inputPlugin->pluginFocusOutEvent();
         }
     }
-// FIXME spacemouse code still needs cleanup
-#if 0
-    //SpacemouseDevice::getInstance().focusOutEvent();
-    //SpacemouseManager::getInstance().getDevice()->focusOutEvent();
-    SpacemouseManager::getInstance().ManagerFocusOutEvent();
-#endif
-
     synthesizeKeyReleasEvents();
 }
 
@@ -4879,14 +4810,6 @@ void Application::idle() {
 
 #if !defined(DISABLE_QML)
     auto offscreenUi = getOffscreenUI();
-
-    // These tasks need to be done on our first idle, because we don't want the showing of
-    // overlay subwindows to do a showDesktop() until after the first time through
-    static bool firstIdle = true;
-    if (firstIdle) {
-        firstIdle = false;
-        connect(offscreenUi.data(), &OffscreenUi::showDesktop, this, &Application::showDesktop);
-    }
 #endif
 
 #ifdef Q_OS_WIN
@@ -5033,7 +4956,6 @@ void Application::idle() {
         //  Record standard deviation and reset counter if needed
         const int STDEV_SAMPLES = 500;
         if (_idleLoopStdev.getSamples() > STDEV_SAMPLES) {
-            _idleLoopMeasuredJitter = _idleLoopStdev.getStDev();
             _idleLoopStdev.reset();
         }
     }
@@ -5136,9 +5058,6 @@ void Application::loadSettings() {
     DependencyManager::get<AudioClient>()->loadSettings();
     DependencyManager::get<LODManager>()->loadSettings();
 
-    // DONT CHECK IN
-    //DependencyManager::get<LODManager>()->setAutomaticLODAdjust(false);
-
     auto menu = Menu::getInstance();
     menu->loadSettings();
 
@@ -5160,54 +5079,21 @@ void Application::loadSettings() {
     }
 
     bool isFirstPerson = false;
-    // if (arguments().contains("--no-launcher")) {
-        auto displayPlugins = pluginManager->getDisplayPlugins();
-        for (auto& plugin : displayPlugins) {
-            if (!plugin->isHmd()) {
-                if (auto action = menu->getActionForOption(plugin->getName())) {
-                    action->setChecked(true);
-                    action->trigger();
-                    break;
-                }
+    auto displayPlugins = pluginManager->getDisplayPlugins();
+    for (auto& plugin : displayPlugins) {
+        if (!plugin->isHmd()) {
+            if (auto action = menu->getActionForOption(plugin->getName())) {
+                action->setChecked(true);
+                action->trigger();
+                break;
             }
         }
-        isFirstPerson = (qApp->isHMDMode());
-    // } else {
-    //     if (_firstRun.get()) {
-    //         // If this is our first run, and no preferred devices were set, default to
-    //         // an HMD device if available.
-    //         auto displayPlugins = pluginManager->getDisplayPlugins();
-    //         for (auto& plugin : displayPlugins) {
-    //             if (plugin->isHmd()) {
-    //                 if (auto action = menu->getActionForOption(plugin->getName())) {
-    //                     action->setChecked(true);
-    //                     action->trigger();
-    //                     break;
-    //                 }
-    //             }
-    //         }
-    //         isFirstPerson = (qApp->isHMDMode());
-    //     } else {
-    //         // if this is not the first run, the camera will be initialized differently depending on user settings
-    //         if (qApp->isHMDMode()) {
-    //             // if the HMD is active, use first-person camera, unless the appropriate setting is checked
-    //             isFirstPerson = menu->isOptionChecked(MenuOption::FirstPersonHMD);
-    //         } else {
-    //             // if HMD is not active, only use first person if the menu option is checked
-    //             isFirstPerson = menu->isOptionChecked(MenuOption::FirstPersonLookAt);
-    //         }
-    //     }
-    // }
+    }
+    isFirstPerson = (qApp->isHMDMode());
 
     // Load settings of the RenderScritpingInterface
     // Do that explicitely before being used
     RenderScriptingInterface::getInstance()->loadSettings();
-
-    // If we launch with shaders disabled in settings, we still need to load and enable them once
-    // before before disabling them, otherwise they require a restart if you switch them on
-    //if (!menu->isOptionChecked(MenuOption::CustomShaders)) {
-    //    TextureCache::setWasLaunchedWithShadersDisabled(true);
-    //} 
 
     // Setup the PerformanceManager which will enforce the several settings to match the Preset
     // On the first run, the Preset is evaluated from the 
@@ -5276,7 +5162,6 @@ void Application::init() {
 #endif
     DependencyManager::get<AvatarManager>()->init();
 
-    _timerStart.start();
     _lastTimeUpdated.start();
 
     if (auto steamClient = PluginManager::getInstance()->getSteamClientPlugin()) {
@@ -6756,7 +6641,6 @@ void Application::queryOctree(
             return;
         }
         // Create modified view that is a simple sphere.
-        // bool interstitialModeEnabled = DependencyManager::get<NodeList>()->getDomainHandler().getInterstitialModeEnabled();
 
         ConicalViewFrustum sphericalView;
         // the sphere is centred on where the avatar is now, not on the global bounding box: that box follows
@@ -6766,25 +6650,22 @@ void Application::queryOctree(
         float radius = INITIAL_QUERY_RADIUS; //glm::max(INITIAL_QUERY_RADIUS, 350);//0.5 * glm::length(box.getDimensions())); 
         sphericalView.setPositionAndSimpleRadius(getMyAvatar()->getWorldPosition(), radius);
 
-        //if (interstitialModeEnabled) {
-        auto menu = Menu::getInstance(); 
-        if (menu) {
-            if (menu->isOptionChecked(MenuOption::LoadCompleteEntityTree)) {            // if Dev > Tivoli Options >>> LoadCompleteEntityTree truee
+        auto menu = Menu::getInstance();
+        if (menu && menu->isOptionChecked(MenuOption::LoadCompleteEntityTree)) {            // if Dev > Tivoli Options >>> LoadCompleteEntityTree truee
 
-                ConicalViewFrustum farView;
-                farView.set(_viewFrustum);
+            ConicalViewFrustum farView;
+            farView.set(_viewFrustum);
 
-                QJsonObject queryFlags;
-                queryFlags["includeDescendants"] = true; // forces entire tree
-                queryFlags["includeAncestors"] = true; // forces entire tree
-                queryFlags["serverScripts"] = true;
+            QJsonObject queryFlags;
+            queryFlags["includeDescendants"] = true; // forces entire tree
+            queryFlags["includeAncestors"] = true; // forces entire tree
+            queryFlags["serverScripts"] = true;
 
-                queryJSONParameters["flags"] = queryFlags;
-               // _octreeQuery->static_cast<EntityNodeData*>(node->getLinkedData()); //setShouldForceFullScene(true);
-                _octreeQuery.clearConicalViews();                     // TIVOLI go frustumless
-                _octreeQuery.setJSONParameters(queryJSONParameters);  // TIVOLI force ancestors and descendents
-                _octreeQuery.setConicalViews({ sphericalView, farView });
-            }
+            queryJSONParameters["flags"] = queryFlags;
+           // _octreeQuery->static_cast<EntityNodeData*>(node->getLinkedData()); //setShouldForceFullScene(true);
+            _octreeQuery.clearConicalViews();                     // TIVOLI go frustumless
+            _octreeQuery.setJSONParameters(queryJSONParameters);  // TIVOLI force ancestors and descendents
+            _octreeQuery.setConicalViews({ sphericalView, farView });
         } else {
             _octreeQuery.setConicalViews({ sphericalView });
         }
@@ -6815,8 +6696,6 @@ void Application::queryOctree(
     }
     _octreeQuery.setReportInitialCompletion(isModifiedQuery);
 
-
-    // auto menu = Menu::getInstance();
     auto treeRenderer = DependencyManager::get<EntityTreeRenderer>();
 
     auto nodeList = DependencyManager::get<NodeList>();
@@ -6854,14 +6733,6 @@ void Application::queryOctree(
         // make sure we still have an active socket
         nodeList->sendUnreliablePacket(*queryPacket, *node);
     }
-}
-
-bool Application::isEditMode() const { // cpm
-    auto settings = SettingsScriptingInterface::getInstance();
-    // how much time does getting a settings value actually take?
-    bool editState = settings->getValue("io.highfidelity.isEditing").toBool();
-    // qDebug() << "EDITING MODE IS " << editState;
-    return editState;
 }
 
 bool Application::isHMDMode() const {
@@ -6940,19 +6811,6 @@ void Application::resetSensors(bool andReload) {
     getActiveDisplayPlugin()->resetSensors();
     getMyAvatar()->reset(true, andReload);
     QMetaObject::invokeMethod(DependencyManager::get<AudioClient>().data(), "reset", Qt::QueuedConnection);
-}
-
-void Application::hmdVisibleChanged(bool visible) {
-    // TODO
-    // calling start and stop will change audio input and ouput to default audio devices.
-    // we need to add a pause/unpause functionality to AudioClient for this to work properly
-#if 0
-    if (visible) {
-        QMetaObject::invokeMethod(DependencyManager::get<AudioClient>().data(), "start", Qt::QueuedConnection);
-    } else {
-        QMetaObject::invokeMethod(DependencyManager::get<AudioClient>().data(), "stop", Qt::QueuedConnection);
-    }
-#endif
 }
 
 void Application::updateWindowTitle() const {
@@ -7219,9 +7077,6 @@ int Application::processOctreeStats(ReceivedMessage& message, SharedNodePointer 
     return statsMessageLength;
 }
 
-void Application::packetSent(quint64 length) {
-}
-
 void Application::registerScriptEngineWithApplicationServices(const ScriptEnginePointer& scriptEngine) {
 
     scriptEngine->setEmitScriptUpdatesFunction([this]() {
@@ -7433,10 +7288,6 @@ bool Application::acceptURL(const QString& urlString, bool defaultUpload) {
         }
     }
 
-    // dont show atp upload dialog when drag and dropping assets into the window
-    // if (defaultUpload && !url.fileName().isEmpty() && url.isLocalFile()) {
-    //     showAssetServerWidget(urlString);
-    // }
     
     return defaultUpload;
 }
@@ -8313,10 +8164,6 @@ void Application::toggleEntityScriptServerLogDialog() {
     }
 }
 
-void Application::loadAddAvatarBookmarkDialog() const {
-    auto avatarBookmarks = DependencyManager::get<AvatarBookmarks>();
-}
-
 void Application::addSnapshotOperator(const SnapshotOperator& snapshotOperator) {
     std::lock_guard<std::mutex> lock(_snapshotMutex);
     _snapshotOperators.push(snapshotOperator);
@@ -8520,9 +8367,6 @@ void Application::initPlugins(const QStringList& arguments) {
         qInfo() << "Disabling following input plugins:" << disabledInputs;
         PluginManager::getInstance()->disableInputs(disabledInputs);
     }
-}
-
-void Application::shutdownPlugins() {
 }
 
 glm::uvec2 Application::getCanvasSize() const {
@@ -9101,9 +8945,6 @@ void Application::readArgumentsFromLocalSocket() const {
     }
 }
 
-void Application::showDesktop() {
-}
-
 CompositorHelper& Application::getApplicationCompositor() const {
     return *DependencyManager::get<CompositorHelper>();
 }
@@ -9202,7 +9043,7 @@ void Application::saveNextPhysicsStats(QString filename) {
 
 void Application::copyToClipboard(const QString& text) {
     if (QThread::currentThread() != qApp->thread()) {
-        QMetaObject::invokeMethod(this, "copyToClipboard");
+        QMetaObject::invokeMethod(this, "copyToClipboard", Q_ARG(QString, text));
         return;
     }
 
