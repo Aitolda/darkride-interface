@@ -303,19 +303,7 @@ QString labelledTitle(const QString& title) {   // ApplicationStartup.cpp reads 
 // we will never drop below the 'min' value
 const int MIN_PROCESSING_THREAD_POOL_SIZE = 2;   // declared in ApplicationConstants.h
 
-const QString SNAPSHOT_EXTENSION = ".jpg";
-const QString JPG_EXTENSION = ".jpg";
-const QString PNG_EXTENSION = ".png";
-const QString SVO_EXTENSION = ".svo";
-const QString SVO_JSON_EXTENSION = ".svo.json";
-const QString JSON_EXTENSION = ".json";
-const QString JS_EXTENSION = ".js";
-const QString FST_EXTENSION = ".fst";
-const QString FBX_EXTENSION = ".fbx";
-const QString OBJ_EXTENSION = ".obj";
-const QString AVA_JSON_EXTENSION = ".ava.json";
-static const QString WEB_VIEW_TAG = "noDownload=true";
-const QString ZIP_EXTENSION = ".zip";
+// The import extensions (ImportExtensions.h declares them) and the table of importers by extension are in ApplicationImport.cpp.
 
 
 const QString KEEP_ME_LOGGED_IN_SETTING_NAME = "keepMeLoggedIn";   // declared in ApplicationConstants.h
@@ -324,17 +312,6 @@ const float FOCUS_HIGHLIGHT_EXPANSION_FACTOR = 1.05f;   // declared in KeyboardF
 
 #if defined(Q_OS_ANDROID)
 #endif
-const std::vector<std::pair<QString, Application::AcceptURLMethod>> Application::_acceptedExtensions {
-    { SVO_EXTENSION, &Application::importSVOFromURL },
-    { SVO_JSON_EXTENSION, &Application::importSVOFromURL },
-    { AVA_JSON_EXTENSION, &Application::askToWearAvatarAttachmentUrl },
-    { JSON_EXTENSION, &Application::importJSONFromURL },
-    { JS_EXTENSION, &Application::askToLoadScript },
-    { FST_EXTENSION, &Application::askToSetAvatarUrl },
-    { ZIP_EXTENSION, &Application::importFromZIP },
-    { JPG_EXTENSION, &Application::importImage },
-    { PNG_EXTENSION, &Application::importImage }
-};
 
 // MyNativeEventFilter (the Windows messages that identify and raise the running instance) is in ApplicationStartup.cpp.
 
@@ -550,36 +527,12 @@ void Application::goToStartingLocation() {
     _connectionMonitor.init();
 }
 
-bool Application::importJSONFromURL(const QString& urlString) {
-    // we only load files that terminate in just .json (not .svo.json and not .ava.json)
-    QUrl jsonURL { urlString };
-
-    emit svoImportRequested(urlString);
-    return true;
-}
-
-bool Application::importSVOFromURL(const QString& urlString) {
-    emit svoImportRequested(urlString);
-    return true;
-}
-
-bool Application::importFromZIP(const QString& filePath) {
-    qDebug() << "A zip file has been dropped in: " << filePath;
-    QUrl empty;
-    qApp->getFileDownloadInterface()->runUnzip(filePath, empty, true, true, false);
-    return true;
-}
+// The import wrappers for a dropped or opened file (importJSONFromURL, importSVOFromURL, importFromZIP) are in ApplicationImport.cpp.
 
 // The serverless domains and the interstitial mode (isServerlessMode, setIsInterstitialMode, setIsServerlessMode,
 // prepareServerlessDomainContents, loadServerlessDomain, loadErrorDomain) are in ApplicationDomain.cpp.
 
-bool Application::importImage(const QString& urlString) {
-    qCDebug(interfaceapp) << "An image file has been dropped in";
-    QString filepath(urlString);
-    filepath.remove("file:///");
-    addAssetToWorld(filepath, "", false, false);
-    return true;
-}
+// importImage is in ApplicationImport.cpp.
 
 // thread-safe
 // onPresent (the display plug-in's present callback) is in ApplicationDisplay.cpp.
@@ -587,23 +540,7 @@ bool Application::importImage(const QString& urlString) {
 // The event routing (notify, event, eventFilter, the key, mouse, touch, wheel and drop handlers) is in
 // ApplicationEvents.cpp.
 
-// This is currently not used, but could be invoked if the user wants to go to the place embedded in an
-// Interface-taken snapshot. (It was developed for drag and drop, before we had asset-server loading or in-world browsers.)
-bool Application::acceptSnapshot(const QString& urlString) {
-    QUrl url(urlString);
-    QString snapshotPath = url.toLocalFile();
-
-    SnapshotMetaData* snapshotData = DependencyManager::get<Snapshot>()->parseSnapshotData(snapshotPath);
-    if (snapshotData) {
-        if (!snapshotData->getURL().toString().isEmpty()) {
-            DependencyManager::get<AddressManager>()->handleLookupString(snapshotData->getURL().toString());
-        }
-    } else {
-        OffscreenUi::asyncWarning("", "No location details were found in the file\n" +
-                             snapshotPath + "\nTry dragging in a Darkride Snap saved on this computer.");
-    }
-    return true;
-}
+// acceptSnapshot is in ApplicationImport.cpp.
 
 // The frame loop's tick (idle, with the Windows CPU monitor it starts) is in ApplicationFrame.cpp.
 
@@ -611,110 +548,11 @@ ivec2 Application::getMouse() const {
     return getApplicationCompositor().getReticlePosition();
 }
 
-bool Application::exportEntities(const QString& filename,
-                                 const QVector<QUuid>& entityIDs,
-                                 const glm::vec3* givenOffset) {
-    QHash<EntityItemID, EntityItemPointer> entities;
-
-    auto nodeList = DependencyManager::get<NodeList>();
-    const QUuid myAvatarID = nodeList->getSessionUUID();
-
-    auto entityTree = getEntities()->getTree();
-    auto exportTree = std::make_shared<EntityTree>();
-    exportTree->setMyAvatar(getMyAvatar());
-    exportTree->createRootElement();
-    glm::vec3 root(TREE_SCALE, TREE_SCALE, TREE_SCALE);
-    bool success = true;
-    entityTree->withReadLock([entityIDs, entityTree, givenOffset, myAvatarID, &root, &entities, &success, &exportTree] {
-        for (auto entityID : entityIDs) { // Gather entities and properties.
-            auto entityItem = entityTree->findEntityByEntityItemID(entityID);
-            if (!entityItem) {
-                qCWarning(interfaceapp) << "Skipping export of" << entityID << "that is not in scene.";
-                continue;
-            }
-
-            if (!givenOffset) {
-                EntityItemID parentID = entityItem->getParentID();
-                bool parentIsAvatar = (parentID == AVATAR_SELF_ID || parentID == myAvatarID);
-                if (!parentIsAvatar && (parentID.isInvalidID() ||
-                                        !entityIDs.contains(parentID) ||
-                                        !entityTree->findEntityByEntityItemID(parentID))) {
-                    // If parent wasn't selected, we want absolute position, which isn't in properties.
-                    auto position = entityItem->getWorldPosition();
-                    root.x = glm::min(root.x, position.x);
-                    root.y = glm::min(root.y, position.y);
-                    root.z = glm::min(root.z, position.z);
-                }
-            }
-            entities[entityID] = entityItem;
-        }
-
-        if (entities.size() == 0) {
-            success = false;
-            return;
-        }
-
-        if (givenOffset) {
-            root = *givenOffset;
-        }
-        for (EntityItemPointer& entityDatum : entities) {
-            auto properties = entityDatum->getProperties();
-            EntityItemID parentID = properties.getParentID();
-            bool parentIsAvatar = (parentID == AVATAR_SELF_ID || parentID == myAvatarID);
-            if (parentIsAvatar) {
-                properties.setParentID(AVATAR_SELF_ID);
-            } else {
-                if (parentID.isInvalidID()) {
-                    properties.setPosition(properties.getPosition() - root);
-                } else if (!entities.contains(parentID)) {
-                    entityDatum->globalizeProperties(properties, "Parent %3 of %2 %1 is not selected for export.", -root);
-                } // else valid parent -- don't offset
-            }
-            exportTree->addEntity(entityDatum->getEntityItemID(), properties);
-        }
-    });
-    if (success) {
-        success = exportTree->writeToJSONFile(filename.toLocal8Bit().constData());
-
-        // restore the main window's active state
-        _window->activateWindow();
-    }
-    return success;
-}
-
-bool Application::exportEntities(const QString& filename, float x, float y, float z, float scale) {
-    glm::vec3 center(x, y, z);
-    glm::vec3 minCorner = center - vec3(scale);
-    float cubeSize = scale * 2;
-    AACube boundingCube(minCorner, cubeSize);
-    QVector<QUuid> entities;
-    auto entityTree = getEntities()->getTree();
-    entityTree->withReadLock([&] {
-        entityTree->evalEntitiesInCube(boundingCube, PickFilter(), entities);
-    });
-    return exportEntities(filename, entities, &center);
-}
+// exportEntities (both forms) is in ApplicationImport.cpp.
 
 // loadSettings and saveSettings are in ApplicationSettings.cpp.
 
-bool Application::importEntities(const QString& urlOrFilename, const bool isObservable, const qint64 callerId) {
-    bool success = false;
-    _entityClipboard->withWriteLock([&] {
-        _entityClipboard->eraseAllOctreeElements();
-
-        // FIXME: readFromURL() can take over the main event loop which may cause problems, especially if downloading the JSON 
-        // from the Web.
-        success = _entityClipboard->readFromURL(urlOrFilename, isObservable, callerId, true);
-        if (success) {
-            _entityClipboard->reaverageOctreeElements();
-        }
-    });
-    return success;
-}
-
-QVector<EntityItemID> Application::pasteEntities(const QString& entityHostType, float x, float y, float z) {
-    return _entityClipboard->sendEntities(&_entityEditSender, getEntities()->getTree(), entityHostType, x, y, z);
-}
+// importEntities and pasteEntities are in ApplicationImport.cpp.
 
 // init (the avatar manager, the entity tree renderer, the physics engine, the entity simulation and the game workload
 // brought up; the interface stage calls it) is in ApplicationStartup.cpp.
@@ -1085,43 +923,7 @@ void Application::updateWindowTitle() const {
 
 // The script API's globals (registerScriptEngineWithApplicationServices) are in ApplicationScripting.cpp.
 
-bool Application::canAcceptURL(const QString& urlString) const {
-    QUrl url(urlString);
-    if (url.query().contains(WEB_VIEW_TAG)) {
-        return false;
-    } else if (urlString.startsWith(URL_SCHEME_HIFI)) {
-        return true;
-    }
-    QString lowerPath = url.path().toLower();
-    for (auto& pair : _acceptedExtensions) {
-        if (lowerPath.endsWith(pair.first, Qt::CaseInsensitive)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool Application::acceptURL(const QString& urlString, bool defaultUpload) {
-    QUrl url(urlString);
-
-    if (url.scheme() == URL_SCHEME_HIFI) {
-        // this is a hifi URL - have the AddressManager handle it
-        QMetaObject::invokeMethod(DependencyManager::get<AddressManager>().data(), "handleLookupString",
-                                  Qt::AutoConnection, Q_ARG(const QString&, urlString));
-        return true;
-    }
-
-    QString lowerPath = url.path().toLower();
-    for (auto& pair : _acceptedExtensions) {
-        if (lowerPath.endsWith(pair.first, Qt::CaseInsensitive)) {
-            AcceptURLMethod method = pair.second;
-            return (this->*method)(urlString);
-        }
-    }
-
-    
-    return defaultUpload;
-}
+// The URL dispatch (canAcceptURL, acceptURL, with the table of importers by extension) is in ApplicationImport.cpp.
 
 // setSessionUUID is in ApplicationDomain.cpp.
 
