@@ -330,6 +330,15 @@ Menu::Menu() {
         editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildResetPanels, 0,
             editor.data(), SLOT(resetLayout())));
         buildMenu->addSeparator();
+        // Build > Import Entities…, Import Entities from URL…, Export Selected Entities…: entities files, as the old
+        // Create app's Edit menu had them
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildImportEntities, 0,
+            editor.data(), SLOT(importEntitiesFromFile())));
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildImportEntitiesFromUrl, 0,
+            editor.data(), SLOT(importEntitiesFromUrl())));
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildExportEntities, 0,
+            editor.data(), SLOT(exportSelection())));
+        buildMenu->addSeparator();
         // Build > Use Stable Links: the world's links to your files by path become their stable links (NATIVE-EDITOR.md 7.4)
         editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildUseStableLinks, 0,
             editor.data(), SLOT(useStableLinks())));

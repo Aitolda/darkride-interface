@@ -362,6 +362,24 @@ void TestScriptingInterface::editorUndo() {
     DependencyManager::get<Editor>()->undo();
 }
 
+bool TestScriptingInterface::editorImportEntities(const QString& url) {
+    if (QThread::currentThread() != thread()) {
+        bool result = false;
+        BLOCKING_INVOKE_METHOD(this, "editorImportEntities", Q_RETURN_ARG(bool, result), Q_ARG(QString, url));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->importEntities(url);
+}
+
+int TestScriptingInterface::editorExportSelection(const QString& path) {
+    if (QThread::currentThread() != thread()) {
+        int result = -1;
+        BLOCKING_INVOKE_METHOD(this, "editorExportSelection", Q_RETURN_ARG(int, result), Q_ARG(QString, path));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->exportSelectionTo(path);
+}
+
 bool TestScriptingInterface::saveWindowPicture(const QString& path) {
     if (QThread::currentThread() != thread()) {
         bool result = false;

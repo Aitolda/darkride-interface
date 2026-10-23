@@ -61,6 +61,9 @@ namespace MenuOption {
     const QString BuildRedo = "Redo";
     const QString BuildResetPanels = "Reset Panels";
     const QString BuildUseStableLinks = "Use Stable Links";
+    const QString BuildImportEntities = "Import Entities…";
+    const QString BuildImportEntitiesFromUrl = "Import Entities from URL…";
+    const QString BuildExportEntities = "Export Selected Entities…";
     const QString BuildBakeImpostor = "Bake Impostor";
     const QString BuildBakeAllImpostors = "Bake All Impostors";
     const QString BuildRemoveImpostor = "Remove Impostor";

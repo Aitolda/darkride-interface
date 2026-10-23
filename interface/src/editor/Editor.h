@@ -124,6 +124,13 @@ public:
     QMenu* buildCreateMenu(QWidget* parent, const QPoint* viewportPos = nullptr);
     // a file or URL dropped on the viewport: models and images are placed where it landed
     bool handleDrop(QDropEvent* event);
+    // an entities file or URL (.json, .json.gz, .svo) into the world: placed under the cursor as a paste is (a whole
+    // world's file, 10 km or more across, where its positions say), selected, one undo step; build mode comes on for
+    // it. The menu's imports, and a file dropped on the window or opened by its address, come here
+    bool importEntities(const QString& url);
+    // the selection and its descendants to an entities file at this path (Build > Export Selected Entities… once a
+    // path is chosen); how many entities were written, -1 when nothing was
+    int exportSelectionTo(const QString& path);
     // a Build menu item that only works while build mode is on
     void addMenuAction(QAction* action);
 
@@ -170,6 +177,12 @@ public slots:
     void cutSelection();
     void paste();
     void selectAll();
+    // Build > Import Entities… / Import Entities from URL…: an entities file (.json, .json.gz, .svo, as Export writes
+    // and world backups are) placed under the cursor like a paste, selected, one undo step; Build > Export Selected
+    // Entities…: the selection with its descendants, to a .json file (the old Create app's Import and Export)
+    void importEntitiesFromFile();
+    void importEntitiesFromUrl();
+    void exportSelection();
     // Build > Use Stable Links: every link in the world to one of the user's own files by its path becomes the file's
     // stable link, read from a fresh listing of My Files; one undo step, and a report of what could not be matched
     // (NATIVE-EDITOR.md section 7.4)
