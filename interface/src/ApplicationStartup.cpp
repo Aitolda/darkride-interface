@@ -881,7 +881,7 @@ void Application::openWindow() {
     if (options.systemCursor) {
         _preferredCursor.set(Cursor::Manager::getIconName(Cursor::Icon::SYSTEM));
     }
-    showCursor(Cursor::Manager::lookupIcon(_preferredCursor.get()));
+    _windowCursor.show(Cursor::Manager::lookupIcon(_preferredCursor.get()));
 
     // enable mouse tracking; otherwise, we only get drag events
     _glWidget->setMouseTracking(true);
@@ -903,7 +903,7 @@ void Application::openWindow() {
 
     if (_displayPlugin && !_displayPlugin->isHmd()) {
         _preferredCursor.set(Cursor::Manager::getIconName(Cursor::Icon::SYSTEM));
-        showCursor(Cursor::Manager::lookupIcon(_preferredCursor.get()));
+        _windowCursor.show(Cursor::Manager::lookupIcon(_preferredCursor.get()));
     }
     StartupProfiler::phase("constructor: audio scripting interface");
     // An audio device changed signal received before the display plugins are set up will cause a crash,

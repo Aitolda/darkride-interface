@@ -87,7 +87,7 @@ void Application::setPreferredCursor(const QString& cursorName) {
         _preferredCursor.set(cursorName.isEmpty() ? Cursor::Manager::getIconName(Cursor::Icon::SYSTEM) : cursorName); 
     }
 
-    showCursor(Cursor::Manager::lookupIcon(_preferredCursor.get()));
+    _windowCursor.show(Cursor::Manager::lookupIcon(_preferredCursor.get()));
 }
 
 void Application::setSettingConstrainToolbarPosition(bool setting) {

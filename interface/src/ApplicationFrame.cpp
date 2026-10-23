@@ -17,6 +17,8 @@
 //
 
 #include "Application.h"
+#include <MainWindow.h>   // the window and the GL canvas handed to the cursor each frame
+#include "GLCanvas.h"
 #include "KeyboardFocusHighlight.h"
 #include <chrono>
 #include <thread>
@@ -471,7 +473,7 @@ void Application::idle() {
         }
     }
     
-    checkChangeCursor();
+    _windowCursor.apply(_window, _glWidget);
 
     auto stats = Stats::getInstance();
     if (stats) {

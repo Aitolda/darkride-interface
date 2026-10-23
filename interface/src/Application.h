@@ -57,6 +57,7 @@ class ClientOptions;
 #include "FancyCamera.h"
 #include "ConnectionMonitor.h"
 #include "CursorManager.h"
+#include "WindowCursor.h"
 #include "gpu/Context.h"
 #include "LoginStateManager.h"
 #include "Menu.h"
@@ -164,8 +165,7 @@ public:
     void setFocus();
     void raise();
 
-    void showCursor(const Cursor::Icon& cursor);
-    Q_INVOKABLE void updateSystemCursor(const Qt::CursorShape cursor);
+    WindowCursor& getWindowCursor() { return _windowCursor; }   // the system cursor over the window (WindowCursor.h)
 
     bool isThrottleRendering() const;
 
@@ -801,10 +801,7 @@ private:
 
     bool _isMissingSequenceNumbers{ false };
 
-    void checkChangeCursor();
-    mutable QMutex _changeCursorLock{ QMutex::Recursive };
-    Qt::CursorShape _desiredCursor{ Qt::BlankCursor };
-    bool _cursorNeedsChanging{ false };
+    WindowCursor _windowCursor;
 
     std::map<void*, std::function<void()>> _postUpdateLambdas;
     std::mutex _postUpdateLambdasLock;

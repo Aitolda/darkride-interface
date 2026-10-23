@@ -227,7 +227,7 @@ void Application::initializeUi() {
     connect(compositorHelper.data(), &CompositorHelper::allowMouseCaptureChanged, this, [=] {
         if (isHMDMode()) {
             auto compositorHelper = DependencyManager::get<CompositorHelper>(); // don't capture outer smartpointer
-            showCursor(compositorHelper->getAllowMouseCapture() ?
+            _windowCursor.show(compositorHelper->getAllowMouseCapture() ?
                        Cursor::Manager::lookupIcon(_preferredCursor.get()) :
                        Cursor::Icon::SYSTEM);
         }

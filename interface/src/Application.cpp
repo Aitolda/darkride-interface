@@ -161,7 +161,7 @@ QString Application::getUserAgent() {
 
 // toggleTabletUI is in ApplicationUi.cpp.
 
-// The cursor (checkChangeCursor, showCursor, updateSystemCursor) is in ApplicationCursor.cpp.
+// The window's cursor is a WindowCursor (WindowCursor.h), the member _windowCursor, reached by getWindowCursor().
 
 void Application::updateHeartbeat() const {
     DeadlockWatchdogThread::updateHeartbeat();

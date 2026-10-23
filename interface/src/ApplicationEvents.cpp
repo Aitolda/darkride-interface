@@ -476,13 +476,13 @@ void Application::keyPressEvent(QKeyEvent* event) {
                     auto cursor = Cursor::Manager::instance().getCursor();
                     auto curIcon = cursor->getIcon();
                     if (curIcon == Cursor::Icon::DEFAULT) {
-                        showCursor(Cursor::Icon::RETICLE);
+                        _windowCursor.show(Cursor::Icon::RETICLE);
                     } else if (curIcon == Cursor::Icon::RETICLE) {
-                        showCursor(Cursor::Icon::SYSTEM);
+                        _windowCursor.show(Cursor::Icon::SYSTEM);
                     } else if (curIcon == Cursor::Icon::SYSTEM) {
-                        showCursor(Cursor::Icon::LINK);
+                        _windowCursor.show(Cursor::Icon::LINK);
                     } else {
-                        showCursor(Cursor::Icon::DEFAULT);
+                        _windowCursor.show(Cursor::Icon::DEFAULT);
                     }
                 } else if (!event->isAutoRepeat()){
                     resetSensors(true);
