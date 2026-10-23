@@ -21,7 +21,6 @@
 #include <NetworkLogging.h>
 #include <NodeList.h>
 #include <OffscreenUi.h>
-#include <UserActivityLogger.h>
 
 static const int AUTO_REFRESH_INTERVAL = 1000;
 
@@ -68,17 +67,17 @@ void AssetMappingsScriptingInterface::getMapping(QString path, QJSValue callback
 }
 
 void AssetMappingsScriptingInterface::uploadFile(QString path, QString mapping, QJSValue startedCallback, QJSValue completedCallback, bool dropEvent) {
-    static const QString helpText =
-        "Upload your asset to a specific folder by entering the full path. Specifying "
-        "a new folder name will automatically create that folder for you.";
-    static const QString dropHelpText =
-        "This file will be added to your Asset Server.\n"
-        "Use the field below to place your file in a specific folder or to rename it. "
-        "Specifying a new folder name will automatically create that folder for you.";
-
+    // Called from the Asset Browser's QML, on the main thread, so the prompts get their words before they wait. A
+    // dropped file and a chosen one get the same prompt.
+    Q_UNUSED(dropEvent);
     auto offscreenUi = DependencyManager::get<OffscreenUi>();
-    auto result = offscreenUi->inputDialog(OffscreenUi::ICON_INFORMATION, "Specify Asset Path",
-                                           dropEvent ? dropHelpText : helpText, mapping);
+    QQuickItem* prompt = offscreenUi->createInputDialog(OffscreenUi::ICON_INFORMATION, "Upload to the World's Assets",
+                                                        "New folders are made for you.", mapping);
+    if (prompt) {
+        OffscreenUi::setButtonText(prompt, QMessageBox::Ok, "Upload");
+        prompt->setProperty("monospace", true);
+    }
+    auto result = offscreenUi->waitForInputDialogResult(prompt);
 
     if (!result.isValid() || result.toString() == "") {
         completedCallback.call({ -1 });
@@ -91,33 +90,23 @@ void AssetMappingsScriptingInterface::uploadFile(QString path, QString mapping, 
         mapping = "/" + mapping;
     }
 
-    // Check for override
+    // Check for override: only Replace replaces (Escape and closing the box keep the file)
     if (isKnownMapping(mapping)) {
-        auto message = mapping + "\n" + "This file already exists. Do you want to overwrite it?";
-        auto button = offscreenUi->messageBox(OffscreenUi::ICON_QUESTION, "Overwrite File", message,
-                                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-        if (button == QMessageBox::No) {
+        QQuickItem* box = offscreenUi->createMessageBox(OffscreenUi::ICON_QUESTION,
+                                                        "Replace " + QFileInfo(mapping).fileName() + "?",
+                                                        "A file with this name is already in the world's assets.",
+                                                        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (box) {
+            OffscreenUi::setButtonText(box, QMessageBox::Yes, "Replace");
+            box->setProperty("destructiveButton", (int)QMessageBox::Yes);
+        }
+        if (offscreenUi->waitForMessageBoxResult(box) != QMessageBox::Yes) {
             completedCallback.call({ -1 });
             return;
         }
     }
 
     startedCallback.call();
-
-    QFileInfo fileInfo { path };
-    int64_t size { fileInfo.size() };
-
-    QString extension = "";
-    auto idx = path.lastIndexOf(".");
-    if (idx >= 0) {
-        extension = path.mid(idx + 1);
-    }
-
-    UserActivityLogger::getInstance().logAction("uploading_asset", {
-        { "size", (qint64)size },
-        { "mapping", mapping },
-        { "extension", extension}
-    });
 
     auto upload = DependencyManager::get<AssetClient>()->createUpload(path);
     QObject::connect(upload, &AssetUpload::finished, this, [=](AssetUpload* upload, const QString& hash) mutable {

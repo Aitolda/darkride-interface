@@ -37,7 +37,6 @@
 #include <ScriptEngines.h>
 #include <SoundCacheScriptingInterface.h>
 #include <SoundCache.h>
-#include <UserActivityLoggerScriptingInterface.h>
 #include <UsersScriptingInterface.h>
 #include <UUID.h>
 
@@ -92,7 +91,6 @@ Agent::Agent(ReceivedMessage& message) :
     DependencyManager::set<EntityScriptingInterface>(false);
 
     DependencyManager::set<ResourceScriptingInterface>();
-    DependencyManager::set<UserActivityLoggerScriptingInterface>();
 
     _entityEditSender.setPacketsPerSecond(DEFAULT_ENTITY_PPS_PER_SCRIPT);
     DependencyManager::get<EntityScriptingInterface>()->setPacketSender(&_entityEditSender);
@@ -967,7 +965,6 @@ void Agent::aboutToFinish() {
     DependencyManager::destroy<AnimationCacheScriptingInterface>();
     DependencyManager::destroy<EntityScriptingInterface>();
     DependencyManager::destroy<ResourceScriptingInterface>();
-    DependencyManager::destroy<UserActivityLoggerScriptingInterface>();
 
     DependencyManager::destroy<ScriptCache>();
     DependencyManager::destroy<SoundCache>();

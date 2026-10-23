@@ -28,13 +28,17 @@ InputBuffer::Push InputBuffer::push(const VehicleInput& input, uint32_t step) {
         align(tick, step);
     } else {
         // the driver's ticks started over (its counter went back by more than a lead's worth), or they come so late
-        // that no lead would do (a client that paused and resumed): the alignment is set again from this input
+        // that no lead would do (a client that paused and resumed), or after a gap of more than a lead's worth with
+        // nothing (the driver stood up and sat again, round 12): the alignment is set again from this input
         int32_t behindNewest = (int32_t)(_newestTick - tick);
         int32_t stepOffset = (int32_t)((tick + _offset) - (_taken ? _lastTakenStep : step));
-        if (behindNewest > MAX_LEAD || stepOffset < -MAX_LEAD) {
+        bool gap = _pushed && (int32_t)(step - _lastPushStep) > MAX_LEAD;
+        if (behindNewest > MAX_LEAD || stepOffset < -MAX_LEAD || gap) {
             align(tick, step);
         }
     }
+    _lastPushStep = step;
+    _pushed = true;
     uint32_t targetStep = tick + _offset;
     if ((int32_t)(tick - _newestTick) > 0) {
         _newestTick = tick;
@@ -107,6 +111,7 @@ int InputBuffer::margin(uint32_t step) const {
 void InputBuffer::reset() {
     _inputs.clear();
     _aligned = false;
+    _pushed = false;
     _offset = 0;
     _newestTick = 0;
     _lastTakenStep = 0;

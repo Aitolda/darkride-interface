@@ -599,6 +599,11 @@ public:
      */
     Q_INVOKABLE virtual void unloadAllEntityScripts(bool blockingCall = false);
 
+    // Unloads the client entity scripts whose entities are no longer in the tree, on this engine's thread, after
+    // whatever loads are queued before it: a world left while its scripts were still being loaded (EntityTreeRenderer
+    // asks for it once the world's entities are erased).
+    Q_INVOKABLE void unloadEntityScriptsOfGoneEntities();
+
     /**jsdoc
      * Calls a method in an entity script.
      * @function Script.callEntityScriptMethod
@@ -961,6 +966,8 @@ protected:
     QHash<QTimer*, CallbackData> _timerFunctionMap;
     QSet<QUrl> _includedURLs;
     mutable QReadWriteLock _entityScriptsLock { QReadWriteLock::Recursive };
+    int _goneEntityTimersStopped { 0 };         // entity scripts whose timers were stopped as their entities were gone,
+    quint64 _goneEntityTimersLoggedAt { 0 };    // since this was last logged
     QHash<EntityItemID, EntityScriptDetails> _entityScripts;
     EntityScriptContentAvailableMap _contentAvailableQueue;
 

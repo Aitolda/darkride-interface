@@ -10,6 +10,7 @@
 //
 
 #include "Menu.h"
+#include "ClientOptions.h"
 
 #include <gpu/Context.h>
 
@@ -18,6 +19,7 @@
 #include <QFileDialog>
 #include <QMenuBar>
 #include <QShortcut>
+#include <QTimer>
 
 #include <thread>
 
@@ -29,11 +31,11 @@
 #include <display-plugins/DisplayPlugin.h>
 #include <PathUtils.h>
 #include <SettingHandle.h>
-#include <UserActivityLogger.h>
 #include <VrMenu.h>
 #include <ScriptEngines.h>
 #include <WasmScriptEngine.h>
 #include <MenuItemProperties.h>
+#include <OffscreenUi.h>
 #include <ui/types/FileTypeProfile.h>
 #include <ui/types/TivoliWebEngineProfile.h>
 
@@ -45,7 +47,6 @@
 #include "assets/ATPAssetMigrator.h"
 #include "audio/AudioScope.h"
 #include "avatar/AvatarManager.h"
-#include "avatar/AvatarPackager.h"
 #include "AvatarBookmarks.h"
 #include "editor/Editor.h"
 #include "editor/EditorCreate.h"
@@ -85,6 +86,24 @@ Menu* Menu::getInstance() {
 
 const char* EXCLUSION_GROUP_KEY = "exclusionGroup";
 
+// Edit > Cut, Copy and Paste run when their shortcut reaches the menu (or from the menu itself). While the 3D view has
+// the keyboard and the overlay's focused item is a web page (the Avatar app's address, Explore's search) or a text
+// field, that item does the edit itself: the made-up key press the menu used to post reached a web page as Option+V on
+// macOS and typed a "√". Otherwise the key is posted to the application object, as before; posted to a widget it
+// would come back to the menu's own shortcut, over and over.
+static bool viewHasKeyboard() {
+    QWidget* focusWidget = QApplication::focusWidget();
+    return !focusWidget || focusWidget == qApp->getPrimaryWidget() || focusWidget == qApp->getWindow();
+}
+
+static void editOrPostKey(const char* action, Qt::Key key) {
+    if (viewHasKeyboard() && DependencyManager::get<OffscreenUi>()->editFocusedItem(action)) {
+        return;
+    }
+    QKeyEvent* keyEvent = new QKeyEvent(QEvent::KeyPress, key, Qt::ControlModifier);
+    QCoreApplication::postEvent(QCoreApplication::instance(), keyEvent);
+}
+
 Menu::Menu() {
     auto dialogsManager = DependencyManager::get<DialogsManager>();
     auto accountManager = DependencyManager::get<AccountManager>();
@@ -93,7 +112,7 @@ Menu::Menu() {
     MenuWrapper* fileMenu = addMenu("File");
 
     // File > Login menu items
-    if (qApp->arguments().indexOf("--tokens") == -1) {
+    if (!ClientOptions::get().hasTokens) {
         addActionToQMenuAndActionHash(fileMenu, MenuOption::Login);
 
         // connect to the appropriate signal of the AccountManager so that we can change the Login/Logout menu item
@@ -101,6 +120,11 @@ Menu::Menu() {
                 dialogsManager.data(), &DialogsManager::toggleLoginDialog);
         connect(accountManager.data(), &AccountManager::logoutComplete,
                 dialogsManager.data(), &DialogsManager::toggleLoginDialog);
+
+        // The signals above only fire after a profile is loaded or a logout completes, so prime the menu item
+        // so its triggered signal is connected: otherwise File > Login does nothing on a fresh start. Deferred
+        // because Menu::getInstance() is null until construction finishes.
+        QTimer::singleShot(0, dialogsManager.data(), &DialogsManager::toggleLoginDialog);
     }
 
     // File > Import Avatar: wear an .fst, or auto rig a character file (AUTO-RIGGING.md)
@@ -119,22 +143,19 @@ Menu::Menu() {
     // Edit > Cut
     auto cutAction = addActionToQMenuAndActionHash(editMenu, "Cut", QKeySequence::Cut);
     connect(cutAction, &QAction::triggered, [] {
-            QKeyEvent* keyEvent = new QKeyEvent(QEvent::KeyPress, Qt::Key_X, Qt::ControlModifier);
-            QCoreApplication::postEvent(QCoreApplication::instance(), keyEvent);
+            editOrPostKey("Cut", Qt::Key_X);
     });
 
     // Edit > Copy
     auto copyAction = addActionToQMenuAndActionHash(editMenu, "Copy", QKeySequence::Copy);
     connect(copyAction, &QAction::triggered, [] {
-            QKeyEvent* keyEvent = new QKeyEvent(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
-            QCoreApplication::postEvent(QCoreApplication::instance(), keyEvent);
+            editOrPostKey("Copy", Qt::Key_C);
     });
 
     // Edit > Paste
     auto pasteAction = addActionToQMenuAndActionHash(editMenu, "Paste", QKeySequence::Paste);
     connect(pasteAction, &QAction::triggered, [] {
-            QKeyEvent* keyEvent = new QKeyEvent(QEvent::KeyPress, Qt::Key_V, Qt::ControlModifier);
-            QCoreApplication::postEvent(QCoreApplication::instance(), keyEvent);
+            editOrPostKey("Paste", Qt::Key_V);
     });
 
     // Edit > Delete
@@ -168,15 +189,6 @@ Menu::Menu() {
         QObject::connect(nodeList.data(), &NodeList::canWriteAssetsChanged, assetServerAction, &QAction::setEnabled);
         assetServerAction->setEnabled(nodeList->getThisNodeCanWriteAssets());
     }
-
-    // Edit > Avatar Packager
-#ifndef Q_OS_ANDROID
-    action = addActionToQMenuAndActionHash(editMenu, MenuOption::AvatarPackager);
-    connect(action, &QAction::triggered, [] {
-        DependencyManager::get<AvatarPackager>()->open();
-    });
-#endif
-
     // Edit > Reload All Content and clear caches
     addActionToQMenuAndActionHash(editMenu, MenuOption::ReloadContent, 0, qApp, SLOT(reloadResourceCaches()));    
 
@@ -573,6 +585,9 @@ Menu::Menu() {
     addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::Shadows, 0, RenderScriptingInterface::getInstance()->getShadowsEnabled(),
         RenderScriptingInterface::getInstance(), SLOT(setShadowsEnabled(bool)));
 
+    // Developer > Render > GPU Instancing (INSTANCING.md 3.6): copies of a model drawn in one draw call; off to compare
+    addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::GpuInstancing, 0, true);
+
     addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::AmbientOcclusion, 0, RenderScriptingInterface::getInstance()->getAmbientOcclusionEnabled(),
         RenderScriptingInterface::getInstance(), SLOT(setAmbientOcclusionEnabled(bool)));
 
@@ -589,6 +604,20 @@ Menu::Menu() {
     connect(RenderScriptingInterface::getInstance(), &RenderScriptingInterface::settingsChanged, action, [action] {
         // the method changed by another road (a preset, a script): the item follows
         action->setChecked(RenderScriptingInterface::getInstance()->getRenderMethod() == RenderScriptingInterface::RenderMethod::FORWARD);
+    });
+
+    // Developer > Render > Vsync: the swap waits for the display's refresh. Off by default: the frames are paced at the
+    // display's rate without a wait and the compositor shows the newest at each refresh, which is even; on macOS the
+    // GL swap's wait was measured at two refreshes with the odd frame queued at once, a ragged 72 Hz on a 144 Hz
+    // panel (PHYSICS.md "The driver's stutter"). The setting is Render.vsyncEnabled; TIVOLI_VSYNC in the environment
+    // forces it.
+    action = addCheckableActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::Vsync, 0,
+        RenderScriptingInterface::getInstance()->getVsyncEnabled());
+    connect(action, &QAction::triggered, [action] {
+        RenderScriptingInterface::getInstance()->setVsyncEnabled(action->isChecked());
+    });
+    connect(RenderScriptingInterface::getInstance(), &RenderScriptingInterface::settingsChanged, action, [action] {
+        action->setChecked(RenderScriptingInterface::getInstance()->getVsyncEnabled());
     });
 
     // Developer > Render > MSAA (Forward): the forward path's multisampling, 1, 2, 4 or 8 samples a pixel (the
@@ -850,12 +879,6 @@ Menu::Menu() {
         Setting::Handle<int>(KTXCache::SETTING_VERSION_NAME, KTXCache::INVALID_VERSION).set(KTXCache::INVALID_VERSION);
     });
 
-    addCheckableActionToQMenuAndActionHash(networkMenu,
-        MenuOption::DisableActivityLogger,
-        0,
-        false,
-        &UserActivityLogger::getInstance(),
-        SLOT(disable(bool)));
     addActionToQMenuAndActionHash(networkMenu, MenuOption::ShowDSConnectTable, 0,
         qApp, SLOT(loadDomainConnectionDialog()));
 

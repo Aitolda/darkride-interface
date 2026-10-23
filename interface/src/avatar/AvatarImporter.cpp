@@ -10,6 +10,7 @@
 
 #include "AvatarImporter.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <vector>
@@ -151,9 +152,10 @@ QString avatarFolder(const QString& name) {
 
 // The importer's alerts and banner, in the design language Caity chose for all of Darkride's popups (10-18): a narrow
 // centred alert in the manner of macOS, with a picture on top, a bold title, at most one short line, and full-width
-// buttons, side by side when there are two (the default on the right) and stacked when there are more (the default on
-// top), the default in blue; further detail sits behind a small Details fold-out, in a scrolling field. A success gets
-// no alert but a banner in the window's corner that fades by itself.
+// buttons, side by side when there are two (Cancel on the left, the default on the right) and stacked when there are
+// more (the default on top), the default in blue; further detail sits behind a small Details fold-out, in a scrolling
+// field. A success gets no alert but a banner in the window's corner that fades by itself. The viewer's other popups
+// share this design in QML (interface/resources/qml/dialogs/alert/AlertPanel.qml).
 namespace popup {
 
 const int ALERT_WIDTH = 260;
@@ -298,7 +300,8 @@ public:
         }
         layout->addSpacing(details.isEmpty() ? 16 : 12);
 
-        // Two buttons side by side with the default on the right; more, stacked with the default on top.
+        // Two buttons side by side, Cancel always on the left (Caity, 10-19) and the default on the right; more,
+        // stacked with the default on top.
         const bool sideBySide = buttons.size() == 2;
         auto row = sideBySide ? (QBoxLayout*)new QHBoxLayout() : (QBoxLayout*)new QVBoxLayout();
         row->setSpacing(8);
@@ -319,6 +322,10 @@ public:
             } else {
                 order.insert(order.begin(), _default);
             }
+        }
+        if (sideBySide && _cancel >= 0 && order.front() != _cancel) {
+            order.erase(std::find(order.begin(), order.end(), _cancel));
+            order.insert(order.begin(), _cancel);
         }
         for (int i : order) {
             auto button = new QPushButton(buttons[i].label);

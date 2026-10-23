@@ -45,6 +45,9 @@ public:
     // the driver's tick that substep `step` applies (0 before the first input)
     uint32_t tickForStep(uint32_t step) const { return _aligned ? step - _offset : 0; }
     bool aligned() const { return _aligned; }
+    // no input for more than a lead's worth of substeps (the driver stood up, the link dropped): the alignment, the
+    // tick for a step and the margin say nothing until the next input aligns the buffer again
+    bool quiet(uint32_t step) const { return !_pushed || (int32_t)(step - _lastPushStep) > MAX_LEAD; }
     size_t size() const { return _inputs.size(); }
     void reset();
 
@@ -73,6 +76,8 @@ private:
     uint32_t _newestTick { 0 };      // the highest tick heard of, stored or not
     uint32_t _lastTakenStep { 0 };
     bool _taken { false };
+    uint32_t _lastPushStep { 0 };    // when an input last arrived, to tell a gap (the driver stood, the link dropped)
+    bool _pushed { false };
     int _overfullSteps { 0 };
     Counts _counts;
 };

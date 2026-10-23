@@ -14,7 +14,6 @@
 
 #include <shared/QtHelpers.h>
 #include <SettingHandle.h>
-#include <UserActivityLogger.h>
 #include <PathUtils.h>
 #include <shared/FileUtils.h>
 #include <NetworkingConstants.h>
@@ -563,7 +562,6 @@ ScriptEnginePointer ScriptEngines::getScriptEngine(const QUrl& rawScriptURL) {
 
 // FIXME - change to new version of ScriptCache loading notification
 void ScriptEngines::onScriptEngineLoaded(const QString& rawScriptURL) {
-    UserActivityLogger::getInstance().loadedScript(rawScriptURL);
     QSharedPointer<BaseScriptEngine> baseScriptEngine = qobject_cast<ScriptEngine*>(sender())->sharedFromThis();
     ScriptEnginePointer scriptEngine = qSharedPointerCast<ScriptEngine>(baseScriptEngine);
 
