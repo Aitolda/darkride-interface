@@ -4,7 +4,9 @@
 # and after. Prints the client's pid; the log is results/<name>/client.log.
 #   tests-manual/wasm-scripting/run-client.sh <name> <seconds> [client arguments...]
 # Environment: DARKRIDE_RUN_JS_ON_WASM=1 runs the JavaScript scripts on the WebAssembly engine; HIFI_METAVERSE_URL
-# names the metaverse server (https://vr.darkride.ai unless given).
+# names the metaverse server (https://vr.darkride.ai unless given); DARKRIDE_CLIENT_LABEL is the label the window
+# title starts with ("Darkride - Wasm - <name>" unless given), so that a test client is told apart from the other
+# clients on the same desktop.
 set -e
 # The metaverse server the client signs in to and finds worlds on; the client's built-in default is out of date.
 export HIFI_METAVERSE_URL=${HIFI_METAVERSE_URL:-https://vr.darkride.ai}
@@ -13,6 +15,7 @@ NAME=$1
 SECONDS_MAX=$2
 shift 2
 [ -n "$NAME" ] && [ -n "$SECONDS_MAX" ] || { echo "usage: $0 <name> <seconds> [client arguments...]" >&2; exit 1; }
+export DARKRIDE_CLIENT_LABEL=${DARKRIDE_CLIENT_LABEL:-"Darkride - Wasm - $NAME"}
 BIN="$D/../../build/interface/Darkride.app/Contents/MacOS/Darkride"
 BIN=$(cd "$(dirname "$BIN")" && pwd)/Darkride
 [ -x "$BIN" ] || { echo "no client at $BIN" >&2; exit 1; }
