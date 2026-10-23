@@ -60,9 +60,9 @@
 using namespace std;
 
 QSharedPointer<OffscreenUi> getOffscreenUI();   // Application.cpp's
-QString labelledTitle(const QString& title);     // ApplicationDisplay.cpp's: a window title with the client label
+QString labelledTitle(const QString& title);     // Display.cpp's: a window title with the client label
 extern void setupPreferences();                  // ui/PreferencesDialog.cpp's
-void addDisplayPluginToMenu(const DisplayPluginPointer& displayPlugin, int index, bool active = false);   // ApplicationDisplay.cpp's; initializeUi reads it
+void addDisplayPluginToMenu(const DisplayPluginPointer& displayPlugin, int index, bool active = false);   // Display.cpp's; initializeUi reads it
 
 // a constant only this code reads
 static const QString INFO_HELP_PATH = "html/tabletHelp.html";
@@ -164,7 +164,7 @@ void Application::initializeUi() {
     ContextAwareProfile::restrictContext(offscreenUi->getSurfaceContext(), true);
     offscreenUi->resume();
     connect(_window, &MainWindow::windowGeometryChanged, [this](const QRect& r){
-        resizeGL();
+        _display.resizeGL();
         if (_touchscreenVirtualPadDevice) {
             _touchscreenVirtualPadDevice->resize();
         }
@@ -231,7 +231,7 @@ void Application::initializeUi() {
         int dpIndex = 1;
         // concatenate the groupings into a single list in the order: standard, advanced, developer
         for(const auto& displayPlugin : displayPlugins) {
-            addDisplayPluginToMenu(displayPlugin, dpIndex, _displayPlugin == displayPlugin);
+            addDisplayPluginToMenu(displayPlugin, dpIndex, _display.plugin() == displayPlugin);
             dpIndex++;
         }
 

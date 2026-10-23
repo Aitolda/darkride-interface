@@ -11,6 +11,8 @@
 
 
 #include "Application.h"
+#include "ui/DialogsManager.h"
+#include "GLCanvas.h"
 #include "ImportExtensions.h"
 #include "ApplicationConstants.h"
 #include "LambdaEvent.h"
@@ -68,8 +70,6 @@ Q_LOGGING_CATEGORY(trace_app_input_mouse, "trace.app.input.mouse")
 
 using namespace std;
 
-
-// The window title's client label (clientLabel, labelledTitle) is in ApplicationDisplay.cpp, with updateWindowTitle.
 
 
 // For processing on QThreadPool, we target a number of threads after reserving some
@@ -200,8 +200,10 @@ void Application::updateHeartbeat() const {
 
 // The shutdown sequence (onAboutToQuit, cleanupBeforeQuit, ~Application) is in ApplicationShutdown.cpp.
 
-// The GL context and its share contexts, the display plug-ins and the render engine's start (initializeGL,
-// initializeDisplayPlugins, initializeRenderEngine) are in ApplicationDisplay.cpp.
+// The GL context and its share contexts, the display plug-ins' start and the render engine's start (initializeGL,
+// initializeDisplayPlugins, initializeRenderEngine) are in ApplicationStartup.cpp; the display plug-ins, the window's geometry
+// and title and the headset are a Display (Display.h), the member _display, reached by getDisplay(); getActiveDisplayPlugin,
+// isHMDMode and the other display queries forward to it.
 
 // The interface's bring-up (initializeUi) is in ApplicationUi.cpp.
 
@@ -220,8 +222,6 @@ void Application::runTests() {
 // The preferences' setters (setFieldOfView to setMiniTabletEnabled) are in ApplicationSettings.cpp.
 
 // showHelp (the controls reference on the tablet) is in ApplicationUi.cpp.
-
-// The window's resize (resizeEvent, resizeGL, with verticalFieldOfView) is in ApplicationDisplay.cpp.
 
 // The import wrappers for a dropped or opened file, the URL dispatch's targets (with the asks in ApplicationDialogs.cpp).
 bool Application::importJSONFromURL(const QString& urlString) {
@@ -253,7 +253,7 @@ bool Application::importImage(const QString& urlString) {
 }
 
 // thread-safe
-// onPresent (the display plug-in's present callback) is in ApplicationDisplay.cpp.
+// onPresent (the display plug-in's present callback) is in ApplicationFrame.cpp.
 
 // The event routing (notify, event, eventFilter, the key, mouse, touch, wheel and drop handlers) is in
 // ApplicationEvents.cpp.
@@ -304,13 +304,9 @@ bool Application::acceptSnapshot(const QString& urlString) {
 // The simulation step and what frames it (updateDialogs, the physics gate setArrivalWaitsForNearby/tryToEnablePhysics,
 // update, updateRenderArgs) is in ApplicationFrame.cpp.
 
-// isHMDMode is in ApplicationDisplay.cpp.
-
 float Application::getNumCollisionObjects() const {
     return _physicsEngine ? _physicsEngine->getNumCollisionObjects() : 0;
 }
-
-// getTargetRenderFrameRate and getDesirableApplicationGeometry are in ApplicationDisplay.cpp.
 
 // getMyAvatar and getAvatarPosition are in ApplicationAvatar.cpp.
 
@@ -324,8 +320,6 @@ void Application::resetSensors(bool andReload) {
     getMyAvatar()->reset(true, andReload);
     QMetaObject::invokeMethod(DependencyManager::get<AudioClient>().data(), "reset", Qt::QueuedConnection);
 }
-
-// updateWindowTitle is in ApplicationDisplay.cpp.
 
 // The script API's globals (registerScriptEngineWithApplicationServices) are in ApplicationScripting.cpp.
 
@@ -382,11 +376,7 @@ bool Application::acceptURL(const QString& urlString, bool defaultUpload) {
 // The snapshots asked of the next frame are a SnapshotRequests (SnapshotRequests.h), the member _snapshotRequests, reached
 // by getSnapshotRequests().
 
-// getRenderResolutionScale is in ApplicationDisplay.cpp.
-
 // checkSkeleton is in ApplicationAvatar.cpp.
-
-// The window's state changes (activeChanged, windowMinimizedChanged) are in ApplicationDisplay.cpp.
 
 void Application::postLambdaEvent(const std::function<void()>& f) {
     if (this->thread() == QThread::currentThread()) {
@@ -405,12 +395,7 @@ void Application::sendLambdaEvent(const std::function<void()>& f) {
     }
 }
 
-// initPlugins (the display and input plug-ins' enable lists from the command line) is in ApplicationDisplay.cpp.
-
-// The canvas, UI and device sizes, focus and raise, the active display plug-in and the display modes (getCanvasSize,
-// getRenderingGeometry, getUiSize, getRecommendedHUDRect, getDeviceSize, isThrottleRendering, hasFocus, setFocus, raise,
-// getDevicePixelRatio, getActiveDisplayPlugin, updateDisplayMode, setDisplayPlugin, switchDisplayMode) are in
-// ApplicationDisplay.cpp.
+// initPlugins (the display and input plug-ins' enable lists from the command line) is in ApplicationStartup.cpp.
 
 void Application::setShowBulletWireframe(bool value) {
     _physicsEngine->setShowBulletWireframe(value);
@@ -432,14 +417,9 @@ void Application::setShowBulletConstraintLimits(bool value) {
     _physicsEngine->setShowBulletConstraintLimits(value);
 }
 
-// hasRiftControllers and hasViveControllers are in ApplicationDisplay.cpp.
-
 void Application::setShowTrackedObjects(bool value) {
     _showTrackedObjects = value;
 }
-
-// The HMD's session and queries (startHMDStandBySession, endHMDSession, getEyeProjection, getEyeOffset, getHMDSensorPose)
-// are in ApplicationDisplay.cpp.
 
 void Application::deadlockApplication() {
     qCDebug(interfaceapp) << "Intentionally deadlocked Interface";
@@ -462,10 +442,6 @@ void Application::unresponsiveApplication() {
     }
 }
 
-// setActiveDisplayPlugin is in ApplicationDisplay.cpp.
-
-// raiseWindow is in ApplicationDisplay.cpp.
-
 CompositorHelper& Application::getApplicationCompositor() const {
     return *DependencyManager::get<CompositorHelper>();
 }
@@ -478,7 +454,6 @@ ui::Menu* Application::getPrimaryMenu() {
     return uiMenu;
 }
 
-// The primary widget, window and context, the display plug-ins' tools and isForeground are in ApplicationDisplay.cpp.
 
 // FIXME?  perhaps two, one for the main thread and one for the offscreen UI rendering thread?
 static const int UI_RESERVED_THREADS = 1;
@@ -486,7 +461,7 @@ static const int UI_RESERVED_THREADS = 1;
 static const int OS_RESERVED_THREADS = 1;
 
 void Application::updateThreadPoolCount() const {
-    auto reservedThreads = UI_RESERVED_THREADS + OS_RESERVED_THREADS + _displayPlugin->getRequiredThreadCount();
+    auto reservedThreads = UI_RESERVED_THREADS + OS_RESERVED_THREADS + _display.plugin()->getRequiredThreadCount();
     auto availableThreads = QThread::idealThreadCount() - reservedThreads;
     auto threadPoolSize = std::max(MIN_PROCESSING_THREAD_POOL_SIZE, availableThreads);
     qCDebug(interfaceapp) << "Ideal Thread Count " << QThread::idealThreadCount();
@@ -539,3 +514,24 @@ void Application::forceLoginWithTokens(const QString& tokens) {
 }
 
 // The Android lifecycle (beforeEnterBackground, enterBackground, enterForeground, toggleAwayMode) is in ApplicationEvents.cpp.
+
+// The PluginContainer's window and context, and the display plug-ins' tools dialog.
+GLWidget* Application::getPrimaryWidget() {
+    return _glWidget;
+}
+
+MainWindow* Application::getPrimaryWindow() {
+    return getWindow();
+}
+
+QOpenGLContext* Application::getPrimaryContext() {
+    return _glWidget->qglContext();
+}
+
+bool Application::makeRenderingContextCurrent() {
+    return true;
+}
+
+void Application::showDisplayPluginsTools(bool show) {
+    DependencyManager::get<DialogsManager>()->hmdTools(show);
+}

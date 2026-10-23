@@ -17,6 +17,9 @@
 //
 
 #include "Application.h"
+#include <shared/NsightHelpers.h>
+#include <QtGui/QWindow>
+#include <gl/OffscreenGLCanvas.h>
 #include "ApplicationServices.h"
 #include "ApplicationConstants.h"
 #include "ClientOptions.h"
@@ -113,7 +116,7 @@
 using namespace std;
 
 QSharedPointer<OffscreenUi> getOffscreenUI();            // Application.cpp's
-QString labelledTitle(const QString& title);             // ApplicationDisplay.cpp's: a window title with the client label
+QString labelledTitle(const QString& title);             // Display.cpp's: a window title with the client label
 
 QTimer locationUpdateTimer;   // started by the constructor, stopped in ApplicationShutdown.cpp
 
@@ -414,6 +417,7 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 
 // The log handler, test arguments, the GPU's identity, the plug-in container, the thread pool, fonts.
 void Application::setupProcess() {
+    connect(&_display, &Display::activeDisplayPluginChanged, this, &Application::activeDisplayPluginChanged);   // relayed: services connect to Application's signal in the essentials stage
     const ClientOptions& options = ClientOptions::get();
 
     StartupProfiler::phase("constructor: log handler, test arguments");
@@ -633,9 +637,9 @@ void Application::connectServices() {
     });
     connect(&domainHandler, &DomainHandler::resetting, &_domainSession, &DomainSession::resettingDomain);
     connect(&_domainSession, &DomainSession::interstitialModeChanged, this, &Application::interstitialModeChanged);   // relayed: the Window scripting interface connects to Application in the essentials stage, before the session exists
-    connect(&domainHandler, &DomainHandler::connectedToDomain, this, &Application::updateWindowTitle);
+    connect(&domainHandler, &DomainHandler::connectedToDomain, &_display, &Display::updateWindowTitle);
     connect(&domainHandler, &DomainHandler::connectedToDomain, this, [] { StartupProfiler::instant("connected to a domain"); });
-    connect(&domainHandler, &DomainHandler::disconnectedFromDomain, this, &Application::updateWindowTitle);
+    connect(&domainHandler, &DomainHandler::disconnectedFromDomain, &_display, &Display::updateWindowTitle);
     connect(&domainHandler, &DomainHandler::disconnectedFromDomain, this, [this]() {
         auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
         entityScriptingInterface->deleteEntity(getTabletScreenID());
@@ -695,7 +699,7 @@ void Application::connectServices() {
 #else
     connect(accountManager.data(), &AccountManager::authRequired, dialogsManager.data(), &DialogsManager::showLoginDialog);
 #endif
-    connect(accountManager.data(), &AccountManager::usernameChanged, this, &Application::updateWindowTitle);
+    connect(accountManager.data(), &AccountManager::usernameChanged, &_display, &Display::updateWindowTitle);
     connect(accountManager.data(), &AccountManager::usernameChanged, this, [&](const QString username){
         auto avatarManager = DependencyManager::get<AvatarManager>();
         if (avatarManager) avatarManager->getMyAvatar()->setDisplayName(username);
@@ -713,7 +717,7 @@ void Application::connectServices() {
         return myAvatar ? myAvatar->getWorldOrientation() : glm::quat();
     });
 
-    connect(addressManager.data(), &AddressManager::hostChanged, this, &Application::updateWindowTitle);
+    connect(addressManager.data(), &AddressManager::hostChanged, &_display, &Display::updateWindowTitle);
     connect(this, &QCoreApplication::aboutToQuit, addressManager.data(), &AddressManager::storeCurrentAddress);
 
     connect(this, &Application::activeDisplayPluginChanged, this, &Application::updateThreadPoolCount);
@@ -860,7 +864,7 @@ void Application::openWindow() {
     initializeDisplayPlugins();
     qCDebug(interfaceapp, "Initialized Display");
 
-    if (_displayPlugin && !_displayPlugin->isHmd()) {
+    if (_display.plugin() && !_display.plugin()->isHmd()) {
         _preferredCursor.set(Cursor::Manager::getIconName(Cursor::Icon::SYSTEM));
         _windowCursor.show(Cursor::Manager::lookupIcon(_preferredCursor.get()));
     }
@@ -1412,8 +1416,8 @@ void Application::installOperators() {
     EntityEditPacketSender* entityPacketSender = static_cast<EntityEditPacketSender*>(packetSender);
     entityPacketSender->setMyAvatar(myAvatar.get());
 
-    connect(this, &Application::applicationStateChanged, this, &Application::activeChanged);
-    connect(_window, SIGNAL(windowMinimizedChanged(bool)), this, SLOT(windowMinimizedChanged(bool)));
+    connect(this, &Application::applicationStateChanged, &_display, &Display::activeChanged);
+    connect(_window, &MainWindow::windowMinimizedChanged, &_display, &Display::windowMinimizedChanged);
     qCDebug(interfaceapp, "Startup time: %4.2f seconds.", (double)_sessionRunTimer.elapsed() / 1000.0);
     StartupProfiler::phase("constructor: fade function, snapshot sound, asset timers, picks, web-surface operators");
 
@@ -1686,4 +1690,167 @@ void Application::init() {
         _gameWorkload.startup(getEntities()->getWorkloadSpace(), _graphicsEngine.getRenderScene(), _entitySimulation);
     }
     _entitySimulation->setWorkloadSpace(getEntities()->getWorkloadSpace());
+}
+
+// The GL context and its share contexts, the display plug-ins' start and the render engine's start, which the window
+// and interface stages call, and the plug-in lists from the command line (main calls initPlugins first).
+OffscreenGLCanvas* _qmlShareContext { nullptr };
+
+// FIXME hack access to the internal share context for the Chromium helper
+// Normally we'd want to use QWebEngine::initialize(), but we can't because
+// our primary context is a QGLWidget, which can't easily be initialized to share
+// from a QOpenGLContext.
+//
+// So instead we create a new offscreen context to share with the QGLWidget,
+// and manually set THAT to be the shared context for the Chromium helper
+OffscreenGLCanvas* _chromiumShareContext { nullptr };
+
+Q_GUI_EXPORT void qt_gl_set_global_share_context(QOpenGLContext *context);
+Q_GUI_EXPORT QOpenGLContext *qt_gl_global_share_context();
+
+void Application::initializeGL() {
+    qCDebug(interfaceapp) << "Created Display Window.";
+
+
+    // initialize glut for shape drawing; Qt apparently initializes it on OS X
+    if (_isGLInitialized) {
+        return;
+    } else {
+        _isGLInitialized = true;
+    }
+
+    _glWidget->windowHandle()->setFormat(getDefaultOpenGLSurfaceFormat());
+
+    // When loading QtWebEngineWidgets, it creates a global share context on startup.
+    // We have to account for this possibility by checking here for an existing
+    // global share context
+    auto globalShareContext = qt_gl_global_share_context();
+
+    // Build a shared canvas / context for the Chromium processes
+    if (!globalShareContext) {
+        StartupProfiler::Scope step("initializeGL: Chromium share context");
+        // Chromium rendering uses some GL functions that prevent nSight from capturing
+        // frames, so we only create the shared context if nsight is NOT active.
+        if (!nsightActive()) {
+            _chromiumShareContext = new OffscreenGLCanvas();
+            _chromiumShareContext->setObjectName("ChromiumShareContext");
+            auto format =QSurfaceFormat::defaultFormat();
+#ifdef Q_OS_MACOS
+            // On mac, the primary shared OpenGL context must be a 3.2 core context,
+            // or chromium flips out and spews error spam (but renders fine)
+            format.setMajorVersion(3);
+            format.setMinorVersion(2);
+#endif
+            _chromiumShareContext->setFormat(format);
+            _chromiumShareContext->create();
+            if (!_chromiumShareContext->makeCurrent()) {
+                qCWarning(interfaceapp, "Unable to make chromium shared context current");
+            }
+            globalShareContext = _chromiumShareContext->getContext();
+            qt_gl_set_global_share_context(globalShareContext);
+            _chromiumShareContext->doneCurrent();
+        }
+    }
+
+
+    {
+        StartupProfiler::Scope step("initializeGL: window context");
+        _glWidget->createContext(globalShareContext);
+
+        if (!_glWidget->makeCurrent()) {
+            qCWarning(interfaceapp, "Unable to make window context current");
+        }
+
+        // Populate the global OpenGL context based on the information for the primary window GL context
+        gl::ContextInfo::get(true);
+    }
+
+    QStringList chromiumFlags;
+    // HACK: re-expose mic and camera to prevent crash on domain-change in chromium's media::FakeAudioInputStream::ReadAudioFromSource()
+    // This isn't necessary because there's a permission popup when the webcam is requested 
+    // chromiumFlags << "--use-fake-device-for-media-stream";
+
+    // Disable signed distance field font rendering on ATI/AMD GPUs, due to
+    // a High Fidelity bug report: text drawn white in the web views on those GPUs
+    std::string vendor{ (const char*)glGetString(GL_VENDOR) };
+    if ((vendor.find("AMD") != std::string::npos) || (vendor.find("ATI") != std::string::npos)) {
+        chromiumFlags << "--disable-distance-field-text";
+    }
+
+    // Enable autoplay
+    chromiumFlags << "--autoplay-policy=no-user-gesture-required";
+
+    // Enable this for debugging chromium
+    // chromiumFlags << "--enable-logging" << "--log-level=0" << "--v=1";
+
+    // Ensure all Qt webengine processes launched from us have the appropriate command line flags
+    if (!chromiumFlags.empty()) {
+        qputenv("QTWEBENGINE_CHROMIUM_FLAGS", chromiumFlags.join(' ').toLocal8Bit());
+    }
+
+    if (!globalShareContext) {
+        globalShareContext = _glWidget->qglContext();
+        qt_gl_set_global_share_context(globalShareContext);
+    }
+
+    // Build a shared canvas / context for the QML rendering
+    {
+        StartupProfiler::Scope step("initializeGL: QML share context");
+        _qmlShareContext = new OffscreenGLCanvas();
+        _qmlShareContext->setObjectName("QmlShareContext");
+        _qmlShareContext->create(globalShareContext);
+        if (!_qmlShareContext->makeCurrent()) {
+            qCWarning(interfaceapp, "Unable to make QML shared context current");
+        }
+        OffscreenQmlSurface::setSharedContext(_qmlShareContext->getContext());
+        _qmlShareContext->doneCurrent();
+        if (!_glWidget->makeCurrent()) {
+            qCWarning(interfaceapp, "Unable to make window context current");
+        }
+    }
+
+
+    // Build an offscreen GL context for the main thread.
+    _glWidget->makeCurrent();
+    glClearColor(0.2f, 0.2f, 0.2f, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    _glWidget->swapBuffers();
+
+    {
+        StartupProfiler::Scope step("initializeGL: GPU context and render thread (GraphicsEngine::initializeGPU)");
+        _graphicsEngine.initializeGPU(_glWidget);
+    }
+}
+
+// The display plug-ins' start, with the first frame: the plug-ins themselves are the Display's (Display.cpp).
+void Application::initializeDisplayPlugins() {
+    _display.initializePlugins();
+    // Submit a default frame to render until the engine starts up
+    updateRenderArgs(0.0f);
+}
+
+void Application::initializeRenderEngine() {
+    // FIXME: on low end systems os the shaders take up to 1 minute to compile, so we pause the deadlock watchdog thread.
+    DeadlockWatchdogThread::withPause([&] {
+        {
+            StartupProfiler::Scope step("initializeRenderEngine: the render engine and its pipelines (GraphicsEngine::initializeRender)");
+            _graphicsEngine.initializeRender();
+        }
+        DependencyManager::get<Keyboard>()->registerKeyboardHighlighting();
+    });
+}
+
+void Application::initPlugins(const ClientOptions& options) {
+    if (!options.displays.isEmpty()) {
+        qInfo() << "Setting prefered display plugins:" << options.displays;
+        PluginManager::getInstance()->setPreferredDisplayPlugins(options.displays);
+    }
+    if (!options.disabledDisplays.isEmpty()) {
+        qInfo() << "Disabling following display plugins:"  << options.disabledDisplays;
+        PluginManager::getInstance()->disableDisplays(options.disabledDisplays);
+    }
+    if (!options.disabledInputs.isEmpty()) {
+        qInfo() << "Disabling following input plugins:" << options.disabledInputs;
+        PluginManager::getInstance()->disableInputs(options.disabledInputs);
+    }
 }

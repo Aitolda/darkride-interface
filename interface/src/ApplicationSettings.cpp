@@ -34,7 +34,7 @@ QSharedPointer<OffscreenUi> getOffscreenUI();   // Application.cpp's
 void Application::setFieldOfView(float fov) {
     if (fov != _fieldOfView.get()) {
         _fieldOfView.set(fov);
-        resizeGL();
+        _display.resizeGL();
     }
 }
 
@@ -47,7 +47,7 @@ void Application::setFarClip(float farClip) {
 void Application::setNearClip(float nearClip) {
     if (nearClip != _nearClip.get()) {
         _nearClip.set(nearClip);
-        resizeGL();   // the projection is rebuilt there
+        _display.resizeGL();   // the projection is rebuilt there
     }
 }
 
@@ -80,7 +80,7 @@ void Application::setPreferAvatarFingerOverStylus(bool value) {
 void Application::setPreferredCursor(const QString& cursorName) {
     qCDebug(interfaceapp) << "setPreferredCursor" << cursorName;
 
-    if (_displayPlugin && _displayPlugin->isHmd()) {
+    if (_display.plugin() && _display.plugin()->isHmd()) {
         _preferredCursor.set(cursorName.isEmpty() ? DEFAULT_CURSOR_NAME : cursorName);
     }
     else { 

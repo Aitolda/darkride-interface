@@ -18,7 +18,7 @@
 #include <QtCore/QString>
 #include <QtCore/QUrl>
 
-extern const QString ACTIVE_DISPLAY_PLUGIN_SETTING_NAME;   // ApplicationDisplay.cpp
+extern const QString ACTIVE_DISPLAY_PLUGIN_SETTING_NAME;   // Display.cpp; the shutdown writes it
 extern const QString KEEP_ME_LOGGED_IN_SETTING_NAME;       // Application.cpp
 extern const int MIN_PROCESSING_THREAD_POOL_SIZE;          // Application.cpp
 extern const QUrl AVATAR_INPUTS_BAR_QML;                   // Application.cpp; the start-up's QML-surface operator reads it

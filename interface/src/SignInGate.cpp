@@ -36,7 +36,7 @@
 #include "ui/Keyboard.h"
 #include "ui/LoginDialog.h"
 
-QString labelledTitle(const QString& title);   // ApplicationDisplay.cpp's: a window title with the client label
+QString labelledTitle(const QString& title);   // Display.cpp's: a window title with the client label
 
 // the mappings the pause swaps: the standard one off, one without movement on
 static const QString STANDARD_TO_ACTION_MAPPING_NAME = "Standard to Action";

@@ -58,6 +58,7 @@ class ClientOptions;
 #include "AssetImport.h"
 #include "SignInGate.h"
 #include "DomainSession.h"
+#include "Display.h"
 #include "CursorManager.h"
 #include "WindowCursor.h"
 #include "SnapshotRequests.h"
@@ -122,9 +123,10 @@ public:
     virtual MainWindow* getPrimaryWindow() override;
     virtual QOpenGLContext* getPrimaryContext() override;
     virtual bool makeRenderingContextCurrent() override;
-    virtual bool isForeground() const override;
+    virtual bool isForeground() const override { return _display.isForeground(); }
 
-    virtual DisplayPluginPointer getActiveDisplayPlugin() const override;
+    Display& getDisplay() { return _display; }   // the display plug-ins, the window's geometry and title, the headset (Display.h)
+    virtual DisplayPluginPointer getActiveDisplayPlugin() const override { return _display.getActiveDisplayPlugin(); }
 
     // FIXME? Empty methods, do we still need them?
     static void initPlugins(const ClientOptions& options);
@@ -146,25 +148,19 @@ public:
     void initializeRenderEngine();
     void initializeUi();
 
-    void resizeGL();
-
     bool notify(QObject*, QEvent*) override;
     bool event(QEvent* event) override;
     bool eventFilter(QObject* object, QEvent* event) override;
 
-    glm::uvec2 getCanvasSize() const;
-    QRect getRenderingGeometry() const;
-
-    glm::uvec2 getUiSize() const;
-    QRect getRecommendedHUDRect() const;
-    glm::vec2 getDeviceSize() const;
-    bool hasFocus() const;
-    void setFocus();
-    void raise();
+    glm::uvec2 getCanvasSize() const { return _display.getCanvasSize(); }
+    glm::uvec2 getUiSize() const { return _display.getUiSize(); }
+    QRect getRecommendedHUDRect() const { return _display.getRecommendedHUDRect(); }
+    glm::vec2 getDeviceSize() const { return _display.getDeviceSize(); }
+    bool hasFocus() const { return _display.hasFocus(); }
+    void setFocus() { _display.setFocus(); }
+    void raise() { _display.raise(); }
 
     WindowCursor& getWindowCursor() { return _windowCursor; }   // the system cursor over the window (WindowCursor.h)
-
-    bool isThrottleRendering() const;
 
     ViewState& getViewState() { return _viewState; }   // the camera and what it sees: the view frustums, the conical views (ViewState.h)
     const ViewState& getViewState() const { return _viewState; }
@@ -196,7 +192,6 @@ public:
     size_t getRenderFrameCount() const { return _graphicsEngine.getRenderFrameCount(); }
     float getRenderLoopRate() const { return _graphicsEngine.getRenderLoopRate(); }
     float getNumCollisionObjects() const;
-    float getTargetRenderFrameRate() const;  // frames/second
 
     static void setupQmlSurface(QQmlContext* surfaceContext, bool setAdditionalContextProperties);
 
@@ -268,15 +263,15 @@ public:
     virtual QThread* getMainThread() override { return thread(); }
     virtual PickRay computePickRay(float x, float y) const override { return _viewState.computePickRay(x, y); }
     virtual glm::vec3 getAvatarPosition() const override;
-    virtual qreal getDevicePixelRatio() override;
+    virtual qreal getDevicePixelRatio() override { return _display.getDevicePixelRatio(); }
 
-    void setActiveDisplayPlugin(const QString& pluginName);
+    void setActiveDisplayPlugin(const QString& pluginName) { _display.setActiveDisplayPlugin(pluginName); }
 
 #ifndef Q_OS_ANDROID
     FileLogger* getLogger() const { return _logger; }
 #endif
 
-    float getRenderResolutionScale() const;
+    float getRenderResolutionScale() const { return _display.getRenderResolutionScale(); }
 
     qint64 getCurrentSessionRuntime() const { return _sessionRunTimer.elapsed(); }
 
@@ -293,12 +288,10 @@ public:
     // the isHMDMode is true whenever we use the interface from an HMD and not a standard flat display
     // rendering of several elements depend on that
     // TODO: carry that information on the Camera as a setting
-    virtual bool isHMDMode() const override;
-    glm::mat4 getHMDSensorPose() const;
-    glm::mat4 getEyeOffset(int eye) const;
-    glm::mat4 getEyeProjection(int eye) const;
-
-    QRect getDesirableApplicationGeometry() const;
+    virtual bool isHMDMode() const override { return _display.isHMDMode(); }
+    glm::mat4 getHMDSensorPose() const { return _display.getHMDSensorPose(); }
+    glm::mat4 getEyeOffset(int eye) const { return _display.getEyeOffset(eye); }
+    glm::mat4 getEyeProjection(int eye) const { return _display.getEyeProjection(eye); }
 
     virtual bool canAcceptURL(const QString& url) const override;
     virtual bool acceptURL(const QString& url, bool defaultUpload = false) override;
@@ -354,8 +347,8 @@ public:
     const QDir& getDefaultScriptsLocation() const { return _defaultScriptsLocation; }   // --scripts, when given
 
     // Check if a headset is connected
-    bool hasRiftControllers();
-    bool hasViveControllers();
+    bool hasRiftControllers() { return _display.hasRiftControllers(); }
+    bool hasViveControllers() { return _display.hasViveControllers(); }
 
 #if defined(Q_OS_ANDROID)
     void beforeEnterBackground();
@@ -379,7 +372,7 @@ signals:
     void fullAvatarURLChanged(const QString& newValue, const QString& modelName);
 
     void beforeAboutToQuit();
-    void activeDisplayPluginChanged();
+    void activeDisplayPluginChanged();   // the Display's, relayed: services connect here in the essentials stage
 
     void uploadRequest(QString path);
 
@@ -391,7 +384,8 @@ signals:
 public slots:
     void updateThreadPoolCount() const;
     void updateSystemTabletMode();
-    void updateWindowTitle() const;   // the domain session calls it when the domain changes
+    void updateWindowTitle() const { _display.updateWindowTitle(); }   // the domain session and the start-up call it
+    void onPresent(quint32 frameCount);   // the display plug-in's present callback, on its thread: the next idle and render events posted
 
     Q_INVOKABLE void loadDialog();
     void importAvatarDialog();
@@ -410,7 +404,7 @@ public slots:
     FileScriptingInterface* getFileDownloadInterface() { return _fileDownload; }
 
     // the hand-offs of later launches (SingleInstance): raise this window (the domain session goes to the address handed over)
-    void raiseWindow() const;
+    void raiseWindow() const { _display.raiseWindow(); }
 
     static void packageModel();
 
@@ -466,11 +460,6 @@ private slots:
     void onDesktopRootItemCreated(QQuickItem* qmlContext);
     void onDesktopRootContextCreated(QQmlContext* qmlContext);
     void onAboutToQuit();
-    void onPresent(quint32 frameCount);
-
-    void activeChanged(Qt::ApplicationState state);
-    void windowMinimizedChanged(bool minimized);
-
     void loadSettings();
     void saveSettings() const;
 
@@ -481,10 +470,7 @@ private slots:
     bool askToWearAvatarAttachmentUrl(const QString& url);
     void displayAvatarAttachmentWarning(const QString& message) const;
 
-    void updateDisplayMode();
-    void setDisplayPlugin(DisplayPluginPointer newPlugin);
-
-    void switchDisplayMode();
+    void updateDisplayMode() { _display.updateDisplayMode(); }   // the Output menu's items and the graphics engine reach it by name
 
     void setShowBulletWireframe(bool value);
     void setShowBulletAABBs(bool value);
@@ -528,8 +514,6 @@ private:
     bool importFromZIP(const QString& filePath);
     bool importImage(const QString& urlString);
 
-    void resizeEvent(QResizeEvent* size);
-
     void keyPressEvent(QKeyEvent* event);
     void keyReleaseEvent(QKeyEvent* event);
 
@@ -556,6 +540,7 @@ private:
     void userKickConfirmation(const QUuid& nodeID);
 
     MainWindow* _window;
+    Display _display;   // the display plug-ins, the window's geometry and title, the headset (Display.h); before the essentials stage, which may ask it for the active plug-in
     QElapsedTimer& _sessionRunTimer;
 
     bool _aboutToQuit{ false };
@@ -566,14 +551,9 @@ private:
 
     bool _previousSessionCrashed;
 
-    DisplayPluginPointer _displayPlugin;
-    mutable std::mutex _displayPluginLock;
-
-
     // Frame Rate Measurement
     RateCounter<500> _gameLoopCounter;
 
-    QTimer _minimizedWindowTimer;
     QElapsedTimer _lastTimeUpdated;
 
     ShapeManager _shapeManager;
@@ -636,8 +616,6 @@ private:
     typedef bool (Application::*AcceptURLMethod)(const QString&);
     static const std::vector<std::pair<QString, Application::AcceptURLMethod>> _acceptedExtensions;
 
-    glm::uvec2 _renderResolution;
-
     SignInGate _signInGate;   // the sign-in screen and the pause and resume around it (SignInGate.h)
     PerformanceManager _performanceManager;
     RefreshRateManager _refreshRateManager;
@@ -654,7 +632,6 @@ private:
     DialogsManagerScriptingInterface* _dialogsManagerScriptingInterface = new DialogsManagerScriptingInterface();
 
     KeyboardFocus _keyboardFocus;
-    bool _isForeground = true;  // starts out assumed to be in foreground
     bool _isGLInitialized{ false };
 
     bool _reticleClickPressed{ false };
@@ -676,12 +653,6 @@ private:
     SharedSoundPointer _snapshotSound;
     SharedSoundPointer _sampleSound;
     SnapshotRequests _snapshotRequests;
-
-    DisplayPluginPointer _autoSwitchDisplayModeSupportedHMDPlugin{ nullptr };
-    QString _autoSwitchDisplayModeSupportedHMDPluginName;
-    bool _previousHMDWornStatus;
-    void startHMDStandBySession();
-    void endHMDSession();
 
     QUrl _avatarOverrideUrl;
     bool _saveAvatarOverrideUrl{ false };

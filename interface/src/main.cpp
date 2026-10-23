@@ -140,7 +140,7 @@ int main(int argc, const char* argv[]) {
 
 
         // later launches hand their address to this client (SingleInstance)
-        QObject::connect(&singleInstance, &SingleInstance::connected, &app, &Application::raiseWindow);
+        QObject::connect(&singleInstance, &SingleInstance::connected, &app.getDisplay(), &Display::raiseWindow);
         QObject::connect(&singleInstance, &SingleInstance::urlHandedOff, &app.getDomainSession(), &DomainSession::goToHandedOffUrl);
         singleInstance.listen();
 

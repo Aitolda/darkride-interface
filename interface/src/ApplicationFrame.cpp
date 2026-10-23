@@ -17,6 +17,7 @@
 //
 
 #include "Application.h"
+#include "graphics/RenderEventHandler.h"
 #include <MainWindow.h>   // the window and the GL canvas handed to the cursor each frame
 #include "GLCanvas.h"
 #include <chrono>
@@ -60,7 +61,7 @@
 using namespace std;
 
 QSharedPointer<OffscreenUi> getOffscreenUI();                        // Application.cpp's
-float verticalFieldOfView(float horizontalFov, float aspectRatio);   // ApplicationDisplay.cpp's, beside resizeGL
+float verticalFieldOfView(float horizontalFov, float aspectRatio);   // Display.cpp's, beside resizeGL
 
 // Application.cpp's constant that only the frame loop reads
 static const quint64 TOO_LONG_SINCE_LAST_SEND_DOWNSTREAM_AUDIO_STATS = 1 * USECS_PER_SECOND;
@@ -393,7 +394,7 @@ void Application::idle() {
 void Application::updateLOD(float deltaTime) const {
     PerformanceTimer perfTimer("LOD");
     // adjust it unless we were asked to disable this feature, or if we're currently in throttleRendering mode
-    if (!isThrottleRendering()) {
+    if (!_display.isThrottleRendering()) {
         float presentTime = getActiveDisplayPlugin()->getAveragePresentTime();
         float engineRunTime = (float)(_graphicsEngine.getRenderEngine()->getConfiguration().get()->getCPURunTime());
         float gpuTime = getGPUContext()->getFrameTimerGPUAverage();
@@ -925,7 +926,7 @@ void Application::updateRenderArgs(float deltaTime) {
             }
             PerformanceWarning::setSuppressShortTimings(suppressShortTimings);
             PerformanceWarning warn(showWarnings, "Application::paintGL()");
-            resizeGL();
+            _display.resizeGL();
         }
 
         _viewState.updateCamera(appRenderArgs._renderArgs, deltaTime);
@@ -1002,4 +1003,17 @@ void Application::updateRenderArgs(float deltaTime) {
         // Then we can move this logic into the Avatar::simulate call.
         myAvatar->preDisplaySide(&appRenderArgs._renderArgs);
     });
+}
+
+// The display plug-in's present callback, on its thread: the next idle event posted when none is pending, the next
+// render event when the graphics engine has one waiting.
+void Application::onPresent(quint32 frameCount) {
+    bool expected = false;
+    if (_pendingIdleEvent.compare_exchange_strong(expected, true)) {
+        postEvent(this, new QEvent((QEvent::Type)ApplicationEvent::Idle), Qt::HighEventPriority);
+    }
+    expected = false;
+    if (_graphicsEngine.checkPendingRenderEvent() && !isAboutToQuit()) {
+        postEvent(_graphicsEngine._renderEventHandler, new QEvent((QEvent::Type)ApplicationEvent::Render));
+    }
 }

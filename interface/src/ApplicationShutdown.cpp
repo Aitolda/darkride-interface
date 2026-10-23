@@ -96,11 +96,7 @@ void Application::onAboutToQuit() {
 
     _signInGate.shutdown();   // the sign-in setting cleared
 
-    getActiveDisplayPlugin()->deactivate();
-    if (_autoSwitchDisplayModeSupportedHMDPlugin
-        && _autoSwitchDisplayModeSupportedHMDPlugin->isSessionActive()) {
-        _autoSwitchDisplayModeSupportedHMDPlugin->endSession();
-    }
+    _display.deactivate();   // the plug-in deactivated, the headset's stand-by session ended
     // Hide Running Scripts dialog so that it gets destroyed in an orderly manner; prevents warnings at shutdown.
     getOffscreenUI()->hide("RunningScripts");
 
@@ -181,7 +177,7 @@ void Application::cleanupBeforeQuit() {
         DependencyManager::get<AccountManager>()->removeAccountFromFile();
     }
 
-    _displayPlugin.reset();
+    _display.releasePlugin();
     PluginManager::getInstance()->shutdown();
 
     // Cleanup all overlays after the scripts, as scripts might add more
