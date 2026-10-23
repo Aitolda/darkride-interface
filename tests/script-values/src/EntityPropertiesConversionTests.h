@@ -26,6 +26,8 @@ private slots:
     void testReadingVariantMaps();
     void testWorldFileText();
     void testRoundTrip();
+    void testVehiclesAndTracks();
+    void testWorldFiles();
 };
 
 #endif // hifi_EntityPropertiesConversionTests_h

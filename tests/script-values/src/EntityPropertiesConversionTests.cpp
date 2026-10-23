@@ -21,6 +21,7 @@
 
 #include <EntityItemProperties.h>
 #include <EntityTypes.h>
+#include <Gzip.h>
 #include <PlainScriptValue.h>
 #include <SharedUtil.h>
 #include <VariantMapToScriptValue.h>
@@ -513,4 +514,176 @@ void EntityPropertiesConversionTests::testRoundTrip() {
     QString where;
     QVERIFY2(sameVariant(a, b, where), qPrintable(where));
     QVERIFY(a.value("name").toString() == "sample" && a.value("modelURL").toString() == "https://example.invalid/model.glb");
+}
+
+namespace {
+
+// A car riding a track, with every vehicle property set to a value that is not its default (the wheels and seats as
+// the lists WheeledVehicleSpec reads), and a Track with every track and train property set
+const char* const VEHICLE_ON_A_TRACK = R"JSON({
+    "type": "Box", "name": "a car on a track", "dynamic": true,
+    "position": {"x": 1, "y": 2, "z": 3}, "dimensions": {"x": 2, "y": 1, "z": 4},
+    "trackID": "{1a2b3c4d-0000-0000-0000-0000000000aa}", "trackOffset": 12.5,
+    "vehicle": {
+        "type": "car", "mass": 1200, "centerOfMass": {"x": 0, "y": -0.25, "z": 0.125},
+        "wheels": "[{\"name\":\"frontLeft\",\"center\":[-0.8,-0.3,-1.3],\"radius\":0.35,\"width\":0.2,\"mass\":20,\"suspensionDistance\":0.3,\"targetPosition\":0.5,\"spring\":35000,\"damper\":4500,\"steer\":1,\"drive\":true,\"brake\":1,\"handBrake\":0,\"suspensionForcePoint\":false},{\"name\":\"rearRight\",\"center\":{\"x\":0.8,\"y\":-0.3,\"z\":1.3},\"radius\":0.35,\"steer\":0,\"drive\":true,\"handBrake\":1}]",
+        "seats": "[{\"name\":\"driver\",\"position\":[-0.4,0.2,0],\"yaw\":0,\"driver\":true},{\"name\":\"passenger\",\"position\":{\"x\":0.4,\"y\":0.2,\"z\":0},\"yaw\":180}]",
+        "maxSteerAngle": 35, "maxTorque": 650, "minRPM": 900, "maxRPM": 7000, "gearRatios": "[3.5,2.1,1.4,1.0,0.8]",
+        "reverseGearRatio": 3.125, "finalDriveRatio": 3.875, "maxBrakeTorque": 1800, "maxHandBrakeTorque": 4200,
+        "driveType": "all", "suspensionFrequency": 1.75, "suspensionDamping": 0.625, "wheel": "frontLeft", "axle": "z",
+        "driver": "{1a2b3c4d-0000-0000-0000-0000000000bb}", "inputSequence": 42, "throttle": 0.5, "steering": -0.25,
+        "brake": 0.125, "handBrake": 1, "engineRPM": 3200, "gear": 3, "stateTime": 123456789,
+        "envelopeVolume": 5000, "centerOfBuoyancy": {"x": 0, "y": 1.5, "z": 0}, "gasDensity": 0.0625,
+        "maxThrust": 20000, "maxVerticalThrust": 800, "thrustPoint": {"x": 0, "y": 0.25, "z": 0.5},
+        "dragArea": {"x": 3, "y": 8, "z": 0.75}, "angularDragArea": {"x": 800, "y": 800, "z": 600}, "rudderArea": 2,
+        "elevatorArea": 4, "finPoint": {"x": 0, "y": 0.5, "z": 4.5}, "maxFinAngle": 32, "ballastRate": 0.25,
+        "ventRate": 0.375, "pitch": 0.125, "lift": 0.5, "trim": -0.0625, "ballast": 0.75, "fill": 0.875,
+        "wingArea": 24, "wingSpan": 11, "wingPoint": {"x": 0, "y": 0.25, "z": 0.25}, "tilt": 1
+    }
+})JSON";
+
+const char* const TRACK_WITH_A_TRAIN = R"JSON({
+    "type": "Track", "name": "a track with a train",
+    "position": {"x": 0, "y": 0, "z": 0}, "dimensions": {"x": 40, "y": 4, "z": 20},
+    "trackPoints": [{"x": 0, "y": 0, "z": 0}, {"x": 10, "y": 1, "z": 0}, {"x": 20, "y": 0, "z": 5}, {"x": 10, "y": -1, "z": 10}],
+    "trackBank": [0, 0.25, -0.125, 0], "trackDwell": [5, 0, 3, 0], "trackClosed": true,
+    "trackSpeed": 7.5, "trackAcceleration": 1.25, "trainDistance": 33.5, "trainSpeed": 6.25, "trainReversed": true,
+    "trainDwell": 2.5, "trainStation": 2, "trainTime": 987654321, "trackProfile": "none", "trackWidth": 0.75,
+    "trackHeight": 0.5, "trackClearance": 1.25, "trackPylonSpacing": 12, "trackPylonFloor": -6
+})JSON";
+
+// The named properties of a writing, compared with another's
+bool sameValues(const QVariantMap& expected, const QVariantMap& actual, const QStringList& names, QString& where) {
+    for (const QString& name : names) {
+        if (!expected.contains(name)) {
+            where = name + " not written";
+            return false;
+        }
+        if (!sameVariant(expected.value(name), actual.value(name), where)) {
+            where = name + ": " + where;
+            return false;
+        }
+    }
+    return true;
+}
+
+}  // namespace
+
+void EntityPropertiesConversionTests::testVehiclesAndTracks() {
+    // what physics asked for (10-18): a round trip through copyToScriptValue and copyFromScriptValue, QtScript and
+    // plain, identical, for an entity with every vehicle property set and a Track with its train properties
+    struct Sample {
+        const char* name;
+        const char* json;
+        QStringList properties;  // each set to a value that is not its default, each to come back
+    };
+    const Sample samples[] = {
+        { "a car on a track", VEHICLE_ON_A_TRACK, { "trackID", "trackOffset", "vehicle" } },
+        { "a track with a train", TRACK_WITH_A_TRAIN,
+          { "trackPoints", "trackBank", "trackDwell", "trackClosed", "trackSpeed", "trackAcceleration", "trainDistance",
+            "trainSpeed", "trainReversed", "trainDwell", "trainStation", "trainTime", "trackProfile", "trackWidth",
+            "trackHeight", "trackClearance", "trackPylonSpacing", "trackPylonFloor" } },
+    };
+    const int vehicleProperties = EntityItemProperties::getPropertiesOfGroup("vehicle").size();
+    QVERIFY(vehicleProperties > 0);
+    for (const Sample& sample : samples) {
+        const QString name(sample.name);
+        QScriptEngine engine;
+        PlainScriptEngine plainEngine;
+        const QScriptValue input = engine.evaluate(QString("(") + sample.json + ")");
+        QVERIFY2(!engine.hasUncaughtException(), qPrintable(name + ": " + engine.uncaughtException().toString()));
+        EntityItemProperties properties;
+        properties.copyFromScriptValue(input, false);
+        properties.setCreated(usecTimestampNow() - USECS_PER_SECOND);
+
+        // every property set: the writing without defaults carries each one, and all of the vehicle's
+        const QVariantMap nonDefaults = properties.copyToScriptValue(&engine, true).toVariant().toMap();
+        for (const QString& property : sample.properties) {
+            QVERIFY2(nonDefaults.contains(property), qPrintable(name + ": " + property + " is at its default"));
+        }
+        if (sample.properties.contains("vehicle")) {
+            const QVariantMap vehicle = nonDefaults.value("vehicle").toMap();
+            QVERIFY2(vehicle.size() == vehicleProperties,
+                     qPrintable(name + QString(": %1 of the %2 vehicle properties set").arg(vehicle.size()).arg(vehicleProperties)));
+        }
+
+        // written both ways, every way: the same
+        QString where;
+        QVERIFY2(sameWritingEveryWay(properties, where), qPrintable(name + ": " + where));
+
+        // the round trip on each path: written and read back by QtScript, written and read back as plain values;
+        // the same properties come back on both, and they are the values set
+        const QScriptValue scriptWritten = properties.copyToScriptValue(&engine, false);
+        const PlainScriptValue plainWritten = properties.copyToScriptValue(&plainEngine, false);
+        for (bool honorReadOnly : { false, true }) {
+            EntityItemProperties viaScript;
+            EntityItemProperties viaPlain;
+            viaScript.copyFromScriptValue(scriptWritten, honorReadOnly);
+            viaPlain.copyFromScriptValue(plainWritten, honorReadOnly);
+            viaPlain.setLastEdited(viaScript.getLastEdited());
+            QVariantMap a = viaScript.copyToScriptValue(&engine, false, true).toVariant().toMap();
+            QVariantMap b = viaPlain.copyToScriptValue(&engine, false, true).toVariant().toMap();
+            stripClock(a);
+            stripClock(b);
+            const QString way = name + (honorReadOnly ? " (read-only honoured)" : "");
+            QVERIFY2(sameVariant(a, b, where), qPrintable(way + ": " + where));
+            QVERIFY2(sameValues(nonDefaults, a, sample.properties, where), qPrintable(way + ", the values back: " + where));
+        }
+
+        // the readers outside scripting (a world file's entity, avatar-entity data, a bookmark), a script's object
+        // as text, and the world file's text
+        const QVariantMap written = scriptWritten.toVariant().toMap();
+        QVERIFY2(sameVariantReading(written, false, where), qPrintable(name + ", read as a world file reads it: " + where));
+        QVERIFY2(sameVariantReading(written, true, where), qPrintable(name + ", read as a bookmark reads it: " + where));
+        const QString json = QString::fromUtf8(QJsonDocument::fromVariant(written).toJson(QJsonDocument::Compact));
+        QVERIFY2(sameReading(json, true, where), qPrintable(name + ", read as a script's object: " + where));
+        QVERIFY2(sameWorldFileText(properties, true, where), qPrintable(name + ", the world file's text: " + where));
+        QVERIFY2(sameWorldFileText(properties, false, where), qPrintable(name + ", the world file's text, defaults too: " + where));
+    }
+}
+
+void EntityPropertiesConversionTests::testWorldFiles() {
+    // whole worlds as an entity server keeps them (models.json.gz, or the JSON), named in SCRIPT_VALUES_TEST_WORLDS
+    // (paths separated by ':'): every entity read as EntityTree::readFromMap reads one, and written as the world
+    // file and an export write one, on QtScript and on the plain path, compared; skipped when the variable names none
+    const QStringList paths = QString::fromLocal8Bit(qgetenv("SCRIPT_VALUES_TEST_WORLDS")).split(':', Qt::SkipEmptyParts);
+    if (paths.isEmpty()) {
+        QSKIP("SCRIPT_VALUES_TEST_WORLDS names no world files");
+    }
+    for (const QString& path : paths) {
+        QFile file(path);
+        QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable("cannot open " + path));
+        QByteArray data = file.readAll();
+        if (path.endsWith(".gz")) {
+            QByteArray unzipped;
+            QVERIFY2(gunzip(data, unzipped), qPrintable("cannot unzip " + path));
+            data = unzipped;
+        }
+        const QVariantList entities = QJsonDocument::fromJson(data).toVariant().toMap().value("Entities").toList();
+        QVERIFY2(!entities.isEmpty(), qPrintable("no entities in " + path));
+        QMap<QString, int> types;
+        for (const QVariant& entity : entities) {
+            const QVariantMap map = entity.toMap();
+            const QString at = path + " " + map.value("id").toString() + ": ";
+            QString where;
+            // the load: read-only properties read too, as EntityItemPropertiesFromScriptValueIgnoreReadOnly does
+            QVERIFY2(sameVariantReading(map, false, where), qPrintable(at + where));
+            // the save: the properties read, written as the world file (without defaults) and as an export
+            // (without defaults, or every property) write them
+            EntityItemProperties properties;
+            properties.copyFromScriptValue(PlainScriptValue::fromVariant(map), false);
+            if (properties.getCreated() == UNKNOWN_CREATED_TIME) {
+                properties.setCreated(usecTimestampNow() - USECS_PER_SECOND);
+            }
+            QVERIFY2(sameWorldFileText(properties, true, where), qPrintable(at + "the world file's text: " + where));
+            QVERIFY2(sameWriting(properties, true, false, false, EntityPsuedoPropertyFlags(), where), qPrintable(at + "an export: " + where));
+            QVERIFY2(sameWriting(properties, false, false, false, EntityPsuedoPropertyFlags(), where), qPrintable(at + "an export of every property: " + where));
+            types[map.value("type").toString()]++;
+        }
+        QStringList counts;
+        for (auto it = types.cbegin(); it != types.cend(); ++it) {
+            counts << QString("%1 %2").arg(it.value()).arg(it.key());
+        }
+        qInfo().noquote() << path << "-" << entities.size() << "entities, the same on both paths:" << counts.join(", ");
+    }
 }
