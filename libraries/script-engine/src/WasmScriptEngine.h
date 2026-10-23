@@ -185,7 +185,6 @@ private:
     void stopAll();
     void loop();
     void onModuleFailure(const ModuleInstancePointer& instance, const QString& entry, const QString& error);
-    void installSerializer(ValueCodec& codec);
     int addTimer(const ScriptCallback& callback, int intervalMS, bool singleShot);
     void removeTimer(int id);
     void stopTimers();

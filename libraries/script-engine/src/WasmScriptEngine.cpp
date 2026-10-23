@@ -20,7 +20,6 @@
 #include <QtCore/QMetaEnum>
 #include <QtCore/QPointer>
 #include <QtCore/QRegularExpression>
-#include <QtCore/QSet>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
@@ -433,10 +432,6 @@ void WasmScriptEngine::run() {
     if (!_isInitialized) {
         _isInitialized = true;
         DependencyManager::get<EntityScriptingInterface>()->init();
-        // the QtScript conversions on the carried engine, for the serializer alone (installSerializer converts
-        // the types that have no conversion of their own through them, EntityItemProperties as of now); the
-        // call goes when the serializer goes
-        registerConversions();
         registerStandardGlobals();
     }
     // the network objects XMLHttpRequest and WebSocket are built on in the guest
@@ -474,7 +469,6 @@ WasmScriptEngine::ModuleInstancePointer WasmScriptEngine::makeInstance(const QSt
     instance->name = name;
     instance->module = module;
     instance->codec = std::make_unique<ValueCodec>(_objects.get());
-    installSerializer(*instance->codec);
     instance->target = std::make_shared<InstanceCallbackTarget>(this, instance);
     instance->codec->setCallbackTarget(instance->target);
     instance->instance = std::make_unique<WasmInstance>(module, limits);
@@ -759,67 +753,6 @@ void WasmScriptEngine::waitTillDoneRunning() {
         }
         scriptInfoMessage("Script Engine has stopped:" + getFilename());
     }
-}
-
-// --- the serializer: QtScript's conversions for the types that have no QVariant ones yet ----------------------
-
-namespace {
-
-// Each type the serializer converts is logged once per process, so a run shows what still crosses through QtScript.
-void noteSerializedType(int type, const char* direction) {
-    static std::mutex mutex;
-    static QSet<QString> noted;
-    const QString key = QString("%1 %2").arg(direction).arg(type);
-    std::lock_guard<std::mutex> lock(mutex);
-    if (!noted.contains(key)) {
-        noted.insert(key);
-        qCDebug(scriptengine) << "WasmScriptEngine: a" << QMetaType::typeName(type) << "value was" << direction << "through QtScript's conversion";
-    }
-}
-
-} // namespace
-
-void WasmScriptEngine::installSerializer(ValueCodec& codec) {
-    const int scriptValueType = QMetaType::type("QScriptValue");  // registered by QtScript at run time
-    codec.setFallback(
-        [this, &codec, scriptValueType](const QVariant& value, QCborValue& out) {
-            const int type = value.userType();
-            if (type == scriptValueType) {
-                return false;
-            }
-            QScriptValue converted = qScriptValueFromValue_helper(this, type, value.constData());
-            if (!converted.isValid()) {
-                return false;
-            }
-            QVariant plain = converted.toVariant();
-            if (plain.userType() == type) {
-                return false;  // no conversion registered: QtScript wrapped the value as it was
-            }
-            noteSerializedType(type, "encoded");
-            out = codec.toCbor(plain);
-            return true;
-        },
-        [this, &codec, scriptValueType](const QCborValue& value, int targetType, QVariant& out) {
-            if (targetType == scriptValueType) {
-                return false;
-            }
-            QVariant plain = codec.fromCbor(value);
-            QScriptValue scriptValue = qScriptValueFromValue_helper(this, plain.userType(), plain.constData());
-            if (!scriptValue.isValid()) {
-                return false;
-            }
-            void* buffer = QMetaType::create(targetType);
-            if (!buffer) {
-                return false;
-            }
-            bool ok = qscriptvalue_cast_helper(scriptValue, targetType, buffer);
-            if (ok) {
-                noteSerializedType(targetType, "decoded");
-                out = QVariant(targetType, buffer);
-            }
-            QMetaType::destroy(targetType, buffer);
-            return ok;
-        });
 }
 
 // --- timers -------------------------------------------------------------------------------------------------------
