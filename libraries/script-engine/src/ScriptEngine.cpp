@@ -757,31 +757,9 @@ void ScriptEngine::init() {
 
     _isInitialized = true;
 
-    auto entityScriptingInterface = DependencyManager::get<EntityScriptingInterface>();
-    entityScriptingInterface->init();
+    DependencyManager::get<EntityScriptingInterface>()->init();
 
-    // register various meta-types
-    registerMetaTypes(this);
-    registerMIDIMetaTypes(this);
-    registerEventTypes(this);
-    registerMenuItemProperties(this);
-    registerAnimationTypes(this);
-    registerAvatarTypes(this);
-    registerAudioMetaTypes(this);
-
-    qScriptRegisterMetaType(this, EntityPropertyFlagsToScriptValue, EntityPropertyFlagsFromScriptValue);
-    qScriptRegisterMetaType(this, EntityItemPropertiesToScriptValue, EntityItemPropertiesFromScriptValueHonorReadOnly);
-    qScriptRegisterMetaType(this, EntityPropertyInfoToScriptValue, EntityPropertyInfoFromScriptValue);
-    qScriptRegisterMetaType(this, EntityItemIDtoScriptValue, EntityItemIDfromScriptValue);
-    qScriptRegisterMetaType(this, RayToEntityIntersectionResultToScriptValue, RayToEntityIntersectionResultFromScriptValue);
-    qScriptRegisterMetaType(this, RayToAvatarIntersectionResultToScriptValue, RayToAvatarIntersectionResultFromScriptValue);
-    qScriptRegisterMetaType(this, AvatarEntityMapToScriptValue, AvatarEntityMapFromScriptValue);
-    qScriptRegisterSequenceMetaType<QVector<QUuid>>(this);
-    qScriptRegisterSequenceMetaType<QVector<EntityItemID>>(this);
-
-    qScriptRegisterSequenceMetaType<QVector<glm::vec2>>(this);
-    qScriptRegisterSequenceMetaType<QVector<glm::quat>>(this);
-    qScriptRegisterSequenceMetaType<QVector<QString>>(this);
+    registerConversions();
 
     QScriptValue xmlHttpRequestConstructorValue = newFunction(XMLHttpRequestClass::constructor);
     globalObject().setProperty("XMLHttpRequest", xmlHttpRequestConstructorValue);
@@ -800,53 +778,6 @@ void ScriptEngine::init() {
 
     QScriptValue audioEffectOptionsConstructorValue = newFunction(AudioEffectOptions::constructor);
     globalObject().setProperty("AudioEffectOptions", audioEffectOptionsConstructorValue);
-
-    qScriptRegisterMetaType(this, injectorToScriptValue, injectorFromScriptValue);
-    qScriptRegisterMetaType(this, inputControllerToScriptValue, inputControllerFromScriptValue);
-    qScriptRegisterMetaType(this, avatarDataToScriptValue, avatarDataFromScriptValue);
-    qScriptRegisterMetaType(this, animationDetailsToScriptValue, animationDetailsFromScriptValue);
-    qScriptRegisterMetaType(this, webSocketToScriptValue, webSocketFromScriptValue);
-    qScriptRegisterMetaType(this, qWSCloseCodeToScriptValue, qWSCloseCodeFromScriptValue);
-    qScriptRegisterMetaType(this, wscReadyStateToScriptValue, wscReadyStateFromScriptValue);
-
-    // NOTE: You do not want to end up creating new instances of singletons here. They will be on the ScriptEngine thread
-    // and are likely to be unusable if we "reset" the ScriptEngine by creating a new one (on a whole new thread).
-
-    registerGlobalObject("Script", this);
-
-    {
-        // set up Script.require.resolve and Script.require.cache
-        auto Script = globalObject().property("Script");
-        auto require = Script.property("require");
-        auto resolve = Script.property("_requireResolve");
-        require.setProperty("resolve", resolve, READONLY_PROP_FLAGS);
-        resetModuleCache();
-    }
-
-    registerGlobalObject("Audio", DependencyManager::get<AudioScriptingInterface>().data());
-
-    registerGlobalObject("Entities", entityScriptingInterface.data());
-    registerFunction("Entities", "getMultipleEntityProperties", EntityScriptingInterface::getMultipleEntityProperties);
-    registerGlobalObject("Quat", &_quatLibrary);
-    registerGlobalObject("Vec3", &_vec3Library);
-    registerGlobalObject("Mat4", &_mat4Library);
-    registerGlobalObject("Uuid", &_uuidLibrary);
-    registerGlobalObject("Messages", DependencyManager::get<MessagesClient>().data());
-    registerGlobalObject("File", new FileScriptingInterface(this));
-    registerGlobalObject("console", &_consoleScriptingInterface);
-    registerFunction("console", "info", ConsoleScriptingInterface::info, currentContext()->argumentCount());
-    registerFunction("console", "log", ConsoleScriptingInterface::log, currentContext()->argumentCount());
-    registerFunction("console", "debug", ConsoleScriptingInterface::debug, currentContext()->argumentCount());
-    registerFunction("console", "warn", ConsoleScriptingInterface::warn, currentContext()->argumentCount());
-    registerFunction("console", "error", ConsoleScriptingInterface::error, currentContext()->argumentCount());
-    registerFunction("console", "exception", ConsoleScriptingInterface::exception, currentContext()->argumentCount());
-    registerFunction("console", "assert", ConsoleScriptingInterface::assertion, currentContext()->argumentCount());
-    registerFunction("console", "group", ConsoleScriptingInterface::group, 1);
-    registerFunction("console", "groupCollapsed", ConsoleScriptingInterface::groupCollapsed, 1);
-    registerFunction("console", "groupEnd", ConsoleScriptingInterface::groupEnd, 0);
-
-    qScriptRegisterMetaType(this, animVarMapToScriptValue, animVarMapFromScriptValue);
-    qScriptRegisterMetaType(this, resultHandlerToScriptValue, resultHandlerFromScriptValue);
 
     /**jsdoc
      * Encodes text to base64.
@@ -898,15 +829,95 @@ void ScriptEngine::init() {
     // constants
     globalObject().setProperty("TREE_SCALE", newVariant(QVariant(TREE_SCALE)));
 
+    registerStandardGlobals();
+
+    {
+        // set up Script.require.resolve and Script.require.cache
+        auto Script = globalObject().property("Script");
+        auto require = Script.property("require");
+        auto resolve = Script.property("_requireResolve");
+        require.setProperty("resolve", resolve, READONLY_PROP_FLAGS);
+        resetModuleCache();
+    }
+}
+
+// The QtScript conversions of the engine's types, registered on this QScriptEngine: how a value of each type
+// becomes a script value and back. (The WebAssembly engine registers them on the QScriptEngine it carries for
+// its serializer alone, WasmScriptEngine::installSerializer.)
+void ScriptEngine::registerConversions() {
+    registerMetaTypes(this);
+    registerMIDIMetaTypes(this);
+    registerEventTypes(this);
+    registerMenuItemProperties(this);
+    registerAnimationTypes(this);
+    registerAvatarTypes(this);
+    registerAudioMetaTypes(this);
+
+    qScriptRegisterMetaType(this, EntityPropertyFlagsToScriptValue, EntityPropertyFlagsFromScriptValue);
+    qScriptRegisterMetaType(this, EntityItemPropertiesToScriptValue, EntityItemPropertiesFromScriptValueHonorReadOnly);
+    qScriptRegisterMetaType(this, EntityPropertyInfoToScriptValue, EntityPropertyInfoFromScriptValue);
+    qScriptRegisterMetaType(this, EntityItemIDtoScriptValue, EntityItemIDfromScriptValue);
+    qScriptRegisterMetaType(this, RayToEntityIntersectionResultToScriptValue, RayToEntityIntersectionResultFromScriptValue);
+    qScriptRegisterMetaType(this, RayToAvatarIntersectionResultToScriptValue, RayToAvatarIntersectionResultFromScriptValue);
+    qScriptRegisterMetaType(this, AvatarEntityMapToScriptValue, AvatarEntityMapFromScriptValue);
+    qScriptRegisterSequenceMetaType<QVector<QUuid>>(this);
+    qScriptRegisterSequenceMetaType<QVector<EntityItemID>>(this);
+
+    qScriptRegisterSequenceMetaType<QVector<glm::vec2>>(this);
+    qScriptRegisterSequenceMetaType<QVector<glm::quat>>(this);
+    qScriptRegisterSequenceMetaType<QVector<QString>>(this);
+
+    qScriptRegisterMetaType(this, injectorToScriptValue, injectorFromScriptValue);
+    qScriptRegisterMetaType(this, inputControllerToScriptValue, inputControllerFromScriptValue);
+    qScriptRegisterMetaType(this, avatarDataToScriptValue, avatarDataFromScriptValue);
+    qScriptRegisterMetaType(this, animationDetailsToScriptValue, animationDetailsFromScriptValue);
+    qScriptRegisterMetaType(this, webSocketToScriptValue, webSocketFromScriptValue);
+    qScriptRegisterMetaType(this, qWSCloseCodeToScriptValue, qWSCloseCodeFromScriptValue);
+    qScriptRegisterMetaType(this, wscReadyStateToScriptValue, wscReadyStateFromScriptValue);
+
+    qScriptRegisterMetaType(this, animVarMapToScriptValue, animVarMapFromScriptValue);
+    qScriptRegisterMetaType(this, resultHandlerToScriptValue, resultHandlerFromScriptValue);
+
+    qScriptRegisterMetaType(this, meshToScriptValue, meshFromScriptValue);
+    qScriptRegisterMetaType(this, meshesToScriptValue, meshesFromScriptValue);
+}
+
+// The globals every engine gives a script, through the register calls each engine implements (the WebAssembly
+// engine records them in its object table). The objects made here for the script alone (File, Model) are the
+// engine's children.
+void ScriptEngine::registerStandardGlobals() {
+    // NOTE: You do not want to end up creating new instances of singletons here. They will be on the ScriptEngine thread
+    // and are likely to be unusable if we "reset" the ScriptEngine by creating a new one (on a whole new thread).
+
+    registerGlobalObject("Script", this);
+    registerGlobalObject("Audio", DependencyManager::get<AudioScriptingInterface>().data());
+
+    registerGlobalObject("Entities", DependencyManager::get<EntityScriptingInterface>().data());
+    registerFunction("Entities", "getMultipleEntityProperties", EntityScriptingInterface::getMultipleEntityProperties);
+    registerGlobalObject("Quat", &_quatLibrary);
+    registerGlobalObject("Vec3", &_vec3Library);
+    registerGlobalObject("Mat4", &_mat4Library);
+    registerGlobalObject("Uuid", &_uuidLibrary);
+    registerGlobalObject("Messages", DependencyManager::get<MessagesClient>().data());
+    registerGlobalObject("File", new FileScriptingInterface(this));
+    registerGlobalObject("console", &_consoleScriptingInterface);
+    registerFunction("console", "info", ConsoleScriptingInterface::info, currentContext()->argumentCount());
+    registerFunction("console", "log", ConsoleScriptingInterface::log, currentContext()->argumentCount());
+    registerFunction("console", "debug", ConsoleScriptingInterface::debug, currentContext()->argumentCount());
+    registerFunction("console", "warn", ConsoleScriptingInterface::warn, currentContext()->argumentCount());
+    registerFunction("console", "error", ConsoleScriptingInterface::error, currentContext()->argumentCount());
+    registerFunction("console", "exception", ConsoleScriptingInterface::exception, currentContext()->argumentCount());
+    registerFunction("console", "assert", ConsoleScriptingInterface::assertion, currentContext()->argumentCount());
+    registerFunction("console", "group", ConsoleScriptingInterface::group, 1);
+    registerFunction("console", "groupCollapsed", ConsoleScriptingInterface::groupCollapsed, 1);
+    registerFunction("console", "groupEnd", ConsoleScriptingInterface::groupEnd, 0);
+
     registerGlobalObject("Assets", _assetScriptingInterface);
     registerGlobalObject("Resources", DependencyManager::get<ResourceScriptingInterface>().data());
 
     registerGlobalObject("DebugDraw", &DebugDraw::getInstance());
 
     registerGlobalObject("Model", new ModelScriptingInterface(this));
-    qScriptRegisterMetaType(this, meshToScriptValue, meshFromScriptValue);
-    qScriptRegisterMetaType(this, meshesToScriptValue, meshesFromScriptValue);
-
 #if DEV_BUILD || PR_BUILD
     registerGlobalObject("StackTest", new StackTestScriptingInterface(this));
 #endif

@@ -431,9 +431,13 @@ void WasmScriptEngine::run() {
     scriptInfoMessage((_runsJavaScript ? "JavaScript on the WebAssembly script engine starting:" : "WebAssembly script engine starting:") + getFilename());
 
     if (!_isInitialized) {
-        // the QtScript engine's own initialization: it registers the standard globals (through this class's
-        // registerGlobalObject) and the QtScript conversions on the carried engine, which the serializer uses
-        init();
+        _isInitialized = true;
+        DependencyManager::get<EntityScriptingInterface>()->init();
+        // the QtScript conversions on the carried engine, for the serializer alone (installSerializer converts
+        // the types that have no conversion of their own through them, EntityItemProperties as of now); the
+        // call goes when the serializer goes
+        registerConversions();
+        registerStandardGlobals();
     }
     // the network objects XMLHttpRequest and WebSocket are built on in the guest
     registerGlobalObject("Http", _http);
