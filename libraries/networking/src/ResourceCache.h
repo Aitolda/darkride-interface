@@ -230,6 +230,11 @@ public:
     // with no request (Resource::makeRequest). Old worlds carry hundreds of links to hosts that are gone.
     static bool isHostDead(const QString& host);
     static void markHostDead(const QString& host);
+    // A host that has answered this run: sent the headers of a reply (any status, a redirect included, from the network
+    // or the disk cache). A request that times out with nothing received makes its host dead only if the host has never
+    // answered: an address where nothing listens, not a live host on a slow or busy link (Resource::handleFailedRequest).
+    static bool hasHostAnswered(const QString& host);
+    static void markHostAnswered(const QString& host);
     static const qint64 DEAD_HOST_MSECS = 2 * 60 * 1000;
     static uint32_t getRequestLimit() { return DependencyManager::get<ResourceCacheSharedItems>()->getRequestLimit(); }
     
