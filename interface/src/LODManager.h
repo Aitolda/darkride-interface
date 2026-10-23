@@ -148,6 +148,8 @@ class LODManager : public QObject, public Dependency {
 
         Q_PROPERTY(WorldDetailQuality worldDetailQuality READ getWorldDetailQuality WRITE setWorldDetailQuality 
             NOTIFY worldDetailQualityChanged)
+        // the same as a plain number (0 low, 1 medium, 2 high), for QML, which can't read the enum above
+        Q_PROPERTY(int worldDetail READ getWorldDetail WRITE setWorldDetail NOTIFY worldDetailQualityChanged)
 
         Q_PROPERTY(float lodQualityLevel READ getLODQualityLevel WRITE setLODQualityLevel NOTIFY lodQualityLevelChanged)
 
@@ -308,6 +310,10 @@ public:
 
     void setWorldDetailQuality(WorldDetailQuality quality);
     WorldDetailQuality getWorldDetailQuality() const;
+    int getWorldDetail() const { return (int)getWorldDetailQuality(); }
+    void setWorldDetail(int quality) {
+        setWorldDetailQuality((WorldDetailQuality)std::max((int)WORLD_DETAIL_LOW, std::min((int)WORLD_DETAIL_HIGH, quality)));
+    }
 
     void setLODQualityLevel(float quality);
     float getLODQualityLevel() const;

@@ -2,7 +2,8 @@
 //  Page.qml
 //  qml/darkride/panel
 //
-//  A panel's page: the large title, then its sections on the grouped background, scrolling.
+//  A panel's page: the large title, its tabs (a segmented control under the title, when it has more than one), then
+//  its sections on the grouped background, scrolling. A tab's sections sit in a Tab whose index says which it is.
 //
 //  Copyright 2026 Darkride.
 //
@@ -18,6 +19,8 @@ Rectangle {
     id: page
 
     property string title: ""
+    property var tabs: []          // the tabs' names; none or one: no tab bar
+    property int currentTab: 0
     default property alias content: column.data
 
     color: Theme.background
@@ -51,6 +54,18 @@ Rectangle {
                     topPadding: 14 * Theme.unit
                     bottomPadding: 2 * Theme.unit
                     leftPadding: 4 * Theme.unit
+                }
+
+                Segmented {
+                    visible: page.tabs.length > 1
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.topMargin: 10 * Theme.unit
+                    model: page.tabs.map(function (name, index) { return { text: name, value: index }; })
+                    current: page.currentTab
+                    onChosen: {
+                        page.currentTab = value;
+                        scroll.contentItem.contentY = 0;
+                    }
                 }
             }
         }

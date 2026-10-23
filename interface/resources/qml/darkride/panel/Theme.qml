@@ -2,9 +2,10 @@
 //  Theme.qml
 //  qml/darkride/panel
 //
-//  The look of Darkride's QML panels (Settings first, then Friends and Explore): iOS's grouped lists in its dark
-//  palette, the same on the desktop and on the tablet (Caity, 10-23: "classy ... kinda like iOS design language").
-//  One per QML engine, so the tablet's surface may set its own unit.
+//  The look of Darkride's QML panels (Settings first, then Friends, Explore and Avatar): iOS's grouped lists, the
+//  same on the desktop and on the tablet (Caity, 10-23: "classy ... kinda like iOS design language"), in one of
+//  four colour schemes or a loaded theme file (PanelTheme, which every engine shares and which saves the choice).
+//  Graphite, soft greys, is the default (Caity, 10-23: the black first look was "a little too harsh").
 //
 //  Copyright 2026 Darkride.
 //
@@ -13,25 +14,70 @@
 
 pragma Singleton
 import QtQuick 2.15
+import DarkridePanels 1.0
 
 QtObject {
     // 1 on the desktop; a surface seen from further away may scale everything up
     property real unit: 1
 
-    // iOS dark: the grouped background, its cells, their separators
-    readonly property color background: "#000000"
-    readonly property color card: "#1c1c1e"
-    readonly property color cardPressed: "#2c2c2e"
-    readonly property color separator: Qt.rgba(84 / 255, 84 / 255, 88 / 255, 0.6)
-    readonly property color text: "#ffffff"
-    readonly property color secondaryText: Qt.rgba(235 / 255, 235 / 255, 245 / 255, 0.6)
-    readonly property color tertiaryText: Qt.rgba(235 / 255, 235 / 255, 245 / 255, 0.3)
-    readonly property color tint: "#0a84ff"
-    readonly property color on: "#30d158"            // a switch that is on
-    readonly property color destructive: "#ff453a"
-    readonly property color fill: Qt.rgba(118 / 255, 118 / 255, 128 / 255, 0.24)   // fields, segmented tracks
-    readonly property color segmentThumb: "#636366"
-    readonly property color sliderTrack: Qt.rgba(120 / 255, 120 / 255, 128 / 255, 0.36)
+    // the built-in schemes; a theme file sets any of these keys over its base scheme (PanelTheme::COLOR_KEYS)
+    readonly property var schemes: ({
+        graphite: {
+            name: "Graphite", background: "#1c1c1f", card: "#2a2a2e", cardPressed: "#35353a",
+            separator: "#17ffffff", text: "#ececf0", secondaryText: "#a1a1a9", tertiaryText: "#6c6c74",
+            tint: "#5aa2ff", on: "#34c759", destructive: "#ff6961", fill: "#3a3a40", segmentThumb: "#5c5c64",
+            sliderTrack: "#46464d"
+        },
+        midnight: {
+            name: "Midnight", background: "#000000", card: "#1c1c1e", cardPressed: "#2c2c2e",
+            separator: "#99545458", text: "#ffffff", secondaryText: "#99ebebf5", tertiaryText: "#4debebf5",
+            tint: "#0a84ff", on: "#30d158", destructive: "#ff453a", fill: "#3d767680", segmentThumb: "#636366",
+            sliderTrack: "#5c787880"
+        },
+        dusk: {
+            name: "Dusk", background: "#1b1828", card: "#272338", cardPressed: "#322d47",
+            separator: "#1affffff", text: "#eeeaf7", secondaryText: "#a9a3bf", tertiaryText: "#6e6884",
+            tint: "#a78bfa", on: "#9b7bf7", destructive: "#ff6b81", fill: "#3a3550", segmentThumb: "#5b5478",
+            sliderTrack: "#45405c"
+        },
+        daylight: {
+            name: "Daylight", background: "#f2f2f7", card: "#ffffff", cardPressed: "#e5e5ea",
+            separator: "#4a3c3c43", text: "#1c1c1e", secondaryText: "#6c6c70", tertiaryText: "#aeaeb2",
+            tint: "#007aff", on: "#34c759", destructive: "#ff3b30", fill: "#33787880", segmentThumb: "#ffffff",
+            sliderTrack: "#e5e5ea"
+        }
+    })
+    readonly property var schemeOrder: ["graphite", "midnight", "dusk", "daylight"]
+
+    // the palette in use: the chosen scheme, or a loaded file's colours over its base scheme
+    readonly property var palette: {
+        var custom = PanelTheme.custom || {};
+        var chosen = PanelTheme.scheme === "custom" ? (custom.base || "graphite") : PanelTheme.scheme;
+        var base = schemes[chosen] || schemes.graphite;
+        if (PanelTheme.scheme !== "custom") {
+            return base;
+        }
+        var merged = {};
+        for (var key in base) {
+            merged[key] = custom[key] !== undefined ? custom[key] : base[key];
+        }
+        return merged;
+    }
+    readonly property string schemeName: palette.name
+
+    readonly property color background: palette.background
+    readonly property color card: palette.card
+    readonly property color cardPressed: palette.cardPressed
+    readonly property color separator: palette.separator
+    readonly property color text: palette.text
+    readonly property color secondaryText: palette.secondaryText
+    readonly property color tertiaryText: palette.tertiaryText
+    readonly property color tint: palette.tint
+    readonly property color on: palette.on              // a switch that is on
+    readonly property color destructive: palette.destructive
+    readonly property color fill: palette.fill          // fields, segmented tracks
+    readonly property color segmentThumb: palette.segmentThumb
+    readonly property color sliderTrack: palette.sliderTrack
 
     readonly property real largeTitleSize: 26 * unit
     readonly property real bodySize: 14 * unit

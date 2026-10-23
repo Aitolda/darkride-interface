@@ -35,9 +35,11 @@ Item {
     property real scrubStep: 1
     signal scrubbed(real value)
 
-    // an action row
+    // an action row: the label in blue (red when it deletes), the whole row a button; a clickable row is a button
+    // with its label and value as they are (a picker's row)
     property bool action: false
     property bool destructive: false
+    property bool clickable: action
     signal clicked()
 
     width: parent ? parent.width : 0
@@ -49,14 +51,18 @@ Item {
         return Math.max(Theme.rowHeight, inner + 2 * Theme.rowPadding);
     }
 
+    // the item that sits in the card's column: the row itself, or the picker whose first row it is
+    property Item cardItem: row
+
     // the separator runs above every row but a card's first, inset to the text as iOS draws it
     readonly property bool firstShown: {
-        if (!parent) {
+        var column = cardItem ? cardItem.parent : null;
+        if (!column) {
             return true;
         }
-        for (var i = 0; i < parent.children.length; i++) {
-            if (parent.children[i].visible) {
-                return parent.children[i] === row;
+        for (var i = 0; i < column.children.length; i++) {
+            if (column.children[i].visible) {
+                return column.children[i] === cardItem;
             }
         }
         return true;
@@ -65,11 +71,32 @@ Item {
         && Math.max(labelWidth, labelColumn.implicitWidth) + Theme.gap + contentRow.visibleChildrenWidth
            > width - 2 * Theme.cardPadding
 
+    readonly property bool lastShown: {
+        var column = cardItem ? cardItem.parent : null;
+        if (!column) {
+            return true;
+        }
+        for (var i = column.children.length - 1; i >= 0; i--) {
+            if (column.children[i].visible) {
+                return column.children[i] === cardItem;
+            }
+        }
+        return true;
+    }
+
+    // pressed: the row darkens, rounded where it meets the card's corners
     Rectangle {
         anchors.fill: parent
-        visible: row.action && actionArea.pressed
+        visible: row.clickable && actionArea.pressed
         color: Theme.cardPressed
-        radius: Theme.cardRadius
+        radius: row.firstShown || row.lastShown ? Theme.cardRadius : 0
+        Rectangle {
+            visible: parent.radius > 0 && !(row.firstShown && row.lastShown)
+            color: parent.color
+            width: parent.width
+            height: parent.radius
+            y: row.firstShown ? parent.height - height : 0
+        }
     }
 
     Rectangle {
@@ -83,7 +110,7 @@ Item {
     MouseArea {
         id: actionArea
         anchors.fill: parent
-        enabled: row.action && row.enabled
+        enabled: row.clickable && row.enabled
         onClicked: row.clicked()
     }
 
