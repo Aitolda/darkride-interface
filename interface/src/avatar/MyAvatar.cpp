@@ -361,8 +361,6 @@ MyAvatar::MyAvatar(QThread* thread) :
 
 MyAvatar::~MyAvatar() {
     _lookAtTargetAvatar.reset();
-    delete _scriptEngine;
-    _scriptEngine = nullptr;
 }
 
 QString MyAvatar::getDominantHand() const {
@@ -1686,8 +1684,7 @@ void MyAvatar::handleChangedAvatarEntityData() {
                 blobFailed = true; // blob doesn't exist
                 return;
             }
-            std::lock_guard<std::mutex> guard(_scriptEngineLock);
-            if (!EntityItemProperties::blobToProperties(*_scriptEngine, itr.value(), properties)) {
+            if (!EntityItemProperties::blobToProperties(itr.value(), properties)) {
                 blobFailed = true; // blob is corrupt
             }
         });
@@ -1719,8 +1716,7 @@ void MyAvatar::handleChangedAvatarEntityData() {
                 skip = true;
                 return;
             }
-            std::lock_guard<std::mutex> guard(_scriptEngineLock);
-            if (!EntityItemProperties::blobToProperties(*_scriptEngine, itr.value(), properties)) {
+            if (!EntityItemProperties::blobToProperties(itr.value(), properties)) {
                 skip = true;
             }
         });
@@ -1827,10 +1823,7 @@ bool MyAvatar::updateStaleAvatarEntityBlobs() const {
         if (found) {
             ++numFound;
             QByteArray blob;
-            {
-                std::lock_guard<std::mutex> guard(_scriptEngineLock);
-                EntityItemProperties::propertiesToBlob(*_scriptEngine, getID(), properties, blob);
-            }
+            EntityItemProperties::propertiesToBlob(getID(), properties, blob);
             _avatarEntitiesLock.withWriteLock([&] {
                 _cachedAvatarEntityBlobs[id] = blob;
             });
@@ -1886,10 +1879,7 @@ AvatarEntityMap MyAvatar::getAvatarEntityData() const {
         EntityItemProperties properties = entity->getProperties(desiredProperties);
 
         QByteArray blob;
-        {
-            std::lock_guard<std::mutex> guard(_scriptEngineLock);
-            EntityItemProperties::propertiesToBlob(*_scriptEngine, getID(), properties, blob, true);
-        }
+        EntityItemProperties::propertiesToBlob(getID(), properties, blob, true);
 
         data[entityID] = blob;
     }
@@ -2016,9 +2006,6 @@ void MyAvatar::avatarEntityDataToJson(QJsonObject& root) const {
 }
 
 void MyAvatar::loadData() {
-    if (!_scriptEngine) {
-        _scriptEngine = new QScriptEngine();
-    }
     getHead()->setBasePitch(_headPitchSetting.get());
 
     _yawSpeed = _yawSpeedSetting.get(_yawSpeed);
@@ -2627,12 +2614,8 @@ QVariantList MyAvatar::getAvatarEntitiesVariant() {
             QVariantMap avatarEntityData;
             avatarEntityData["id"] = entityID;
             EntityItemProperties entityProperties = entity->getProperties(desiredProperties);
-            {
-                std::lock_guard<std::mutex> guard(_scriptEngineLock);
-                QScriptValue scriptProperties;
-                scriptProperties = EntityItemPropertiesToScriptValue(_scriptEngine, entityProperties);
-                avatarEntityData["properties"] = scriptProperties.toVariant();
-            }
+            PlainScriptEngine engine;
+            avatarEntityData["properties"] = entityProperties.copyToScriptValue(&engine, false).toVariant();
             avatarEntitiesData.append(QVariant(avatarEntityData));
         }
     }

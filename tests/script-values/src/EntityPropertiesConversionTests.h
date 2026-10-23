@@ -25,6 +25,7 @@ private slots:
     void testReadingWorldEntities();
     void testReadingVariantMaps();
     void testWorldFileText();
+    void testAvatarEntityBlobs();
     void testRoundTrip();
     void testVehiclesAndTracks();
     void testWorldFiles();

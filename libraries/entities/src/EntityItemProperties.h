@@ -123,8 +123,9 @@ class EntityItemProperties {
     friend class TerrainEntityItem;
     friend class MaterialEntityItem;
 public:
-    static bool blobToProperties(QScriptEngine& scriptEngine, const QByteArray& blob, EntityItemProperties& properties);
-    static void propertiesToBlob(QScriptEngine& scriptEngine, const QUuid& myAvatarID, const EntityItemProperties& properties, 
+    /// Avatar-entity data: an entity's properties as compact JSON text, through the plain conversions.
+    static bool blobToProperties(const QByteArray& blob, EntityItemProperties& properties);
+    static void propertiesToBlob(const QUuid& myAvatarID, const EntityItemProperties& properties,
         QByteArray& blob, bool allProperties = false);
 
     EntityItemProperties(EntityPropertyFlags desiredProperties = EntityPropertyFlags());
@@ -155,7 +156,6 @@ public:
     PlainScriptValue copyToScriptValue(PlainScriptEngine* engine, bool skipDefaults, bool allowUnknownCreateTime = false,
         bool strictSemantics = false, EntityPsuedoPropertyFlags psueudoPropertyFlags = EntityPsuedoPropertyFlags()) const;
     void copyFromScriptValue(const PlainScriptValue& object, bool honorReadOnly);
-    void copyFromJSONString(QScriptEngine& scriptEngine, const QString& jsonString);
 
     static QScriptValue entityPropertyFlagsToScriptValue(QScriptEngine* engine, const EntityPropertyFlags& flags);
     static void entityPropertyFlagsFromScriptValue(const QScriptValue& object, EntityPropertyFlags& flags);

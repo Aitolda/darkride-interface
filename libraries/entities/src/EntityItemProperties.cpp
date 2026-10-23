@@ -28,7 +28,6 @@
 #include <GLMHelpers.h>
 #include <RegisteredMetaTypes.h>
 #include <Extents.h>
-#include <VariantMapToScriptValue.h>
 
 #include "EntitiesLogging.h"
 #include "EntityItem.h"
@@ -2456,18 +2455,6 @@ void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool 
 void EntityItemProperties::copyFromScriptValue(const PlainScriptValue& object, bool honorReadOnly) {
     copyFromScriptValueOf(object, honorReadOnly);
 }
-
-void EntityItemProperties::copyFromJSONString(QScriptEngine& scriptEngine, const QString& jsonString) {
-    // DANGER: this method is expensive
-    QJsonDocument propertiesDoc = QJsonDocument::fromJson(jsonString.toUtf8());
-    QJsonObject propertiesObj = propertiesDoc.object();
-    QVariant propertiesVariant(propertiesObj);
-    QVariantMap propertiesMap = propertiesVariant.toMap();
-    QScriptValue propertiesScriptValue = variantMapToScriptValue(propertiesMap, scriptEngine);
-    bool honorReadOnly = true;
-    copyFromScriptValue(propertiesScriptValue, honorReadOnly);
-}
-
 
 void EntityItemProperties::merge(const EntityItemProperties& other) {
     // Core
@@ -5550,7 +5537,7 @@ void EntityItemProperties::convertToCloneProperties(const EntityItemID& entityID
     setCloneAvatarEntity(ENTITY_ITEM_DEFAULT_CLONE_AVATAR_ENTITY);
 }
 
-bool EntityItemProperties::blobToProperties(QScriptEngine& scriptEngine, const QByteArray& blob, EntityItemProperties& properties) {
+bool EntityItemProperties::blobToProperties(const QByteArray& blob, EntityItemProperties& properties) {
     // DANGER: this method is NOT efficient.
     // begin recipe for converting unfortunately-formatted-binary-blob to EntityItemProperties
     QJsonValue jsonProperties = QJsonDocument::fromJson(blob).toVariant().toJsonValue();
@@ -5558,22 +5545,17 @@ bool EntityItemProperties::blobToProperties(QScriptEngine& scriptEngine, const Q
         qCDebug(entities) << "bad avatarEntityData json" << QString(blob.toHex());
         return false;
     }
-    QVariant variant = jsonProperties.toVariant();
-    QVariantMap variantMap = variant.toMap();
-    QScriptValue scriptValue = variantMapToScriptValue(variantMap, scriptEngine);
-    EntityItemPropertiesFromScriptValueIgnoreReadOnly(scriptValue, properties);
+    properties.copyFromScriptValue(PlainScriptValue::fromVariant(jsonProperties.toVariant().toMap()), false);
     // end recipe
     return true;
 }
 
-void EntityItemProperties::propertiesToBlob(QScriptEngine& scriptEngine, const QUuid& myAvatarID, 
-            const EntityItemProperties& properties, QByteArray& blob, bool allProperties) {
+void EntityItemProperties::propertiesToBlob(const QUuid& myAvatarID, const EntityItemProperties& properties,
+            QByteArray& blob, bool allProperties) {
     // DANGER: this method is NOT efficient.
     // begin recipe for extracting unfortunately-formatted-binary-blob from EntityItem
-    QScriptValue scriptValue = allProperties
-        ? EntityItemPropertiesToScriptValue(&scriptEngine, properties)
-        : EntityItemNonDefaultPropertiesToScriptValue(&scriptEngine, properties);
-    QVariant variantProperties = scriptValue.toVariant();
+    PlainScriptEngine engine;
+    QVariant variantProperties = properties.copyToScriptValue(&engine, !allProperties).toVariant();
     QJsonDocument jsonProperties = QJsonDocument::fromVariant(variantProperties);
     // the ID of the parent/avatar changes from session to session.  use a special UUID to indicate the avatar
     QJsonObject jsonObject = jsonProperties.object();

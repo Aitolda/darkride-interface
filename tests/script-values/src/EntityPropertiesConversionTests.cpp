@@ -487,6 +487,57 @@ void EntityPropertiesConversionTests::testWorldFileText() {
     }
 }
 
+void EntityPropertiesConversionTests::testAvatarEntityBlobs() {
+    // propertiesToBlob and blobToProperties as they were, with a QScriptEngine, against the plain functions
+    const QUuid myAvatarID("{aaaaaaaa-0000-0000-0000-00000000000a}");
+    for (int type = EntityTypes::Box; type < EntityTypes::NUM_TYPES; ++type) {
+        const QString name = EntityTypes::getEntityTypeName((EntityTypes::EntityType)type);
+        EntityItemProperties properties = sampleProperties((EntityTypes::EntityType)type);
+        properties.setParentID(myAvatarID);
+        for (bool allProperties : { false, true }) {
+            QScriptEngine engine;
+            QVariant variantProperties = properties.copyToScriptValue(&engine, !allProperties).toVariant();
+            QJsonObject jsonObject = QJsonDocument::fromVariant(variantProperties).object();
+            if (jsonObject.contains("parentID") && QUuid(jsonObject["parentID"].toString()) == myAvatarID) {
+                jsonObject["parentID"] = AVATAR_SELF_ID.toString();
+            }
+            jsonObject.remove("age");
+            jsonObject.remove("ageAsText");
+            const QByteArray expected = QJsonDocument(jsonObject).toJson(QJsonDocument::Compact);
+
+            QByteArray blob;
+            EntityItemProperties::propertiesToBlob(myAvatarID, properties, blob, allProperties);
+            QJsonObject written = QJsonDocument::fromJson(blob).object();
+            written.remove("age");
+            written.remove("ageAsText");
+            const QByteArray actual = QJsonDocument(written).toJson(QJsonDocument::Compact);
+            QVERIFY2(actual == expected, qPrintable(name + ": " + actual.left(200) + " vs " + expected.left(200)));
+            QVERIFY2(written["parentID"].toString() == AVATAR_SELF_ID.toString(), qPrintable(name + ": the avatar's own id is not replaced"));
+
+            // and read back both ways
+            EntityItemProperties fromScript;
+            QVariantMap map = QJsonDocument::fromJson(blob).toVariant().toMap();
+            fromScript.copyFromScriptValue(variantMapToScriptValue(map, engine), false);
+            EntityItemProperties fromPlain;
+            QVERIFY2(EntityItemProperties::blobToProperties(blob, fromPlain), qPrintable(name + ": the blob does not read"));
+            QVariantMap a = fromScript.copyToScriptValue(&engine, false, true).toVariant().toMap();
+            QVariantMap b = fromPlain.copyToScriptValue(&engine, false, true).toVariant().toMap();
+            stripClock(a);
+            stripClock(b);
+            // lastEdited is the clock at the end of each reading (and setLastEdited clamps to the creation time,
+            // which both paths read through a float, as variantToScriptValue reads a 64-bit integer: a known quirk)
+            a.remove("lastEdited");
+            b.remove("lastEdited");
+            QString where;
+            QVERIFY2(sameVariant(a, b, where), qPrintable(name + ": " + where));
+        }
+    }
+    EntityItemProperties none;
+    QVERIFY(!EntityItemProperties::blobToProperties(QByteArray(), none));
+    QVERIFY(!EntityItemProperties::blobToProperties(QByteArray("[1, 2]"), none));
+    QVERIFY(!EntityItemProperties::blobToProperties(QByteArray("{}"), none));
+}
+
 void EntityPropertiesConversionTests::testRoundTrip() {
     // what QtScript writes for an entity with values, read back both ways, as a script's full property map is
     for (EntityTypes::EntityType type : { EntityTypes::Model, EntityTypes::Image, EntityTypes::Zone, EntityTypes::Text, EntityTypes::Shape }) {
