@@ -166,7 +166,8 @@ int main(int argc, const char* argv[]) {
 
         if (!options.traceFile.isEmpty()) {
             tracer->stopTracing();
-            tracer->serialize(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/" + options.traceFile);
+            // a relative name lands in Documents (FileUtils::computeDocumentPath), an absolute path where it says
+            tracer->serialize(options.traceFile);
         }
     }
 
