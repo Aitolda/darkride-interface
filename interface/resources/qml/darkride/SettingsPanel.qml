@@ -561,6 +561,84 @@ Page {
         }
     }
 
+    // everyone in the world but you, for the mixer: their name, distance, loudness, and your volume and mute for them
+    ListModel {
+        id: people
+    }
+
+    QtObject {
+        id: mixer
+
+        property bool open: false
+
+        // the engine forgets a person's volume when they or you leave; mute is mutual (Users.personalMute)
+        function refresh() {
+            var mine = String(MyAvatar.sessionUUID);
+            var ids = AvatarList.getAvatarIdentifiers().map(function (id) { return String(id); }).filter(function (id) {
+                return id !== "" && id !== mine && id !== "{00000000-0000-0000-0000-000000000000}";
+            });
+            for (var i = people.count - 1; i >= 0; i--) {
+                if (ids.indexOf(people.get(i).id) === -1) {
+                    people.remove(i);
+                }
+            }
+            ids.forEach(function (id) {
+                var avatar = AvatarList.getAvatar(id);
+                if (!avatar) {
+                    return;
+                }
+                var name = avatar.sessionDisplayName || avatar.displayName || "Someone";
+                var distance = Vec3.distance(avatar.position, MyAvatar.position);
+                var record = {
+                    id: id,
+                    name: name,
+                    distance: isFinite(distance) ? distance : -1,
+                    level: Math.max(0, Math.min(1, Math.log(1 + Math.max(0, avatar.audioLoudness)) / Math.log(1 + 3000))),
+                    gain: Users.getAvatarGain(id),
+                    muted: Users.getPersonalMuteStatus(id)
+                };
+                var at = -1;
+                for (var j = 0; j < people.count; j++) {
+                    if (people.get(j).id === id) {
+                        at = j;
+                        break;
+                    }
+                }
+                if (at === -1) {
+                    // in name order, so the rows don't move as people walk about
+                    var place = 0;
+                    while (place < people.count && people.get(place).name.toLowerCase() < name.toLowerCase()) {
+                        place++;
+                    }
+                    people.insert(place, record);
+                } else {
+                    for (var key in record) {
+                        if (people.get(at)[key] !== record[key]) {
+                            people.setProperty(at, key, record[key]);
+                        }
+                    }
+                }
+            });
+        }
+
+        function setGain(index, gain) {
+            Users.setAvatarGain(people.get(index).id, gain);
+            people.setProperty(index, "gain", gain);
+        }
+
+        function setMuted(index, muted) {
+            Users.personalMute(people.get(index).id, muted);
+            people.setProperty(index, "muted", muted);
+        }
+    }
+
+    Timer {
+        interval: 250
+        repeat: true
+        running: root.visible && root.currentTab === 2
+        onTriggered: mixer.refresh()
+    }
+
     Tab {
         visible: root.currentTab === 2
 
@@ -660,13 +738,99 @@ Page {
 
         Section {
             title: "Volume"
-            footer: "People: other avatars' voices. World: the sounds of the world and its scripts. Interface: "
-                + "Darkride's own sounds."
+            footer: mixer.open
+                ? "A person's volume lasts for this visit. Muting someone is mutual: neither of you hears the other."
+                : "People: other avatars' voices. World: the sounds of the world and its scripts. Interface: "
+                  + "Darkride's own sounds."
 
             VolumeRow {
                 label: "People"
                 gain: AudioScriptingInterface.avatarGain
                 onSetGain: AudioScriptingInterface.avatarGain = gain
+            }
+            // Each person: the mixer, opened under People
+            ListRow {
+                objectName: "eachPersonRow"   // a test opens the mixer by it
+                label: "Each person"
+                detail: mixer.open ? "" : "a volume and a mute for everyone here"
+                clickable: true
+                onClicked: {
+                    mixer.open = !mixer.open;
+                    mixer.refresh();
+                }
+                Text {
+                    text: String(people.count)
+                    color: Theme.secondaryText
+                    font.pixelSize: Theme.bodySize
+                }
+                Text {
+                    text: mixer.open ? "\u2303" : "\u2304"
+                    color: Theme.tertiaryText
+                    font.pixelSize: Theme.bodySize
+                }
+            }
+            Repeater {
+                model: mixer.open ? people : null
+                delegate: ListRow {
+                    label: model.name
+                    detail: model.muted ? "muted" : (model.distance >= 0 ? Math.round(model.distance) + " m away" : "")
+                    fill: true
+                    labelWidth: 120 * Theme.unit
+                    scrubbable: true
+                    scrubValue: model.gain
+                    scrubFrom: -60
+                    scrubTo: 20
+                    scrubStep: 0.5
+                    onScrubbed: mixer.setGain(index, Math.round(value))
+
+                    // how loud they are now
+                    Rectangle {
+                        implicitWidth: 6 * Theme.unit
+                        implicitHeight: 18 * Theme.unit
+                        radius: width / 2
+                        color: Theme.sliderTrack
+                        Rectangle {
+                            anchors.bottom: parent.bottom
+                            width: parent.width
+                            height: parent.height * model.level
+                            radius: parent.radius
+                            color: model.muted ? Theme.tertiaryText : Theme.on
+                        }
+                    }
+                    ValueSlider {
+                        from: -60; to: 20; stepSize: 1; decimals: 0; units: " dB"
+                        enabled: !model.muted
+                        value: model.gain
+                        onMoved: mixer.setGain(index, value)
+                    }
+                    ResetButton {
+                        needed: Math.abs(model.gain) > 0.01
+                        onClicked: mixer.setGain(index, 0)
+                    }
+                    // mute: a small button, red while they're muted
+                    Rectangle {
+                        implicitWidth: muteLabel.implicitWidth + 16 * Theme.unit
+                        implicitHeight: 24 * Theme.unit
+                        radius: 6 * Theme.unit
+                        color: model.muted ? Theme.destructive : Theme.fill
+                        Text {
+                            id: muteLabel
+                            anchors.centerIn: parent
+                            text: model.muted ? "Muted" : "Mute"
+                            color: model.muted ? "#ffffff" : Theme.text
+                            font.pixelSize: Theme.controlTextSize
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: mixer.setMuted(index, !model.muted)
+                        }
+                    }
+                }
+            }
+            ListRow {
+                visible: mixer.open && people.count === 0
+                label: "No one else is here."
+                enabled: false
             }
             VolumeRow {
                 label: "World"
