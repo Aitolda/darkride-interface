@@ -17,6 +17,7 @@
 #include "ApplicationServices.h"
 #include "ImportExtensions.h"
 #include "ApplicationSettingNames.h"
+#include "KeyboardFocusHighlight.h"
 #include "LambdaEvent.h"
 #include "ClientOptions.h"
 #include "DeadlockWatchdog.h"
@@ -246,7 +247,6 @@ using namespace std;
 QSharedPointer<OffscreenUi> getOffscreenUI();      // Application.cpp's
 extern Setting::Handle<bool> loginDialogPoppedUp;  // Application.cpp's
 extern QTimer locationUpdateTimer;                 // Application.cpp's; the constructor starts it
-extern QUuid _keyboardFocusHighlightID;            // Application.cpp's: the keyboard-focus highlight entity
 
 void Application::onAboutToQuit() {
     setCrashAnnotation("shutdown", "1");
