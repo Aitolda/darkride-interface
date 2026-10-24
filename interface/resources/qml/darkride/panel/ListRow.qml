@@ -24,6 +24,9 @@ Item {
     property int detailFormat: Text.PlainText   // Text.StyledText for a detail with a link (Explore's "by <author>")
     signal linkActivated(string link)
     property url icon: ""          // a small picture left of the label (an avatar menu's control)
+    property real iconSize: 26 * Theme.unit
+    property real iconRadius: 0    // rounded (a thing's picture in a collection's list), or square as it comes
+    property string iconPlaceholder: ""
     // the control fills the room beside the label (a slider, a text field) rather than sitting at the right
     property bool fill: false
     // a fixed width for the label, so the controls of neighbouring rows line up (0: the words' own width)
@@ -59,6 +62,11 @@ Item {
     // the item that sits in the card's column: the row itself, or the picker whose first row it is
     property Item cardItem: row
 
+    // a row in the card's column: visible and with a height (a Repeater is a child too, of none)
+    function shown(item) {
+        return item.visible && item.height > 0;
+    }
+
     // the separator runs above every row but a card's first, inset to the text as iOS draws it
     readonly property bool firstShown: {
         var column = cardItem ? cardItem.parent : null;
@@ -66,7 +74,7 @@ Item {
             return true;
         }
         for (var i = 0; i < column.children.length; i++) {
-            if (column.children[i].visible) {
+            if (shown(column.children[i])) {
                 return column.children[i] === cardItem;
             }
         }
@@ -82,7 +90,7 @@ Item {
             return true;
         }
         for (var i = column.children.length - 1; i >= 0; i--) {
-            if (column.children[i].visible) {
+            if (shown(column.children[i])) {
                 return column.children[i] === cardItem;
             }
         }
@@ -140,14 +148,14 @@ Item {
             visible: row.label !== ""
             spacing: 10 * Theme.unit
 
-            Image {
-                visible: row.icon.toString() !== ""
+            RoundedImage {
+                visible: row.icon.toString() !== "" || row.iconPlaceholder !== ""
                 anchors.verticalCenter: parent.verticalCenter
-                width: 26 * Theme.unit
+                width: row.iconSize
                 height: width
-                sourceSize.width: width * 2
-                sourceSize.height: height * 2
-                fillMode: Image.PreserveAspectFit
+                radius: row.iconRadius
+                fillMode: row.iconRadius > 0 ? Image.PreserveAspectCrop : Image.PreserveAspectFit
+                placeholder: row.iconPlaceholder
                 source: row.icon
             }
 

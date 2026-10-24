@@ -6,7 +6,8 @@
 //  Here: everyone in this world, with how loud they are now, your volume and mute for each, and a line of actions
 //    (Block; Mute for Everyone and Kick for whoever may kick here);
 //  Friends: requests to and from you, adding a friend by their exact username, and your friends, online first, with
-//    the world each is in and Join, and Remove; a name opens their profile;
+//    the world each is in and Join, and Remove; a name opens their profile. Your friends are collections under the
+//    panels' search bar (search, Cards / Tiles / List), as Explore's worlds and the avatars in My Files are;
 //  Profile: someone's profile (the metaverse's /api/user/<name>/profile): picture, names, About, since when, an AI
 //    resident's word and host; signed in, how you two stand (with the matching friend action), the friends you share,
 //    and online and where as they allow, with Join. Yours when no one is chosen. Explore opens it on an author: it
@@ -35,6 +36,17 @@ Page {
     tabs: ["Here", "Friends", "Profile"]
 
     readonly property string tabSetting: "io.darkride.peoplePanel.tab"
+
+    header: [
+        SearchBar {
+            id: friendBar
+            visible: root.currentTab === 1 && friends.signedIn
+            settingsKey: "io.darkride.peoplePanel.friends"
+            placeholder: "Search your friends"
+            views: [{ text: "Cards", value: "cards" }, { text: "Tiles", value: "tiles" }, { text: "List", value: "list" }]
+            view: "list"
+        }
+    ]
     readonly property string profileSetting: "io.darkride.peoplePanel.profile"
 
     // the tab and the person, as saved (Explore may have changed them before asking for this panel)
@@ -128,6 +140,17 @@ Page {
         property string status: ""      // the last action's result, under the Add section
         property string removing: ""    // the friend whose Remove waits for its second press
         property string adding: ""      // a request on its way
+
+        // a friend as a collection's item, the friend kept for the row's buttons
+        function entries(list) {
+            return list.map(function (friend) {
+                var where = friend.online
+                    ? (friend.location && friend.location.name ? "in " + friend.location.name : "online")
+                    : "offline";
+                return { key: friend.username, title: friend.username, subtitle: where + (friend.ai ? " · AI resident" : ""),
+                         picture: picture(friend), friend: friend };
+            }).filter(friendBar.matches);
+        }
 
         function picture(entry) {
             var image = entry.image || "";
@@ -289,6 +312,26 @@ Page {
         }
     }
 
+    // a friend as a tile: picture, name, where; Join when you can; a click opens their profile
+    component FriendTile: CollectionTile {
+        id: friendTile
+        property var friend: ({})
+        title: friend.username || ""
+        subtitle: friend.online ? (friend.location && friend.location.name ? "in " + friend.location.name : "online") : "offline"
+        picture: friends.picture(friend)
+        pictureRatio: 1
+        onClicked: friends.showProfile(friend.username)
+        Item {
+            Layout.fillWidth: true
+        }
+        RowButton {
+            visible: friendTile.friend.online && !!friendTile.friend.location
+            text: "Join"
+            strong: true
+            onPressed: friends.join(friendTile.friend.username)
+        }
+    }
+
     Tab {
         visible: root.currentTab === 1
 
@@ -350,25 +393,28 @@ Page {
             }
         }
 
-        Section {
+        CollectionView {
+            id: onlineFriends
             visible: friends.signedIn
             title: "Online" + (friends.online.length ? " · " + friends.online.length : "")
-            footer: friends.online.length === 0 ? (friends.busy ? "…" : "None of your friends is online.") : ""
-
-            Repeater {
-                model: friends.online
-                delegate: FriendRow { friend: modelData }
-            }
+            items: friends.entries(friends.online)
+            view: friendBar.view
+            row: Component { FriendRow { friend: entry.friend } }
+            tile: Component { FriendTile { friend: entry.friend } }
+            empty: friends.online.length === 0 ? (friends.busy ? "…" : "None of your friends is online.")
+                : "No friend online matches \u201c" + friendBar.search + "\u201d."
+            onActivated: friends.showProfile(item.key)
         }
 
-        Section {
+        CollectionView {
             visible: friends.signedIn && friends.offline.length > 0
             title: "Offline · " + friends.offline.length
-
-            Repeater {
-                model: friends.offline
-                delegate: FriendRow { friend: modelData }
-            }
+            items: friends.entries(friends.offline)
+            view: friendBar.view
+            row: Component { FriendRow { friend: entry.friend } }
+            tile: Component { FriendTile { friend: entry.friend } }
+            empty: "No friend offline matches \u201c" + friendBar.search + "\u201d."
+            onActivated: friends.showProfile(item.key)
         }
     }
 

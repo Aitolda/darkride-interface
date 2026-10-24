@@ -3,8 +3,11 @@
 //  qml/darkride
 //
 //  Darkride's Avatar panel, in the panels' iOS look (darkride/panel), with three tabs (Caity, 10-23):
-//  Avatar: the avatar worn (its picture and name), wearing another by its URL, from My Files or from Favorites, the
-//    default, its scale, its collisions with the world, and putting it in My Files;
+//  Avatar: the avatar worn (its picture and name); Favorites; the avatars in My Files as a collection (Caity, 10-24:
+//    she has 100+), under the panels' search bar (search, Cards / Tiles / List, Name / Newest / Folder), each with its
+//    picture when there is one beside it (<name>.preview.jpg or .png, or preview.jpg/.png in its folder: the
+//    picture an .fst's `preview` field names); wearing one by its URL, the default, its scale, its collisions with
+//    the world, and putting it in My Files;
 //  Menu: the avatar's own menu, as its package made it (toggles, buttons held while pressed, radial sliders and
 //    submenus; MyAvatar.getAvatarMenu()), drawn for whatever avatar is worn; a choice goes to avatarMenu.js on the
 //    local channel io.darkride.avatarMenu, which sets the parameter, remembers the saved ones and plays emotes;
@@ -33,6 +36,20 @@ Page {
     tabs: ["Avatar", "Menu", "Nametag"]
 
     readonly property string tabSetting: "io.darkride.avatarPanel.tab"
+
+    header: [
+        SearchBar {
+            id: avatarBar
+            visible: root.currentTab === 0
+            settingsKey: "io.darkride.avatarPanel.files"
+            placeholder: "Search your avatars"
+            sorts: [
+                { text: "Name", value: "name", by: function (a, b) { return a.title.toLowerCase().localeCompare(b.title.toLowerCase()); } },
+                { text: "Newest", value: "newest", by: function (a, b) { return b.updated - a.updated; } },
+                { text: "Folder", value: "folder", by: function (a, b) { return a.key.toLowerCase().localeCompare(b.key.toLowerCase()); } }
+            ]
+        }
+    ]
     Component.onCompleted: currentTab = Math.max(0, Math.min(2, Settings.getValue(tabSetting, 0)))
     onCurrentTabChanged: Settings.setValue(tabSetting, currentTab)
 
@@ -141,11 +158,28 @@ Page {
     QtObject {
         id: myFiles
 
-        property var avatars: []     // [{ name, url }]
+        property var avatars: []     // [{ key, title, subtitle, picture, url, updated, isPrivate, badge }]
         property int privateCount: 0
-        property bool open: false
         property bool busy: false
         property string status: ""
+
+        // as the search bar arranges them, the one worn ticked
+        readonly property var shown: avatarBar.arrange(avatars).map(function (entry) {
+            return Object.assign({}, entry, { checked: entry.url === avatar.url });
+        })
+
+        // the picture beside an .fst: <name>.preview.jpg/.png, then preview.jpg/.png in its folder
+        function pictureFor(keys, folder, name) {
+            var candidates = [name + ".preview.jpg", name + ".preview.jpeg", name + ".preview.png",
+                              "preview.jpg", "preview.jpeg", "preview.png"];
+            for (var i = 0; i < candidates.length; i++) {
+                var found = keys[(folder + candidates[i]).toLowerCase()];
+                if (found) {
+                    return found;
+                }
+            }
+            return "";
+        }
 
         function load() {
             if (!AccountServices.loggedIn || busy) {
@@ -160,16 +194,26 @@ Page {
                 }
                 var found = [];
                 var privates = 0;
+                var keys = {};
+                (data.files || []).forEach(function (file) {
+                    var key = file.key.charAt(0) === "/" ? file.key : "/" + file.key;
+                    keys[key.toLowerCase()] = key;
+                });
                 (data.files || []).forEach(function (file) {
                     if (!/\.fst$/i.test(file.key)) {
                         return;
                     }
                     var key = file.key.charAt(0) === "/" ? file.key : "/" + file.key;
+                    var folder = key.substring(0, key.lastIndexOf("/") + 1);
+                    var name = key.split("/").pop().replace(/\.fst$/i, "");
+                    var picture = pictureFor(keys, folder, name);
                     privates += file.tea ? 1 : 0;
-                    found.push({ name: key.split("/").pop().replace(/\.fst$/i, ""), path: key, url: data.url + key,
-                                 isPrivate: !!file.tea });
+                    found.push({ key: key, title: name, subtitle: folder.replace(/^\/|\/$/g, "") || "My Files",
+                                 keywords: key, picture: picture !== "" ? data.url + picture : "",
+                                 url: data.url + key, updated: Date.parse(file.updated) || 0, isPrivate: !!file.tea,
+                                 badge: file.tea ? "private" : "" });
                 });
-                found.sort(function (a, b) { return a.path.toLowerCase() < b.path.toLowerCase() ? -1 : 1; });
+                found.sort(function (a, b) { return a.key.toLowerCase() < b.key.toLowerCase() ? -1 : 1; });
                 avatars = found;
                 privateCount = privates;
                 status = "";
@@ -183,125 +227,45 @@ Page {
         visible: root.currentTab === 0
 
         Section {
+            title: "Wearing"
             Item {
                 width: parent ? parent.width : 0
-                height: avatarCard.implicitHeight + 2 * Theme.cardPadding
+                height: wornRow.implicitHeight + 2 * Theme.rowPadding + 4 * Theme.unit
 
-                Column {
-                    id: avatarCard
-                    anchors.centerIn: parent
+                RowLayout {
+                    id: wornRow
+                    x: Theme.cardPadding
                     width: parent.width - 2 * Theme.cardPadding
-                    spacing: 8 * Theme.unit
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 12 * Theme.unit
 
-                    Image {
-                        id: avatarPicture
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        visible: status === Image.Ready
-                        width: Math.min(180 * Theme.unit, parent.width)
-                        height: visible ? width * sourceSize.height / Math.max(1, sourceSize.width) : 0
-                        fillMode: Image.PreserveAspectFit
+                    RoundedImage {
+                        Layout.preferredWidth: 56 * Theme.unit
+                        Layout.preferredHeight: 56 * Theme.unit
+                        radius: 10 * Theme.unit
+                        placeholder: avatar.name !== "" ? avatar.name : "?"
                         source: avatar.pictureUrl
-                        asynchronous: true
                     }
-                    Text {
-                        width: parent.width
-                        horizontalAlignment: Text.AlignHCenter
-                        text: avatar.favoriteName !== "" ? avatar.favoriteName : (avatar.name !== "" ? avatar.name : "Your avatar")
-                        color: Theme.text
-                        font.pixelSize: 18 * Theme.unit
-                        font.bold: true
-                        elide: Text.ElideMiddle
-                    }
-                    Text {
-                        width: parent.width
-                        horizontalAlignment: Text.AlignHCenter
-                        text: avatar.url
-                        color: Theme.tertiaryText
-                        font.pixelSize: Theme.detailSize
-                        elide: Text.ElideMiddle
-                    }
-                }
-            }
-        }
-
-        Section {
-            title: "Wear"
-            footer: myFiles.status !== "" ? myFiles.status
-                : myFiles.privateCount > 0
-                  ? "Private: other players see it when they're on Darkride 1.2 or newer; it can't be downloaded "
-                    + "from a browser."
-                  : ""
-
-            ListRow {
-                label: "URL"
-                fill: true
-                Field {
-                    id: urlField
-                    Layout.fillWidth: true
-                    text: avatar.url
-                    horizontalAlignment: TextInput.AlignLeft
-                    placeholderText: "https://…/avatar.fst"
-                    onAccepted: if (text.trim() !== "" && text.trim() !== avatar.url) { avatar.wear(text.trim(), text.trim().split("/").pop()); }
-                }
-            }
-            ListRow {
-                visible: urlField.text.trim() !== "" && urlField.text.trim() !== avatar.url
-                action: true
-                label: "Wear This URL"
-                onClicked: avatar.wear(urlField.text.trim(), urlField.text.trim().split("/").pop())
-            }
-
-            // My Files: a row that opens the list under it
-            Column {
-                id: filesPicker
-                visible: AccountServices.loggedIn
-                width: parent ? parent.width : 0
-
-                ListRow {
-                    label: "From My Files"
-                    cardItem: filesPicker
-                    clickable: true
-                    onClicked: {
-                        myFiles.open = !myFiles.open;
-                        if (myFiles.open) {
-                            myFiles.load();
-                        }
-                    }
-                    Text {
-                        text: myFiles.busy ? "…" : String(myFiles.avatars.length)
-                        color: Theme.secondaryText
-                        font.pixelSize: Theme.bodySize
-                    }
-                    Text {
-                        text: myFiles.open ? "⌃" : "⌄"
-                        color: Theme.tertiaryText
-                        font.pixelSize: Theme.bodySize
-                    }
-                }
-                Repeater {
-                    model: myFiles.open ? myFiles.avatars : []
-                    delegate: ListRow {
-                        label: modelData.name
-                        detail: modelData.path + (modelData.isPrivate ? " · private" : "")
-                        clickable: true
-                        onClicked: {
-                            avatar.wear(modelData.url, modelData.name);
-                            myFiles.open = false;
+                    Column {
+                        Layout.fillWidth: true
+                        spacing: 2 * Theme.unit
+                        Text {
+                            width: parent.width
+                            text: avatar.favoriteName !== "" ? avatar.favoriteName : (avatar.name !== "" ? avatar.name : "Your avatar")
+                            color: Theme.text
+                            font.pixelSize: 16 * Theme.unit
+                            font.bold: true
+                            elide: Text.ElideMiddle
                         }
                         Text {
-                            text: "✓"
-                            color: Theme.tint
-                            font.pixelSize: Theme.bodySize
-                            font.bold: true
-                            opacity: modelData.url === avatar.url ? 1 : 0
+                            width: parent.width
+                            text: avatar.url
+                            color: Theme.tertiaryText
+                            font.pixelSize: Theme.detailSize
+                            elide: Text.ElideMiddle
                         }
                     }
                 }
-            }
-            ListRow {
-                action: true
-                label: "Use the Default Avatar"
-                onClicked: avatar.wearDefault()
             }
         }
 
@@ -310,7 +274,7 @@ Page {
             footer: avatar.favorites.length === 0 && !avatar.adding ? "Add the avatar you wear to keep it a click away." : ""
 
             Repeater {
-                model: avatar.favorites
+                model: avatar.favorites.filter(function (name) { return avatarBar.matches({ title: name }); })
                 delegate: ListRow {
                     label: modelData
                     clickable: true
@@ -376,6 +340,51 @@ Page {
                     favoriteField.forceActiveFocus();
                     favoriteField.selectAll();
                 }
+            }
+        }
+
+        CollectionView {
+            objectName: "avatarFiles"   // a test fills it
+            visible: AccountServices.loggedIn
+            title: "My Files" + (myFiles.avatars.length > 0 ? " · " + (avatarBar.search !== ""
+                ? myFiles.shown.length + " of " + myFiles.avatars.length : myFiles.avatars.length) : "")
+            items: myFiles.shown
+            view: avatarBar.view
+            empty: myFiles.status !== "" ? myFiles.status : myFiles.busy ? "…"
+                : avatarBar.search !== "" ? "No avatar in My Files matches “" + avatarBar.search + "”."
+                : "Avatars you put in My Files show here."
+            footer: myFiles.privateCount > 0
+                ? "Private: other players see it when they're on Darkride 1.2 or newer; it can't be downloaded from a browser."
+                : ""
+            onActivated: avatar.wear(item.url, item.title)
+        }
+
+        Section {
+            title: "Wear by URL"
+
+            ListRow {
+                label: "URL"
+                fill: true
+                Field {
+                    id: urlField
+                    Layout.fillWidth: true
+                    text: avatar.url
+                    horizontalAlignment: TextInput.AlignLeft
+                    placeholderText: "https://…/avatar.fst"
+                    onAccepted: if (text.trim() !== "" && text.trim() !== avatar.url) { avatar.wear(text.trim(), text.trim().split("/").pop()); }
+                }
+            }
+            ListRow {
+                visible: urlField.text.trim() !== "" && urlField.text.trim() !== avatar.url
+                action: true
+                label: "Wear This URL"
+                onClicked: avatar.wear(urlField.text.trim(), urlField.text.trim().split("/").pop())
+            }
+
+            ListRow {
+                action: true
+                label: "Use the Default Avatar"
+                onClicked: avatar.wearDefault()
             }
         }
 

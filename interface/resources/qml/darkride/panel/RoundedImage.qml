@@ -22,6 +22,7 @@ Item {
     property real radius: Theme.cardRadius
     property bool roundBottom: true
     property string placeholder: ""
+    property int fillMode: Image.PreserveAspectCrop
     readonly property bool ready: image.status === Image.Ready
 
     Item {
@@ -42,7 +43,7 @@ Item {
 
         Rectangle {
             anchors.fill: parent
-            visible: !picture.ready
+            visible: !picture.ready && (picture.placeholder !== "" || picture.source.toString() !== "")
             color: Theme.fill
             Text {
                 anchors.centerIn: parent
@@ -56,7 +57,7 @@ Item {
         Image {
             id: image
             anchors.fill: parent
-            fillMode: Image.PreserveAspectCrop
+            fillMode: picture.fillMode
             asynchronous: true
             source: picture.source
         }

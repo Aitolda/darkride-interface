@@ -12,3 +12,6 @@ PickerRow 1.0 PickerRow.qml
 NearbyPeople 1.0 NearbyPeople.qml
 PersonRow 1.0 PersonRow.qml
 RoundedImage 1.0 RoundedImage.qml
+SearchBar 1.0 SearchBar.qml
+CollectionView 1.0 CollectionView.qml
+CollectionTile 1.0 CollectionTile.qml

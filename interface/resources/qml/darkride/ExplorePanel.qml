@@ -6,10 +6,11 @@
 //  the worlds that open as instances; Liked; Private, your own), searchable; each a card with its picture, author,
 //  likes, who is there, and Hop (where the people are, else somewhere running, else a new public instance), with the
 //  places running now and new instances (public, friends, private) under More. The instance you are in has its own
-//  card: its link, edit mode, save, close. Back and Forward walk your history of places. The search and the toolbar
-//  stay pinned at the top (Caity, 10-24): List or Tiles (three a row; a tile's click opens its card alone), and the
-//  order: Relevance (the metaverse's own: people in it, then the newest), Likes, People, Name; sorted here, over the
-//  worlds loaded. An author's name opens their profile in the People panel (its Profile tab, through the bar).
+//  card: its link, edit mode, save, close. Back and Forward walk your history of places. The worlds are a collection
+//  under the panels' search bar, pinned at the top (Caity, 10-24): the search (the metaverse's), Cards / Tiles / List
+//  (a tile's or a row's click opens its card alone), and the order: Relevance (the metaverse's own: people in it,
+//  then the newest), Likes, People, Name; sorted here, over the worlds loaded. An author's name opens their profile
+//  in the People panel (its Profile tab, through the bar).
 //
 //  The version check (with the metaverse's version-check, Caity's yes 10-24): the client's protocol signature goes with
 //  a list's request and with an instance's start, so a world or an instance running another version of Darkride is
@@ -41,12 +42,8 @@ Page {
 
     readonly property var kinds: ["popular", "liked", "private"]
     readonly property string tabSetting: "io.darkride.explorePanel.tab"
-    readonly property string viewSetting: "io.darkride.explorePanel.view"
-    readonly property string sortSetting: "io.darkride.explorePanel.sort"
     readonly property string protocol: Window.protocolSignature()
     Component.onCompleted: {
-        explore.view = Settings.getValue(viewSetting, "list") === "tiles" ? "tiles" : "list";
-        explore.sort = Settings.getValue(sortSetting, "relevance");
         currentTab = Math.max(0, Math.min(2, Settings.getValue(tabSetting, 0)));
         explore.load(true);
         here.refresh();
@@ -77,33 +74,11 @@ Page {
         property string search: ""
         property string hoppingWorld: ""   // a hop under way, so a second click doesn't start another
         readonly property int amount: 50
-        property string view: "list"       // list: a card a row; tiles: three a row
-        property string sort: "relevance"  // relevance (the metaverse's order), likes, people, name
-        property var focused: null         // a world opened from its tile, shown alone
+        property var focused: null         // a world opened from its tile or row, shown alone
         property var likesNow: ({})        // likes changed here since the list came, by world id: { liked, likes }
 
-        onViewChanged: { Settings.setValue(root.viewSetting, view); focused = null; }
-        onSortChanged: Settings.setValue(root.sortSetting, sort)
-
-        // the worlds in the chosen order; ties keep the metaverse's order
-        readonly property var shown: {
-            if (sort === "relevance") {
-                return worlds;
-            }
-            var order = worlds.map(function (world, index) { return { world: world, index: index }; });
-            order.sort(function (a, b) {
-                var by = 0;
-                if (sort === "likes") {
-                    by = explore.likeState(b.world).likes - explore.likeState(a.world).likes;
-                } else if (sort === "people") {
-                    by = explore.people(b.world) - explore.people(a.world);
-                } else if (sort === "name") {
-                    by = String(a.world.label || "").localeCompare(String(b.world.label || ""));
-                }
-                return by !== 0 ? by : a.index - b.index;
-            });
-            return order.map(function (entry) { return entry.world; });
-        }
+        // the worlds in the search bar's order (the metaverse searched them); ties keep the metaverse's order
+        readonly property var shown: worldBar.arrange(worlds, false)
 
         function query(extra) {
             var parts = ["page=" + page, "amount=" + amount, "search=" + encodeURIComponent(search),
@@ -177,6 +152,17 @@ Page {
                 .sort(function (a, b) { return people(b) - people(a); });
             return merged.concat(rest.filter(function (w) { return people(w) > 0; }))
                 .concat(rest.filter(function (w) { return people(w) === 0; }));
+        }
+
+        // a world's line under its name: who's there, or what Hop will do
+        function summary(world, list) {
+            var instances = world.instances || null;
+            var here = people(world);
+            if (!compatible(world.protocol)) return "Runs another version of Darkride.";
+            if (here > 0) return here + (here === 1 ? " person here" : " people here");
+            if (list.length > 0) return "Open now. Be the first one in.";
+            if (instances && instances.canStart) return "Hop opens a new instance for you.";
+            return instances ? "Sign in to open this world." : "Nobody's here right now.";
         }
 
         function compatible(protocol) {
@@ -395,40 +381,25 @@ Page {
 
     // ==== the page ====================================================================================================
 
-    // pinned: searching; the view and the order; walking back and forth through the places you've been
+    // pinned: the panels' search bar (searching, the view and the order), and walking back and forth through the
+    // places you've been
     header: [
-        Section {
-            ListRow {
-                label: "Search"
-                fill: true
-                Field {
-                    id: searchField
-                    Layout.fillWidth: true
-                    horizontalAlignment: TextInput.AlignLeft
-                    placeholderText: "worlds by name"
-                    onTextChanged: searchDelay.restart()
-                    onAccepted: { searchDelay.stop(); explore.search = text.trim(); explore.load(true); }
-                }
-            }
-        },
-        Flow {
-            Layout.fillWidth: true
-            Layout.topMargin: 10 * Theme.unit
-            spacing: 8 * Theme.unit
+        SearchBar {
+            id: worldBar
+            settingsKey: "io.darkride.explorePanel.worlds"
+            placeholder: "Search worlds"
+            sorts: [
+                { text: "Relevance", value: "relevance", by: null },
+                { text: "Likes", value: "likes", by: function (a, b) {
+                    return explore.likeState(b).likes - explore.likeState(a).likes; } },
+                { text: "People", value: "people", by: function (a, b) { return explore.people(b) - explore.people(a); } },
+                { text: "Name", value: "name", by: function (a, b) {
+                    return String(a.label || "").toLowerCase().localeCompare(String(b.label || "").toLowerCase()); } }
+            ]
+            onSearchChanged: { explore.search = search; explore.load(true); }
+            onViewChanged: explore.focused = null
+            onSortChanged: scrollToTop()
 
-            Segmented {
-                objectName: "viewPicker"
-                model: [{ text: "List", value: "list" }, { text: "Tiles", value: "tiles" }]
-                current: explore.view
-                onChosen: { explore.view = value; scrollToTop(); }
-            }
-            Segmented {
-                objectName: "sortPicker"
-                model: [{ text: "Relevance", value: "relevance" }, { text: "Likes", value: "likes" },
-                        { text: "People", value: "people" }, { text: "Name", value: "name" }]
-                current: explore.sort
-                onChosen: { explore.sort = value; scrollToTop(); }
-            }
             CardButton {
                 visible: history.canGoBack
                 height: Theme.controlHeight
@@ -443,11 +414,6 @@ Page {
             }
         }
     ]
-    Timer {
-        id: searchDelay
-        interval: 400
-        onTriggered: { explore.search = searchField.text.trim(); explore.load(true); }
-    }
     QtObject {
         id: history
         property bool canGoBack: false
@@ -584,13 +550,7 @@ Page {
         readonly property int people: explore.people(world)
         readonly property var places: explore.places(world)
         readonly property bool canHop: explore.canHop(world, places)
-        readonly property string summary: {
-            if (!compatible) return "Runs another version of Darkride.";
-            if (people > 0) return people + (people === 1 ? " person here" : " people here");
-            if (places.length > 0) return "Open now. Be the first one in.";
-            if (instances && instances.canStart) return "Hop opens a new instance for you.";
-            return instances ? "Sign in to open this world." : "Nobody's here right now.";
-        }
+        readonly property string summary: explore.summary(world, places)
 
         footer: status
 
@@ -663,11 +623,10 @@ Page {
     }
 
     // one world as a tile, three a row: its picture, name, author, likes, who's there, Hop; a click opens its card
-    component WorldTile: Rectangle {
+    component WorldTile: CollectionTile {
         id: tile
         objectName: "worldTile"
         property var world: ({})
-        property string status: ""
         readonly property bool compatible: explore.compatible(world.protocol)
         readonly property int people: explore.people(world)
         readonly property var places: explore.places(world)
@@ -677,101 +636,63 @@ Page {
             status = text;
         }
 
-        implicitHeight: tileColumn.implicitHeight
-        radius: Theme.cardRadius
-        color: tileArea.pressed ? Theme.cardPressed : Theme.card
+        title: world.label || ""
+        subtitle: explore.byline(world, !compatible ? "another version" : people > 0 ? people + " here" : "")
+        picture: world.id ? explore.picture(world.id) : ""
+        pictureRatio: 0.6
+        dim: !compatible
+        onClicked: explore.openWorld(world)
+        onLinkActivated: explore.openProfile(decodeURIComponent(link))
 
-        MouseArea {
-            id: tileArea
-            anchors.fill: parent
-            onClicked: explore.openWorld(tile.world)
+        Likes {
+            world: tile.world
         }
-
-        Column {
-            id: tileColumn
-            width: parent.width
-
-            RoundedImage {
-                width: parent.width
-                height: width * 0.6
-                roundBottom: false
-                placeholder: tile.world.label || ""
-                source: tile.world.id ? explore.picture(tile.world.id) : ""
-                opacity: tile.compatible ? 1 : 0.45
-            }
-
-            Column {
-                x: 10 * Theme.unit
-                width: parent.width - 2 * x
-                topPadding: 8 * Theme.unit
-                bottomPadding: 10 * Theme.unit
-                spacing: 2 * Theme.unit
-
-                Text {
-                    width: parent.width
-                    text: tile.world.label || ""
-                    color: Theme.text
-                    font.pixelSize: Theme.bodySize
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
-                }
-                Text {
-                    width: parent.width
-                    text: explore.byline(tile.world, !tile.compatible ? "another version"
-                        : tile.people > 0 ? tile.people + " here" : "")
-                    textFormat: Text.RichText
-                    color: Theme.secondaryText
-                    font.pixelSize: Theme.detailSize
-                    elide: Text.ElideRight
-                    onLinkActivated: explore.openProfile(decodeURIComponent(link))
-                    MouseArea {
-                        anchors.fill: parent
-                        acceptedButtons: Qt.NoButton
-                        cursorShape: parent.hoveredLink !== "" ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    }
-                }
-                Item {
-                    width: parent.width
-                    height: 6 * Theme.unit
-                }
-                Item {
-                    width: parent.width
-                    height: tileHop.height
-                    Likes {
-                        anchors.verticalCenter: parent.verticalCenter
-                        world: tile.world
-                    }
-                    CardButton {
-                        id: tileHop
-                        anchors.right: parent.right
-                        text: explore.hoppingWorld === tile.world.id ? "Hopping…" : "Hop"
-                        strong: true
-                        enabled: tile.canHop && explore.hoppingWorld === ""
-                        onPressed: explore.hop(tile.world, tile.places, tile.report)
-                    }
-                }
-                Text {
-                    visible: tile.status !== ""
-                    width: parent.width
-                    topPadding: 4 * Theme.unit
-                    text: tile.status
-                    color: Theme.secondaryText
-                    font.pixelSize: Theme.detailSize
-                    wrapMode: Text.WordWrap
-                }
-            }
+        Item {
+            Layout.fillWidth: true
+        }
+        CardButton {
+            text: explore.hoppingWorld === tile.world.id ? "Hopping…" : "Hop"
+            strong: true
+            enabled: tile.canHop && explore.hoppingWorld === ""
+            onPressed: explore.hop(tile.world, tile.places, tile.report)
         }
     }
 
-    Section {
-        visible: explore.worlds.length === 0 && explore.focused === null
-        footer: explore.loading ? "…" : explore.status !== "" ? explore.status
-            : explore.search !== "" ? "No world goes by that name."
-            : root.currentTab === 1 ? "Worlds you like show here." : root.currentTab === 2 ? "Your private worlds show here."
-            : "No worlds are open right now."
+    // one world as a row of the List: a small picture, name, author and who's there, likes, Hop; a click opens its card
+    component WorldRow: ListRow {
+        id: worldRow
+        property var world: ({})
+        property string status: ""
+        readonly property var places: explore.places(world)
+        readonly property bool canHop: explore.canHop(world, places)
+
+        function report(text) {
+            status = text;
+        }
+
+        label: world.label || ""
+        detail: status !== "" ? explore.escaped(status) : explore.byline(world, explore.summary(world, places))
+        detailFormat: Text.RichText
+        onLinkActivated: explore.openProfile(decodeURIComponent(link))
+        icon: world.id ? explore.picture(world.id) : ""
+        iconSize: 40 * Theme.unit
+        iconRadius: 8 * Theme.unit
+        iconPlaceholder: world.label || "?"
+        clickable: true
+        onClicked: explore.openWorld(world)
+
+        Likes {
+            world: worldRow.world
+        }
+        CardButton {
+            text: explore.hoppingWorld === worldRow.world.id ? "Hopping…" : "Hop"
+            strong: true
+            enabled: worldRow.canHop && explore.hoppingWorld === ""
+            onPressed: explore.hop(worldRow.world, worldRow.places, worldRow.report)
+        }
     }
 
-    // a world opened from its tile, alone, with the way back to the tiles
+    // a world opened from its tile or row, alone, with the way back
     Section {
         visible: explore.focused !== null
         ListRow {
@@ -785,28 +706,17 @@ Page {
         delegate: WorldCard { world: modelData; open: true }
     }
 
-    Repeater {
-        model: explore.view === "list" && explore.focused === null ? explore.shown : []
-        delegate: WorldCard { world: modelData }
-    }
-
-    GridLayout {
-        visible: explore.view === "tiles" && explore.focused === null && explore.shown.length > 0
-        Layout.fillWidth: true
-        Layout.topMargin: 18 * Theme.unit
-        columns: width < 480 * Theme.unit ? 2 : 3
-        columnSpacing: Theme.gap
-        rowSpacing: Theme.gap
-
-        Repeater {
-            model: explore.view === "tiles" && explore.focused === null ? explore.shown : []
-            delegate: WorldTile {
-                world: modelData
-                Layout.fillWidth: true
-                Layout.preferredWidth: 1
-                Layout.alignment: Qt.AlignTop
-            }
-        }
+    CollectionView {
+        visible: explore.focused === null
+        items: explore.shown
+        view: worldBar.view
+        card: Component { WorldCard { world: entry } }
+        tile: Component { WorldTile { world: entry } }
+        row: Component { WorldRow { world: entry } }
+        empty: explore.loading ? "…" : explore.status !== "" ? explore.status
+            : explore.search !== "" ? "No world goes by that name."
+            : root.currentTab === 1 ? "Worlds you like show here." : root.currentTab === 2 ? "Your private worlds show here."
+            : "No worlds are open right now."
     }
 
     Section {
