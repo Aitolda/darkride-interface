@@ -10,7 +10,6 @@
     "gif-h",
     "glslang",
     "hifi-deps",
-    "nlohmann-json",
     {
       "name": "openvr",
       "platform": "x64 & (windows | linux)"
@@ -18,10 +17,6 @@
     {
       "name": "openxr-loader",
       "platform": "x64 & (windows | linux)"
-    },
-    {
-      "name": "quazip",
-      "platform": "!android"
     },
     {
       "name": "sdl2",
