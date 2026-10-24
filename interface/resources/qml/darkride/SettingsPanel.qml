@@ -739,12 +739,22 @@ Page {
     QtObject {
         id: appearance
         property bool awaitingFile: false   // Window.browseChanged answers anyone's browse; only ours is taken
+        property bool awaitingSkin: false
         property string status: ""
+        property string skinStatus: ""
     }
 
     Connections {
         target: Window
         function onBrowseChanged(filename) {
+            if (appearance.awaitingSkin) {
+                appearance.awaitingSkin = false;
+                if (filename !== "") {
+                    var trouble = Skins.install(filename);
+                    appearance.skinStatus = trouble === "" ? "The skin is on." : "Couldn't load the skin: " + trouble + ".";
+                }
+                return;
+            }
             if (!appearance.awaitingFile) {
                 return;
             }
@@ -776,6 +786,40 @@ Page {
                     current: SystemToolbar.place
                     onChosen: SystemToolbar.place = value
                 }
+            }
+        }
+
+        // skins (ui/Skins.h, SKINS.md): Darkride's own look, or one installed; Load Skin... takes a .zip or a skin.json
+        Section {
+            title: "Skin"
+            footer: appearance.skinStatus !== "" ? appearance.skinStatus
+                : "A skin is pictures, colours and fonts only: nothing in it runs, so a skin from anyone is safe to load."
+
+            PickerRow {
+                label: "Skin"
+                current: Skins.current
+                model: [{ text: "Darkride", value: "" }].concat(Skins.installed.map(function (skin) {
+                    return { text: skin.name + (skin.author ? " · " + skin.author : ""), value: skin.id };
+                }))
+                onChosen: {
+                    var trouble = Skins.setCurrent(value);
+                    appearance.skinStatus = trouble === "" ? "" : "Couldn't put it on: " + trouble + ".";
+                }
+            }
+            ListRow {
+                action: true
+                label: "Load Skin…"
+                onClicked: {
+                    appearance.awaitingSkin = true;
+                    Window.browseAsync("Load a Skin", "", "Skins (*.zip *.json)");
+                }
+            }
+            ListRow {
+                visible: Skins.current !== ""
+                action: true
+                destructive: true
+                label: "Remove This Skin"
+                onClicked: appearance.skinStatus = Skins.remove(Skins.current)
             }
         }
 

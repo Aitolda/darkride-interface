@@ -120,14 +120,18 @@ SystemToolbar::SystemToolbar() : QToolBar("Buttons") {
     setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     setIconSize(QSize(BUTTON, BUTTON));
     toggleViewAction()->setEnabled(false);   // the main window's toolbar menu doesn't hide it: Settings places it
-    // the look until a skin gives one (the QML bar's: white captions on a dark strip)
-    setStyleSheet(
+    setSkinned(false);
+    hide();
+}
+
+void SystemToolbar::setSkinned(bool skinned) {
+    // its own look, until a skin gives one (the QML bar's: white captions on a dark strip)
+    setStyleSheet(skinned ? QString() :
         "QToolBar#systemToolbar { background: #1d1f21; border: none; spacing: 4px; padding: 6px; }"
         "QToolBar#systemToolbar QToolButton { color: #ffffff; font-size: 12px; border: none; border-radius: 6px;"
         " padding: 2px 4px; }"
         "QToolBar#systemToolbar QToolButton:hover { background: rgba(255, 255, 255, 0.10); }"
         "QToolBar#systemToolbar QToolButton:pressed { background: rgba(255, 255, 255, 0.18); }");
-    hide();
 }
 
 void SystemToolbar::attach(QMainWindow* window, TabletProxy* tablet) {

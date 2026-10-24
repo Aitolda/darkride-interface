@@ -77,6 +77,7 @@
 #include "scripting/DiskCacheScriptingInterface.h"
 #include "avatar/AvatarThumbnails.h"
 #include "ui/MetaverseRequests.h"
+#include "ui/Skins.h"
 #include "ui/SystemToolbar.h"
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
 #include "SpeechRecognizer.h"
@@ -130,6 +131,7 @@ void Application::onDesktopRootContextCreated(QQmlContext* surfaceContext) {
     surfaceContext->setContextProperty("MetaverseRequests", DependencyManager::get<MetaverseRequests>().data());
     surfaceContext->setContextProperty("AvatarThumbnails", DependencyManager::get<AvatarThumbnails>().data());
     surfaceContext->setContextProperty("SystemToolbar", SystemToolbar::instance());
+    surfaceContext->setContextProperty("Skins", DependencyManager::get<Skins>().data());
     _fileDownload = new FileScriptingInterface(engine);
     surfaceContext->setContextProperty("File", _fileDownload);
     connect(_fileDownload, &FileScriptingInterface::unzipResult, &_assetImport, &AssetImport::handleUnzip);
@@ -245,6 +247,7 @@ void Application::setupQmlSurface(QQmlContext* surfaceContext, bool setAdditiona
         surfaceContext->setContextProperty("MetaverseRequests", DependencyManager::get<MetaverseRequests>().data());
         surfaceContext->setContextProperty("AvatarThumbnails", DependencyManager::get<AvatarThumbnails>().data());
         surfaceContext->setContextProperty("SystemToolbar", SystemToolbar::instance());
+        surfaceContext->setContextProperty("Skins", DependencyManager::get<Skins>().data());
 
         surfaceContext->setContextProperty("Account", AccountServicesScriptingInterface::getInstance()); // DEPRECATED - TO BE REMOVED
         surfaceContext->setContextProperty("GlobalServices", AccountServicesScriptingInterface::getInstance()); // DEPRECATED - TO BE REMOVED

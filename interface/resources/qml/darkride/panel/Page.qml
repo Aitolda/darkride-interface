@@ -28,6 +28,13 @@ Rectangle {
 
     color: Theme.background
 
+    // a skin's panel frame behind it all, and its padding around the page (ui/Skins.h)
+    readonly property var skinPadding: Theme.frame("panel") ? Theme.frame("panel").padding : [0, 0, 0, 0]
+    SkinFrame {
+        part: "panel"
+        anchors.fill: parent
+    }
+
     // closes the panel the page is on, as its close box does: a desktop window hides (the bar's button follows it);
     // the tablet goes back to its home screen. Explore closes itself so a hop isn't watched from behind it.
     function closePanel() {
@@ -53,8 +60,9 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        anchors.leftMargin: Theme.pageMargin
-        anchors.rightMargin: Theme.pageMargin
+        anchors.leftMargin: Theme.pageMargin + page.skinPadding[0]
+        anchors.rightMargin: Theme.pageMargin + page.skinPadding[2]
+        anchors.topMargin: page.skinPadding[1]
         spacing: 0
 
         Text {
@@ -108,6 +116,9 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
+        anchors.leftMargin: page.skinPadding[0]
+        anchors.rightMargin: page.skinPadding[2]
+        anchors.bottomMargin: page.skinPadding[3]
         clip: true
         contentWidth: availableWidth
         contentHeight: holder.implicitHeight

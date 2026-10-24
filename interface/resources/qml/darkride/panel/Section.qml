@@ -45,7 +45,14 @@ ColumnLayout {
         Layout.fillWidth: true
         implicitHeight: rowColumn.implicitHeight
         radius: Theme.cardRadius
-        color: Theme.card
+        color: cardFrame.shown ? "transparent" : Theme.card
+
+        // a skin's card frame, when it gives one (ui/Skins.h)
+        SkinFrame {
+            id: cardFrame
+            part: "card"
+            anchors.fill: parent
+        }
 
         Column {
             id: rowColumn

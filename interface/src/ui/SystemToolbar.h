@@ -45,6 +45,9 @@ public:
     /// the sign-in gate's say: a bar may show (false on the sign-in screen)
     void setAllowed(bool allowed);
 
+    /// a skin is on: the bar drops its own look for the application's style sheet (Skins)
+    void setSkinned(bool skinned);
+
 signals:
     void placeChanged();
 

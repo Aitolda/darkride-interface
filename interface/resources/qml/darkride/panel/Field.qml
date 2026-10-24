@@ -32,10 +32,21 @@ QQC2.TextField {
     selectByMouse: true
     opacity: enabled ? 1 : 0.4
 
-    background: Rectangle {
-        radius: 7 * Theme.unit
-        color: Theme.fill
-        border.width: field.activeFocus ? 1 : 0
-        border.color: Theme.tint
+    background: Item {
+        Rectangle {
+            anchors.fill: parent
+            visible: !fieldFrame.shown
+            radius: 7 * Theme.unit
+            color: Theme.fill
+            border.width: field.activeFocus ? 1 : 0
+            border.color: Theme.tint
+        }
+        // a skin's field frame, when it gives one ("checked" while typing)
+        SkinFrame {
+            id: fieldFrame
+            part: "field"
+            look: field.activeFocus ? "checked" : "image"
+            anchors.fill: parent
+        }
     }
 }

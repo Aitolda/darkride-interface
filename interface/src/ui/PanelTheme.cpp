@@ -44,6 +44,13 @@ void PanelTheme::registerWithQml() {
     qmlRegisterSingletonInstance("DarkridePanels", 1, 0, "PanelTheme", instance);
 }
 
+void PanelTheme::setSkin(const QVariantMap& skin) {
+    if (skin != _skin) {
+        _skin = skin;
+        emit changed();
+    }
+}
+
 void PanelTheme::setScheme(const QString& scheme) {
     if (!BUILT_IN_SCHEMES.contains(scheme) && !(scheme == "custom" && !_custom.isEmpty())) {
         return;

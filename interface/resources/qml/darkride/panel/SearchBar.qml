@@ -99,9 +99,17 @@ ColumnLayout {
         Layout.topMargin: 12 * Theme.unit
         implicitHeight: 34 * Theme.unit
         radius: 10 * Theme.unit
-        color: Theme.fill
-        border.width: field.activeFocus ? 1 : 0
+        color: searchFrame.shown ? "transparent" : Theme.fill
+        border.width: field.activeFocus && !searchFrame.shown ? 1 : 0
         border.color: Theme.tint
+
+        // a skin's field frame, when it gives one ("checked" while typing)
+        SkinFrame {
+            id: searchFrame
+            part: "field"
+            look: field.activeFocus ? "checked" : "image"
+            anchors.fill: parent
+        }
 
         Canvas {
             id: magnifier

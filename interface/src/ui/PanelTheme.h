@@ -31,6 +31,9 @@ class PanelTheme : public QObject, public Dependency {
     Q_PROPERTY(QString scheme READ getScheme NOTIFY changed)
     /// a loaded file's colours (key → "#rrggbb" or "#aarrggbb"), its "name" and its "base" scheme; empty when none
     Q_PROPERTY(QVariantMap custom READ getCustom NOTIFY changed)
+    /// the skin on (ui/Skins.h): { name, colors, frames: { part: { source, hover, pressed, checked, disabled, slice,
+    /// padding } }, fontFamily }; empty when none. Its colours go over the scheme's; its frames, the panel controls draw.
+    Q_PROPERTY(QVariantMap skin READ getSkin NOTIFY changed)
 
 public:
     /// the keys a theme file may set, the colours Theme.qml has
@@ -41,6 +44,9 @@ public:
 
     QString getScheme() const { return _scheme; }
     QVariantMap getCustom() const { return _custom; }
+    QVariantMap getSkin() const { return _skin; }
+    /// Skins puts its skin here, or {} when it takes it off
+    void setSkin(const QVariantMap& skin);
 
     /// a built-in scheme by name ("graphite", "midnight", "dusk", "daylight"), or "custom" for the loaded file
     Q_INVOKABLE void setScheme(const QString& scheme);
@@ -58,6 +64,7 @@ private:
     Setting::Handle<QVariant> _customSetting { "panelTheme/custom", QVariantMap() };
     QString _scheme;
     QVariantMap _custom;
+    QVariantMap _skin;
 };
 
 #endif // hifi_PanelTheme_h

@@ -49,19 +49,26 @@ QtObject {
     })
     readonly property var schemeOrder: ["graphite", "midnight", "dusk", "daylight"]
 
-    // the palette in use: the chosen scheme, or a loaded file's colours over its base scheme
+    // the palette in use: the chosen scheme, or a loaded file's colours over its base scheme; then the colours of a
+    // skin that is on (ui/Skins.h) over that
     readonly property var palette: {
         var custom = PanelTheme.custom || {};
         var chosen = PanelTheme.scheme === "custom" ? (custom.base || "graphite") : PanelTheme.scheme;
         var base = schemes[chosen] || schemes.graphite;
-        if (PanelTheme.scheme !== "custom") {
-            return base;
-        }
+        var colors = PanelTheme.scheme === "custom" ? custom : {};
+        var skinColors = (PanelTheme.skin && PanelTheme.skin.colors) || {};
         var merged = {};
         for (var key in base) {
-            merged[key] = custom[key] !== undefined ? custom[key] : base[key];
+            merged[key] = skinColors[key] !== undefined ? skinColors[key]
+                : colors[key] !== undefined ? colors[key] : base[key];
         }
         return merged;
+    }
+
+    // a skin's frame for a part: { source, hover, pressed, checked, disabled, slice: [l, t, r, b], padding }, or null
+    function frame(part) {
+        var frames = PanelTheme.skin && PanelTheme.skin.frames;
+        return frames && frames[part] ? frames[part] : null;
     }
     readonly property string schemeName: palette.name
 

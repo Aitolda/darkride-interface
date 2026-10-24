@@ -45,6 +45,7 @@
 #include "scripting/AccountServicesScriptingInterface.h"
 #include "scripting/HMDScriptingInterface.h"
 #include "scripting/TTSScriptingInterface.h"
+#include "ui/Skins.h"
 #include "ui/SystemToolbar.h"
 #include "ui/ResourceImageItem.h"
 #include "ui/AddressBarDialog.h"
@@ -127,6 +128,8 @@ void Application::initializeUi() {
         // the bar's buttons on a side of the window, when Settings puts them there (ui/SystemToolbar.h)
         SystemToolbar::instance()->attach(_window, systemTablet);
     }
+    // the skin chosen last time, now the main window and the bar exist (ui/Skins.h)
+    DependencyManager::get<Skins>()->start(_window);
 
     auto offscreenUi = getOffscreenUI();
     connect(offscreenUi.data(), &hifi::qml::OffscreenSurface::rootContextCreated,
