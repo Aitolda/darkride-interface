@@ -183,6 +183,65 @@ void InputBufferTests::realignment() {
     QCOMPARE(buffer.margin(step + 100), 1);
 }
 
+void InputBufferTests::lateForLong() {
+    InputBuffer buffer;
+    VehicleInput out;
+    // aligned: tick t is applied two substeps after it arrives, one tick a substep
+    uint32_t step = 50;
+    uint32_t tick = 1000;
+    for (int i = 0; i < 20; ++i, ++step, ++tick) {
+        buffer.push(inputAt(tick), step);
+        buffer.take(step, out);
+    }
+    QCOMPARE(buffer.counts().realigned, 0);
+    // the driver stalls for five substeps (a hitch on its side: this side runs on, holding the last input), then its
+    // ticks go on from where they were: every input from now on comes three substeps after its own, by less than a
+    // lead's worth, so each is late
+    for (int i = 0; i < 5; ++i, ++step) {
+        buffer.take(step, out);
+    }
+    int late = 0;
+    for (int i = 0; i < InputBuffer::LATE_REALIGN_INPUTS - 1; ++i, ++step, ++tick) {
+        if (buffer.push(inputAt(tick), step) == InputBuffer::Push::Late) {
+            ++late;
+        }
+        buffer.take(step, out);
+    }
+    QCOMPARE(late, InputBuffer::LATE_REALIGN_INPUTS - 1);
+    QCOMPARE(buffer.counts().realigned, 0);
+    // the next late one sets the alignment again from itself: stored, and applied a lead from now
+    QCOMPARE(buffer.push(inputAt(tick), step), InputBuffer::Push::Stored);
+    QCOMPARE(buffer.counts().realigned, 1);
+    QCOMPARE(buffer.tickForStep(step + InputBuffer::INITIAL_LEAD), tick);
+    uint32_t realignedTick = tick;
+    buffer.take(step, out);
+    ++step;
+    ++tick;
+    // and the inputs after it are on time again
+    int taken = 0;
+    for (int i = 0; i < 20; ++i, ++step, ++tick) {
+        QCOMPARE(buffer.push(inputAt(tick), step), InputBuffer::Push::Stored);
+        if (buffer.take(step, out)) {
+            ++taken;
+        }
+    }
+    QVERIFY(taken >= 18);
+    QVERIFY(out.sequence > realignedTick);
+    // jitter: four inputs held up on the way and then arriving together, the ones whose substep has passed late, the
+    // rest on time: a short run of late ones does not set the alignment again
+    for (int i = 0; i < 4; ++i, ++step) {
+        buffer.take(step, out);
+    }
+    for (int i = 0; i < 4; ++i, ++tick) {
+        buffer.push(inputAt(tick), step);
+    }
+    for (int i = 0; i < 10; ++i, ++step, ++tick) {
+        QCOMPARE(buffer.push(inputAt(tick), step), InputBuffer::Push::Stored);
+        buffer.take(step, out);
+    }
+    QCOMPARE(buffer.counts().realigned, 1);
+}
+
 void InputBufferTests::leadAdaptation() {
     LeadController lead;
     // a steady margin at the target: nothing to do (the clock is the wall clock in seconds, as the client passes it)
