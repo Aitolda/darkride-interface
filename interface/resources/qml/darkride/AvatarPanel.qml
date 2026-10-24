@@ -7,7 +7,8 @@
 //    she has 100+), under the panels' search bar (search, Cards / Tiles / List, Name / Newest / Folder), each with its
 //    picture when there is one beside it (<name>.preview.jpg or .png, or preview.jpg/.png in its folder: the
 //    picture an .fst's `preview` field names); wearing one by its URL, the default, its scale, its collisions with
-//    the world, and putting it in My Files;
+//    the world, and putting it in My Files; for an avatar in your own My Files, a picture: taken of you wearing it
+//    or chosen from this computer (AvatarThumbnails), saved beside its .fst as <name>.preview.jpg;
 //  Menu: the avatar's own menu, as its package made it (toggles, buttons held while pressed, radial sliders and
 //    submenus; MyAvatar.getAvatarMenu()), drawn for whatever avatar is worn; a choice goes to avatarMenu.js on the
 //    local channel io.darkride.avatarMenu, which sets the parameter, remembers the saved ones and plays emotes;
@@ -165,12 +166,16 @@ Page {
 
         // as the search bar arranges them, the one worn ticked
         readonly property var shown: avatarBar.arrange(avatars).map(function (entry) {
-            return Object.assign({}, entry, { checked: entry.url === avatar.url });
+            return Object.assign({}, entry, { checked: entry.url === avatar.webUrl(avatar.url) });
         })
+        // the avatar worn, when it is one of these
+        readonly property var worn: avatars.filter(function (entry) { return entry.url === avatar.webUrl(avatar.url); })[0] || null
 
-        // the picture beside an .fst: <name>.preview.jpg/.png, then preview.jpg/.png in its folder
+        // the picture beside an .fst: <name>.preview.jpg/.png (also as an upload names it: "Auxi Day" is stored as
+        // Auxi_Day), then preview.jpg/.png in its folder
         function pictureFor(keys, folder, name) {
-            var candidates = [name + ".preview.jpg", name + ".preview.jpeg", name + ".preview.png",
+            var safe = name.replace(/[^A-Za-z0-9._-]/g, "_");
+            var candidates = [name + ".preview.jpg", name + ".preview.jpeg", name + ".preview.png", safe + ".preview.jpg",
                               "preview.jpg", "preview.jpeg", "preview.png"];
             for (var i = 0; i < candidates.length; i++) {
                 var found = keys[(folder + candidates[i]).toLowerCase()];
@@ -195,9 +200,11 @@ Page {
                 var found = [];
                 var privates = 0;
                 var keys = {};
+                var updated = {};
                 (data.files || []).forEach(function (file) {
                     var key = file.key.charAt(0) === "/" ? file.key : "/" + file.key;
                     keys[key.toLowerCase()] = key;
+                    updated[key] = Date.parse(file.updated) || 0;
                 });
                 (data.files || []).forEach(function (file) {
                     if (!/\.fst$/i.test(file.key)) {
@@ -209,7 +216,8 @@ Page {
                     var picture = pictureFor(keys, folder, name);
                     privates += file.tea ? 1 : 0;
                     found.push({ key: key, title: name, subtitle: folder.replace(/^\/|\/$/g, "") || "My Files",
-                                 keywords: key, picture: picture !== "" ? data.url + picture : "",
+                                 // the picture's date in its address, so a new picture isn't the old one cached
+                                 keywords: key, picture: picture !== "" ? data.url + picture + "?" + updated[picture] : "",
                                  url: data.url + key, updated: Date.parse(file.updated) || 0, isPrivate: !!file.tea,
                                  badge: file.tea ? "private" : "" });
                 });
@@ -223,11 +231,80 @@ Page {
         Component.onCompleted: load()
     }
 
+    // the worn avatar's picture, when it is in your own My Files: taken or chosen, looked at, then saved beside it
+    QtObject {
+        id: thumb
+
+        property string pending: ""     // a picture taken or chosen, not saved yet (a file:// address here)
+        property bool busy: false
+        property bool choosing: false   // the file dialog is ours (Window answers every browseAsync)
+        property string status: ""
+        readonly property var place: AccountServices.loggedIn ? AvatarThumbnails.myFilesPlace(avatar.url) : ({})
+        readonly property bool possible: place.folder !== undefined
+
+        function take() {
+            busy = true;
+            status = "Taking a picture…";
+            AvatarThumbnails.take(function (error, url) {
+                busy = false;
+                if (error) {
+                    status = "Couldn't take a picture: " + error + ".";
+                    return;
+                }
+                pending = url;
+                status = "";
+            });
+        }
+        function choose() {
+            choosing = true;
+            Window.browseAsync("A picture for " + (avatar.name || "this avatar"), "", "Images (*.png *.jpg *.jpeg)");
+        }
+        function chosen(path) {
+            choosing = false;
+            if (path === "") {
+                return;
+            }
+            AvatarThumbnails.fromFile(path, function (error, url) {
+                if (error) {
+                    status = "Couldn't use that picture: " + error + ".";
+                    return;
+                }
+                pending = url;
+                status = "";
+            });
+        }
+        function save() {
+            busy = true;
+            status = "Saving the picture…";
+            AvatarThumbnails.upload(pending, avatar.url, function (error, url) {
+                busy = false;
+                if (error) {
+                    status = "Couldn't save the picture: " + error + ".";
+                    return;
+                }
+                pending = "";
+                status = "Saved beside the avatar in My Files.";
+                myFiles.load();
+            });
+        }
+    }
+    Connections {
+        target: Window
+        function onBrowseChanged(filename) {
+            if (thumb.choosing) {
+                thumb.chosen(filename);
+            }
+        }
+    }
+
     Tab {
         visible: root.currentTab === 0
 
         Section {
             title: "Wearing"
+            footer: thumb.status !== "" ? thumb.status
+                : thumb.possible && myFiles.worn && myFiles.worn.isPrivate
+                  ? "Its picture is public: anyone with the picture's link can see it." : ""
             Item {
                 width: parent ? parent.width : 0
                 height: wornRow.implicitHeight + 2 * Theme.rowPadding + 4 * Theme.unit
@@ -244,7 +321,7 @@ Page {
                         Layout.preferredHeight: 56 * Theme.unit
                         radius: 10 * Theme.unit
                         placeholder: avatar.name !== "" ? avatar.name : "?"
-                        source: avatar.pictureUrl
+                        source: myFiles.worn && myFiles.worn.picture !== "" ? myFiles.worn.picture : avatar.pictureUrl
                     }
                     Column {
                         Layout.fillWidth: true
@@ -266,6 +343,52 @@ Page {
                         }
                     }
                 }
+            }
+            ListRow {
+                visible: thumb.possible && thumb.pending === ""
+                action: true
+                label: "Take Its Picture"
+                enabled: !thumb.busy
+                onClicked: thumb.take()
+            }
+            ListRow {
+                visible: thumb.possible && thumb.pending === ""
+                action: true
+                label: "Choose a Picture…"
+                enabled: !thumb.busy
+                onClicked: thumb.choose()
+            }
+        }
+
+        // a picture taken or chosen, to look at before it is saved
+        Section {
+            visible: thumb.pending !== ""
+            title: "New picture"
+            Item {
+                width: parent ? parent.width : 0
+                height: width * 0.75
+                RoundedImage {
+                    anchors.fill: parent
+                    roundBottom: false
+                    source: thumb.pending
+                }
+            }
+            ListRow {
+                action: true
+                label: "Save as Its Picture"
+                enabled: !thumb.busy
+                onClicked: thumb.save()
+            }
+            ListRow {
+                action: true
+                label: "Take Another"
+                enabled: !thumb.busy
+                onClicked: thumb.take()
+            }
+            ListRow {
+                action: true
+                label: "Cancel"
+                onClicked: { thumb.pending = ""; thumb.status = ""; }
             }
         }
 

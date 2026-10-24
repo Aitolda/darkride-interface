@@ -52,6 +52,7 @@
 
 #include "Application.h"
 #include "AvatarManager.h"
+#include "AvatarThumbnails.h"
 #include "InterfaceLogging.h"
 #include "MyAvatar.h"
 #include "editor/EditorCreate.h"
@@ -498,7 +499,8 @@ void wear(const QString& fstPath, const QString& name) {
 // An avatar on this computer goes out to others as a blank address (AvatarData::getWireSafeSkeletonModelURL), so they
 // see the default. In My Files it has a web address everyone loads: the model goes up with the files it names beside
 // it (game rips name their textures; anything else in the folder stays here), then the .fst with its filename line
-// pointing beside it, and the client wears that copy. One file at a time, through the editor's upload.
+// pointing beside it, and the client wears that copy. One file at a time, through the editor's upload. Its picture
+// (AvatarThumbnails: a snap of it, worn, from the front) goes up before the .fst, which names it on a `preview` line.
 struct Share {
     QString name;
     QString fstName;
@@ -508,6 +510,9 @@ struct Share {
     bool modelIsLocal { false };
     QStringList files;  // local paths, the model first
     int next { 0 };
+    QByteArray picture;  // a JPEG, or empty when there is none
+    QString pictureName;
+    bool pictureSent { false };
 };
 using SharePointer = std::shared_ptr<Share>;
 
@@ -538,27 +543,43 @@ void wearOnceItReadsBack(const SharePointer& share, const QString& url) {
 }
 
 void shareNext(const SharePointer& share) {
-    const bool fstNow = share->next >= share->files.size();
+    const bool fileNow = share->next < share->files.size();
+    const bool pictureNow = !fileNow && !share->picture.isEmpty() && !share->pictureSent;
+    const bool fstNow = !fileNow && !pictureNow;
     auto upload = new EditorUpload();
     QString error;
     bool started;
-    if (!fstNow) {
+    if (fileNow) {
         started = upload->start(share->files[share->next], share->remoteFolder, error);
         if (started && share->next == 0 && share->modelIsLocal) {
             share->fstLines[share->modelLine] = "filename = " + upload->fileName();
         }
         share->next++;
+    } else if (pictureNow) {
+        started = upload->startData(share->picture, share->pictureName, share->remoteFolder, "image/jpeg", error);
+        share->pictureSent = true;
     } else {
         started = upload->startData(share->fstLines.join('\n').toUtf8(), share->fstName, share->remoteFolder,
                                     "text/plain", error);
+    }
+    if (!started && pictureNow) {
+        delete upload;
+        qCDebug(interfaceapp) << "Import Avatar:" << share->name << "picture not sent:" << error;
+        shareNext(share);  // the avatar goes up without its picture
+        return;
     }
     if (!started) {
         delete upload;
         warn("Couldn't put " + share->name + " in My Files", sentence(error));
         return;
     }
-    QObject::connect(upload, &EditorUpload::failed, upload, [upload, share](const QString& error) {
+    QObject::connect(upload, &EditorUpload::failed, upload, [upload, share, pictureNow](const QString& error) {
         upload->deleteLater();
+        if (pictureNow) {
+            qCDebug(interfaceapp) << "Import Avatar:" << share->name << "picture not sent:" << error;
+            shareNext(share);
+            return;
+        }
         warn("Couldn't put " + share->name + " in My Files", sentence(error));
     });
     QObject::connect(upload, &EditorUpload::finished, upload, [upload, share, fstNow](const QString& url) {
@@ -622,7 +643,20 @@ void shareAvatar(const QString& fstPath, const QString& name) {
     }
     qCDebug(interfaceapp) << "Import Avatar: putting" << name << "in My Files," << share->files.size()
                           << "files and the .fst, into" << share->remoteFolder;
-    shareNext(share);
+    // its picture first, while it is worn (Wear & Keep has only just put it on: the picture waits for it to load)
+    share->pictureName = AvatarThumbnails::pictureName(QFileInfo(share->fstName).completeBaseName());
+    DependencyManager::get<AvatarThumbnails>()->capture([share](const QByteArray& jpeg, const QString& error) {
+        if (jpeg.isEmpty()) {
+            qCDebug(interfaceapp) << "Import Avatar:" << share->name << "no picture:" << error;
+        } else {
+            share->picture = jpeg;
+            share->fstLines.erase(std::remove_if(share->fstLines.begin(), share->fstLines.end(), [](const QString& line) {
+                return line.section('=', 0, 0).trimmed() == "preview";
+            }), share->fstLines.end());
+            share->fstLines.append("preview = " + share->pictureName);
+        }
+        shareNext(share);
+    });
 }
 
 // Asked once an avatar is ready. Wear & Keep (wear it and put it in My Files) is the default; the importer's notes
