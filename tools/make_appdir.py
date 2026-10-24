@@ -117,7 +117,9 @@ print("-- Installed linuxdeployqt")
 
 # make appdir
 
-deferred_plugins = ["libtivoli-tea-protocol-plugin.so"]
+# plugins copied in after linuxdeployqt, which must not touch them (it was the prebuilt tea: loader's place, gone since
+# ad83628471 because its archive can no longer be downloaded); one the build doesn't have is skipped
+deferred_plugins = []
 
 server_exclude_libs = [
     "libQt5WebEngineCore.so.5",
@@ -190,6 +192,9 @@ if program == "interface":
 
 	# add final plugins in
 	for plugin in deferred_plugins:
+		if not os.path.isfile(os.path.join(interface_dir, "plugins", plugin)):
+			print("-- " + plugin + " not built, skipped")
+			continue
 		run(
 		    interface_dir,
 		    "cp plugins/" + plugin + " interface.AppDir/usr/bin/plugins"
@@ -267,6 +272,9 @@ elif program == "server":
 
 	# add final plugins in
 	for plugin in deferred_plugins:
+		if not os.path.isfile(os.path.join(build_dir, "assignment-client", "plugins", plugin)):
+			print("-- " + plugin + " not built, skipped")
+			continue
 		run(
 		    build_dir, "cp assignment-client/plugins/" + plugin +
 		    " server.AppDir/usr/bin/plugins"

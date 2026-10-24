@@ -10,6 +10,7 @@
     "glad",
     "glm",
     "libsndfile",
+    "nlohmann-json",
     "nvtt",
     {
       "name": "openexr",
@@ -18,6 +19,10 @@
     {
       "name": "openssl",
       "platform": "windows | osx"
+    },
+    {
+      "name": "quazip",
+      "platform": "!android"
     },
     {
       "name": "tbb",

@@ -165,8 +165,9 @@ VS Code builds Darkride with the same compiler and presets as steps 4 and 5, thr
 These SDKs can no longer be downloaded, so the build leaves out the plugins that need them:
 
 -   **Oculus PC SDK.** Rift and Quest headsets work through SteamVR with the OpenVR plugin. If you have `LibOVR.lib` in the vcpkg tree, `oculus-plugin` is built again.
--   **Leap Motion 2.3 SDK.**
--   **Tea protocol plugin**, a prebuilt binary on every platform. It is used if its extracted archive is in `plugins/tea-protocol-plugin-prebuilt/tea-protocol-plugin-2021-12-12`.
+
+The Leap Motion plugin and the prebuilt `tea:` protocol plugin, whose downloads are gone too, were removed from the code
+(10-22).
 
 ## Troubleshooting
 
