@@ -31,6 +31,7 @@ public:
     static constexpr int MAX_LEAD = 90;        // substeps: an input further ahead than this is refused (a second)
     static constexpr int REALIGN_MARGIN = 45;  // a margin past this for REALIGN_STEPS substeps sets the alignment again
     static constexpr int REALIGN_STEPS = 90;
+    static constexpr int LATE_REALIGN_INPUTS = 45;  // late inputs in a row (half a second's) that set the alignment again
 
     enum class Push { Stored, Duplicate, Late, Early };
 
@@ -79,6 +80,7 @@ private:
     uint32_t _lastPushStep { 0 };    // when an input last arrived, to tell a gap (the driver stood, the link dropped)
     bool _pushed { false };
     int _overfullSteps { 0 };
+    int _lateRun { 0 };              // late inputs in a row (LATE_REALIGN_INPUTS)
     Counts _counts;
 };
 

@@ -526,8 +526,20 @@ void VehicleSimulation::postSubstep(uint32_t step, float dt) {
 
 void VehicleSimulation::recordTelemetry() {
     Telemetry t;
+    // the vehicle this client drives first: what its scripts read here (the flight assistant's airspeed and tilt, a
+    // readout) is that vehicle's; with none driven, the first of the map as before. With a second aircraft in the world
+    // the flight assistant flew on a parked one's airspeed and tilt (10-24).
+    std::vector<Vehicle*> order;
+    order.reserve(_vehicles.size());
     for (auto& entry : _vehicles) {
-        Vehicle& vehicle = entry.second;
+        if (isLocalDriver(entry.first)) {
+            order.insert(order.begin(), &entry.second);
+        } else {
+            order.push_back(&entry.second);
+        }
+    }
+    for (Vehicle* each : order) {
+        Vehicle& vehicle = *each;
         if (vehicle.aircraft && vehicle.aircraftBuilt) {
             const AircraftForces& f = vehicle.aircraftForces;
             t.valid = true;
