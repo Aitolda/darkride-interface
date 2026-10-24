@@ -2,8 +2,10 @@
 //  Page.qml
 //  qml/darkride/panel
 //
-//  A panel's page: the large title, its tabs (a segmented control under the title, when it has more than one), then
-//  its sections on the grouped background, scrolling. A tab's sections sit in a Tab whose index says which it is.
+//  A panel's page: the large title, its tabs (a segmented control under the title, when it has more than one) and
+//  its header (rows that stay put: Explore's search) pinned at the top; then its sections on the grouped background,
+//  scrolling under them, stopping at either end without a bounce (Caity, 10-24). A tab's sections sit in a Tab whose
+//  index says which it is.
 //
 //  Copyright 2026 Darkride.
 //
@@ -22,6 +24,7 @@ Rectangle {
     property var tabs: []          // the tabs' names; none or one: no tab bar
     property int currentTab: 0
     default property alias content: column.data
+    property alias header: headerColumn.data
 
     color: Theme.background
 
@@ -41,13 +44,74 @@ Rectangle {
         }
     }
 
+    function scrollToTop() {
+        scroll.contentItem.contentY = 0;
+    }
+
+    ColumnLayout {
+        id: top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.leftMargin: Theme.pageMargin
+        anchors.rightMargin: Theme.pageMargin
+        spacing: 0
+
+        Text {
+            visible: page.title !== ""
+            text: page.title
+            color: Theme.text
+            font.pixelSize: Theme.largeTitleSize
+            font.bold: true
+            topPadding: 14 * Theme.unit
+            bottomPadding: 2 * Theme.unit
+            leftPadding: 4 * Theme.unit
+        }
+
+        Segmented {
+            visible: page.tabs.length > 1
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: 10 * Theme.unit
+            model: page.tabs.map(function (name, index) { return { text: name, value: index }; })
+            current: page.currentTab
+            onChosen: {
+                page.currentTab = value;
+                page.scrollToTop();
+            }
+        }
+
+        ColumnLayout {
+            id: headerColumn
+            Layout.fillWidth: true
+            spacing: 0
+        }
+
+        Item {
+            Layout.preferredHeight: 4 * Theme.unit
+        }
+    }
+
+    // a hairline under the pinned top once something has scrolled under it, as iOS draws one
+    Rectangle {
+        anchors.top: top.bottom
+        width: parent.width
+        height: 1
+        z: 1
+        color: Theme.separator
+        visible: scroll.contentItem.contentY > 1
+    }
+
     QQC2.ScrollView {
         id: scroll
         objectName: "pageScroll"   // a test can scroll the page by it
-        anchors.fill: parent
+        anchors.top: top.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
         clip: true
         contentWidth: availableWidth
         contentHeight: holder.implicitHeight
+        Component.onCompleted: contentItem.boundsBehavior = Flickable.StopAtBounds
 
         Item {
             id: holder
@@ -60,29 +124,6 @@ Rectangle {
                 x: Theme.pageMargin
                 width: parent.width - 2 * Theme.pageMargin
                 spacing: 0
-
-                Text {
-                    visible: page.title !== ""
-                    text: page.title
-                    color: Theme.text
-                    font.pixelSize: Theme.largeTitleSize
-                    font.bold: true
-                    topPadding: 14 * Theme.unit
-                    bottomPadding: 2 * Theme.unit
-                    leftPadding: 4 * Theme.unit
-                }
-
-                Segmented {
-                    visible: page.tabs.length > 1
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.topMargin: 10 * Theme.unit
-                    model: page.tabs.map(function (name, index) { return { text: name, value: index }; })
-                    current: page.currentTab
-                    onChosen: {
-                        page.currentTab = value;
-                        scroll.contentItem.contentY = 0;
-                    }
-                }
             }
         }
     }

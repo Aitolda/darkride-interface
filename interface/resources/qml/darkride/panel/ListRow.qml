@@ -21,6 +21,8 @@ Item {
 
     property string label: ""
     property string detail: ""
+    property int detailFormat: Text.PlainText   // Text.StyledText for a detail with a link (Explore's "by <author>")
+    signal linkActivated(string link)
     property url icon: ""          // a small picture left of the label (an avatar menu's control)
     // the control fills the room beside the label (a slider, a text field) rather than sitting at the right
     property bool fill: false
@@ -204,8 +206,17 @@ Item {
                 Text {
                     visible: row.detail !== ""
                     text: row.detail
+                    textFormat: row.detailFormat
                     color: Theme.secondaryText
+                    linkColor: Theme.tint
                     font.pixelSize: Theme.detailSize
+                    onLinkActivated: row.linkActivated(link)
+
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.NoButton   // only the pointer: the clicks go to the link or the row
+                        cursorShape: parent.hoveredLink !== "" ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    }
                 }
             }
         }
