@@ -15,6 +15,7 @@
 #include <QtCore/QMutex>
 #include <QtCore/QSet>
 #include "ResourceRequestObserver.h"
+#include "ResourceScriptingInterface.h"
 
 #include <cfloat>
 #include <cmath>
@@ -347,6 +348,61 @@ namespace {
 QMutex deadHostsMutex;
 QHash<QString, qint64> deadHostsUntil;   // host -> when its death expires, ms since the epoch
 QSet<QString> answeredHosts;
+}
+
+namespace {
+    QMutex failuresMutex;
+    QVector<ResourceCache::Failure> failureList;   // newest last, one per address
+}
+
+QVector<ResourceCache::Failure> ResourceCache::failures() {
+    QMutexLocker lock(&failuresMutex);
+    return failureList;
+}
+
+void ResourceCache::clearFailures() {
+    QMutexLocker lock(&failuresMutex);
+    failureList.clear();
+}
+
+void ResourceCache::recordFailure(const QUrl& url, const QString& resourceType, const QString& reason) {
+    if (url.isEmpty()) {
+        return;
+    }
+    // a person's word for the cache's class
+    QString type = resourceType == "Model" ? "model"
+        : resourceType == "NetworkTexture" ? "texture"
+        : resourceType == "NetworkMaterial" ? "material"
+        : resourceType == "Animation" ? "animation"
+        : resourceType == "NetworkShader" ? "shader"
+        : "file";
+    Failure failure { url, type, reason, QDateTime::currentMSecsSinceEpoch() };
+    {
+        QMutexLocker lock(&failuresMutex);
+        for (int i = 0; i < failureList.size(); ++i) {
+            if (failureList[i].url == url) {
+                failureList.remove(i);
+                break;
+            }
+        }
+        failureList.push_back(failure);
+        if (failureList.size() > MAX_FAILURES) {
+            failureList.remove(0, failureList.size() - MAX_FAILURES);
+        }
+    }
+    if (DependencyManager::isSet<ResourceScriptingInterface>()) {
+        emit DependencyManager::get<ResourceScriptingInterface>()->resourceFailed(url.toString(), type, reason);
+    }
+}
+
+void ResourceCache::forgetFailure(const QUrl& url) {
+    QMutexLocker lock(&failuresMutex);
+    for (int i = 0; i < failureList.size(); ++i) {
+        if (failureList[i].url == url) {
+            failureList.remove(i);
+            return;
+        }
+    }
 }
 
 bool ResourceCache::hasHostAnswered(const QString& host) {
@@ -744,6 +800,7 @@ void Resource::init(bool resetLoaded) {
     } else if (!(_url.isValid())) {
         _startedLoading = _failedToLoad = true;
         _failureReason = "not a valid address";
+        ResourceCache::recordFailure(_url, getType(), _failureReason);
     }
 }
 
@@ -765,6 +822,7 @@ void Resource::finishedLoading(bool success) {
     if (success) {
         _loadPriorities.clear();
         _loaded = true;
+        ResourceCache::forgetFailure(_url);   // it loads now (a retry, or the link was fixed)
     } else {
         _failedToLoad = true;
         if (_failureReason.isEmpty()) {
@@ -772,6 +830,7 @@ void Resource::finishedLoading(bool success) {
             // a damaged file)
             _failureReason = "could not be read";
         }
+        ResourceCache::recordFailure(_url, getType(), _failureReason);
     }
     emit finished(success);
 }

@@ -25,6 +25,7 @@
 #include <QtCore/QWeakPointer>
 #include <QtCore/QReadWriteLock>
 #include <QtCore/QQueue>
+#include <QtCore/QVector>
 
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
@@ -235,6 +236,21 @@ public:
     // answered: an address where nothing listens, not a live host on a slow or busy link (Resource::handleFailedRequest).
     static bool hasHostAnswered(const QString& host);
     static void markHostAnswered(const QString& host);
+
+    // Every file whose load failed for good this run, one entry per address (the latest failure), the newest last: a
+    // list to work through in a debug pass (Caity, 10-24), read by scripts and panels as Resources.getFailures(). A
+    // file that loads later leaves the list. At most MAX_FAILURES are kept, the oldest dropped first.
+    struct Failure {
+        QUrl url;
+        QString type;       // "model", "texture", "material", "animation", "shader" or "file"
+        QString reason;     // Resource::getFailureReason
+        qint64 time { 0 };  // when, msecs since the epoch
+    };
+    static QVector<Failure> failures();
+    static void clearFailures();
+    static void recordFailure(const QUrl& url, const QString& resourceType, const QString& reason);
+    static void forgetFailure(const QUrl& url);
+    static const int MAX_FAILURES = 2000;
     static const qint64 DEAD_HOST_MSECS = 2 * 60 * 1000;
     static uint32_t getRequestLimit() { return DependencyManager::get<ResourceCacheSharedItems>()->getRequestLimit(); }
     
