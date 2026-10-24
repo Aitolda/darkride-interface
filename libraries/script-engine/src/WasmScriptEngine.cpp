@@ -64,7 +64,8 @@ const int MAX_SCRIPT_ENDING_TIME_MS = 3000;  // for the scriptEnding handlers, b
 const int DEFAULT_SCRIPT_CALL_LIMIT_MS = 5000;  // a call into a JavaScript script, of the script's own time
 
 // A call into a JavaScript script may run this long of the script's own time (what it spends in host functions,
-// a download among them, does not count): DARKRIDE_SCRIPT_CALL_LIMIT_MS, 0 for no limit; 5 s otherwise.
+// a download among them, does not count): DARKRIDE_SCRIPT_CALL_LIMIT_MS, 0 for no limit; 5 s otherwise. An entity
+// script is stopped past it; a client script or an agent is warned about once and goes on.
 std::chrono::milliseconds scriptCallTimeLimit() {
     bool ok = false;
     const int fromEnvironment = qEnvironmentVariableIntValue("DARKRIDE_SCRIPT_CALL_LIMIT_MS", &ok);
@@ -167,9 +168,17 @@ WasmScriptEngine::WasmScriptEngine(Context context, const QString& scriptContent
         _limits.memoryBytes = int64_t(1024) * 1024 * 1024;
     }
     if (_runsJavaScript) {
-        // a call into a script may run this long of the script's own time; a runaway is interrupted and, in an
-        // entities engine, that entity script alone is stopped (onCallTimeLimit); stop() interrupts a call as before
-        _limits.callTimeout = scriptCallTimeLimit();
+        // a call into a script may run this long of the script's own time. An entities engine hosts every entity
+        // script of the world on one thread, so a runaway there holds them all: it is interrupted and that entity
+        // script alone is stopped (onCallTimeLimit). A client script or an agent runs on its own, and its runaway
+        // holds only itself: the call is reported in the log once and goes on, as on QtScript (Caity's choice,
+        // 2026-10-24). stop() interrupts a call as before.
+        if (_isEntitiesEngine) {
+            _limits.callTimeout = scriptCallTimeLimit();
+        } else {
+            _limits.callTimeout = std::chrono::milliseconds(0);
+            _limits.callWarning = scriptCallTimeLimit();
+        }
     }
 }
 
@@ -488,6 +497,15 @@ WasmScriptEngine::ModuleInstancePointer WasmScriptEngine::makeInstance(const QSt
         instanceLimits.callTimeout = std::chrono::milliseconds(0);
     }
     instance->instance = std::make_unique<WasmInstance>(module, instanceLimits);
+    if (instanceLimits.callWarning.count() > 0) {
+        // logged at once, from inside the long call: a message queued to this thread would wait for the call to end
+        const QString scriptName = name;
+        instance->instance->setCallWarningHandler([this, scriptName](std::chrono::milliseconds elapsed) {
+            scriptWarningMessage(QString("%1: a call into the script has run %2 ms of its own time and goes on; "
+                                         "it may be stuck (a client script or an agent is not stopped)")
+                                     .arg(scriptName).arg(elapsed.count()));
+        });
+    }
     instance->host = std::make_unique<HostInterface>(*instance->instance, *_objects, *instance->codec, *_relay);
     instance->host->setLogger([this](int level, const QString& text) {
         switch (level) {
