@@ -453,9 +453,12 @@ void WasmScriptEngine::run() {
         DependencyManager::get<EntityScriptingInterface>()->init();
         registerStandardGlobals();
     }
-    // the network objects XMLHttpRequest and WebSocket are built on in the guest
+    // the network objects XMLHttpRequest and WebSocket are built on in the guest, and an agent's WebSocketServer
     registerGlobalObject("Http", _http);
     registerGlobalObject("Sockets", _sockets);
+    if (_context == Context::AGENT_SCRIPT) {
+        registerGlobalObject("WebSocketServers", new WebSocketServerFactory(this));
+    }
     // two globals the QtScript engine gives as a native constructor and a plain object
     registerGlobalObject("AudioEffectOptions", _audioEffectOptions);
     registerGlobalObject("Resource", _resourceStates);

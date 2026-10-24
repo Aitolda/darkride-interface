@@ -1021,27 +1021,29 @@
     global.XMLHttpRequest = XMLHttpRequest;
 
     // --- WebSocket over the engine's Sockets object ---------------------------------------------------------------------
-    function WebSocket(url) {
-        if (!global.Sockets) {
-            throw new Error("WebSocket: the engine has no Sockets object");
-        }
-        var socket = global.Sockets.createWebSocket(url === undefined ? "" : String(url));
-        var self = this;
-        this.onopen = null;
-        this.onmessage = null;
-        this.onerror = null;
-        this.onclose = null;
-        Object.defineProperty(this, "_socket", { value: socket });
+    // the script's side of a host socket: its on* handlers, fired from the socket's signals
+    function attachSocket(target, socket) {
+        target.onopen = null;
+        target.onmessage = null;
+        target.onerror = null;
+        target.onclose = null;
+        Object.defineProperty(target, "_socket", { value: socket });
         function fire(name, event) {
-            var handler = self[name];
+            var handler = target[name];
             if (typeof handler === "function") {
-                try { event === undefined ? handler.call(self) : handler.call(self, event); } catch (e) { reportError("in " + name, e); }
+                try { event === undefined ? handler.call(target) : handler.call(target, event); } catch (e) { reportError("in " + name, e); }
             }
         }
         socket.opened.connect(function () { fire("onopen"); });
         socket.messageReceived.connect(function (message) { fire("onmessage", { data: message }); });
         socket.errored.connect(function () { fire("onerror"); });
         socket.closedWith.connect(function (code, reason, wasClean) { fire("onclose", { code: code, reason: reason, wasClean: wasClean }); });
+    }
+    function WebSocket(url) {
+        if (!global.Sockets) {
+            throw new Error("WebSocket: the engine has no Sockets object");
+        }
+        attachSocket(this, global.Sockets.createWebSocket(url === undefined ? "" : String(url)));
     }
     WebSocket.CONNECTING = 0;
     WebSocket.OPEN = 1;
@@ -1066,6 +1068,37 @@
         else { this._socket.close(code | 0, String(reason)); }
     };
     global.WebSocket = WebSocket;
+
+    // --- WebSocketServer, over the engine's WebSocketServers object, which only an agent's engine has ---------------
+    if (globalHandles.WebSocketServers !== undefined) {
+        var WebSocketServer = function (options) {
+            var serverName = "Scripted WebSocket Listener", port = 0;  // port 0 picks a free one
+            if (options && typeof options === "object") {
+                if (typeof options.serverName === "string") { serverName = options.serverName; }
+                if (typeof options.port === "number") { port = options.port; }
+            }
+            var server = global.WebSocketServers.createWebSocketServer(serverName, port);
+            var self = this, handlers = [];
+            Object.defineProperty(this, "_server", { value: server });
+            // newConnection as QtScript has it, a signal whose handlers get each client, here as a WebSocket
+            this.newConnection = {
+                connect: function (handler) { if (typeof handler === "function") { handlers.push(handler); } },
+                disconnect: function (handler) { var i = handlers.indexOf(handler); if (i >= 0) { handlers.splice(i, 1); } }
+            };
+            server.newConnection.connect(function (socket) {
+                var client = Object.create(WebSocket.prototype);
+                attachSocket(client, socket);
+                handlers.slice().forEach(function (handler) {
+                    try { handler.call(self, client); } catch (e) { reportError("in newConnection", e); }
+                });
+            });
+        };
+        ["url", "port", "listening"].forEach(function (name) {
+            Object.defineProperty(WebSocketServer.prototype, name, { get: function () { return this._server[name]; }, enumerable: true });
+        });
+        WebSocketServer.prototype.close = function () { this._server.close(); };
+        global.WebSocketServer = WebSocketServer;
+    }
 
     // --- request(): the helper the QtScript engine evaluated into every script --------------------------------------
     global.request = function (options, callback) {

@@ -125,6 +125,26 @@
         return "asked";
     });
 
+    // an agent's WebSocketServer: a client of the agent's own connects and says ping; the server answers
+    var socketTrip = {};
+    attempt("WebSocketServer", function () {
+        var server = new WebSocketServer();  // port 0: a free one
+        server.newConnection.connect(function (client) {
+            socketTrip.connected = true;
+            client.onmessage = function (event) { client.send("pong to " + event.data); };
+        });
+        Script.setTimeout(function () {
+            var socket = new WebSocket("ws://127.0.0.1:" + server.port);
+            socket.onopen = function () { socket.send("ping"); };
+            socket.onmessage = function (event) {
+                socketTrip.answer = event.data;
+                socket.close();
+                server.close();
+            };
+        }, 500);
+        return { listening: server.listening, hasPort: server.port > 0, urlType: typeof server.url };
+    });
+
     // events
     var updates = 0;
     Script.update.connect(function () { updates++; });
@@ -258,6 +278,7 @@
             return { type: typeof avatar, hasPosition: !!(avatar && avatar.position), count: ids.length };
         });
         report("Assets.getAsset's answer", assetAnswer);
+        report("WebSocketServer round trip", socketTrip);
         report("updates over 26 s", updates > 600 ? "more than 600" : updates);
         report("clearingEntities", clearing);
         report("messages", messages);
