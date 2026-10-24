@@ -263,7 +263,8 @@ void HTTPResourceRequest::onRequestFinished() {
             break;
 
         case QNetworkReply::UnknownContentError: // Script.include('QUrl("https://httpbin.org/status/402")')
-        case QNetworkReply::ContentOperationNotPermittedError: //Script.include('https://httpbin.org/status/403')
+        case QNetworkReply::ContentAccessDenied: // Script.include('https://httpbin.org/status/403'): Qt's name for a 403
+        case QNetworkReply::ContentOperationNotPermittedError: // a 405
         case QNetworkReply::AuthenticationRequiredError: // Script.include('https://httpbin.org/basic-auth/user/passwd')
             _result = AccessDenied;
             break;
@@ -285,9 +286,9 @@ void HTTPResourceRequest::onRequestFinished() {
             break;
     }
 
-    // our files host refuses a private file to a request without the player's login: asked once more with it, in this
-    // same request (so the login never goes anywhere else, and only for private files)
-    if (_result == AccessDenied && !_withAccessToken && isMetaverseFilesHost(_requestUrl) &&
+    // our files host refuses a private file (403) to a request without the player's login: asked once more with it, in
+    // this same request (so the login never goes anywhere else, and only for private files)
+    if (statusCode == 403 && !_withAccessToken && isMetaverseFilesHost(_requestUrl) &&
         !accessTokenHeaderValue().isEmpty()) {
         _reply->disconnect(this);
         _reply->deleteLater();
