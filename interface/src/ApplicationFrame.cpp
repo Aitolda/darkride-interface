@@ -458,6 +458,11 @@ void Application::update(float deltaTime) {
 
     _domainSession.enablePhysicsWhenReady();   // the physics gate: physics stays off until the scene near the avatar is in
 
+    // the sign-in and loading screens are drawn at a capped rate on the desktop (RefreshRateManager::setScreenCap)
+    getRefreshRateManager().setScreenCap(_signInGate.poppedUp() ? RefreshRateManager::SIGN_IN_SCREEN_RATE
+        : (_domainSession.isInterstitialMode() || _domainSession.isWorldLoading()) ? RefreshRateManager::LOADING_SCREEN_RATE
+        : 0);
+
     auto myAvatar = getMyAvatar();
     {
         PerformanceTimer perfTimer("devices");
