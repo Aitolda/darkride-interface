@@ -760,6 +760,25 @@ Page {
     Tab {
         visible: root.currentTab === 3
 
+        // where the bar of app buttons sits (ui/SystemToolbar.h): over the bottom of the view, or on a side of the
+        // window with the view beside it (a player's ask, 10-24)
+        Section {
+            title: "Layout"
+            footer: SystemToolbar.docked ? "On a side, the view sits beside the bar. Drag the bar by its handle to move it."
+                : "Floating, the bar sits over the bottom of the view."
+
+            ListRow {
+                label: "Bar"
+                Segmented {
+                    model: [{ text: "Floating", value: "floating" }, { text: "Top", value: "top" },
+                            { text: "Left", value: "left" }, { text: "Right", value: "right" },
+                            { text: "Bottom", value: "bottom" }]
+                    current: SystemToolbar.place
+                    onChosen: SystemToolbar.place = value
+                }
+            }
+        }
+
         Section {
             title: "Theme"
             footer: appearance.status !== "" ? appearance.status

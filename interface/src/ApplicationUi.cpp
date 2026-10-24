@@ -45,6 +45,7 @@
 #include "scripting/AccountServicesScriptingInterface.h"
 #include "scripting/HMDScriptingInterface.h"
 #include "scripting/TTSScriptingInterface.h"
+#include "ui/SystemToolbar.h"
 #include "ui/ResourceImageItem.h"
 #include "ui/AddressBarDialog.h"
 #include "ui/DialogsManager.h"
@@ -122,7 +123,9 @@ void Application::initializeUi() {
     {
         StartupProfiler::Scope step("initializeUi: the system tablet");
         auto tabletScriptingInterface = DependencyManager::get<TabletScriptingInterface>();
-        tabletScriptingInterface->getTablet(SYSTEM_TABLET);
+        auto systemTablet = tabletScriptingInterface->getTablet(SYSTEM_TABLET);
+        // the bar's buttons on a side of the window, when Settings puts them there (ui/SystemToolbar.h)
+        SystemToolbar::instance()->attach(_window, systemTablet);
     }
 
     auto offscreenUi = getOffscreenUI();

@@ -27,11 +27,11 @@
 #include <ScriptEngines.h>
 #include <shared/GlobalAppProperties.h>
 #include <StartupProfiler.h>
-#include <ui/ToolbarScriptingInterface.h>
 
 #include "Application.h"
 #include "avatar/AvatarManager.h"
 #include "ClientOptions.h"
+#include "ui/SystemToolbar.h"
 #include "ui/DialogsManager.h"
 #include "ui/Keyboard.h"
 #include "ui/LoginDialog.h"
@@ -53,8 +53,7 @@ void SignInGate::showLoginScreen() {
     // there (LoginDialog/ContinueBody.qml), and goes in from it.
     auto dialogsManager = DependencyManager::get<DialogsManager>();
     if (!qApp->isHMDMode()) {
-        auto toolbar =  DependencyManager::get<ToolbarScriptingInterface>()->getToolbar("com.highfidelity.interface.toolbar.system");
-        toolbar->writeProperty("visible", false);
+        SystemToolbar::instance()->setAllowed(false);   // either bar, floating or on a side
     }
     _poppedUp = true;
     _poppedUpSetting.set(_poppedUp);
@@ -129,8 +128,7 @@ void SignInGate::resumeAfterLoginDialogActionTaken() {
     }
 
     if (!qApp->isHMDMode() && qApp->getDesktopTabletBecomesToolbarSetting()) {
-        auto toolbar = DependencyManager::get<ToolbarScriptingInterface>()->getToolbar("com.highfidelity.interface.toolbar.system");
-        toolbar->writeProperty("visible", true);
+        SystemToolbar::instance()->setAllowed(true);   // either bar, floating or on a side
     } else {
         qApp->getApplicationCompositor().getReticleInterface()->setAllowMouseCapture(true);
         qApp->getApplicationCompositor().getReticleInterface()->setVisible(true);
