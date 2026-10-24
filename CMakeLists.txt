@@ -162,7 +162,6 @@ option(USE_GLES "Use OpenGL ES" ${GLES_OPTION})
 option(USE_KHR_ROBUSTNESS "Use KHR_robustness" OFF)
 option(DISABLE_KTX_CACHE "Disable KTX Cache" OFF)
 option(DISABLE_PCM_CODEC "Disable PCM codec" OFF)
-option(DISABLE_HIFI_CODEC "Disable Hifi codec" OFF)
 
 if (NOT OpenGL_GL_PREFERENCE)
   set(OpenGL_GL_PREFERENCE GLVND)

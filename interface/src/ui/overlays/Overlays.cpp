@@ -12,9 +12,6 @@
 
 #include <limits>
 
-#include <QtCore/QThreadStorage>
-#include <QtScript/QScriptValueIterator>
-
 #include <shared/QtHelpers.h>
 #include <OffscreenUi.h>
 #include <render/Scene.h>
@@ -33,7 +30,8 @@
 #include <PickManager.h>
 
 #include <RenderableWebEntityItem.h>
-#include "VariantMapToScriptValue.h"
+#include <PlainScriptValue.h>
+#include <PlainScriptValueConversions.h>
 
 #include "ui/Keyboard.h"
 #include <QtQuick/QQuickWindow>
@@ -300,19 +298,6 @@ QString Overlays::overlayToEntityType(const QString& type) {
     }
 
 static QHash<QUuid, std::pair<glm::quat, bool>> savedRotations = QHash<QUuid, std::pair<glm::quat, bool>>();
-
-// The script engine the overlay and entity property conversions below go through: one per thread, made at the
-// thread's first conversion and deleted when the thread ends. They made a new QScriptEngine per call, and building
-// and tearing one down cost more than the conversion: every Overlays.editOverlay paid it, and the Create app's
-// selection tool hid its handles every frame, about 1,500 engines a second in a client standing still
-// (avatar-ai's idle profile, 10-23). Nothing is kept in the engine between calls but garbage it collects.
-static QThreadStorage<QScriptEngine*> conversionEngines;
-static QScriptEngine& conversionEngine() {
-    if (!conversionEngines.hasLocalData()) {
-        conversionEngines.setLocalData(new QScriptEngine());
-    }
-    return *conversionEngines.localData();
-}
 
 EntityItemProperties Overlays::convertOverlayToEntityProperties(QVariantMap& overlayProps, const QString& type, bool add, const QUuid& id) {
     std::pair<glm::quat, bool> rotation;
@@ -646,16 +631,14 @@ EntityItemProperties Overlays::convertOverlayToEntityProperties(QVariantMap& ove
         }
     }
 
-    QScriptEngine& scriptEngine = conversionEngine();
-    QScriptValue props = variantMapToScriptValue(overlayProps, scriptEngine);
     EntityItemProperties toReturn;
-    EntityItemPropertiesFromScriptValueHonorReadOnly(props, toReturn);
+    toReturn.copyFromScriptValue(PlainScriptValue::fromVariant(overlayProps), true);
     return toReturn;
 }
 
 QVariantMap Overlays::convertEntityToOverlayProperties(const EntityItemProperties& properties) {
-    QScriptEngine& scriptEngine = conversionEngine();
-    QVariantMap overlayProps = EntityItemPropertiesToScriptValue(&scriptEngine, properties).toVariant().toMap();
+    PlainScriptEngine scriptEngine;
+    QVariantMap overlayProps = properties.copyToScriptValue(&scriptEngine, false).toVariant().toMap();
 
     QString type = overlayProps["type"].toString();
     overlayProps["type"] = entityToOverlayType(type);
@@ -754,7 +737,7 @@ QVariantMap Overlays::convertEntityToOverlayProperties(const EntityItemPropertie
         GROUP_ENTITY_TO_OVERLAY_PROP(ring, majorTickMarksColor, majorTickMarksColor);
         GROUP_ENTITY_TO_OVERLAY_PROP(ring, minorTickMarksColor, minorTickMarksColor);
     } else if (type == "PolyLine") {
-        QVector<glm::vec3> points = qVectorVec3FromScriptValue(scriptEngine.newVariant(overlayProps["linePoints"]));
+        QVector<glm::vec3> points = qVectorVec3FromScriptValue(PlainScriptValue::fromVariant(overlayProps["linePoints"]));
         glm::vec3 position = vec3FromVariant(overlayProps["position"]);
         if (points.length() > 1) {
             overlayProps["p1"] = vec3toVariant(points[0] + position);
@@ -769,7 +752,7 @@ QVariantMap Overlays::convertEntityToOverlayProperties(const EntityItemPropertie
         RENAME_PROP(p2, endPoint);
         RENAME_PROP(p2, end);
 
-        QVector<float> widths = qVectorFloatFromScriptValue(scriptEngine.newVariant(overlayProps["strokeWidths"]));
+        QVector<float> widths = qVectorFloatFromScriptValue(PlainScriptValue::fromVariant(overlayProps["strokeWidths"]));
         if (widths.length() > 0) {
             overlayProps["lineWidth"] = widths[0];
         }

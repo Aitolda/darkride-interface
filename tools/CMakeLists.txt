@@ -13,12 +13,10 @@ endfunction()
 
 if (BUILD_TOOLS)
     set(ALL_TOOLS 
-        vhacd-util
         ac-client
         auto-rig
         unity-avatar
         atp-client
-        oven
     )
 
     # Allow different tools for stable builds

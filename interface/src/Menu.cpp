@@ -66,7 +66,6 @@
 
 #include "scripting/SettingsScriptingInterface.h"
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-#include "SpeechRecognizer.h"
 #endif
 
 #include "MeshPartPayload.h"
@@ -274,9 +273,13 @@ Menu::Menu() {
     MenuWrapper* buildMenu = addMenu("Build");
 
     // Build > Build Mode
-    addCheckableActionToQMenuAndActionHash(buildMenu, MenuOption::BuildMode,
+    QAction* buildModeAction = addCheckableActionToQMenuAndActionHash(buildMenu, MenuOption::BuildMode,
         [](bool checked) { DependencyManager::get<Editor>()->setActive(checked); },
         Qt::CTRL | Qt::Key_B, false);
+    // scripts hear it as Menu.menuItemEvent("Build Mode") whichever way build mode changes (this item, Ctrl+B, the bar's
+    // Create button, or the editor leaving by itself: Editor::setActive unchecks the item through setIsOptionChecked,
+    // which triggers it); only items scripts add were forwarded before
+    connect(buildModeAction, SIGNAL(triggered()), MenuScriptingInterface::getInstance(), SLOT(menuItemTriggered()));
 
     // Build > Show Grid
     addCheckableActionToQMenuAndActionHash(buildMenu, MenuOption::BuildGrid,
@@ -329,6 +332,15 @@ Menu::Menu() {
         buildMenu->addSeparator();
         editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildResetPanels, 0,
             editor.data(), SLOT(resetLayout())));
+        buildMenu->addSeparator();
+        // Build > Import Entities…, Import Entities from URL…, Export Selected Entities…: entities files, as the old
+        // Create app's Edit menu had them
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildImportEntities, 0,
+            editor.data(), SLOT(importEntitiesFromFile())));
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildImportEntitiesFromUrl, 0,
+            editor.data(), SLOT(importEntitiesFromUrl())));
+        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildExportEntities, 0,
+            editor.data(), SLOT(exportSelection())));
         buildMenu->addSeparator();
         // Build > Use Stable Links: the world's links to your files by path become their stable links (NATIVE-EDITOR.md 7.4)
         editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildUseStableLinks, 0,
@@ -542,20 +554,7 @@ Menu::Menu() {
     addCheckableActionToQMenuAndActionHash(scriptingOptionsMenu, MenuOption::RunJavaScriptOnWebAssembly,
                                            [](bool checked) { WasmScriptEngine::setRunJavaScriptOnWebAssembly(checked); },
                                            0, WasmScriptEngine::runJavaScriptOnWebAssembly());
-    
-    // Developer > Scripting > Enable Speech Control API
-#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-    auto speechRecognizer = DependencyManager::get<SpeechRecognizer>();
-    QAction* speechRecognizerAction = addCheckableActionToQMenuAndActionHash(scriptingOptionsMenu, MenuOption::ControlWithSpeech,
-        Qt::CTRL | Qt::SHIFT | Qt::Key_C,
-        speechRecognizer->getEnabled(),
-        speechRecognizer.data(),
-        SLOT(setEnabled(bool)),
-        UNSPECIFIED_POSITION);
-    connect(speechRecognizer.data(), SIGNAL(enabledUpdated(bool)), speechRecognizerAction, SLOT(setChecked(bool)));
-#endif
 
-    
     // Developer > UI >>>
     MenuWrapper* uiOptionsMenu = developerMenu->addMenu("UI");
     action = addCheckableActionToQMenuAndActionHash(uiOptionsMenu, MenuOption::DesktopTabletToToolbar, 0,

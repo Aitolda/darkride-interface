@@ -22,6 +22,7 @@
 #include <ScriptCache.h>
 #include <plugins/PluginManager.h>
 #include <EntityEditFilters.h>
+#include <WasmEditFilterEngine.h>
 #include <NetworkingConstants.h>
 #include <hfm/ModelFormatRegistry.h>
 
@@ -101,6 +102,9 @@ OctreePointer EntityServer::createTree() {
     DependencyManager::registerInheritance<SpatialParentFinder, AssignmentParentFinder>();
     DependencyManager::set<AssignmentParentFinder>(tree);
     DependencyManager::set<EntityEditFilters>(std::static_pointer_cast<EntityTree>(tree));
+    // a filter script runs on the engine the scripting setting names: QtScript, or the WebAssembly engine's
+    // JavaScript guest with DARKRIDE_RUN_JS_ON_WASM=1
+    EntityEditFilters::setEngineFactory(&WasmEditFilterEngine::makeForSetting);
 
     return tree;
 }

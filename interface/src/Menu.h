@@ -61,6 +61,9 @@ namespace MenuOption {
     const QString BuildRedo = "Redo";
     const QString BuildResetPanels = "Reset Panels";
     const QString BuildUseStableLinks = "Use Stable Links";
+    const QString BuildImportEntities = "Import Entities…";
+    const QString BuildImportEntitiesFromUrl = "Import Entities from URL…";
+    const QString BuildExportEntities = "Export Selected Entities…";
     const QString BuildBakeImpostor = "Bake Impostor";
     const QString BuildBakeAllImpostors = "Bake All Impostors";
     const QString BuildRemoveImpostor = "Remove Impostor";
@@ -72,7 +75,6 @@ namespace MenuOption {
     const QString Collisions = "Collisions";
     const QString Connexion = "Activate 3D Connexion Devices";
     const QString Console = "Console...";
-    const QString ControlWithSpeech = "Enable Speech Control API";
     const QString CopyAddress = "Copy Address to Clipboard";
     const QString CopyPath = "Copy Path to Clipboard";
     const QString CoupleEyelids = "Couple Eyelids";
