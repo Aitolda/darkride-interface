@@ -389,6 +389,16 @@ QString color(const Skin& skin, const QString& key) {
     return skin.colors.value(key).toString();
 }
 
+// the docked bar takes the skin's look only when the skin gives it something to sit on, a "bar" frame or a background
+// colour; otherwise it keeps its own dark strip and white captions. A colours-only skin used to drop the bar's look
+// and give its captions the skin's dark text on the system's dark toolbar, so they vanished (editor-renderer, 10-24).
+QString barBackground(const Skin& skin) {
+    return color(skin, "background").isEmpty() ? skin.backdropColor : color(skin, "background");
+}
+bool skinsTheBar(const Skin& skin) {
+    return skin.frames.contains("bar") || !barBackground(skin).isEmpty();
+}
+
 QString styleSheet(const Skin& skin) {
     QString sheet;
     const QString text = color(skin, "text");
@@ -425,12 +435,16 @@ QString styleSheet(const Skin& skin) {
     }
     sheet += rules(skin, "menuItem", "QMenu::item:selected", {}, colorOf(menuText));
 
-    sheet += rules(skin, "bar", "QToolBar#systemToolbar", {}, "spacing: 4px; ");
-    sheet += rules(skin, "barButton", "QToolBar#systemToolbar QToolButton",
-                   { { "hover", "QToolBar#systemToolbar QToolButton:hover" },
-                     { "pressed", "QToolBar#systemToolbar QToolButton:pressed" },
-                     { "checked", "QToolBar#systemToolbar QToolButton[active=\"true\"]" } },
-                   colorOf(text) + "font-size: 12px; ");
+    if (skinsTheBar(skin)) {
+        sheet += rules(skin, "bar", "QToolBar#systemToolbar", {},
+                       "spacing: 4px; " + (skin.frames.contains("bar") ? QString()
+                                           : "background: " + barBackground(skin) + "; border: none; padding: 6px; "));
+        sheet += rules(skin, "barButton", "QToolBar#systemToolbar QToolButton",
+                       { { "hover", "QToolBar#systemToolbar QToolButton:hover" },
+                         { "pressed", "QToolBar#systemToolbar QToolButton:pressed" },
+                         { "checked", "QToolBar#systemToolbar QToolButton[active=\"true\"]" } },
+                       colorOf(text) + "font-size: 12px; ");
+    }
     sheet += rules(skin, "toolbar", "QToolBar", {});
     sheet += rules(skin, "toolButton", "QToolBar QToolButton",
                    { { "hover", "QToolBar QToolButton:hover" }, { "pressed", "QToolBar QToolButton:pressed" },
@@ -807,7 +821,7 @@ QString Skins::apply(const QString& id) {
         font.setPointSizeF(skin.fontSize > 0 ? skin.fontSize : _ownFont.pointSizeF());
         QApplication::setFont(font);
     }
-    SystemToolbar::instance()->setSkinned(true);
+    SystemToolbar::instance()->setSkinned(skinsTheBar(skin));
     qApp->setStyleSheet(styleSheet(skin));
 
     if (_window) {
