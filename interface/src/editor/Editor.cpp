@@ -596,10 +596,11 @@ void Editor::createPanels() {
     if (styleSheet.open(QIODevice::ReadOnly)) {
         _styleSource = QString::fromUtf8(styleSheet.readAll());
     }
-    applyStyle();
-    connect(DependencyManager::get<PanelTheme>().data(), &PanelTheme::changed, this, &Editor::applyStyle);
 
     _treeModel = new EntityTreeModel(this);
+    // the style (and the Hierarchy's red and grey rows) from the skin, now and whenever it changes
+    applyStyle();
+    connect(DependencyManager::get<PanelTheme>().data(), &PanelTheme::changed, this, &Editor::applyStyle);
     connect(_treeModel, &EntityTreeModel::renameRequested, this, &Editor::rename);
     connect(_treeModel, &EntityTreeModel::reparentRequested, this, &Editor::reparent);
 
@@ -827,6 +828,14 @@ void Editor::applyStyle() {
         }
         out += _styleSource.mid(last);
         themed = out;
+    }
+    // the Hierarchy's rows that take their own colour: red, couldn't load (destructive); grey, not loaded yet
+    // (tertiaryText)
+    if (_treeModel) {
+        QColor failed(colors.value("destructive").toString());
+        QColor unloaded(colors.value("tertiaryText").toString());
+        _treeModel->setRowColors(failed.isValid() ? failed : QColor(255, 107, 107),
+                                 unloaded.isValid() ? unloaded : QColor(0x7a, 0x7a, 0x7a));
     }
     // the window's sheet holds other parts too: ours goes between its markers, in place
     QString sheet = window->styleSheet();
@@ -1640,6 +1649,10 @@ void Editor::refreshLoadProblems() {
     if (_inspector && !_selection.isEmpty()) {
         _inspector->setLoadProblem(selectionLoadProblem());
     }
+}
+
+QColor Editor::hierarchyRowColor(const QUuid& id) const {
+    return _treeModel ? _treeModel->rowColor(id) : QColor();
 }
 
 QString Editor::loadProblem(const QUuid& id) const {

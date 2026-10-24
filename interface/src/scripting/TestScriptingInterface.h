@@ -342,6 +342,15 @@ public slots:
     Q_INVOKABLE QString setSkin(const QString& id);
 
     /**jsdoc
+     * The colour an entity's row in build mode's Hierarchy is drawn in: red for one that couldn't load, grey for one
+     * listed but not loaded yet (both from the skin while one is on), "" for the panel's own colour.
+     * @function Test.hierarchyRowColor
+     * @param {Uuid} id - The entity.
+     * @returns {string} "#rrggbb", or "".
+     */
+    Q_INVOKABLE QString hierarchyRowColor(const QUuid& id);
+
+    /**jsdoc
      * Imports an entities file into the world as Build > Import Entities… does once the file is chosen: placed under
      * the cursor (or in front of the camera), selected, one undo step; build mode comes on for it.
      * @function Test.editorImportEntities

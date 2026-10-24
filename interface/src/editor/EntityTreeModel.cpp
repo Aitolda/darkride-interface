@@ -599,10 +599,10 @@ QVariant EntityTreeModel::data(const QModelIndex& index, int role) const {
             // stayed blank and said nothing); grey, one the entity server lists that the client has not loaded; the
             // selected row keeps the style sheet's white
             if (!node->loadProblem.isEmpty()) {
-                return QBrush(QColor(255, 107, 107));
+                return QBrush(_failedColor);
             }
             if (!node->loaded) {
-                return QBrush(QColor(0x7a, 0x7a, 0x7a));
+                return QBrush(_unloadedColor);
             }
             return QVariant();
         case LoadedRole:
@@ -707,6 +707,22 @@ void EntityTreeModel::setLoadProblem(const QUuid& id, const QString& problem) {
     node->loadProblem = problem;
     QModelIndex index = indexFor(node);
     emit dataChanged(index, index, { Qt::ForegroundRole, Qt::ToolTipRole });
+}
+
+void EntityTreeModel::setRowColors(const QColor& failed, const QColor& unloaded) {
+    if (failed == _failedColor && unloaded == _unloadedColor) {
+        return;
+    }
+    _failedColor = failed;
+    _unloadedColor = unloaded;
+    // every row may be drawn in one: Qt has no dataChanged for a whole tree, so the views draw it again
+    emit layoutAboutToBeChanged();
+    emit layoutChanged();
+}
+
+QColor EntityTreeModel::rowColor(const QUuid& id) const {
+    QVariant brush = data(indexForId(id), Qt::ForegroundRole);
+    return brush.isValid() ? brush.value<QBrush>().color() : QColor();
 }
 
 QString EntityTreeModel::loadProblem(const QUuid& id) const {

@@ -380,6 +380,16 @@ void TestScriptingInterface::editorUndo() {
     DependencyManager::get<Editor>()->undo();
 }
 
+QString TestScriptingInterface::hierarchyRowColor(const QUuid& id) {
+    if (QThread::currentThread() != thread()) {
+        QString result;
+        BLOCKING_INVOKE_METHOD(this, "hierarchyRowColor", Q_RETURN_ARG(QString, result), Q_ARG(QUuid, id));
+        return result;
+    }
+    QColor color = DependencyManager::get<Editor>()->hierarchyRowColor(id);
+    return color.isValid() ? color.name() : QString();
+}
+
 QString TestScriptingInterface::setSkin(const QString& id) {
     if (QThread::currentThread() != thread()) {
         QString result;

@@ -22,6 +22,7 @@
 #include <QtCore/QStringList>
 #include <QtCore/QTimer>
 #include <QtCore/QUuid>
+#include <QtGui/QColor>
 
 #include <AACube.h>
 #include <EntityItemID.h>
@@ -85,6 +86,11 @@ public:
     // empty when nothing: its row's name is drawn red and the reasons are in its tooltip. The editor sets it
     void setLoadProblem(const QUuid& id, const QString& problem);
     QString loadProblem(const QUuid& id) const;
+    // the colours of those rows (red: couldn't load) and of the rows listed but not loaded yet (grey); the editor sets
+    // them from the skin (Editor::applyStyle), Darkride's own without one
+    void setRowColors(const QColor& failed, const QColor& unloaded);
+    // the colour the entity's row is drawn in, invalid when it is the panel's own (for scripted tests)
+    QColor rowColor(const QUuid& id) const;
 
 signals:
     // the user typed a new name in the Hierarchy; the editor applies it (through undo)
@@ -143,6 +149,8 @@ private:
     EntityTreePointer _tree;
     std::unique_ptr<Node> _root;
     QHash<QUuid, Node*> _nodes;
+    QColor _failedColor { 255, 107, 107 };    // setRowColors
+    QColor _unloadedColor { 0x7a, 0x7a, 0x7a };
     QHash<QUuid, EntityListMessage::Record> _listed;
     bool _hasList { false };
     QSet<QUuid> _pendingEdits;

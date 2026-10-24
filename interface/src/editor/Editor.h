@@ -14,6 +14,7 @@
 #define hifi_Editor_h
 
 #include <QtCore/QByteArray>
+#include <QtGui/QColor>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QHash>
 #include <QtCore/QList>
@@ -134,6 +135,8 @@ public:
     int exportSelectionTo(const QString& path);
     // what the entity could not load, as its Hierarchy row says (refreshLoadProblems); empty when nothing has failed
     QString loadProblem(const QUuid& id) const;
+    // the colour of the entity's Hierarchy row (EntityTreeModel::rowColor), invalid for the panel's own
+    QColor hierarchyRowColor(const QUuid& id) const;
     // a Build menu item that only works while build mode is on
     void addMenuAction(QAction* action);
 
