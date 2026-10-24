@@ -187,6 +187,13 @@ private:
     void stopAll();
     void loop();
     void onModuleFailure(const ModuleInstancePointer& instance, const QString& entry, const QString& error);
+    /// A call into the JavaScript guest ended at the time limit (HostInterface::TimeLimitHandler): the entity script
+    /// that was running is stopped and the others run on; when the script itself was running, it is stopped as a
+    /// failure stops it.
+    void onCallTimeLimit(const ModuleInstancePointer& instance, const QString& entry, const QString& entity, const QString& reason);
+    /// Stops an entity script that misbehaved: its status an error with the reason, its object, timers, signal
+    /// handlers and callbacks dropped (entity_unload, queued), its unload method not called.
+    void stopEntityScript(const EntityItemID& entityID, const QString& errorInfo);
     int addTimer(const ScriptCallback& callback, int intervalMS, bool singleShot);
     void removeTimer(int id);
     void stopTimers();

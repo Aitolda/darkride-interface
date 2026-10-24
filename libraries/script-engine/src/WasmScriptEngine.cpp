@@ -61,6 +61,15 @@ const QString JS_SUFFIX = QStringLiteral("js");
 const int MIN_TIMEOUT_FOR_COARSE_TIMER = 200;  // below this a Qt timer is made precise, as the QtScript engine does
 const int MAX_SCRIPT_QUITTING_TIME_MS = 500;
 const int MAX_SCRIPT_ENDING_TIME_MS = 3000;  // for the scriptEnding handlers, before the modules are interrupted
+const int DEFAULT_SCRIPT_CALL_LIMIT_MS = 5000;  // a call into a JavaScript script, of the script's own time
+
+// A call into a JavaScript script may run this long of the script's own time (what it spends in host functions,
+// a download among them, does not count): DARKRIDE_SCRIPT_CALL_LIMIT_MS, 0 for no limit; 5 s otherwise.
+std::chrono::milliseconds scriptCallTimeLimit() {
+    bool ok = false;
+    const int fromEnvironment = qEnvironmentVariableIntValue("DARKRIDE_SCRIPT_CALL_LIMIT_MS", &ok);
+    return std::chrono::milliseconds(ok && fromEnvironment >= 0 ? fromEnvironment : DEFAULT_SCRIPT_CALL_LIMIT_MS);
+}
 const int SHUTDOWN_POLL_MS = 5;
 const int MAX_MODULE_ID_LENGTH = 4096;
 const int MAX_DEBUG_VALUE_LENGTH = 80;
@@ -158,8 +167,9 @@ WasmScriptEngine::WasmScriptEngine(Context context, const QString& scriptContent
         _limits.memoryBytes = int64_t(1024) * 1024 * 1024;
     }
     if (_runsJavaScript) {
-        // a JavaScript script may run as long as it did on QtScript, which had no limit; stop() still interrupts it
-        _limits.callTimeout = std::chrono::milliseconds(0);
+        // a call into a script may run this long of the script's own time; a runaway is interrupted and, in an
+        // entities engine, that entity script alone is stopped (onCallTimeLimit); stop() interrupts a call as before
+        _limits.callTimeout = scriptCallTimeLimit();
     }
 }
 
@@ -471,7 +481,13 @@ WasmScriptEngine::ModuleInstancePointer WasmScriptEngine::makeInstance(const QSt
     instance->codec = std::make_unique<ValueCodec>(_objects.get());
     instance->target = std::make_shared<InstanceCallbackTarget>(this, instance);
     instance->codec->setCallbackTarget(instance->target);
-    instance->instance = std::make_unique<WasmInstance>(module, limits);
+    WasmInstance::Limits instanceLimits = limits;
+    if (_runsJavaScript && module->interruption() == WasmRuntime::Interruption::Epoch) {
+        // an older guest, which does not ask whether to stop: its only interruption would be a trap, which breaks
+        // the guest and every script in it, so it keeps no time limit, as before (stop() still interrupts it)
+        instanceLimits.callTimeout = std::chrono::milliseconds(0);
+    }
+    instance->instance = std::make_unique<WasmInstance>(module, instanceLimits);
     instance->host = std::make_unique<HostInterface>(*instance->instance, *_objects, *instance->codec, *_relay);
     instance->host->setLogger([this](int level, const QString& text) {
         switch (level) {
@@ -495,6 +511,9 @@ WasmScriptEngine::ModuleInstancePointer WasmScriptEngine::makeInstance(const QSt
     std::weak_ptr<ModuleInstance> weak = instance;
     instance->host->setFailureHandler([this, weak](const QString& entry, const QString& failure) {
         onModuleFailure(weak.lock(), entry, failure);
+    });
+    instance->host->setTimeLimitHandler([this, weak](const QString& entry, const QString& entity, const QString& reason) {
+        onCallTimeLimit(weak.lock(), entry, entity, reason);
     });
     instance->host->install();
     instance->instance->enableWasi();
@@ -685,6 +704,58 @@ void WasmScriptEngine::onModuleFailure(const ModuleInstancePointer& instance, co
         _isFinished = true;
         emit runningStateChanged();
     }
+}
+
+void WasmScriptEngine::onCallTimeLimit(const ModuleInstancePointer& instance, const QString& entry, const QString& entity,
+                                       const QString& reason) {
+    if (!entity.isEmpty()) {
+        const EntityItemID entityID { QUuid(entity) };
+        if (!entityID.isNull() && hasEntityScriptDetails(entityID)) {
+            stopEntityScript(entityID, QString("%1, in %2: the entity script is stopped").arg(reason, entry));
+            return;
+        }
+    }
+    if (_isEntitiesEngine) {
+        // outside any entity script (the guest's own code, a handler nobody owns): the call ended; nothing to stop
+        scriptErrorMessage(QString("%1, in %2, outside any entity script: the call was abandoned").arg(reason, entry));
+        return;
+    }
+    // the script itself ran away: it stops, as a failure stops it
+    onModuleFailure(instance, entry, reason);
+}
+
+void WasmScriptEngine::stopEntityScript(const EntityItemID& entityID, const QString& errorInfo) {
+    EntityScriptDetails details;
+    if (!getEntityScriptDetails(entityID, details)) {
+        return;
+    }
+    const QString name = details.definingSandboxURL.isEmpty() ? QString("entity script") : details.definingSandboxURL.toString();
+    scriptErrorMessage(QString("%1 (%2): %3").arg(name, entityID.toString(), errorInfo));
+    std::weak_ptr<ModuleInstance> host = _entityHosts.value(entityID);
+    _entityHosts.remove(entityID);
+    _callbackHandlers.remove(entityID);
+    EntityScriptDetails stopped;
+    stopped.scriptText = details.scriptText;
+    stopped.definingSandboxURL = details.definingSandboxURL;
+    stopped.status = EntityScriptStatus::ERROR_RUNNING_SCRIPT;
+    stopped.errorInfo = errorInfo;
+    stopped.lastModified = QDateTime::currentMSecsSinceEpoch();
+    setEntityScriptDetails(entityID, stopped);
+    // the guest's record of the script (its object, timers, handlers and callbacks) goes through entity_unload once
+    // the interrupted call has unwound: queued, since this may run inside that call's own report
+    QMetaObject::invokeMethod(this, [this, entityID, host] {
+        ModuleInstancePointer instance = host.lock();
+        if (isStopping() || !instance || !instance->running || !instance->host || !instance->instance->hasExport(ENTITY_UNLOAD_EXPORT)) {
+            return;
+        }
+        QVariantMap payload;
+        payload["entity"] = entityID.toString();
+        QVariant result;
+        QString error;
+        ++_callDepth;
+        instance->host->callWithPayload(ENTITY_UNLOAD_EXPORT, payload, result, error);
+        --_callDepth;
+    }, Qt::QueuedConnection);
 }
 
 void WasmScriptEngine::stop(bool marshal) {
