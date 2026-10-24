@@ -6,8 +6,8 @@
 # without the right to change locks, which would let the agent's edits pass the filter unseen), starts it from
 # this checkout's build with one assignment client more than the six servers, waits, copies the new logs to
 # results/server-check-<engine>/,
-# prints the AGENT-CHECK and SERVER-CHECK lines and the CRITICAL ones, stops the sandbox and takes the two settings
-# out again.
+# prints the AGENT-CHECK and SERVER-CHECK lines and the CRITICAL ones, stops the sandbox and takes the settings out
+# again; a sandbox that was running before is started again as it was.
 #   tests-manual/wasm-scripting/server-check.sh qtscript|wasm [seconds, 40]
 set -e
 ENGINE=${1:?usage: server-check.sh qtscript|wasm [seconds]}
@@ -69,6 +69,9 @@ stop_sandbox() {
 python3 -I "$D/http-echo.py" 43110 "$D/../.." > /dev/null 2>&1 &
 HTTP_PID=$!
 trap 'kill $HTTP_PID 2>/dev/null' EXIT
+# whether the sandbox runs now, to start it again plain at the end
+WAS_RUNNING=0
+[ -f "$ROOT/domain-server.pid" ] && kill -0 "$(cat "$ROOT/domain-server.pid")" 2>/dev/null && WAS_RUNNING=1
 settings on
 # the entities an earlier run left in the sandbox's world: its entity script server would start them before the agent
 # could delete them
@@ -101,6 +104,9 @@ find "$ROOT/logs" -type f -newer "$MARK" -exec cp {} "$OUT/" \;
 rm -f "$MARK"
 stop_sandbox
 settings off
+if [ $WAS_RUNNING = 1 ]; then
+    "$HOME/git/tivolicloud/domain-sandbox.sh" wasm "$BUILD" 43102 > /dev/null
+fi
 cp "$D/results/server-check-filter/client.log" "$OUT/filter-client.log" 2>/dev/null || true
 rm -rf "$D/results/server-check-filter/data/ktx_cache"
 cd "$OUT"
