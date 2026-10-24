@@ -31,6 +31,7 @@
 #include "Application.h"
 #include "avatar/AvatarManager.h"
 #include "ClientOptions.h"
+#include "ui/Skins.h"
 #include "ui/SystemToolbar.h"
 #include "ui/DialogsManager.h"
 #include "ui/Keyboard.h"
@@ -55,6 +56,8 @@ void SignInGate::showLoginScreen() {
     if (!qApp->isHMDMode()) {
         SystemToolbar::instance()->setAllowed(false);   // either bar, floating or on a side
     }
+    DependencyManager::get<Skins>()->setHeld(true);     // no skin on the sign-in screen
+
     _poppedUp = true;
     _poppedUpSetting.set(_poppedUp);
     dialogsManager->showLoginDialog();
@@ -127,9 +130,10 @@ void SignInGate::resumeAfterLoginDialogActionTaken() {
         return;
     }
 
-    if (!qApp->isHMDMode() && qApp->getDesktopTabletBecomesToolbarSetting()) {
-        SystemToolbar::instance()->setAllowed(true);   // either bar, floating or on a side
-    } else {
+    // either bar, floating or on a side, may show now (each still waits for the desktop: none in VR), and the skin
+    SystemToolbar::instance()->setAllowed(true);
+    DependencyManager::get<Skins>()->setHeld(false);
+    if (qApp->isHMDMode() || !qApp->getDesktopTabletBecomesToolbarSetting()) {
         qApp->getApplicationCompositor().getReticleInterface()->setAllowMouseCapture(true);
         qApp->getApplicationCompositor().getReticleInterface()->setVisible(true);
     }

@@ -22,6 +22,7 @@
 #include <QtGui/QFontDatabase>
 #include <QtGui/QImageReader>
 #include <QtGui/QPainter>
+#include <QtGui/QWindow>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QMainWindow>
@@ -509,8 +510,17 @@ public:
             watch(child);
         }
         setGeometry(window->rect());
+        cutAwayViewport();
         raise();
         show();
+        // Qt makes this layer a native view beside the native 3D view (10-24), and a native view on top took the
+        // clicks meant for the sign-in screen and the overlays though the layer is WA_TransparentForMouseEvents: so
+        // its window is transparent for input too, and it is cut away over the 3D view
+        if (windowHandle()) {
+            windowHandle()->setFlag(Qt::WindowTransparentForInput, true);
+        }
+        qCDebug(interfaceapp) << "Skin layer over the main window:" << (internalWinId() ? "a native surface" : "drawn in the window")
+                              << ", transparent for input, the 3D view cut away";
     }
 
 protected:
@@ -520,6 +530,7 @@ protected:
                 if (watched == _window) {
                     setGeometry(_window->rect());
                 }
+                cutAwayViewport();
                 update();
                 break;
             case QEvent::ChildAdded:
@@ -532,6 +543,7 @@ protected:
             case QEvent::Show:
             case QEvent::Hide:
             case QEvent::LayoutRequest:
+                cutAwayViewport();
                 update();
                 break;
             default:
@@ -554,6 +566,15 @@ protected:
     }
 
 private:
+    // the layer never lies over the 3D view (the central widget): not drawn there, and no clicks of its to catch
+    void cutAwayViewport() {
+        QRegion region(rect());
+        if (QWidget* viewport = _window->centralWidget()) {
+            region -= QRegion(viewport->geometry());
+        }
+        setMask(region);
+    }
+
     void watch(QObject* child) {
         if (qobject_cast<QDockWidget*>(child) || qobject_cast<QToolBar*>(child) || qobject_cast<QMenuBar*>(child) ||
             qobject_cast<QStatusBar*>(child) || child == _window->centralWidget()) {
@@ -630,14 +651,34 @@ QString Skins::folder() const {
 void Skins::start(QMainWindow* window) {
     _window = window;
     _ownFont = QApplication::font();
-    const QString saved = _currentSetting.get();
-    if (!saved.isEmpty()) {
-        const QString problem = apply(saved);
-        if (!problem.isEmpty()) {
-            qCWarning(interfaceapp) << "Skin" << saved << "not put on:" << problem;
-            _currentSetting.set(QString());
-        }
+    if (!_held) {
+        _held = true;
+        setHeld(false);
     }
+}
+
+void Skins::setHeld(bool held) {
+    if (held == _held) {
+        return;
+    }
+    _held = held;
+    if (held) {
+        if (!_current.isEmpty()) {
+            takeOff();   // the choice stays saved
+            emit changed();
+        }
+        return;
+    }
+    const QString saved = _currentSetting.get();
+    if (!_window || saved.isEmpty() || saved == _current) {
+        return;
+    }
+    const QString problem = apply(saved);
+    if (!problem.isEmpty()) {
+        qCWarning(interfaceapp) << "Skin" << saved << "not put on:" << problem;
+        _currentSetting.set(QString());
+    }
+    emit changed();
 }
 
 QVariantList Skins::getInstalled() const {

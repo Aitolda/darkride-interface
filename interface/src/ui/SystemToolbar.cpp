@@ -185,7 +185,12 @@ void SystemToolbar::updateVisibility() {
     if (auto qmlToolbar = DependencyManager::get<ToolbarScriptingInterface>()->getToolbar(QML_TOOLBAR)) {
         qmlToolbar->writeProperty("visible", _allowed && desktopBar && !docked);
     }
-    setVisible(_window && _allowed && desktopBar && docked);
+    const bool show = _window && _allowed && desktopBar && docked;
+    if (show != isVisible()) {
+        qCDebug(interfaceapp) << "The bar on a side:" << (show ? "shown" : "hidden") << getPlace()
+                              << "(allowed" << _allowed << ", desktop" << desktopBar << ")";
+    }
+    setVisible(show);
 }
 
 bool SystemToolbar::event(QEvent* event) {

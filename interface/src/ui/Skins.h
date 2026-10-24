@@ -42,8 +42,11 @@ class Skins : public QObject, public Dependency {
 public:
     static const int FORMAT { 1 };
 
-    /// applies the saved choice, once the main window exists
+    /// the main window, once it exists; the saved choice goes on when the sign-in gate lets it (setHeld)
     void start(QMainWindow* window);
+    /// the sign-in gate's say (Caity, 10-24: no skin until you're signed in, it's a setting): held on the sign-in
+    /// screen, the skin is off and the choice stays saved; let go, the saved choice goes on
+    void setHeld(bool held);
 
     QVariantList getInstalled() const;
     QString getCurrent() const { return _current; }
@@ -70,6 +73,7 @@ private:
     QPointer<SkinLayer> _layer;
     Setting::Handle<QString> _currentSetting { "skin/current", QString() };
     QString _current;
+    bool _held { true };
     QFont _ownFont;
     QList<int> _fontIds;
 };

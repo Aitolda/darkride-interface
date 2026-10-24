@@ -66,7 +66,10 @@ private:
     QPointer<QMainWindow> _window;
     QPointer<TabletProxy> _tablet;
     Setting::Handle<QString> _placeSetting { "toolbar/systemPlace", "floating" };
-    bool _allowed { true };
+    // no bar until the sign-in gate says one may show (SignInGate::resumeAfterLoginDialogActionTaken), as the QML bar
+    // always waited: a docked bar shown at start-up and hidden by the sign-in screen resized the 3D view twice, and
+    // the sign-in dialog's clicks landed on a stale size (a bar at the bottom moved them off "Continue as", 10-24)
+    bool _allowed { false };
 };
 
 #endif // hifi_SystemToolbar_h
