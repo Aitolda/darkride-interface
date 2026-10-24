@@ -486,7 +486,7 @@ QDockWidget#EditorAssets::title {
     background: #474747;
 }
 #EditorAssets QToolButton#EditorAssetsCrumb[last="true"] {
-    color: #ffffff;
+    color: #f0f0f0;   /* the skin's text under a skin (Editor::applyStyle): it sits on the panel, not on the selection */
     font-weight: bold;
 }
 #EditorAssets QLabel#EditorAssetsCrumbSeparator {

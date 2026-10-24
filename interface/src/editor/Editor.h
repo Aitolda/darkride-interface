@@ -14,6 +14,7 @@
 #define hifi_Editor_h
 
 #include <QtCore/QByteArray>
+#include <QtGui/QColor>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QHash>
 #include <QtCore/QList>
@@ -134,6 +135,8 @@ public:
     int exportSelectionTo(const QString& path);
     // what the entity could not load, as its Hierarchy row says (refreshLoadProblems); empty when nothing has failed
     QString loadProblem(const QUuid& id) const;
+    // the colour of the entity's Hierarchy row (EntityTreeModel::rowColor), invalid for the panel's own
+    QColor hierarchyRowColor(const QUuid& id) const;
     // a Build menu item that only works while build mode is on
     void addMenuAction(QAction* action);
 
@@ -168,6 +171,9 @@ public slots:
     void redo();
     // docks the panels back where they started, for a panel that was torn off and lost
     void resetLayout();
+    // the panels' style sheet (styles/editor.qss) on the window, its colours the skin's while one is on
+    // (PanelTheme::getSkin): called once the panels exist and again whenever the skin changes
+    void applyStyle();
     void frameSelection();
     // flies the build camera to a Hierarchy row that is not loaded, so the stream brings it; it is selected when it
     // arrives (NATIVE-EDITOR.md 8). A loaded entity is selected and framed
@@ -449,6 +455,7 @@ private:
     QVector<glm::vec3> _inspectorNatural;
 
     bool _panelsCreated { false };
+    QString _styleSource;     // styles/editor.qss as shipped (applyStyle)
     bool _syncingSelection { false };
     HierarchyPanel* _hierarchy { nullptr };
     InspectorPanel* _inspector { nullptr };

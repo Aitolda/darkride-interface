@@ -25,6 +25,7 @@
 #include <QtCore/QStandardPaths>
 #include <QtCore/QUrl>
 #include <QtGui/QClipboard>
+#include <QtGui/QColor>
 #include <QtGui/QCursor>
 #include <QtGui/QImage>
 #include <QtGui/QDropEvent>
@@ -90,6 +91,7 @@
 #include "scripting/RenderScriptingInterface.h"
 #include "PropertySpec.h"
 #include "ui/AssetsPanel.h"
+#include "ui/PanelTheme.h"
 #include "ui/HierarchyPanel.h"
 #include "ui/InspectorPanel.h"
 #include "ui/PropertyEditors.h"
@@ -588,13 +590,17 @@ void Editor::createPanels() {
     }
     _panelsCreated = true;
 
-    // one dark stylesheet for the panels; scoped by object name so the rest of the window is untouched
+    // one dark stylesheet for the panels; scoped by object name so the rest of the window is untouched. Under a skin
+    // (ui/Skins.h) its colours become the skin's, and they follow the skin as it changes
     QFile styleSheet(PathUtils::resourcesPath() + "styles/editor.qss");
     if (styleSheet.open(QIODevice::ReadOnly)) {
-        window->setStyleSheet(window->styleSheet() + "\n" + styleSheet.readAll());
+        _styleSource = QString::fromUtf8(styleSheet.readAll());
     }
 
     _treeModel = new EntityTreeModel(this);
+    // the style (and the Hierarchy's red and grey rows) from the skin, now and whenever it changes
+    applyStyle();
+    connect(DependencyManager::get<PanelTheme>().data(), &PanelTheme::changed, this, &Editor::applyStyle);
     connect(_treeModel, &EntityTreeModel::renameRequested, this, &Editor::rename);
     connect(_treeModel, &EntityTreeModel::reparentRequested, this, &Editor::reparent);
 
@@ -772,6 +778,76 @@ void Editor::showPanels(bool show) {
     _toolBar->setVisible(show);
     _statusBar->setVisible(show);
     updateTerrainBar();
+}
+
+namespace {
+    // Darkride's own panel colours (styles/editor.qss) and the skin colour each one becomes under a skin (SKINS.md
+    // "colors"): backgrounds, fields, headers, hovers, lines, text and the selection blue. The orange World Edit button,
+    // the read-only banner, white text on the selection and the terrain drop target's light blues keep their own.
+    const QHash<QString, QString>& skinRoleForColor() {
+        static const QHash<QString, QString> ROLES {
+            { "#383838", "background" },
+            { "#2a2a2a", "fill" }, { "#2f2f2f", "fill" }, { "#323232", "fill" },
+            { "#3c3c3c", "card" }, { "#454545", "card" }, { "#3a3a3a", "card" },
+            { "#404040", "cardPressed" }, { "#474747", "cardPressed" }, { "#505050", "cardPressed" },
+            { "#1f1f1f", "separator" }, { "#232323", "separator" }, { "#262626", "separator" }, { "#2b2b2b", "separator" },
+            { "#5a5a5a", "segmentThumb" }, { "#555555", "segmentThumb" },
+            { "#d2d2d2", "text" }, { "#c4c4c4", "text" }, { "#f0f0f0", "text" },
+            { "#b8b8b8", "secondaryText" }, { "#9a9a9a", "secondaryText" }, { "#8f8f8f", "secondaryText" },
+            { "#8a8a8a", "secondaryText" },
+            { "#7a7a7a", "tertiaryText" }, { "#6a6a6a", "tertiaryText" },
+            { "#2c5d87", "tint" }, { "#3a6f9c", "tint" },
+            { "#ff6b6b", "destructive" }
+        };
+        return ROLES;
+    }
+    const QString STYLE_BEGIN = "/* build mode panels: begin */";
+    const QString STYLE_END = "/* build mode panels: end */";
+}
+
+void Editor::applyStyle() {
+    auto window = qApp->getWindow();
+    if (!window || _styleSource.isEmpty()) {
+        return;
+    }
+    // the skin's colours over Darkride's own, where the skin gives that role a colour (a skin may set only some)
+    QString themed = _styleSource;
+    QVariantMap colors = DependencyManager::get<PanelTheme>()->getSkin().value("colors").toMap();
+    if (!colors.isEmpty()) {
+        static const QRegularExpression HEX("#[0-9a-fA-F]{6}\\b");
+        QString out;
+        int last = 0;
+        auto matches = HEX.globalMatch(_styleSource);
+        while (matches.hasNext()) {
+            auto match = matches.next();
+            QString role = skinRoleForColor().value(match.captured(0).toLower());
+            QColor skinColor(colors.value(role).toString());
+            out += _styleSource.mid(last, match.capturedStart() - last);
+            out += (!role.isEmpty() && skinColor.isValid()) ? skinColor.name(QColor::HexArgb) : match.captured(0);
+            last = match.capturedEnd();
+        }
+        out += _styleSource.mid(last);
+        themed = out;
+    }
+    // the Hierarchy's rows that take their own colour: red, couldn't load (destructive); grey, not loaded yet
+    // (tertiaryText)
+    if (_treeModel) {
+        QColor failed(colors.value("destructive").toString());
+        QColor unloaded(colors.value("tertiaryText").toString());
+        _treeModel->setRowColors(failed.isValid() ? failed : QColor(255, 107, 107),
+                                 unloaded.isValid() ? unloaded : QColor(0x7a, 0x7a, 0x7a));
+    }
+    // the window's sheet holds other parts too: ours goes between its markers, in place
+    QString sheet = window->styleSheet();
+    int begin = sheet.indexOf(STYLE_BEGIN);
+    int end = sheet.indexOf(STYLE_END);
+    QString block = STYLE_BEGIN + "\n" + themed + "\n" + STYLE_END;
+    if (begin >= 0 && end > begin) {
+        sheet.replace(begin, end + STYLE_END.size() - begin, block);
+    } else {
+        sheet += "\n" + block;
+    }
+    window->setStyleSheet(sheet);
 }
 
 void Editor::resetLayout() {
@@ -1573,6 +1649,10 @@ void Editor::refreshLoadProblems() {
     if (_inspector && !_selection.isEmpty()) {
         _inspector->setLoadProblem(selectionLoadProblem());
     }
+}
+
+QColor Editor::hierarchyRowColor(const QUuid& id) const {
+    return _treeModel ? _treeModel->rowColor(id) : QColor();
 }
 
 QString Editor::loadProblem(const QUuid& id) const {
