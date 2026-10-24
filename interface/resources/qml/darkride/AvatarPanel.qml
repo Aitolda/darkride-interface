@@ -136,7 +136,8 @@ Page {
         Component.onCompleted: refresh()
     }
 
-    // the avatars (.fst files) in My Files that everyone can fetch; tea-only (private) files can't be fetched any more
+    // the avatars (.fst files) in My Files; a tea-only (private) one is fetched with your login (the client asks again
+    // with it when the files host refuses: main 3c9b0d3468, and the metaverse's private files, 10-24)
     QtObject {
         id: myFiles
 
@@ -158,21 +159,19 @@ Page {
                     return;
                 }
                 var found = [];
-                var hidden = 0;
+                var privates = 0;
                 (data.files || []).forEach(function (file) {
                     if (!/\.fst$/i.test(file.key)) {
                         return;
                     }
-                    if (file.tea) {
-                        hidden++;
-                        return;
-                    }
                     var key = file.key.charAt(0) === "/" ? file.key : "/" + file.key;
-                    found.push({ name: key.split("/").pop().replace(/\.fst$/i, ""), path: key, url: data.url + key });
+                    privates += file.tea ? 1 : 0;
+                    found.push({ name: key.split("/").pop().replace(/\.fst$/i, ""), path: key, url: data.url + key,
+                                 isPrivate: !!file.tea });
                 });
                 found.sort(function (a, b) { return a.path.toLowerCase() < b.path.toLowerCase() ? -1 : 1; });
                 avatars = found;
-                privateCount = hidden;
+                privateCount = privates;
                 status = "";
             });
         }
@@ -229,8 +228,8 @@ Page {
             title: "Wear"
             footer: myFiles.status !== "" ? myFiles.status
                 : myFiles.privateCount > 0
-                  ? myFiles.privateCount + (myFiles.privateCount === 1 ? " avatar in My Files is" : " avatars in My Files are")
-                    + " tea-only (private) and can't be worn; make it public to wear it."
+                  ? "Private: other players see it when they're on Darkride 1.2 or newer; it can't be downloaded "
+                    + "from a browser."
                   : ""
 
             ListRow {
@@ -283,7 +282,7 @@ Page {
                     model: myFiles.open ? myFiles.avatars : []
                     delegate: ListRow {
                         label: modelData.name
-                        detail: modelData.path
+                        detail: modelData.path + (modelData.isPrivate ? " · private" : "")
                         clickable: true
                         onClicked: {
                             avatar.wear(modelData.url, modelData.name);
