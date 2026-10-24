@@ -167,6 +167,14 @@ QDockWidget#EditorHierarchy::title, QDockWidget#EditorInspector::title {
 #EditorInspector QSlider::handle:horizontal:disabled {
     background: #555555;
 }
+/* an entity whose model, image or texture failed to load: its name red, the reasons under it (setLoadProblem) */
+#EditorInspector QLabel#EditorInspectorTitle[loadFailed="true"] {
+    color: #ff6b6b;
+}
+#EditorInspector QLabel#EditorInspectorLoadProblem {
+    color: #ff6b6b;
+    padding: 2px 2px 4px 2px;
+}
 #EditorInspector QLabel#EditorInspectorNote {
     color: #8f8f8f;
 }

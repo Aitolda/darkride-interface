@@ -160,6 +160,8 @@ public:
     static void setShowModelsStillLoading(bool show) { _showModelsStillLoading = show; }
     // the model, for the impostor bake (ImpostorBaker): null until it is set
     ModelPointer getModelForBake() const { return _model; }
+    // its model file or textures that failed (Model::loadFailures)
+    QStringList loadFailures() const override { return _model ? _model->loadFailures() : QStringList(); }
     // the mesh waits behind the impostor card (ENTITY-STREAMING.md 3.1): not fetched yet
     bool isMeshDeferred() const { return resultWithReadLock<bool>([&] { return _meshDeferred; }); }
     bool needsImpostorStandIn() const override;

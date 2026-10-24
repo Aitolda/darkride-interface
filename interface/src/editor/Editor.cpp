@@ -56,6 +56,7 @@
 #include <EntityTree.h>
 #include <EntityTreeElement.h>
 #include <EntityTreeRenderer.h>
+#include <RenderableEntityItem.h>
 #include <LightEntityItem.h>
 #include <ParticleEffectEntityItem.h>
 #include <VehiclePropertyGroup.h>
@@ -102,6 +103,7 @@ namespace {
     const int EDIT_INTERVAL_MS = 33;        // while dragging, edits go out at most this often
     const int SCALE_EDIT_INTERVAL_MS = 100; // scale edits are heavier for the server
     const int PRUNE_EVERY_FRAMES = 30;      // how often the selection drops entities that are gone
+    const float LOAD_CHECK_SECONDS = 1.0f;  // how often the Hierarchy and Inspector look for what failed to load
     const float PASTE_FALLBACK_DISTANCE = 3.0f;   // in front of the camera, when the cursor points at nothing
     const float MAX_PLACEMENT_DISTANCE = 200.0f;  // a grid-plane hit farther than this is not a useful spot
     const float GO_TO_STANDOFF = 1.5f;            // the gap between the avatar and what it went to
@@ -787,6 +789,11 @@ void Editor::update(float deltaTime) {
     updateAxes();
     if (++_frameCounter % PRUNE_EVERY_FRAMES == 0 && !_gizmo.isDragging()) {
         _selection.prune();
+    }
+    _loadCheckSeconds += deltaTime;
+    if (_loadCheckSeconds >= LOAD_CHECK_SECONDS) {
+        _loadCheckSeconds = 0.0f;
+        refreshLoadProblems();
     }
     // the grid's lines are a set width in points, not pixels, so they don't thin to a hair on a Retina display
     _grid.setPixelsPerPoint((float)qApp->getDevicePixelRatio() * RenderScriptingInterface::getInstance()->getViewportResolutionScale());
@@ -1520,6 +1527,55 @@ bool Editor::selectionSnapshots(QVector<EntityItemProperties>& snapshots, Entity
     return !snapshots.isEmpty();
 }
 
+// --- what failed to load (Caity, 10-24: an Image whose picture never came, and nothing said so) --------------------
+
+void Editor::refreshLoadProblems() {
+    // every entity the Hierarchy lists: its row goes red while its model, image or a texture has failed, with the
+    // reasons in its tooltip; asked of the renderers (EntityRenderer::loadFailures), so an entity too far away to have
+    // been loaded says nothing yet
+    auto treeRenderer = DependencyManager::get<EntityTreeRenderer>();
+    if (!_treeModel || !treeRenderer) {
+        return;
+    }
+    for (const auto& id : _treeModel->allIds()) {
+        auto renderer = treeRenderer->renderableForEntityId(id);
+        _treeModel->setLoadProblem(id, renderer ? renderer->loadFailures().join("\n") : QString());
+    }
+    if (_inspector && !_selection.isEmpty()) {
+        _inspector->setLoadProblem(selectionLoadProblem());
+    }
+}
+
+QString Editor::loadProblem(const QUuid& id) const {
+    return _treeModel ? _treeModel->loadProblem(id) : QString();
+}
+
+QString Editor::selectionLoadProblem() const {
+    if (!_treeModel) {
+        return QString();
+    }
+    const int MAX_LINES = 6;
+    QStringList lines;
+    bool several = _selection.ids().size() > 1;
+    for (const auto& id : _selection.ids()) {
+        QString problem = _treeModel->loadProblem(id);
+        if (problem.isEmpty()) {
+            continue;
+        }
+        if (several) {
+            // which of the selected it is: its row's name in the Hierarchy
+            QString name = _treeModel->data(_treeModel->indexForId(id), Qt::DisplayRole).toString();
+            problem = name + ": " + problem;
+        }
+        lines << problem;
+        if (lines.size() >= MAX_LINES) {
+            lines << "…";
+            break;
+        }
+    }
+    return lines.join("\n");
+}
+
 void Editor::refreshInspector(bool selectionChanged) {
     if (!_inspector || !_active) {
         return;
@@ -1542,6 +1598,7 @@ void Editor::refreshInspector(bool selectionChanged) {
             title = QString("%1 entities selected").arg(snapshots.size());
         }
         _inspector->showEntities(snapshots, type, multiple, title);
+        _inspector->setLoadProblem(selectionLoadProblem());
     } else if (_inspectorEditKey.isEmpty() || !_lightHandleDrag.isNone()) {
         // a light handle's drag is an edit no field is making: the fields follow it
         _inspector->refreshValues(snapshots);

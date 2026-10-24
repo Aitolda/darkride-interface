@@ -15,6 +15,7 @@
 #include <QtCore/QMutex>
 #include <QtCore/QSet>
 #include "ResourceRequestObserver.h"
+#include "ResourceScriptingInterface.h"
 
 #include <cfloat>
 #include <cmath>
@@ -347,6 +348,61 @@ namespace {
 QMutex deadHostsMutex;
 QHash<QString, qint64> deadHostsUntil;   // host -> when its death expires, ms since the epoch
 QSet<QString> answeredHosts;
+}
+
+namespace {
+    QMutex failuresMutex;
+    QVector<ResourceCache::Failure> failureList;   // newest last, one per address
+}
+
+QVector<ResourceCache::Failure> ResourceCache::failures() {
+    QMutexLocker lock(&failuresMutex);
+    return failureList;
+}
+
+void ResourceCache::clearFailures() {
+    QMutexLocker lock(&failuresMutex);
+    failureList.clear();
+}
+
+void ResourceCache::recordFailure(const QUrl& url, const QString& resourceType, const QString& reason) {
+    if (url.isEmpty()) {
+        return;
+    }
+    // a person's word for the cache's class
+    QString type = resourceType == "Model" ? "model"
+        : resourceType == "NetworkTexture" ? "texture"
+        : resourceType == "NetworkMaterial" ? "material"
+        : resourceType == "Animation" ? "animation"
+        : resourceType == "NetworkShader" ? "shader"
+        : "file";
+    Failure failure { url, type, reason, QDateTime::currentMSecsSinceEpoch() };
+    {
+        QMutexLocker lock(&failuresMutex);
+        for (int i = 0; i < failureList.size(); ++i) {
+            if (failureList[i].url == url) {
+                failureList.remove(i);
+                break;
+            }
+        }
+        failureList.push_back(failure);
+        if (failureList.size() > MAX_FAILURES) {
+            failureList.remove(0, failureList.size() - MAX_FAILURES);
+        }
+    }
+    if (DependencyManager::isSet<ResourceScriptingInterface>()) {
+        emit DependencyManager::get<ResourceScriptingInterface>()->resourceFailed(url.toString(), type, reason);
+    }
+}
+
+void ResourceCache::forgetFailure(const QUrl& url) {
+    QMutexLocker lock(&failuresMutex);
+    for (int i = 0; i < failureList.size(); ++i) {
+        if (failureList[i].url == url) {
+            failureList.remove(i);
+            return;
+        }
+    }
 }
 
 bool ResourceCache::hasHostAnswered(const QString& host) {
@@ -732,16 +788,19 @@ void Resource::allReferencesCleared() {
 void Resource::init(bool resetLoaded) {
     _startedLoading = false;
     _failedToLoad = false;
+    _failureReason.clear();
     if (resetLoaded) {
         _loaded = false;
     }
     _attempts = 0;
-    
+
     if (_url.isEmpty()) {
         _startedLoading = _loaded = true;
-        
+
     } else if (!(_url.isValid())) {
         _startedLoading = _failedToLoad = true;
+        _failureReason = "not a valid address";
+        ResourceCache::recordFailure(_url, getType(), _failureReason);
     }
 }
 
@@ -763,8 +822,15 @@ void Resource::finishedLoading(bool success) {
     if (success) {
         _loadPriorities.clear();
         _loaded = true;
+        ResourceCache::forgetFailure(_url);   // it loads now (a retry, or the link was fixed)
     } else {
         _failedToLoad = true;
+        if (_failureReason.isEmpty()) {
+            // it arrived, but the client could not make anything of it (a model or picture in a format it cannot read,
+            // a damaged file)
+            _failureReason = "could not be read";
+        }
+        ResourceCache::recordFailure(_url, getType(), _failureReason);
     }
     emit finished(success);
 }
@@ -923,6 +989,21 @@ bool Resource::handleFailedRequest(ResourceRequest::Result result) {
             _attemptsRemaining = 0;
             QMetaEnum metaEnum = QMetaEnum::fromType<ResourceRequest::Result>();
             qCDebug(networking) << "Error loading:" << metaEnum.valueToKey(result) << "resource:" << _url.toString();
+            // the reason, for build mode: what went wrong, with the server's own status when it answered with one
+            // (some texture paths fail here after their request is gone)
+            QString what;
+            switch (result) {
+                case ResourceRequest::Result::HostNotFound: what = "host not found: " + _activeUrl.host(); break;
+                case ResourceRequest::Result::Timeout: what = "timed out"; break;
+                case ResourceRequest::Result::ServerUnavailable: what = "server unavailable"; break;
+                case ResourceRequest::Result::AccessDenied: what = "access denied"; break;
+                case ResourceRequest::Result::NotFound: what = "not found"; break;
+                case ResourceRequest::Result::InvalidURL: what = "not a valid address"; break;
+                case ResourceRequest::Result::RedirectFail: what = "redirected where it may not go"; break;
+                default: what = "could not be fetched"; break;
+            }
+            int statusCode = _request ? _request->getStatusCode() : 0;
+            _failureReason = statusCode >= 400 ? QString("%1 %2").arg(statusCode).arg(what) : what;
             auto error = (result == ResourceRequest::Timeout) ? QNetworkReply::TimeoutError
                                                               : QNetworkReply::UnknownNetworkError;
             emit failed(error);

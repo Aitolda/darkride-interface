@@ -380,6 +380,15 @@ int TestScriptingInterface::editorExportSelection(const QString& path) {
     return DependencyManager::get<Editor>()->exportSelectionTo(path);
 }
 
+QString TestScriptingInterface::editorLoadProblem(const QUuid& id) {
+    if (QThread::currentThread() != thread()) {
+        QString result;
+        BLOCKING_INVOKE_METHOD(this, "editorLoadProblem", Q_RETURN_ARG(QString, result), Q_ARG(QUuid, id));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->loadProblem(id);
+}
+
 bool TestScriptingInterface::saveWindowPicture(const QString& path) {
     if (QThread::currentThread() != thread()) {
         bool result = false;
