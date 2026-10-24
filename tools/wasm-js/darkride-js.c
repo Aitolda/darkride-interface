@@ -510,8 +510,49 @@ static JSValue decode_item(cbor_reader* r, cbor_item* item) {
     }
 }
 
-/* The bytes a host function returned: decoded and freed. A top-level error record becomes a thrown Error
-   whose name is the record's type. */
+/* An error of the record's type: a real TypeError, SyntaxError and so on for JavaScript's own types (instanceof
+   works, as it did for QtScript's errors), otherwise an Error whose name is the type. */
+static JSValue make_error_of_type(JSValueConst type, JSValueConst message) {
+    static const char* const STANDARD[] = { "Error", "TypeError", "SyntaxError", "RangeError", "ReferenceError", "EvalError", "URIError", NULL };
+    JSValue text = JS_IsUndefined(message) ? JS_NewString(ctx, "") : JS_DupValue(ctx, message);
+    JSValue error = JS_UNDEFINED;
+    if (JS_IsString(type)) {
+        const char* name = JS_ToCString(ctx, type);
+        int standard = 0;
+        for (int i = 0; name && STANDARD[i]; i++) {
+            if (strcmp(name, STANDARD[i]) == 0) {
+                standard = 1;
+                break;
+            }
+        }
+        if (standard) {
+            JSValue global = JS_GetGlobalObject(ctx);
+            JSValue constructor = JS_GetPropertyStr(ctx, global, name);
+            JS_FreeValue(ctx, global);
+            if (JS_IsConstructor(ctx, constructor)) {
+                error = JS_CallConstructor(ctx, constructor, 1, &text);
+                if (JS_IsException(error)) {
+                    JS_FreeValue(ctx, JS_GetException(ctx));
+                    error = JS_UNDEFINED;
+                }
+            }
+            JS_FreeValue(ctx, constructor);
+        }
+        if (name) JS_FreeCString(ctx, name);
+    }
+    if (JS_IsUndefined(error)) {
+        error = JS_NewError(ctx);
+        JS_DefinePropertyValueStr(ctx, error, "message", JS_DupValue(ctx, text), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+        if (JS_IsString(type)) {
+            JS_DefinePropertyValueStr(ctx, error, "name", JS_DupValue(ctx, type), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+        }
+    }
+    JS_FreeValue(ctx, text);
+    return error;
+}
+
+/* The bytes a host function returned: decoded and freed. A top-level error record becomes a thrown error of the
+   record's type. */
 static JSValue take_result(int64_t packed) {
     dr_bytes bytes = dr_unpack(packed);
     if (!bytes.data) {
@@ -527,11 +568,7 @@ static JSValue take_result(int64_t packed) {
     if (JS_IsObject(record)) {
         JSValue type = JS_GetPropertyStr(ctx, record, "type");
         JSValue message = JS_GetPropertyStr(ctx, record, "message");
-        JSValue error = JS_NewError(ctx);
-        JS_DefinePropertyValueStr(ctx, error, "message", JS_IsUndefined(message) ? JS_NewString(ctx, "") : JS_DupValue(ctx, message), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
-        if (JS_IsString(type)) {
-            JS_DefinePropertyValueStr(ctx, error, "name", JS_DupValue(ctx, type), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
-        }
+        JSValue error = make_error_of_type(type, message);
         JS_FreeValue(ctx, type);
         JS_FreeValue(ctx, message);
         JS_FreeValue(ctx, record);

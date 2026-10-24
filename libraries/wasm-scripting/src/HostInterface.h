@@ -201,6 +201,9 @@ private:
     FailureHandler _failureHandler;
     TimeLimitHandler _timeLimitHandler;
     bool _timeLimitHit { false };   // the call that just failed ended at the time limit, not by a stop or a trap
+    // The JavaScript error type of the last failed call, as QtScript names the same failure: SyntaxError when every
+    // candidate took more arguments than were given, TypeError for anything else
+    QString _callErrorType;
     QString _timeLimitEntity;
     QHash<QPair<const QMetaObject*, QByteArray>, QVector<int>> _candidates;
     QHash<QPair<const QMetaObject*, int>, QVector<int>> _parameterTypes;

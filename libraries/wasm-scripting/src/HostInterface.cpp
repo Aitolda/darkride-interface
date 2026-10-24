@@ -216,7 +216,7 @@ void HostInterface::install() {
             }
         }
         QVariant result = callWithCbor(ObjectTable::Handle(std::get<int32_t>(args[0])), name, arguments, error);
-        results.push_back(writeResult(error.isEmpty() ? result : QVariant(errorRecord("CallError", error))));
+        results.push_back(writeResult(error.isEmpty() ? result : QVariant(errorRecord(_callErrorType, error))));
         return QString();
     });
 
@@ -742,6 +742,9 @@ QVariant HostInterface::call(ObjectTable::Handle handle, const QString& methodNa
 
 QVariant HostInterface::callWithCbor(ObjectTable::Handle handle, const QByteArray& methodName, const QCborArray& arguments, QString& error) {
     ++_statistics.calls;
+    // a failure is a TypeError unless every candidate wanted more arguments than were given: QtScript's
+    // "too few arguments in call to ..." is a SyntaxError
+    _callErrorType = QStringLiteral("TypeError");
     QObject* object = _objects.object(handle);
     if (!object) {
         error = _objects.contains(handle) ? QString("the object behind handle %1 (%2) no longer exists").arg(handle).arg(_objects.className(handle))
@@ -779,11 +782,15 @@ QVariant HostInterface::callWithCbor(ObjectTable::Handle handle, const QByteArra
     QVariantList bestArguments;
     QString firstError;
     QVector<int> bestTypes;
+    bool everyFailureTooFew = true;
     for (int index : indices) {
         QVariantList converted;
         int cost = 0;
         QString candidateError;
         QVector<int> types = parameterTypes(meta, index);
+        if (int(arguments.size()) >= types.size()) {
+            everyFailureTooFew = false;  // this candidate fails, if it does, on a type, not on the count
+        }
         if (convertArguments(meta->method(index), types, arguments, converted, cost, candidateError)) {
             if (bestIndex < 0 || cost < bestCost) {
                 bestIndex = index;
@@ -799,6 +806,9 @@ QVariant HostInterface::callWithCbor(ObjectTable::Handle handle, const QByteArra
         }
     }
     if (bestIndex < 0) {
+        if (everyFailureTooFew) {
+            _callErrorType = QStringLiteral("SyntaxError");
+        }
         error = indices.size() == 1 ? firstError
                                     : QString("no overload of %1.%2 takes these %3 arguments (%4)")
                                           .arg(QString::fromUtf8(meta->className()), QString::fromUtf8(methodName)).arg(arguments.size()).arg(firstError);

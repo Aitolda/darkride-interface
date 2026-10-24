@@ -131,6 +131,7 @@ private slots:
     void testScopedCallbacks();
     void testRunawayLoopIsInterrupted();
     void testRunawayEntityScriptIsNamed();
+    void testErrorsAndPrintedNamesAsOnQtScript();
 };
 
 #endif // hifi_JavaScriptGuestTests_h

@@ -192,7 +192,12 @@
             return proto;
         }
         proto = {};
-        Object.defineProperty(proto, "toString", { value: function () { return "[object " + className + "]"; }, writable: true, configurable: true });
+        // as QtScript printed a QObject: its class and its objectName, "Vec3(name = \"\")"
+        Object.defineProperty(proto, "toString", { value: function () {
+            var name = "";
+            try { name = host.get(this, "objectName"); } catch (e) { name = ""; }
+            return className + "(name = \"" + (name === undefined || name === null ? "" : String(name)) + "\")";
+        }, writable: true, configurable: true });
         var methods = description.methods || [];
         var seen = new Set();
         for (var i = 0; i < methods.length; i++) {
@@ -373,6 +378,37 @@
         "LaserPointerScriptingInterface": itemListForms,
         "PointerScriptingInterface": itemListForms,
         "EntityScriptingInterface": function (entities) {
+            // findRayIntersection with lists: the QtScript form takes them as QScriptValues, so a module's call would
+            // reach the shorter form and drop them; the host's findRayIntersectionVector takes them as lists
+            if (typeof entities.findRayIntersectionVector === "function") {
+                defineMethod(entities, "findRayIntersection", function (ray, precisionPicking, include, discard, visibleOnly, collidableOnly) {
+                    return host.call(entities, "findRayIntersectionVector",
+                        [ray, !!precisionPicking, idList(include), idList(discard), !!visibleOnly, !!collidableOnly]);
+                });
+            }
+            // queryPropertyMetadata(id, property, callback) or (id, property, scope, method): the host's form takes a
+            // callback called with (error, result); the error becomes an Error carrying its fields, as QtScript's
+            // makeError made it, and the checks QtScript made before asking are made here
+            defineMethod(entities, "queryPropertyMetadata", function (entityID, property, scopeOrCallback, methodOrName) {
+                var name = String(property);
+                var callback = scopedCallback(scopeOrCallback, methodOrName, arguments.length > 3);
+                if (typeof callback !== "function") {
+                    throw new TypeError("callback is not a function");
+                }
+                if (name !== "script" && name !== "serverScripts") {
+                    throw new Error("metadata for property " + name + " is not yet queryable");
+                }
+                return host.call(entities, "queryPropertyMetadata", [entityID, name, function (error, result) {
+                    var err;
+                    if (error) {
+                        err = new Error(error.message);
+                        for (var key in error) {
+                            if (Object.prototype.hasOwnProperty.call(error, key)) { err[key] = error[key]; }
+                        }
+                    }
+                    return callback(err, result === null ? undefined : result);
+                }]);
+            });
             // getMultipleEntityProperties(ids, properties): one getEntityProperties per id
             Object.defineProperty(entities, "getMultipleEntityProperties", {
                 value: function (ids, properties) {

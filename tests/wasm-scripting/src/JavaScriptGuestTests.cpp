@@ -621,3 +621,28 @@ void JavaScriptGuestTests::testRunawayEntityScriptIsNamed() {
     QVERIFY2(guest.errors.isEmpty(), qPrintable(guest.errors.join(" | ")));
     guest.stop();
 }
+
+// What a script sees as QtScript showed it: an API object prints as "Class(name = "objectName")", a call with too few
+// arguments throws a real SyntaxError and a call whose arguments will not convert a real TypeError (instanceof works).
+void JavaScriptGuestTests::testErrorsAndPrintedNamesAsOnQtScript() {
+    Guest guest;
+    guest.probe.setObjectName("the probe");
+    START_OR_SKIP(guest, R"(
+        var out = [String(Probe), "" + Assets];
+        try { Probe.add(1); } catch (e) { out.push(e.name, e instanceof SyntaxError, e.message.indexOf("arguments") >= 0); }
+        try { Probe.scale(true, {}); } catch (e) { out.push(e.name, e instanceof TypeError); }
+        Probe.carry(out);
+    )");
+    QVERIFY2(guest.errors.isEmpty(), qPrintable(guest.errors.join(" | ")));
+    QCOMPARE(guest.carried.size(), 1);
+    const QVariantList out = guest.carried[0].toList();
+    QCOMPARE(out.size(), 7);
+    QCOMPARE(out[0].toString(), QString("Probe(name = \"the probe\")"));
+    QCOMPARE(out[1].toString(), QString("AssetScriptingInterface(name = \"\")"));
+    QCOMPARE(out[2].toString(), QString("SyntaxError"));
+    QCOMPARE(out[3].toBool(), true);
+    QCOMPARE(out[4].toBool(), true);
+    QCOMPARE(out[5].toString(), QString("TypeError"));
+    QCOMPARE(out[6].toBool(), true);
+    guest.stop();
+}
