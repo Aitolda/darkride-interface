@@ -23,7 +23,6 @@
       "name": "openssl",
       "platform": "windows | osx"
     },
-    "polyvox",
     {
       "name": "tbb",
       "platform": "!android"

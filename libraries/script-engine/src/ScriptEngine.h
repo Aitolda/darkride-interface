@@ -903,6 +903,10 @@ signals:
 
 protected:
     void init();
+    /// The QtScript conversions of the engine's types, on this QScriptEngine.
+    void registerConversions();
+    /// The globals every engine gives a script, through the register calls.
+    void registerStandardGlobals();
 
     /**jsdoc
      * @function Script.executeOnScriptThread

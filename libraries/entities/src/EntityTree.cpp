@@ -18,14 +18,12 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 
-#include <QtScript/QScriptEngine>
-
 #include <Extents.h>
 #include <PerfStat.h>
 #include <Profile.h>
 
 #include "EntitySimulation.h"
-#include "VariantMapToScriptValue.h"
+#include <PlainScriptValue.h>
 
 #include "AddEntityOperator.h"
 #include "UpdateEntityOperator.h"
@@ -2552,13 +2550,6 @@ bool EntityTree::sendEntitiesOperation(const OctreeElementPointer& element, void
             }
         }
 
-        properties.setXNNeighborID(getMapped(properties.getXNNeighborID()));
-        properties.setXPNeighborID(getMapped(properties.getXPNeighborID()));
-        properties.setYNNeighborID(getMapped(properties.getYNNeighborID()));
-        properties.setYPNeighborID(getMapped(properties.getYPNeighborID()));
-        properties.setZNNeighborID(getMapped(properties.getZNNeighborID()));
-        properties.setZPNeighborID(getMapped(properties.getZPNeighborID()));
-
         QByteArray actionData = properties.getActionData();
         properties.setActionData(remapActionDataIDs(actionData, *args->map));
 
@@ -2591,8 +2582,7 @@ bool EntityTree::writeToMap(QVariantMap& entityDescription, OctreeElementPointer
     }
     entityDescription["DataVersion"] = _persistDataVersion;
     entityDescription["Id"] = _persistID;
-    QScriptEngine scriptEngine;
-    RecurseOctreeToMapOperator theOperator(entityDescription, element, &scriptEngine, skipDefaultValues,
+    RecurseOctreeToMapOperator theOperator(entityDescription, element, skipDefaultValues,
                                             skipThoseWithBadParents, _myAvatar);
     withReadLock([&] {
         recurseTreeWithOperator(&theOperator);
@@ -2775,10 +2765,9 @@ bool EntityTree::readFromMap(QVariantMap& map, const bool isImport) {
 
     // map will have a top-level list keyed as "Entities".  This will be extracted
     // and iterated over.  Each member of this list is converted to a QVariantMap, then
-    // to a QScriptValue, and then to EntityItemProperties.  These properties are used
+    // to a PlainScriptValue, and then to EntityItemProperties.  These properties are used
     // to add the new entity to the EntityTree.
     QVariantList entitiesQList = parentsBeforeChildren(map["Entities"].toList());
-    QScriptEngine scriptEngine;
 
     if (entitiesQList.length() == 0) {
         // Empty map or invalidly formed file.
@@ -2789,7 +2778,7 @@ bool EntityTree::readFromMap(QVariantMap& map, const bool isImport) {
 
     bool success = true;
     foreach (QVariant entityVariant, entitiesQList) {
-        // QVariantMap --> QScriptValue --> EntityItemProperties --> Entity
+        // QVariantMap --> PlainScriptValue --> EntityItemProperties --> Entity
         QVariantMap entityMap = entityVariant.toMap();
 
         // handle parentJointName for wearables
@@ -2802,9 +2791,16 @@ bool EntityTree::readFromMap(QVariantMap& map, const bool isImport) {
                 " mapped it to parentJointIndex " << entityMap["parentJointIndex"].toInt();
         }
 
-        QScriptValue entityScriptValue = variantMapToScriptValue(entityMap, scriptEngine);
         EntityItemProperties properties;
-        EntityItemPropertiesFromScriptValueIgnoreReadOnly(entityScriptValue, properties);
+        properties.copyFromScriptValue(PlainScriptValue::fromVariant(entityMap), false);
+
+        // an entity of a type this version does not have (PolyVox, removed 2026-10-23) is left out and the rest of the
+        // world loads; it is not a failure of the file
+        if (properties.getType() == EntityTypes::Unknown) {
+            qCDebug(entities) << "Leaving out an entity of a type this version does not have:" << entityMap["type"].toString()
+                              << entityMap["id"].toString();
+            continue;
+        }
 
         EntityItemID entityItemID;
         if (entityMap.contains("id")) {
@@ -2946,8 +2942,7 @@ bool EntityTree::readFromMap(QVariantMap& map, const bool isImport) {
 }
 
 bool EntityTree::writeToJSON(QString& jsonString, const OctreeElementPointer& element) {
-    QScriptEngine scriptEngine;
-    RecurseOctreeToJSONOperator theOperator(element, &scriptEngine, jsonString);
+    RecurseOctreeToJSONOperator theOperator(element, jsonString);
     withReadLock([&] {
         recurseTreeWithOperator(&theOperator);
     });

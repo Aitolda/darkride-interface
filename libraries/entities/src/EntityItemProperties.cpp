@@ -28,7 +28,6 @@
 #include <GLMHelpers.h>
 #include <RegisteredMetaTypes.h>
 #include <Extents.h>
-#include <VariantMapToScriptValue.h>
 
 #include "EntitiesLogging.h"
 #include "EntityItem.h"
@@ -660,20 +659,6 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
     CHECK_PROPERTY_CHANGE(PROP_TONE_MAPPING_MODE, toneMappingMode);
     CHECK_PROPERTY_CHANGE(PROP_AVATAR_PRIORITY, avatarPriority);
 
-    // Polyvox
-    CHECK_PROPERTY_CHANGE(PROP_VOXEL_VOLUME_SIZE, voxelVolumeSize);
-    CHECK_PROPERTY_CHANGE(PROP_VOXEL_DATA, voxelData);
-    CHECK_PROPERTY_CHANGE(PROP_VOXEL_SURFACE_STYLE, voxelSurfaceStyle);
-    CHECK_PROPERTY_CHANGE(PROP_X_TEXTURE_URL, xTextureURL);
-    CHECK_PROPERTY_CHANGE(PROP_Y_TEXTURE_URL, yTextureURL);
-    CHECK_PROPERTY_CHANGE(PROP_Z_TEXTURE_URL, zTextureURL);
-    CHECK_PROPERTY_CHANGE(PROP_X_N_NEIGHBOR_ID, xNNeighborID);
-    CHECK_PROPERTY_CHANGE(PROP_Y_N_NEIGHBOR_ID, yNNeighborID);
-    CHECK_PROPERTY_CHANGE(PROP_Z_N_NEIGHBOR_ID, zNNeighborID);
-    CHECK_PROPERTY_CHANGE(PROP_X_P_NEIGHBOR_ID, xPNeighborID);
-    CHECK_PROPERTY_CHANGE(PROP_Y_P_NEIGHBOR_ID, yPNeighborID);
-    CHECK_PROPERTY_CHANGE(PROP_Z_P_NEIGHBOR_ID, zPNeighborID);
-
     // Web
     CHECK_PROPERTY_CHANGE(PROP_SOURCE_URL, sourceUrl);
     CHECK_PROPERTY_CHANGE(PROP_DPI, dpi);
@@ -954,7 +939,6 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
  * @see {@link Entities.EntityProperties-ParticleEffect|EntityProperties-ParticleEffect}
  * @see {@link Entities.EntityProperties-PolyLine|EntityProperties-PolyLine}
  * @see {@link Entities.EntityProperties-Track|EntityProperties-Track}
- * @see {@link Entities.EntityProperties-PolyVox|EntityProperties-PolyVox}
  * @see {@link Entities.EntityProperties-Shape|EntityProperties-Shape}
  * @see {@link Entities.EntityProperties-Sphere|EntityProperties-Sphere}
  * @see {@link Entities.EntityProperties-Terrain|EntityProperties-Terrain}
@@ -1378,60 +1362,6 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
  */
 
 /**jsdoc
- * The <code>"PolyVox"</code> {@link Entities.EntityType|EntityType} displays a set of textured voxels.
- * It has properties in addition to the common {@link Entities.EntityProperties|EntityProperties}.
- * If you have two or more neighboring PolyVox entities of the same size abutting each other, you can display them as joined by
- * configuring their <code>voxelSurfaceStyle</code> and various neighbor ID properties.
- * <p>PolyVox entities uses a library from <a href="http://www.volumesoffun.com/">Volumes of Fun</a>. Their
- * <a href="http://www.volumesoffun.com/polyvox-documentation/">library documentation</a> may be useful to read.</p>
- *
- * @typedef {object} Entities.EntityProperties-PolyVox
- * @property {Vec3} dimensions=0.1,0.1,0.1 - The dimensions of the entity.
- * @property {Vec3} voxelVolumeSize=32,32,32 - Integer number of voxels along each axis of the entity, in the range 
- *     <code>1,1,1</code> to <code>128,128,128</code>. The dimensions of each voxel is 
- *     <code>dimensions / voxelVolumesize</code>.
- * @property {string} voxelData="ABAAEAAQAAAAHgAAEAB42u3BAQ0AAADCoPdPbQ8HFAAAAPBuEAAAAQ==" - Base-64 encoded compressed dump of 
- *     the PolyVox data. This property is typically not used in scripts directly; rather, functions that manipulate a PolyVox 
- *     entity update it.
- *     <p>The size of this property increases with the size and complexity of the PolyVox entity, with the size depending on how 
- *     the particular entity's voxels compress. Because this property value has to fit within a High Fidelity datagram packet, 
- *     there is a limit to the size and complexity of a PolyVox entity; edits which would result in an overflow are rejected.</p>
- * @property {Entities.PolyVoxSurfaceStyle} voxelSurfaceStyle=2 - The style of rendering the voxels' surface and how 
- *     neighboring PolyVox entities are joined.
- * @property {string} xTextureURL="" - The URL of the texture to map to surfaces perpendicular to the entity's local x-axis. 
- *     JPG or PNG format. If no texture is specified the surfaces display white.
- * @property {string} yTextureURL="" - The URL of the texture to map to surfaces perpendicular to the entity's local y-axis. 
- *     JPG or PNG format. If no texture is specified the surfaces display white.
- * @property {string} zTextureURL="" - The URL of the texture to map to surfaces perpendicular to the entity's local z-axis. 
- *     JPG or PNG format. If no texture is specified the surfaces display white.
- * @property {Uuid} xNNeighborID=Uuid.NULL - The ID of the neighboring PolyVox entity in the entity's -ve local x-axis 
- *     direction, if you want them joined. Set to {@link Uuid(0)|Uuid.NULL} if there is none or you don't want to join them.
- * @property {Uuid} yNNeighborID=Uuid.NULL - The ID of the neighboring PolyVox entity in the entity's -ve local y-axis 
- *     direction, if you want them joined. Set to {@link Uuid(0)|Uuid.NULL} if there is none or you don't want to join them.
- * @property {Uuid} zNNeighborID=Uuid.NULL - The ID of the neighboring PolyVox entity in the entity's -ve local z-axis 
- *     direction, if you want them joined. Set to {@link Uuid(0)|Uuid.NULL} if there is none or you don't want to join them.
- * @property {Uuid} xPNeighborID=Uuid.NULL - The ID of the neighboring PolyVox entity in the entity's +ve local x-axis 
- *     direction, if you want them joined. Set to {@link Uuid(0)|Uuid.NULL} if there is none or you don't want to join them.
- * @property {Uuid} yPNeighborID=Uuid.NULL - The ID of the neighboring PolyVox entity in the entity's +ve local y-axis 
- *     direction, if you want them joined. Set to {@link Uuid(0)|Uuid.NULL} if there is none or you don't want to join them.
- * @property {Uuid} zPNeighborID=Uuid.NULL - The ID of the neighboring PolyVox entity in the entity's +ve local z-axis 
- *     direction, if you want them joined. Set to {@link Uuid(0)|Uuid.NULL} if there is none or you don't want to join them.
- * @example <caption>Create a textured PolyVox sphere.</caption>
- * var position = Vec3.sum(MyAvatar.position, Vec3.multiplyQbyV(MyAvatar.orientation, { x: 0, y: 0.5, z: -8 }));
- * var texture = "http://public.highfidelity.com/cozza13/tuscany/Concrete2.jpg";
- * var polyVox = Entities.addEntity({
- *     type: "PolyVox",
- *     position: position,
- *     dimensions: { x: 2, y: 2, z: 2 },
- *     xTextureURL: texture,
- *     yTextureURL: texture,
- *     zTextureURL: texture,
- *     lifetime: 300  // Delete after 5 minutes.
- * });
- * Entities.setVoxelSphere(polyVox, position, 0.8, 255);
- */
-
-/**jsdoc
  * The <code>"Shape"</code> {@link Entities.EntityType|EntityType} displays an entity of a specified <code>shape</code>.
  * It has properties in addition to the common {@link Entities.EntityProperties|EntityProperties}.
  *
@@ -1713,14 +1643,15 @@ EntityPropertyFlags EntityItemProperties::getChangedProperties() const {
  * @property {Entities.RingGizmo} ring - The ring gizmo properties.
  */
 
-QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool skipDefaults, bool allowUnknownCreateTime,
+template <typename Value, typename Engine>
+Value EntityItemProperties::copyToScriptValueOf(Engine* engine, bool skipDefaults, bool allowUnknownCreateTime,
     bool strictSemantics, EntityPsuedoPropertyFlags psueudoPropertyFlags) const {
 
     // If strictSemantics is true and skipDefaults is false, then all and only those properties are copied for which the property flag
     // is included in _desiredProperties, or is one of the specially enumerated ALWAYS properties below.
     // (There may be exceptions, but if so, they are bugs.)
     // In all other cases, you are welcome to inspect the code and try to figure out what was intended. I wish you luck. -HRS 1/18/17
-    QScriptValue properties = engine->newObject();
+    Value properties = engine->newObject();
     EntityItemProperties defaultEntityProperties;
 
     const bool psuedoPropertyFlagsActive = psueudoPropertyFlags.test(EntityPsuedoPropertyFlag::FlagsActive);
@@ -1759,7 +1690,7 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
     // track reads the physics server at 255, PHYSICS.md round 5); settable only through the physics
     if ((_desiredProperties.isEmpty() || _desiredProperties.getHasProperty(PROP_SIMULATION_OWNER)) &&
         (!skipDefaults || !_simulationOwner.isNull())) {
-        QScriptValue simulationOwner = engine->newObject();
+        auto simulationOwner = engine->newObject();
         simulationOwner.setProperty("ownerID", _simulationOwner.getID().toString());
         simulationOwner.setProperty("priority", (int)_simulationOwner.getPriority());
         properties.setProperty("simulationOwner", simulationOwner);
@@ -2011,24 +1942,6 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
         COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_TRANSPARENT_BACKGROUND, transparentBackground);
     }
 
-    // PolyVoxel only
-    if (_type == EntityTypes::PolyVox) {
-        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_VOXEL_VOLUME_SIZE, voxelVolumeSize);
-        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_VOXEL_DATA, voxelData);
-        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_VOXEL_SURFACE_STYLE, voxelSurfaceStyle);
-        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_X_TEXTURE_URL, xTextureURL);
-        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_Y_TEXTURE_URL, yTextureURL);
-        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_Z_TEXTURE_URL, zTextureURL);
-
-        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_X_N_NEIGHBOR_ID, xNNeighborID);
-        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_Y_N_NEIGHBOR_ID, yNNeighborID);
-        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_Z_N_NEIGHBOR_ID, zNNeighborID);
-
-        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_X_P_NEIGHBOR_ID, xPNeighborID);
-        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_Y_P_NEIGHBOR_ID, yPNeighborID);
-        COPY_PROPERTY_TO_QSCRIPTVALUE(PROP_Z_P_NEIGHBOR_ID, zPNeighborID);
-    }
-
     // Lines
     if (_type == EntityTypes::Line) {
         COPY_PROPERTY_TO_QSCRIPTVALUE_TYPED(PROP_COLOR, color, u8vec3Color);
@@ -2101,7 +2014,7 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
         // Handle conversions to old 'textures' property from "imageURL"
         if (((!psuedoPropertyFlagsButDesiredEmpty && _desiredProperties.isEmpty()) || _desiredProperties.getHasProperty(PROP_IMAGE_URL)) &&
                 (!skipDefaults || defaultEntityProperties._imageURL != _imageURL)) {
-            QScriptValue textures = engine->newObject();
+            auto textures = engine->newObject();
             textures.setProperty("tex.picture", _imageURL);
             properties.setProperty("textures", textures);
         }
@@ -2144,11 +2057,11 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
         (!psuedoPropertyFlagsActive || psueudoPropertyFlags.test(EntityPsuedoPropertyFlag::BoundingBox))) {
 
         AABox aaBox = getAABox();
-        QScriptValue boundingBox = engine->newObject();
-        QScriptValue bottomRightNear = vec3ToScriptValue(engine, aaBox.getCorner());
-        QScriptValue topFarLeft = vec3ToScriptValue(engine, aaBox.calcTopFarLeft());
-        QScriptValue center = vec3ToScriptValue(engine, aaBox.calcCenter());
-        QScriptValue boundingBoxDimensions = vec3ToScriptValue(engine, aaBox.getDimensions());
+        auto boundingBox = engine->newObject();
+        auto bottomRightNear = vec3ToScriptValue(engine, aaBox.getCorner());
+        auto topFarLeft = vec3ToScriptValue(engine, aaBox.calcTopFarLeft());
+        auto center = vec3ToScriptValue(engine, aaBox.calcCenter());
+        auto boundingBoxDimensions = vec3ToScriptValue(engine, aaBox.getDimensions());
         boundingBox.setProperty("brn", bottomRightNear);
         boundingBox.setProperty("tfl", topFarLeft);
         boundingBox.setProperty("center", center);
@@ -2165,7 +2078,7 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
     if (!skipDefaults && !strictSemantics &&
         (!psuedoPropertyFlagsActive || psueudoPropertyFlags.test(EntityPsuedoPropertyFlag::RenderInfo))) {
 
-        QScriptValue renderInfo = engine->newObject();
+        auto renderInfo = engine->newObject();
 
         /**jsdoc
          * Information on how an entity is rendered. Properties are only filled in for <code>Model</code> entities; other 
@@ -2210,8 +2123,19 @@ QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool
     return properties;
 }
 
-void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool honorReadOnly) {
-    QScriptValue typeScriptValue = object.property("type");
+QScriptValue EntityItemProperties::copyToScriptValue(QScriptEngine* engine, bool skipDefaults, bool allowUnknownCreateTime,
+    bool strictSemantics, EntityPsuedoPropertyFlags psueudoPropertyFlags) const {
+    return copyToScriptValueOf<QScriptValue>(engine, skipDefaults, allowUnknownCreateTime, strictSemantics, psueudoPropertyFlags);
+}
+
+PlainScriptValue EntityItemProperties::copyToScriptValue(PlainScriptEngine* engine, bool skipDefaults, bool allowUnknownCreateTime,
+    bool strictSemantics, EntityPsuedoPropertyFlags psueudoPropertyFlags) const {
+    return copyToScriptValueOf<PlainScriptValue>(engine, skipDefaults, allowUnknownCreateTime, strictSemantics, psueudoPropertyFlags);
+}
+
+template <typename Value>
+void EntityItemProperties::copyFromScriptValueOf(const Value& object, bool honorReadOnly) {
+    auto typeScriptValue = object.property("type");
     if (typeScriptValue.isValid()) {
         setType(typeScriptValue.toVariant().toString());
     }
@@ -2409,20 +2333,6 @@ void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool 
     COPY_PROPERTY_FROM_QSCRIPTVALUE_ENUM(toneMappingMode, ToneMappingMode);
     COPY_PROPERTY_FROM_QSCRIPTVALUE_ENUM(avatarPriority, AvatarPriority);
 
-    // Polyvox
-    COPY_PROPERTY_FROM_QSCRIPTVALUE(voxelVolumeSize, vec3, setVoxelVolumeSize);
-    COPY_PROPERTY_FROM_QSCRIPTVALUE(voxelData, QByteArray, setVoxelData);
-    COPY_PROPERTY_FROM_QSCRIPTVALUE(voxelSurfaceStyle, uint16_t, setVoxelSurfaceStyle);
-    COPY_PROPERTY_FROM_QSCRIPTVALUE(xTextureURL, QString, setXTextureURL);
-    COPY_PROPERTY_FROM_QSCRIPTVALUE(yTextureURL, QString, setYTextureURL);
-    COPY_PROPERTY_FROM_QSCRIPTVALUE(zTextureURL, QString, setZTextureURL);
-    COPY_PROPERTY_FROM_QSCRIPTVALUE(xNNeighborID, EntityItemID, setXNNeighborID);
-    COPY_PROPERTY_FROM_QSCRIPTVALUE(yNNeighborID, EntityItemID, setYNNeighborID);
-    COPY_PROPERTY_FROM_QSCRIPTVALUE(zNNeighborID, EntityItemID, setZNNeighborID);
-    COPY_PROPERTY_FROM_QSCRIPTVALUE(xPNeighborID, EntityItemID, setXPNeighborID);
-    COPY_PROPERTY_FROM_QSCRIPTVALUE(yPNeighborID, EntityItemID, setYPNeighborID);
-    COPY_PROPERTY_FROM_QSCRIPTVALUE(zPNeighborID, EntityItemID, setZPNeighborID);
-
     // Web
     COPY_PROPERTY_FROM_QSCRIPTVALUE(sourceUrl, QString, setSourceUrl);
     COPY_PROPERTY_FROM_QSCRIPTVALUE(dpi, uint16_t, setDPI);
@@ -2496,7 +2406,7 @@ void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool 
 
     // Handle conversions from old 'textures' property to "imageURL"
     {
-        QScriptValue V = object.property("textures");
+        auto V = object.property("textures");
         if (_type == EntityTypes::Image && V.isValid() && !object.property("imageURL").isValid()) {
             bool isValid = false;
             QString textures = QString_convertFromScriptValue(V, isValid);
@@ -2515,7 +2425,7 @@ void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool 
 
     // Handle old "faceCamera" and "isFacingAvatar" props
     if (_type != EntityTypes::PolyLine) {
-        QScriptValue P = object.property("faceCamera");
+        auto P = object.property("faceCamera");
         if (P.isValid() && !object.property("billboardMode").isValid()) {
             bool newValue = P.toVariant().toBool();
             bool oldValue = getBillboardMode() == BillboardMode::YAW;
@@ -2525,7 +2435,7 @@ void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool 
         }
     }
     {
-        QScriptValue P = object.property("isFacingAvatar");
+        auto P = object.property("isFacingAvatar");
         if (P.isValid() && !object.property("billboardMode").isValid() && !object.property("faceCamera").isValid()) {
             bool newValue = P.toVariant().toBool();
             bool oldValue = getBillboardMode() == BillboardMode::FULL;
@@ -2538,17 +2448,13 @@ void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool 
     _lastEdited = usecTimestampNow();
 }
 
-void EntityItemProperties::copyFromJSONString(QScriptEngine& scriptEngine, const QString& jsonString) {
-    // DANGER: this method is expensive
-    QJsonDocument propertiesDoc = QJsonDocument::fromJson(jsonString.toUtf8());
-    QJsonObject propertiesObj = propertiesDoc.object();
-    QVariant propertiesVariant(propertiesObj);
-    QVariantMap propertiesMap = propertiesVariant.toMap();
-    QScriptValue propertiesScriptValue = variantMapToScriptValue(propertiesMap, scriptEngine);
-    bool honorReadOnly = true;
-    copyFromScriptValue(propertiesScriptValue, honorReadOnly);
+void EntityItemProperties::copyFromScriptValue(const QScriptValue& object, bool honorReadOnly) {
+    copyFromScriptValueOf(object, honorReadOnly);
 }
 
+void EntityItemProperties::copyFromScriptValue(const PlainScriptValue& object, bool honorReadOnly) {
+    copyFromScriptValueOf(object, honorReadOnly);
+}
 
 void EntityItemProperties::merge(const EntityItemProperties& other) {
     // Core
@@ -2729,20 +2635,6 @@ void EntityItemProperties::merge(const EntityItemProperties& other) {
     COPY_PROPERTY_IF_CHANGED(hazeMode);
     COPY_PROPERTY_IF_CHANGED(bloomMode);
     COPY_PROPERTY_IF_CHANGED(avatarPriority);
-
-    // Polyvox
-    COPY_PROPERTY_IF_CHANGED(voxelVolumeSize);
-    COPY_PROPERTY_IF_CHANGED(voxelData);
-    COPY_PROPERTY_IF_CHANGED(voxelSurfaceStyle);
-    COPY_PROPERTY_IF_CHANGED(xTextureURL);
-    COPY_PROPERTY_IF_CHANGED(yTextureURL);
-    COPY_PROPERTY_IF_CHANGED(zTextureURL);
-    COPY_PROPERTY_IF_CHANGED(xNNeighborID);
-    COPY_PROPERTY_IF_CHANGED(yNNeighborID);
-    COPY_PROPERTY_IF_CHANGED(zNNeighborID);
-    COPY_PROPERTY_IF_CHANGED(xPNeighborID);
-    COPY_PROPERTY_IF_CHANGED(yPNeighborID);
-    COPY_PROPERTY_IF_CHANGED(zPNeighborID);
 
     // Web
     COPY_PROPERTY_IF_CHANGED(sourceUrl);
@@ -3226,20 +3118,6 @@ bool EntityItemProperties::getPropertyInfo(const QString& propertyName, EntityPr
         ADD_PROPERTY_TO_MAP(PROP_TONE_MAPPING_MODE, ToneMappingMode, toneMappingMode, uint32_t);
         ADD_PROPERTY_TO_MAP(PROP_AVATAR_PRIORITY, AvatarPriority, avatarPriority, uint32_t);
 
-        // Polyvox
-        ADD_PROPERTY_TO_MAP(PROP_VOXEL_VOLUME_SIZE, VoxelVolumeSize, voxelVolumeSize, vec3);
-        ADD_PROPERTY_TO_MAP(PROP_VOXEL_DATA, VoxelData, voxelData, QByteArray);
-        ADD_PROPERTY_TO_MAP(PROP_VOXEL_SURFACE_STYLE, VoxelSurfaceStyle, voxelSurfaceStyle, uint16_t);
-        ADD_PROPERTY_TO_MAP(PROP_X_TEXTURE_URL, XTextureURL, xTextureURL, QString);
-        ADD_PROPERTY_TO_MAP(PROP_Y_TEXTURE_URL, YTextureURL, yTextureURL, QString);
-        ADD_PROPERTY_TO_MAP(PROP_Z_TEXTURE_URL, ZTextureURL, zTextureURL, QString);
-        ADD_PROPERTY_TO_MAP(PROP_X_N_NEIGHBOR_ID, XNNeighborID, xNNeighborID, EntityItemID);
-        ADD_PROPERTY_TO_MAP(PROP_Y_N_NEIGHBOR_ID, YNNeighborID, yNNeighborID, EntityItemID);
-        ADD_PROPERTY_TO_MAP(PROP_Z_N_NEIGHBOR_ID, ZNNeighborID, zNNeighborID, EntityItemID);
-        ADD_PROPERTY_TO_MAP(PROP_X_P_NEIGHBOR_ID, XPNeighborID, xPNeighborID, EntityItemID);
-        ADD_PROPERTY_TO_MAP(PROP_Y_P_NEIGHBOR_ID, YPNeighborID, yPNeighborID, EntityItemID);
-        ADD_PROPERTY_TO_MAP(PROP_Z_P_NEIGHBOR_ID, ZPNeighborID, zPNeighborID, EntityItemID);
-
         // Web
         ADD_PROPERTY_TO_MAP(PROP_SOURCE_URL, SourceUrl, sourceUrl, QString);
         ADD_PROPERTY_TO_MAP(PROP_DPI, DPI, dpi, uint16_t);
@@ -3703,21 +3581,6 @@ OctreeElement::AppendState EntityItemProperties::encodeEntityEditPacket(PacketTy
                 APPEND_ENTITY_PROPERTY(PROP_AVATAR_PRIORITY, (uint32_t)properties.getAvatarPriority());
                 APPEND_ENTITY_PROPERTY(PROP_ZONE_CULLING_MODE, (uint32_t)properties.getZoneCullingMode());
                 APPEND_ENTITY_PROPERTY(PROP_TONE_MAPPING_MODE, (uint32_t)properties.getToneMappingMode());
-            }
-
-            if (properties.getType() == EntityTypes::PolyVox) {
-                APPEND_ENTITY_PROPERTY(PROP_VOXEL_VOLUME_SIZE, properties.getVoxelVolumeSize());
-                APPEND_ENTITY_PROPERTY(PROP_VOXEL_DATA, properties.getVoxelData());
-                APPEND_ENTITY_PROPERTY(PROP_VOXEL_SURFACE_STYLE, properties.getVoxelSurfaceStyle());
-                APPEND_ENTITY_PROPERTY(PROP_X_TEXTURE_URL, properties.getXTextureURL());
-                APPEND_ENTITY_PROPERTY(PROP_Y_TEXTURE_URL, properties.getYTextureURL());
-                APPEND_ENTITY_PROPERTY(PROP_Z_TEXTURE_URL, properties.getZTextureURL());
-                APPEND_ENTITY_PROPERTY(PROP_X_N_NEIGHBOR_ID, properties.getXNNeighborID());
-                APPEND_ENTITY_PROPERTY(PROP_Y_N_NEIGHBOR_ID, properties.getYNNeighborID());
-                APPEND_ENTITY_PROPERTY(PROP_Z_N_NEIGHBOR_ID, properties.getZNNeighborID());
-                APPEND_ENTITY_PROPERTY(PROP_X_P_NEIGHBOR_ID, properties.getXPNeighborID());
-                APPEND_ENTITY_PROPERTY(PROP_Y_P_NEIGHBOR_ID, properties.getYPNeighborID());
-                APPEND_ENTITY_PROPERTY(PROP_Z_P_NEIGHBOR_ID, properties.getZPNeighborID());
             }
 
             if (properties.getType() == EntityTypes::Web) {
@@ -4221,21 +4084,6 @@ bool EntityItemProperties::decodeEntityEditPacket(const unsigned char* data, int
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_AVATAR_PRIORITY, uint32_t, setAvatarPriority);
     }
 
-    if (properties.getType() == EntityTypes::PolyVox) {
-        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_VOXEL_VOLUME_SIZE, vec3, setVoxelVolumeSize);
-        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_VOXEL_DATA, QByteArray, setVoxelData);
-        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_VOXEL_SURFACE_STYLE, uint16_t, setVoxelSurfaceStyle);
-        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_X_TEXTURE_URL, QString, setXTextureURL);
-        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_Y_TEXTURE_URL, QString, setYTextureURL);
-        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_Z_TEXTURE_URL, QString, setZTextureURL);
-        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_X_N_NEIGHBOR_ID, EntityItemID, setXNNeighborID);
-        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_Y_N_NEIGHBOR_ID, EntityItemID, setYNNeighborID);
-        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_Z_N_NEIGHBOR_ID, EntityItemID, setZNNeighborID);
-        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_X_P_NEIGHBOR_ID, EntityItemID, setXPNeighborID);
-        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_Y_P_NEIGHBOR_ID, EntityItemID, setYPNeighborID);
-        READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_Z_P_NEIGHBOR_ID, EntityItemID, setZPNeighborID);
-    }
-
     if (properties.getType() == EntityTypes::Web) {
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_COLOR, u8vec3Color, setColor);
         READ_ENTITY_PROPERTY_TO_PROPERTIES(PROP_ALPHA, float, setAlpha);
@@ -4651,20 +4499,6 @@ void EntityItemProperties::markAllChanged() {
     _avatarPriorityChanged = true;
     _zoneCullingModeChanged = true;
     _toneMappingModeChanged = true;
-
-    // Polyvox
-    _voxelVolumeSizeChanged = true;
-    _voxelDataChanged = true;
-    _voxelSurfaceStyleChanged = true;
-    _xTextureURLChanged = true;
-    _yTextureURLChanged = true;
-    _zTextureURLChanged = true;
-    _xNNeighborIDChanged = true;
-    _yNNeighborIDChanged = true;
-    _zNNeighborIDChanged = true;
-    _xPNeighborIDChanged = true;
-    _yPNeighborIDChanged = true;
-    _zPNeighborIDChanged = true;
 
     // Web
     _sourceUrlChanged = true;
@@ -5326,44 +5160,6 @@ QList<QString> EntityItemProperties::listChangedProperties() {
     if (toneMappingModeChanged()) {
         out += "toneMappingMode";
     }
-    // Polyvox
-    if (voxelVolumeSizeChanged()) {
-        out += "voxelVolumeSize";
-    }
-    if (voxelDataChanged()) {
-        out += "voxelData";
-    }
-    if (voxelSurfaceStyleChanged()) {
-        out += "voxelSurfaceStyle";
-    }
-    if (xTextureURLChanged()) {
-        out += "xTextureURL";
-    }
-    if (yTextureURLChanged()) {
-        out += "yTextureURL";
-    }
-    if (zTextureURLChanged()) {
-        out += "zTextureURL";
-    }
-    if (xNNeighborIDChanged()) {
-        out += "xNNeighborID";
-    }
-    if (yNNeighborIDChanged()) {
-        out += "yNNeighborID";
-    }
-    if (zNNeighborIDChanged()) {
-        out += "zNNeighborID";
-    }
-    if (xPNeighborIDChanged()) {
-        out += "xPNeighborID";
-    }
-    if (yPNeighborIDChanged()) {
-        out += "yPNeighborID";
-    }
-    if (zPNeighborIDChanged()) {
-        out += "zPNeighborID";
-    }
-
     // Web
     if (sourceUrlChanged()) {
         out += "sourceUrl";
@@ -5741,7 +5537,7 @@ void EntityItemProperties::convertToCloneProperties(const EntityItemID& entityID
     setCloneAvatarEntity(ENTITY_ITEM_DEFAULT_CLONE_AVATAR_ENTITY);
 }
 
-bool EntityItemProperties::blobToProperties(QScriptEngine& scriptEngine, const QByteArray& blob, EntityItemProperties& properties) {
+bool EntityItemProperties::blobToProperties(const QByteArray& blob, EntityItemProperties& properties) {
     // DANGER: this method is NOT efficient.
     // begin recipe for converting unfortunately-formatted-binary-blob to EntityItemProperties
     QJsonValue jsonProperties = QJsonDocument::fromJson(blob).toVariant().toJsonValue();
@@ -5749,22 +5545,17 @@ bool EntityItemProperties::blobToProperties(QScriptEngine& scriptEngine, const Q
         qCDebug(entities) << "bad avatarEntityData json" << QString(blob.toHex());
         return false;
     }
-    QVariant variant = jsonProperties.toVariant();
-    QVariantMap variantMap = variant.toMap();
-    QScriptValue scriptValue = variantMapToScriptValue(variantMap, scriptEngine);
-    EntityItemPropertiesFromScriptValueIgnoreReadOnly(scriptValue, properties);
+    properties.copyFromScriptValue(PlainScriptValue::fromVariant(jsonProperties.toVariant().toMap()), false);
     // end recipe
     return true;
 }
 
-void EntityItemProperties::propertiesToBlob(QScriptEngine& scriptEngine, const QUuid& myAvatarID, 
-            const EntityItemProperties& properties, QByteArray& blob, bool allProperties) {
+void EntityItemProperties::propertiesToBlob(const QUuid& myAvatarID, const EntityItemProperties& properties,
+            QByteArray& blob, bool allProperties) {
     // DANGER: this method is NOT efficient.
     // begin recipe for extracting unfortunately-formatted-binary-blob from EntityItem
-    QScriptValue scriptValue = allProperties
-        ? EntityItemPropertiesToScriptValue(&scriptEngine, properties)
-        : EntityItemNonDefaultPropertiesToScriptValue(&scriptEngine, properties);
-    QVariant variantProperties = scriptValue.toVariant();
+    PlainScriptEngine engine;
+    QVariant variantProperties = properties.copyToScriptValue(&engine, !allProperties).toVariant();
     QJsonDocument jsonProperties = QJsonDocument::fromVariant(variantProperties);
     // the ID of the parent/avatar changes from session to session.  use a special UUID to indicate the avatar
     QJsonObject jsonObject = jsonProperties.object();
