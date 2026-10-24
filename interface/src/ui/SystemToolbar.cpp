@@ -183,6 +183,9 @@ void SystemToolbar::updateVisibility() {
     const bool desktopBar = _tablet && _tablet->getToolbarMode();   // not in VR
     const bool docked = isDocked();
     if (auto qmlToolbar = DependencyManager::get<ToolbarScriptingInterface>()->getToolbar(QML_TOOLBAR)) {
+        // the sign-in gate's word, as SignInGate wrote it before; whether the QML bar is the one in use is its own
+        // `shown` binding's (hifi/Desktop.qml: not while docked), which a C++ write would not remove, so both bars
+        // showed when this wrote `shown` (10-24)
         qmlToolbar->writeProperty("visible", _allowed && desktopBar && !docked);
     }
     const bool show = _window && _allowed && desktopBar && docked;

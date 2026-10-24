@@ -306,7 +306,10 @@ if (APPLE)
   set(RESOURCES_DEV_DIR "$<TARGET_FILE_DIR:${TARGET_NAME}>/../Resources")
 
   add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-    # copy script files beside the executable
+    # copy script files beside the executable, into an emptied folder: a script deleted from the repo must not live
+    # on in a build (the old Create app's did, 10-24, and ran beside the bar's Build button)
+    COMMAND "${CMAKE_COMMAND}" -E remove_directory
+      "${RESOURCES_DEV_DIR}/scripts"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
       "${CMAKE_SOURCE_DIR}/scripts"
       "${RESOURCES_DEV_DIR}/scripts"
@@ -363,6 +366,9 @@ else()
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
       "${PROJECT_SOURCE_DIR}/resources/fonts"
       "${RESOURCES_DEV_DIR}/fonts"
+    # into an emptied folder, as on macOS: a script deleted from the repo must not live on in a build
+    COMMAND "${CMAKE_COMMAND}" -E remove_directory
+      "${INTERFACE_EXEC_DIR}/scripts"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
       "${CMAKE_SOURCE_DIR}/scripts"
       "${INTERFACE_EXEC_DIR}/scripts"
