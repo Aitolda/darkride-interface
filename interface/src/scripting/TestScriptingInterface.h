@@ -333,6 +333,15 @@ public slots:
     Q_INVOKABLE void editorUndo();
 
     /**jsdoc
+     * Puts an installed skin on (ui/Skins.h), or Darkride's own look with "", as the Skins panel does, so a scripted
+     * test can picture build mode's panels under a skin and back.
+     * @function Test.setSkin
+     * @param {string} id - The installed skin's id (its folder's name under the app data's skins/), or "".
+     * @returns {string} "" when it is on, else what is wrong with it.
+     */
+    Q_INVOKABLE QString setSkin(const QString& id);
+
+    /**jsdoc
      * Imports an entities file into the world as Build > Import Entities… does once the file is chosen: placed under
      * the cursor (or in front of the camera), selected, one undo step; build mode comes on for it.
      * @function Test.editorImportEntities

@@ -30,6 +30,7 @@
 #include <display-plugins/OpenGLDisplayPlugin.h>
 
 #include "editor/Editor.h"
+#include "ui/Skins.h"
 #include "graphics/GraphicsEngine.h"
 #include <EntityTreeRenderer.h>
 #include <RenderableEntityItem.h>
@@ -377,6 +378,15 @@ void TestScriptingInterface::editorUndo() {
         return;
     }
     DependencyManager::get<Editor>()->undo();
+}
+
+QString TestScriptingInterface::setSkin(const QString& id) {
+    if (QThread::currentThread() != thread()) {
+        QString result;
+        BLOCKING_INVOKE_METHOD(this, "setSkin", Q_RETURN_ARG(QString, result), Q_ARG(QString, id));
+        return result;
+    }
+    return DependencyManager::get<Skins>()->setCurrent(id);
 }
 
 bool TestScriptingInterface::editorImportEntities(const QString& url) {
