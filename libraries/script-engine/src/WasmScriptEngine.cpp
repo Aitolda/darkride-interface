@@ -734,6 +734,7 @@ void WasmScriptEngine::stopEntityScript(const EntityItemID& entityID, const QStr
     std::weak_ptr<ModuleInstance> host = _entityHosts.value(entityID);
     _entityHosts.remove(entityID);
     _callbackHandlers.remove(entityID);
+    _stoppedByTimeLimit.insert(entityID, details.scriptText);
     EntityScriptDetails stopped;
     stopped.scriptText = details.scriptText;
     stopped.definingSandboxURL = details.definingSandboxURL;
@@ -937,6 +938,24 @@ void WasmScriptEngine::loadEntityScript(const EntityItemID& entityID, const QStr
     if (isStopping() || !scriptEngines || scriptEngines->isStopped()) {
         return;
     }
+    // a script the time limit stopped stays stopped, with its error showing, until its entity names another script
+    // or a reload is forced
+    auto stopped = _stoppedByTimeLimit.find(entityID);
+    if (stopped != _stoppedByTimeLimit.end()) {
+        if (!forceRedownload && stopped.value() == entityScript) {
+            return;
+        }
+        _stoppedByTimeLimit.erase(stopped);
+    }
+    // the same script asked for again while it loads or runs is the one under way: a second load would run the
+    // script twice, as two objects with their own timers. Requests queue up while the engine is busy (a call that
+    // runs long, a runaway until the limit stops it), and the first may have finished loading when the second comes.
+    // A reload unloads the script first or is forced.
+    EntityScriptDetails current;
+    if (!forceRedownload && getEntityScriptDetails(entityID, current) && current.scriptText == entityScript &&
+        (current.status == EntityScriptStatus::LOADING || current.status == EntityScriptStatus::RUNNING)) {
+        return;
+    }
     if (!hasEntityScriptDetails(entityID)) {
         updateEntityScriptStatus(entityID, EntityScriptStatus::PENDING, "...pending...");
     }
@@ -1065,6 +1084,9 @@ void WasmScriptEngine::unloadEntityScript(const EntityItemID& entityID, bool sho
     if (QThread::currentThread() != thread()) {
         QMetaObject::invokeMethod(this, "unloadEntityScript", Q_ARG(const EntityItemID&, entityID), Q_ARG(bool, shouldRemoveFromMap));
         return;
+    }
+    if (shouldRemoveFromMap) {
+        _stoppedByTimeLimit.remove(entityID);
     }
     EntityScriptDetails oldDetails;
     if (!getEntityScriptDetails(entityID, oldDetails)) {
