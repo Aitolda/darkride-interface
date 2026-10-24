@@ -16,11 +16,14 @@
 
 // Version guard so reloading the script does not register duplicate handlers.
 if (typeof VOXEL_BUILDER_VERSION === "undefined" ||
-    VOXEL_BUILDER_VERSION !== 107) {
-    var VOXEL_BUILDER_VERSION = 107;
+    VOXEL_BUILDER_VERSION !== 108) {
+    var VOXEL_BUILDER_VERSION = 108;
 
-    // Edge length of every voxel, in metres. All voxels are identical.
-    var VOXEL_SIZE = 0.25;
+    // Default voxel edge length, in metres.
+    var DEFAULT_VOXEL_SIZE = 0.25;
+
+    // Half-size voxel edge length for furniture, in metres.
+    var HALF_VOXEL_SIZE = 0.125;
 
     // Side length of the single black ground cube, in metres. Five miles.
     var GROUND_SIZE = 8046.72;
@@ -111,10 +114,12 @@ if (typeof VOXEL_BUILDER_VERSION === "undefined" ||
     var state = {
         color: 0,
         groundID: null,
+        half: false,
         hudIDs: [],
         statusID: null,
         swatchIDs: [],
         buttons: [],
+        sizeButton: null,
         history: []
     };
 
@@ -135,7 +140,7 @@ if (typeof VOXEL_BUILDER_VERSION === "undefined" ||
      * @returns {number} The cell centre on that axis.
      */
     function snap(value) {
-        return (Math.floor(value / VOXEL_SIZE) + 0.5) * VOXEL_SIZE;
+        return (Math.floor(value / currentSize()) + 0.5) * currentSize();
     }
 
     /**
@@ -198,7 +203,7 @@ if (typeof VOXEL_BUILDER_VERSION === "undefined" ||
      */
     function placeCentre(hit) {
         var normal = faceNormal(hit);
-        var point = offsetPoint(hit.intersection, normal, VOXEL_SIZE / 2.0);
+        var point = offsetPoint(hit.intersection, normal, currentSize() / 2.0);
         return snapPoint(point);
     }
 
@@ -292,7 +297,7 @@ if (typeof VOXEL_BUILDER_VERSION === "undefined" ||
         var props = { type: "Box", shape: "Cube", name: VOXEL_NAME };
         props.position = position;
         props.dimensions = {
-            x: VOXEL_SIZE, y: VOXEL_SIZE, z: VOXEL_SIZE
+            x: currentSize(), y: currentSize(), z: currentSize()
         };
         props.color = {
             red: colour.red, green: colour.green, blue: colour.blue
@@ -422,7 +427,43 @@ if (typeof VOXEL_BUILDER_VERSION === "undefined" ||
      * @returns {string} The colour name in capitals.
      */
     function statusText() {
-        return PALETTE[state.color].name.toUpperCase();
+        return currentSize() + " m   " +
+               PALETTE[state.color].name.toUpperCase();
+    }
+
+    /**
+     * Return the current voxel edge length in metres.
+     *
+     * @returns {number} 0.25 normally, 0.125 when half size is on.
+     */
+    function currentSize() {
+        return state.half ? HALF_VOXEL_SIZE : DEFAULT_VOXEL_SIZE;
+    }
+
+    /**
+     * Toggle between the default and half voxel size.
+     *
+     * @returns {void}
+     */
+    function toggleSize() {
+        state.half = !state.half;
+        updateStatus();
+        updateSizeButton();
+    }
+
+    /**
+     * Outline the half-size button when it is active.
+     *
+     * @returns {void}
+     */
+    function updateSizeButton() {
+        if (!state.sizeButton) {
+            return;
+        }
+        Overlays.editOverlay(state.sizeButton.panel, {
+            borderColor: state.half ? HUD_TITLE_COLOR : HUD_SWATCH_BORDER,
+            borderWidth: state.half ? 2 : 1
+        });
     }
 
     /**
@@ -556,7 +597,7 @@ if (typeof VOXEL_BUILDER_VERSION === "undefined" ||
      * @param {string} text - Button text.
      * @param {object} color - Button colour.
      * @param {function} action - Function to run when clicked.
-     * @returns {void}
+     * @returns {object} The button record.
      */
     function addButton(x, width, text, color, action) {
         var panel = addPanel({ x: x, y: HUD_ROW_Y, width: width,
@@ -564,7 +605,9 @@ if (typeof VOXEL_BUILDER_VERSION === "undefined" ||
         var label = addLabel({ x: x + 5, y: HUD_ROW_Y + 2, width: width - 10,
                                height: HUD_ROW_H - 4 }, text,
                              HUD_TITLE_COLOR, 11);
-        state.buttons.push({ panel: panel, label: label, action: action });
+        var button = { panel: panel, label: label, action: action };
+        state.buttons.push(button);
+        return button;
     }
 
     /**
@@ -575,6 +618,10 @@ if (typeof VOXEL_BUILDER_VERSION === "undefined" ||
     function createButtons() {
         addButton(276, 88, "GROUND", HUD_ACCENT_A, toggleGround);
         addButton(374, 70, "UNDO", HUD_ACCENT_B, undo);
+        state.sizeButton = addButton(454, 70, "HALF",
+                                     { red: 72, green: 154, blue: 92 },
+                                     toggleSize);
+        updateSizeButton();
     }
 
     /**
