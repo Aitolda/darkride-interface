@@ -16,10 +16,12 @@
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QHash>
 #include <QtCore/QMimeData>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QSet>
+#include <QtCore/QStandardPaths>
 #include <QtCore/QUrl>
 #include <QtGui/QCursor>
 #include <QtGui/QImage>
@@ -33,6 +35,7 @@
 #include <QtWidgets/QAbstractSpinBox>
 #include <QtWidgets/QAction>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QFileDialog>
 #include <QtWidgets/QInputDialog>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
@@ -50,6 +53,7 @@
 #include <EntityItem.h>
 #include <EntityScriptingInterface.h>
 #include <EntityTree.h>
+#include <EntityTreeElement.h>
 #include <EntityTreeRenderer.h>
 #include <LightEntityItem.h>
 #include <ParticleEffectEntityItem.h>
@@ -70,6 +74,7 @@
 #include <TrackEntityItem.h>
 
 #include "Application.h"
+#include "EntityClipboard.h"
 #include "avatar/AvatarManager.h"
 #include "avatar/MyAvatar.h"
 #include "EditorCreate.h"
@@ -2495,6 +2500,186 @@ void Editor::pasteAt(const glm::vec3& target) {
         _selection.set(created);
     }
     stack->endMacro();
+}
+
+// --- entity files: import and export -------------------------------------------------------------
+
+namespace {
+    // where the file dialogs open: the last folder used this session, Documents at first
+    QString& entityFilesFolder() {
+        static QString folder = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        return folder;
+    }
+}
+
+void Editor::importEntitiesFromFile() {
+    if (!_active || !editable()) {
+        return;
+    }
+    QString path = QFileDialog::getOpenFileName(qApp->getWindow(), "Import Entities", entityFilesFolder(),
+        "Entities (*.json *.json.gz *.svo);;All files (*)");
+    if (path.isEmpty()) {
+        return;
+    }
+    entityFilesFolder() = QFileInfo(path).absolutePath();
+    importEntities(QUrl::fromLocalFile(path).toString());
+}
+
+void Editor::importEntitiesFromUrl() {
+    if (!_active || !editable()) {
+        return;
+    }
+    bool ok = false;
+    QString url = QInputDialog::getText(qApp->getWindow(), "Import Entities from URL",
+        "Address of an entities file (.json, .json.gz or .svo):", QLineEdit::Normal, QString(), &ok).trimmed();
+    if (ok && !url.isEmpty()) {
+        importEntities(url);
+    }
+}
+
+bool Editor::importEntities(const QString& url) {
+    if (!_active) {
+        setActive(true);
+    }
+    if (!_active || _gizmo.isDragging() || !editable()) {
+        return false;
+    }
+    QString name = QUrl(url).fileName();
+    if (name.isEmpty()) {
+        name = url;
+    }
+    setStatus("Importing " + name + "…");
+    // the entities' clipboard reads the file, of any of the formats the old Create app took, with model links
+    // relative to the file resolved; the scripts' Clipboard.importEntities reads into the same tree
+    auto& clipboard = qApp->getEntityClipboard();
+    if (!clipboard.importEntities(url)) {
+        setStatus("Could not read " + name + " as entities", STATUS_CLEAR_MS);
+        return false;
+    }
+    auto tree = clipboard.tree();
+    QHash<QUuid, EntityItemProperties> byId;
+    QList<QUuid> found;
+    tree->withReadLock([&] {
+        tree->recurseTreeWithOperation([&](const OctreeElementPointer& element, void*) {
+            std::static_pointer_cast<EntityTreeElement>(element)->forEachEntity([&](const EntityItemPointer& entity) {
+                byId.insert(entity->getID(), entity->getProperties());
+                found << entity->getID();
+            });
+            return true;
+        });
+    });
+    if (found.isEmpty()) {
+        setStatus(name + " holds no entities", STATUS_CLEAR_MS);
+        return false;
+    }
+
+    // as an add takes them (EditorUndo::capture's marking): every property set, a child placed in its parent's
+    // frame; parents first, so the add can put each child on its new parent. An entity attached to a parent the
+    // file lacks (an avatar's, or one outside an export) comes in at the top level
+    QVector<EntityItemProperties> properties;
+    QList<QUuid> ids;
+    QSet<QUuid> placed;
+    AABox bounds;
+    bool hasBounds = false;
+    while (ids.size() < found.size()) {
+        int before = ids.size();
+        for (const auto& id : found) {
+            if (placed.contains(id)) {
+                continue;
+            }
+            EntityItemProperties entry = byId.value(id);
+            QUuid parentID = entry.getParentID();
+            if (!parentID.isNull() && !byId.contains(parentID)) {
+                entry.setParentID(QUuid());
+                parentID = QUuid();
+            }
+            if (!parentID.isNull() && !placed.contains(parentID)) {
+                continue;   // after its parent
+            }
+            entry.markAllChanged();
+            entry.setLocalPositionChanged(true);
+            entry.setLocalRotationChanged(true);
+            entry.setQueryAACubeChanged(false);
+            if (parentID.isNull()) {
+                // the file's top level: positions in the world, relative to the export's lowest corner
+                glm::vec3 dimensions = entry.getDimensions();
+                AABox box(entry.getPosition() - 0.5f * dimensions, dimensions);
+                if (hasBounds) {
+                    bounds += box;
+                } else {
+                    bounds = box;
+                    hasBounds = true;
+                }
+            }
+            properties << entry;
+            ids << id;
+            placed.insert(id);
+        }
+        if (ids.size() == before) {
+            break;   // a parent loop: what is left cannot be placed
+        }
+    }
+
+    // the footprint's middle lands under the cursor, as a paste's does; a whole world (the old Create app's 10 km
+    // rule) stays where its positions put it
+    const float WHOLE_WORLD_SIZE = 10000.0f;
+    glm::vec3 center = bounds.calcCenter();
+    glm::vec3 anchor(center.x, bounds.getMinimumPoint().y, center.z);
+    glm::vec3 extent = bounds.getDimensions();
+    bool wholeWorld = glm::max(extent.x, glm::max(extent.y, extent.z)) >= WHOLE_WORLD_SIZE;
+    glm::vec3 target = anchor;
+    if (!wholeWorld && !cursorWorldPoint(target)) {
+        target = _camera.position() + viewDirection() * PASTE_FALLBACK_DISTANCE;
+    }
+
+    EditorClipboard imported;
+    imported.set(properties, ids, anchor);
+    auto stack = _undo.stack();
+    stack->beginMacro("Import " + name);   // the entities and their selection are one step
+    QList<QUuid> created = imported.paste(_undo, "Import " + name, target - anchor);
+    if (!created.isEmpty()) {
+        _selection.set(created);
+    }
+    stack->endMacro();
+    int skipped = found.size() - ids.size();
+    setStatus(QString("Imported %1 entit%2 from %3%4").arg(ids.size()).arg(ids.size() == 1 ? "y" : "ies").arg(name)
+        .arg(skipped > 0 ? QString(" (%1 in a parent loop left out)").arg(skipped) : QString()), STATUS_CLEAR_MS);
+    return !created.isEmpty();
+}
+
+void Editor::exportSelection() {
+    if (!_active) {
+        return;
+    }
+    if (_selection.isEmpty()) {
+        setStatus("Select what to export first", STATUS_CLEAR_MS);
+        return;
+    }
+    QString path = QFileDialog::getSaveFileName(qApp->getWindow(), "Export Selected Entities",
+        QDir(entityFilesFolder()).filePath("entities.json"), "Entities (*.json)");
+    if (path.isEmpty()) {
+        return;
+    }
+    if (!path.endsWith(".json", Qt::CaseInsensitive)) {
+        path += ".json";
+    }
+    entityFilesFolder() = QFileInfo(path).absolutePath();
+    exportSelectionTo(path);
+}
+
+int Editor::exportSelectionTo(const QString& path) {
+    if (_selection.isEmpty()) {
+        return -1;
+    }
+    // the selection with everything under it; positions relative to the lowest corner of the top level, as the
+    // old Create app's Export wrote them, so an import can place them anywhere
+    QList<QUuid> all = EditorUndo::withDescendants(_selection.topLevel());
+    QVector<QUuid> ids(all.begin(), all.end());
+    bool ok = qApp->getEntityClipboard().exportEntities(path, ids);
+    setStatus(ok ? QString("Exported %1 entit%2 to %3").arg(ids.size()).arg(ids.size() == 1 ? "y" : "ies")
+                       .arg(QFileInfo(path).fileName())
+                 : "Could not write " + QFileInfo(path).fileName(), STATUS_CLEAR_MS);
+    return ok ? ids.size() : -1;
 }
 
 // --- go to, bring here --------------------------------------------------------------------------

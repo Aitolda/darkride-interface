@@ -331,6 +331,24 @@ public slots:
     Q_INVOKABLE void editorUndo();
 
     /**jsdoc
+     * Imports an entities file into the world as Build > Import Entities… does once the file is chosen: placed under
+     * the cursor (or in front of the camera), selected, one undo step; build mode comes on for it.
+     * @function Test.editorImportEntities
+     * @param {string} url - The file's URL (file:///…, https://…, atp:…).
+     * @returns {boolean} Whether any entities were made.
+     */
+    Q_INVOKABLE bool editorImportEntities(const QString& url);
+
+    /**jsdoc
+     * Exports the editor's selection and its descendants as Build > Export Selected Entities… does once the path is
+     * chosen.
+     * @function Test.editorExportSelection
+     * @param {string} path - The file to write (.json).
+     * @returns {number} How many entities were written, -1 for none.
+     */
+    Q_INVOKABLE int editorExportSelection(const QString& path);
+
+    /**jsdoc
      * Turns build mode on or off, as Build > Build Mode does.
      * @function Test.setBuildMode
      * @param {boolean} on - Whether build mode is on.

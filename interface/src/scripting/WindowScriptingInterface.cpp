@@ -28,6 +28,7 @@
 #include "MainWindow.h"
 #include "Menu.h"
 #include "OffscreenUi.h"
+#include "editor/Editor.h"
 
 static const QString DESKTOP_LOCATION = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
 static const QString LAST_BROWSE_LOCATION_SETTING = "LastBrowseLocation";
@@ -47,16 +48,19 @@ WindowScriptingInterface::WindowScriptingInterface() {
     connect(&domainHandler, &DomainHandler::domainConnectionRefused, this, &WindowScriptingInterface::domainConnectionRefused);
     connect(&domainHandler, &DomainHandler::redirectErrorStateChanged, this, &WindowScriptingInterface::redirectErrorStateChanged);
 
+    // an entities file dropped on the window or opened by its address: build mode imports it (Editor::importEntities),
+    // or, outside build mode, a script that asks for it (the old Create app, while it is still loaded); with neither,
+    // build mode comes on for it
     connect(qApp, &Application::svoImportRequested, [this](const QString& urlString) {
         static const QMetaMethod svoImportRequestedSignal =
             QMetaMethod::fromSignal(&WindowScriptingInterface::svoImportRequested);
 
-        if (isSignalConnected(svoImportRequestedSignal)) {
+        auto editor = DependencyManager::get<Editor>();
+        if (!editor->isActive() && isSignalConnected(svoImportRequestedSignal)) {
             QUrl url(urlString);
             emit svoImportRequested(url.url());
         } else {
-            OffscreenUi::asyncWarning("Can't import objects right now",
-                                      "The Create app isn't running. Start it again in Running Scripts.");
+            editor->importEntities(urlString);
         }
     });
 
