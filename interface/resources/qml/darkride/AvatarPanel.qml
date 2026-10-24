@@ -8,7 +8,9 @@
 //    picture when there is one beside it (<name>.preview.jpg or .png, or preview.jpg/.png in its folder: the
 //    picture an .fst's `preview` field names); wearing one by its URL, the default, its scale, its collisions with
 //    the world, and putting it in My Files; for an avatar in your own My Files, a picture: taken of you wearing it
-//    or chosen from this computer (AvatarThumbnails), saved beside its .fst as <name>.preview.jpg;
+//    or chosen from this computer (AvatarThumbnails), saved beside its .fst as <name>.preview.jpg, private when the
+//    avatar is (Caity, 10-24); the pictures load through the engine's loader (image://resource/), which asks the files
+//    host again with your login for a private one;
 //  Menu: the avatar's own menu, as its package made it (toggles, buttons held while pressed, radial sliders and
 //    submenus; MyAvatar.getAvatarMenu()), drawn for whatever avatar is worn; a choice goes to avatarMenu.js on the
 //    local channel io.darkride.avatarMenu, which sets the parameter, remembers the saved ones and plays emotes;
@@ -103,6 +105,16 @@ Page {
             favoriteName = Settings.getValue(favoriteNameSetting, "");
             collisions = MyAvatar.collisionsEnabled;
             scale = MyAvatar.scale;
+        }
+
+        // a picture's source: one in My Files (tea:// or the files host) through the engine's loader, which asks with
+        // your login for a private one (ResourceImageProvider); anything else as it is
+        function pictureSource(address) {
+            address = String(address || "");
+            if (/^tea:\/\//i.test(address) || /^https?:\/\/files\./i.test(address)) {
+                return "image://resource/" + encodeURIComponent(address);
+            }
+            return address;
         }
 
         // tea://<user>/<path> is the files host's https://files.<metaverse host>/<user>/<path> (ResourceManager.cpp)
@@ -217,7 +229,7 @@ Page {
                     privates += file.tea ? 1 : 0;
                     found.push({ key: key, title: name, subtitle: folder.replace(/^\/|\/$/g, "") || "My Files",
                                  // the picture's date in its address, so a new picture isn't the old one cached
-                                 keywords: key, picture: picture !== "" ? data.url + picture + "?" + updated[picture] : "",
+                                 keywords: key, picture: picture !== "" ? avatar.pictureSource(data.url + picture + "?" + updated[picture]) : "",
                                  url: data.url + key, updated: Date.parse(file.updated) || 0, isPrivate: !!file.tea,
                                  badge: file.tea ? "private" : "" });
                 });
@@ -276,15 +288,39 @@ Page {
         function save() {
             busy = true;
             status = "Saving the picture…";
+            var wantPrivate = !!(myFiles.worn && myFiles.worn.isPrivate);
+            var key = AvatarThumbnails.pictureKey(avatar.url);
             AvatarThumbnails.upload(pending, avatar.url, function (error, url) {
-                busy = false;
                 if (error) {
+                    busy = false;
                     status = "Couldn't save the picture: " + error + ".";
                     return;
                 }
-                pending = "";
-                status = "Saved beside the avatar in My Files.";
-                myFiles.load();
+                // the picture keeps its avatar's privacy: an upload keeps an old picture's setting, a new one is public
+                var done = function (problem) {
+                    busy = false;
+                    pending = "";
+                    status = problem !== "" ? problem
+                        : wantPrivate ? "Saved beside the avatar, private as the avatar is." : "Saved beside the avatar in My Files.";
+                    myFiles.load();
+                };
+                MetaverseRequests.send("GET", "/api/user/files", null, function (listError, code, data) {
+                    var file = listError || !data ? null : (data.files || []).filter(function (f) {
+                        return (f.key.charAt(0) === "/" ? f.key : "/" + f.key).toLowerCase() === key.toLowerCase();
+                    })[0];
+                    if (!file) {
+                        done("Saved, but its privacy couldn't be checked.");
+                        return;
+                    }
+                    if (!!file.tea === wantPrivate) {
+                        done("");
+                        return;
+                    }
+                    MetaverseRequests.send("POST", "/api/user/files/tea-only?path=" + encodeURIComponent(key), null,
+                                           function (toggleError) {
+                        done(toggleError ? "Saved, but its privacy couldn't be set: " + toggleError + "." : "");
+                    });
+                });
             });
         }
     }
@@ -302,9 +338,7 @@ Page {
 
         Section {
             title: "Wearing"
-            footer: thumb.status !== "" ? thumb.status
-                : thumb.possible && myFiles.worn && myFiles.worn.isPrivate
-                  ? "Its picture is public: anyone with the picture's link can see it." : ""
+            footer: thumb.status
             Item {
                 width: parent ? parent.width : 0
                 height: wornRow.implicitHeight + 2 * Theme.rowPadding + 4 * Theme.unit
@@ -321,7 +355,8 @@ Page {
                         Layout.preferredHeight: 56 * Theme.unit
                         radius: 10 * Theme.unit
                         placeholder: avatar.name !== "" ? avatar.name : "?"
-                        source: myFiles.worn && myFiles.worn.picture !== "" ? myFiles.worn.picture : avatar.pictureUrl
+                        source: myFiles.worn && myFiles.worn.picture !== "" ? myFiles.worn.picture
+                            : avatar.pictureSource(avatar.pictureUrl)
                     }
                     Column {
                         Layout.fillWidth: true

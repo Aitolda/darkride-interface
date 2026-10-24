@@ -47,6 +47,8 @@ public:
     Q_INVOKABLE void fromFile(const QString& path, QJSValue callback);
     /// { folder, name } of an avatar's .fst in the signed-in user's My Files ("/avatars/meehae", "meehae"), or {}
     Q_INVOKABLE QVariantMap myFilesPlace(const QString& fstUrl) const;
+    /// the path in My Files an avatar's picture has ("/avatars/meehae/meehae.preview.jpg"), or "" when it isn't yours
+    Q_INVOKABLE QString pictureKey(const QString& fstUrl) const;
     /// uploads the picture at pictureUrl as <name>.preview.jpg beside the .fst: callback(error, url)
     Q_INVOKABLE void upload(const QString& pictureUrl, const QString& fstUrl, QJSValue callback);
 

@@ -250,6 +250,11 @@ QVariantMap AvatarThumbnails::myFilesPlace(const QString& fstUrl) const {
     return place;
 }
 
+QString AvatarThumbnails::pictureKey(const QString& fstUrl) const {
+    const QVariantMap place = myFilesPlace(fstUrl);
+    return place.isEmpty() ? QString() : place["folder"].toString() + "/" + pictureName(place["name"].toString());
+}
+
 void AvatarThumbnails::upload(const QString& pictureUrl, const QString& fstUrl, QJSValue callback) {
     const QVariantMap place = myFilesPlace(fstUrl);
     if (place.isEmpty()) {

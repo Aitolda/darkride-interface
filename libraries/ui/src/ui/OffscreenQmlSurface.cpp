@@ -6,6 +6,7 @@
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
 //
 #include "OffscreenQmlSurface.h"
+#include "ResourceImageProvider.h"
 
 #include <unordered_set>
 #include <unordered_map>
@@ -255,6 +256,8 @@ void OffscreenQmlSurface::initializeEngine(QQmlEngine* engine) {
     });
 
     engine->setNetworkAccessManagerFactory(new QmlNetworkAccessManagerFactory);
+    // pictures through the engine's own loader: private files in My Files, tea:// and atp: (ResourceImageProvider.h)
+    engine->addImageProvider(ResourceImageProvider::NAME, new ResourceImageProvider());
     auto importList = engine->importPathList();
     importList.insert(importList.begin(), PathUtils::resourcesPath() + "qml/");
     importList.insert(importList.begin(), PathUtils::resourcesPath());
