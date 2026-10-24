@@ -28,7 +28,8 @@ class MetaverseRequests : public QObject, public Dependency {
     SINGLETON_DEPENDENCY
 
 public:
-    /// method "GET" or "POST"; path under "/api/"; body sent as JSON with a POST; callback(error, status, data):
+    /// method "GET", "POST", "PUT" or "DELETE"; path under "/api/"; body sent as JSON with a POST or a PUT;
+    /// callback(error, status, data):
     /// error null on a 2xx answer, otherwise a short description; data the answer parsed as JSON (null if it is not)
     Q_INVOKABLE void send(const QString& method, const QString& path, const QVariant& body, QJSValue callback);
 

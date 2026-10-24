@@ -106,7 +106,6 @@ void Application::initializeUi() {
     OffscreenQmlSurface::addWhitelistContextHandler({
         QUrl{ "hifi/tablet/TabletAddressDialog.qml" },
         QUrl{ "hifi/Card.qml" },
-        QUrl{ "hifi/Pal.qml" },
         QUrl{ "hifi/NameCard.qml" },
         }, platformInfoCallback);
 

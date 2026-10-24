@@ -44,6 +44,17 @@ export class Buttons {
 			"small",
 		);
 
+		// people: Darkride's People panel (qml/darkride/PeoplePanel.qml): who is here, and your friends; it takes the
+		// place of High Fidelity's People app (pal.js), in the same place on the bar
+		const people = this.buttonManager.addQmlButton(
+			"People",
+			"icons/tablet-icons/people.svg",
+			"#2196f3", // blue 500
+			7,
+			Script.resourcesPath() + "qml/darkride/PeoplePanel.qml",
+			"small",
+		);
+
 		// explore
 		const explore = this.buttonManager.addWebButton(
 			"Explore",

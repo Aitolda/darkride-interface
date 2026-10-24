@@ -29,7 +29,7 @@ void MetaverseRequests::send(const QString& method, const QString& path, const Q
         answer(QJSValue("not a metaverse API path: " + path), 0, QVariant());
         return;
     }
-    if (method != "GET" && method != "POST") {
+    if (method != "GET" && method != "POST" && method != "PUT" && method != "DELETE") {
         answer(QJSValue("unsupported method: " + method), 0, QVariant());
         return;
     }
@@ -49,8 +49,10 @@ void MetaverseRequests::send(const QString& method, const QString& path, const Q
     }
 
     auto& networkAccessManager = NetworkAccessManager::getInstance();
-    QNetworkReply* reply = method == "POST"
-        ? networkAccessManager.post(request, QJsonDocument::fromVariant(body).toJson(QJsonDocument::Compact))
+    const QByteArray json = QJsonDocument::fromVariant(body).toJson(QJsonDocument::Compact);
+    QNetworkReply* reply = method == "POST" ? networkAccessManager.post(request, json)
+        : method == "PUT" ? networkAccessManager.put(request, json)
+        : method == "DELETE" ? networkAccessManager.deleteResource(request)
         : networkAccessManager.get(request);
     connect(reply, &QNetworkReply::finished, this, [reply, answer]() mutable {
         int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();

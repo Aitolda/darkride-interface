@@ -10,7 +10,6 @@
 	// "system/bubble.js",
 
 	"system/snapshot.js",
-	"system/pal.js",
 	// "system/makeUserConnection.js",
 	// "system/tablet-goto.js",
 	// "system/notifications.js",

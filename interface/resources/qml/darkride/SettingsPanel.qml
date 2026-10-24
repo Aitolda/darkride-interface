@@ -101,9 +101,10 @@ Page {
             PickerRow {
                 visible: AccountServices.loggedIn
                 label: "Who sees you're online"
-                current: AccountServices.findableBy
-                model: [{ text: "Everyone", value: "all" }, { text: "Connections", value: "connections" },
-                        { text: "Friends", value: "friends" }, { text: "No one", value: "none" }]
+                current: AccountServices.findableBy === "connections" ? "friends" : AccountServices.findableBy
+                // the metaverse's availability: everyone, friends or no one ("connections", gone, meant friends)
+                model: [{ text: "Everyone", value: "all" }, { text: "Friends", value: "friends" },
+                        { text: "No one", value: "none" }]
                 onChosen: AccountServices.findableBy = value
             }
             ListRow {
@@ -561,82 +562,15 @@ Page {
         }
     }
 
-    // everyone in the world but you, for the mixer: their name, distance, loudness, and your volume and mute for them
-    ListModel {
-        id: people
-    }
-
+    // everyone in the world but you, for the mixer (panel/NearbyPeople, shared with the People panel)
     QtObject {
         id: mixer
-
         property bool open: false
-
-        // the engine forgets a person's volume when they or you leave; mute is mutual (Users.personalMute)
-        function refresh() {
-            var mine = String(MyAvatar.sessionUUID);
-            var ids = AvatarList.getAvatarIdentifiers().map(function (id) { return String(id); }).filter(function (id) {
-                return id !== "" && id !== mine && id !== "{00000000-0000-0000-0000-000000000000}";
-            });
-            for (var i = people.count - 1; i >= 0; i--) {
-                if (ids.indexOf(people.get(i).id) === -1) {
-                    people.remove(i);
-                }
-            }
-            ids.forEach(function (id) {
-                var avatar = AvatarList.getAvatar(id);
-                if (!avatar) {
-                    return;
-                }
-                var name = avatar.sessionDisplayName || avatar.displayName || "Someone";
-                var distance = Vec3.distance(avatar.position, MyAvatar.position);
-                var record = {
-                    id: id,
-                    name: name,
-                    distance: isFinite(distance) ? distance : -1,
-                    level: Math.max(0, Math.min(1, Math.log(1 + Math.max(0, avatar.audioLoudness)) / Math.log(1 + 3000))),
-                    gain: Users.getAvatarGain(id),
-                    muted: Users.getPersonalMuteStatus(id)
-                };
-                var at = -1;
-                for (var j = 0; j < people.count; j++) {
-                    if (people.get(j).id === id) {
-                        at = j;
-                        break;
-                    }
-                }
-                if (at === -1) {
-                    // in name order, so the rows don't move as people walk about
-                    var place = 0;
-                    while (place < people.count && people.get(place).name.toLowerCase() < name.toLowerCase()) {
-                        place++;
-                    }
-                    people.insert(place, record);
-                } else {
-                    for (var key in record) {
-                        if (people.get(at)[key] !== record[key]) {
-                            people.setProperty(at, key, record[key]);
-                        }
-                    }
-                }
-            });
-        }
-
-        function setGain(index, gain) {
-            Users.setAvatarGain(people.get(index).id, gain);
-            people.setProperty(index, "gain", gain);
-        }
-
-        function setMuted(index, muted) {
-            Users.personalMute(people.get(index).id, muted);
-            people.setProperty(index, "muted", muted);
-        }
     }
 
-    Timer {
-        interval: 250
-        repeat: true
-        running: root.visible && root.currentTab === 2
-        onTriggered: mixer.refresh()
+    NearbyPeople {
+        id: people
+        active: root.visible && root.currentTab === 2
     }
 
     Tab {
@@ -754,10 +688,7 @@ Page {
                 label: "Each person"
                 detail: mixer.open ? "" : "a volume and a mute for everyone here"
                 clickable: true
-                onClicked: {
-                    mixer.open = !mixer.open;
-                    mixer.refresh();
-                }
+                onClicked: mixer.open = !mixer.open
                 Text {
                     text: String(people.count)
                     color: Theme.secondaryText
@@ -770,61 +701,16 @@ Page {
                 }
             }
             Repeater {
-                model: mixer.open ? people : null
-                delegate: ListRow {
-                    label: model.name
-                    detail: model.muted ? "muted" : (model.distance >= 0 ? Math.round(model.distance) + " m away" : "")
-                    fill: true
-                    labelWidth: 120 * Theme.unit
-                    scrubbable: true
-                    scrubValue: model.gain
-                    scrubFrom: -60
-                    scrubTo: 20
-                    scrubStep: 0.5
-                    onScrubbed: mixer.setGain(index, Math.round(value))
-
-                    // how loud they are now
-                    Rectangle {
-                        implicitWidth: 6 * Theme.unit
-                        implicitHeight: 18 * Theme.unit
-                        radius: width / 2
-                        color: Theme.sliderTrack
-                        Rectangle {
-                            anchors.bottom: parent.bottom
-                            width: parent.width
-                            height: parent.height * model.level
-                            radius: parent.radius
-                            color: model.muted ? Theme.tertiaryText : Theme.on
-                        }
-                    }
-                    ValueSlider {
-                        from: -60; to: 20; stepSize: 1; decimals: 0; units: " dB"
-                        enabled: !model.muted
-                        value: model.gain
-                        onMoved: mixer.setGain(index, value)
-                    }
-                    ResetButton {
-                        needed: Math.abs(model.gain) > 0.01
-                        onClicked: mixer.setGain(index, 0)
-                    }
-                    // mute: a small button, red while they're muted
-                    Rectangle {
-                        implicitWidth: muteLabel.implicitWidth + 16 * Theme.unit
-                        implicitHeight: 24 * Theme.unit
-                        radius: 6 * Theme.unit
-                        color: model.muted ? Theme.destructive : Theme.fill
-                        Text {
-                            id: muteLabel
-                            anchors.centerIn: parent
-                            text: model.muted ? "Muted" : "Mute"
-                            color: model.muted ? "#ffffff" : Theme.text
-                            font.pixelSize: Theme.controlTextSize
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: mixer.setMuted(index, !model.muted)
-                        }
-                    }
+                model: mixer.open ? people.model : null
+                delegate: PersonRow {
+                    nearby: people
+                    index: model.index
+                    name: model.name
+                    distance: model.distance
+                    level: model.level
+                    gain: model.gain
+                    muted: model.muted
+                    blocked: model.blocked
                 }
             }
             ListRow {

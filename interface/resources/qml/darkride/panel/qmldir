@@ -9,3 +9,5 @@ Field 1.0 Field.qml
 ResetButton 1.0 ResetButton.qml
 Tab 1.0 Tab.qml
 PickerRow 1.0 PickerRow.qml
+NearbyPeople 1.0 NearbyPeople.qml
+PersonRow 1.0 PersonRow.qml
