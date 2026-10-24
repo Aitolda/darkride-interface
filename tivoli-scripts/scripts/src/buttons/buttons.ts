@@ -13,6 +13,8 @@ export class Buttons {
 	readonly exploreMappingName = "com.tivolicloud.explore";
 	// a local "open" here opens Explore: the viewer's "Can't reach" alert sends it
 	readonly exploreChannel = "com.tivolicloud.explore";
+	// the Explore panel asks for someone's profile: it saves the person and the tab, and People reads them as it opens
+	readonly peopleChannel = "Darkride-People";
 
 	constructor() {
 		// old order from hifi
@@ -78,6 +80,7 @@ export class Buttons {
 				}
 			});
 		Messages.subscribe(this.exploreChannel);
+		Messages.subscribe(this.peopleChannel);
 		this.signalManager.connect(
 			Messages.messageReceived,
 			(channel: string, message: string, senderID: Uuid, localOnly: boolean) => {
@@ -88,6 +91,10 @@ export class Buttons {
 					!explore.button.getProperties().isActive
 				) {
 					explore.open();
+				}
+				if (channel == this.peopleChannel && localOnly && message == "profile") {
+					people.close();
+					people.open();
 				}
 			},
 		);
@@ -116,6 +123,7 @@ export class Buttons {
 	cleanup = () => {
 		Controller.disableMapping(this.exploreMappingName);
 		Messages.unsubscribe(this.exploreChannel);
+		Messages.unsubscribe(this.peopleChannel);
 
 		this.buttonManager.cleanup();
 		this.signalManager.cleanup();

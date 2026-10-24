@@ -6,7 +6,10 @@
 //  the worlds that open as instances; Liked; Private, your own), searchable; each a card with its picture, author,
 //  likes, who is there, and Hop (where the people are, else somewhere running, else a new public instance), with the
 //  places running now and new instances (public, friends, private) under More. The instance you are in has its own
-//  card: its link, edit mode, save, close. Back and Forward walk your history of places.
+//  card: its link, edit mode, save, close. Back and Forward walk your history of places. The search and the toolbar
+//  stay pinned at the top (Caity, 10-24): List or Tiles (three a row; a tile's click opens its card alone), and the
+//  order: Relevance (the metaverse's own: people in it, then the newest), Likes, People, Name; sorted here, over the
+//  worlds loaded. An author's name opens their profile in the People panel (its Profile tab, through the bar).
 //
 //  The version check (with the metaverse's version-check, Caity's yes 10-24): the client's protocol signature goes with
 //  a list's request and with an instance's start, so a world or an instance running another version of Darkride is
@@ -38,8 +41,12 @@ Page {
 
     readonly property var kinds: ["popular", "liked", "private"]
     readonly property string tabSetting: "io.darkride.explorePanel.tab"
+    readonly property string viewSetting: "io.darkride.explorePanel.view"
+    readonly property string sortSetting: "io.darkride.explorePanel.sort"
     readonly property string protocol: Window.protocolSignature()
     Component.onCompleted: {
+        explore.view = Settings.getValue(viewSetting, "list") === "tiles" ? "tiles" : "list";
+        explore.sort = Settings.getValue(sortSetting, "relevance");
         currentTab = Math.max(0, Math.min(2, Settings.getValue(tabSetting, 0)));
         explore.load(true);
         here.refresh();
@@ -70,6 +77,33 @@ Page {
         property string search: ""
         property string hoppingWorld: ""   // a hop under way, so a second click doesn't start another
         readonly property int amount: 50
+        property string view: "list"       // list: a card a row; tiles: three a row
+        property string sort: "relevance"  // relevance (the metaverse's order), likes, people, name
+        property var focused: null         // a world opened from its tile, shown alone
+        property var likesNow: ({})        // likes changed here since the list came, by world id: { liked, likes }
+
+        onViewChanged: { Settings.setValue(root.viewSetting, view); focused = null; }
+        onSortChanged: Settings.setValue(root.sortSetting, sort)
+
+        // the worlds in the chosen order; ties keep the metaverse's order
+        readonly property var shown: {
+            if (sort === "relevance") {
+                return worlds;
+            }
+            var order = worlds.map(function (world, index) { return { world: world, index: index }; });
+            order.sort(function (a, b) {
+                var by = 0;
+                if (sort === "likes") {
+                    by = explore.likeState(b.world).likes - explore.likeState(a.world).likes;
+                } else if (sort === "people") {
+                    by = explore.people(b.world) - explore.people(a.world);
+                } else if (sort === "name") {
+                    by = String(a.world.label || "").localeCompare(String(b.world.label || ""));
+                }
+                return by !== 0 ? by : a.index - b.index;
+            });
+            return order.map(function (entry) { return entry.world; });
+        }
 
         function query(extra) {
             var parts = ["page=" + page, "amount=" + amount, "search=" + encodeURIComponent(search),
@@ -80,6 +114,10 @@ Page {
         function load(reset) {
             page = reset ? 1 : page + 1;
             loading = true;
+            if (reset) {
+                focused = null;
+                likesNow = {};
+            }
             var kind = root.kinds[root.currentTab];
             var path = kind === "liked" ? "/api/user/domains/liked" : kind === "private" ? "/api/user/domains/private"
                 : "/api/domains";
@@ -145,6 +183,78 @@ Page {
             return !protocol || !root.protocol || protocol === root.protocol;
         }
 
+        // where a world can be joined: its own server when it is up, then its instances; the fullest first
+        function places(world) {
+            var instances = world.instances || null;
+            var list = [];
+            if (!!world.online && !(instances && instances.instanceOnly)) {
+                list.push({ name: "Always on", detail: "the world's own server · " + (world.numUsers || 0) + " here",
+                            people: world.numUsers || 0, instance: null, compatible: compatible(world.protocol) });
+            }
+            ((instances && instances.list) || []).forEach(function (instance) {
+                var bits = [(instance.players || 0) + " here"];
+                if (instance.startedBy) bits.push("started by " + instance.startedBy);
+                if (!instance.latest) bits.push("an older version");
+                if (instance.editing) bits.push("being edited");
+                var ok = compatible(instance.protocol);
+                if (!ok) bits.push("another version of Darkride");
+                list.push({ name: instance.visibility.charAt(0).toUpperCase() + instance.visibility.slice(1) + " instance",
+                            detail: bits.join(" · "), people: instance.players || 0, instance: instance, compatible: ok });
+            });
+            return list.sort(function (a, b) { return b.people - a.people; });
+        }
+        function canHop(world, list) {
+            var instances = world.instances || null;
+            return compatible(world.protocol)
+                && (list.some(function (p) { return p.compatible; }) || !!(instances && instances.canStart));
+        }
+        // where the people are; else somewhere running; else a new public instance. report(text) says how it went.
+        function hop(world, list, report) {
+            var instances = world.instances || null;
+            var open = list.filter(function (p) { return p.compatible; });
+            var best = open.filter(function (p) { return p.people > 0; })[0]
+                || open.filter(function (p) { return p.instance === null; })[0]
+                || open.filter(function (p) { return p.instance && p.instance.visibility === "public"; })[0]
+                || (instances && instances.canStart ? null : open[0]);
+            if (best) {
+                join(world, best);
+            } else if (instances && instances.canStart) {
+                start(world, "public", report);
+            }
+        }
+        function join(world, place) {
+            if (place.instance) {
+                joinInstance(world, place.instance);
+            } else {
+                joinWorld(world);
+            }
+        }
+        function start(world, visibility, report) {
+            report("Starting a " + visibility + " instance…");
+            startInstance(world, visibility, report);
+        }
+
+        // "by <author>", the name a link to their profile (a ListRow detail or a tile's line, as rich text)
+        function escaped(text) {
+            return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        }
+        function byline(world, rest) {
+            var parts = [];
+            if (world.username) {
+                parts.push("by <a href=\"" + encodeURIComponent(world.username) + "\">" + escaped(world.username) + "</a>");
+            }
+            if (rest) {
+                parts.push(escaped(rest));
+            }
+            return "<style>a { color: " + Theme.tint + "; text-decoration: none; }</style>" + parts.join(" · ");
+        }
+        // someone's profile: the People panel opens on its Profile tab (the bar hears "Darkride-People", buttons.ts)
+        function openProfile(username) {
+            Settings.setValue("io.darkride.peoplePanel.profile", username);
+            Settings.setValue("io.darkride.peoplePanel.tab", 2);
+            Messages.sendLocalMessage("Darkride-People", "profile");
+        }
+
         function picture(worldId) {
             return MetaverseRequests.metaverseUrl() + "/api/domain/" + worldId + "/image";
         }
@@ -186,12 +296,25 @@ Page {
             });
         }
 
-        function like(world, on, done) {
+        // a world from its tile, alone (an inline component can't reach the page's id, so the page scrolls from here)
+        function openWorld(world) {
+            focused = world;
+            root.scrollToTop();
+        }
+
+        function likeState(world) {
+            return likesNow[world.id] || { liked: !!world.liked, likes: world.likes || 0 };
+        }
+        function like(world, on) {
             MetaverseRequests.send("POST", "/api/domains/" + world.id + "/" + (on ? "like" : "unlike"), null,
                                    function (error) {
-                if (!error) {
-                    done();
+                var state = likeState(world);
+                if (error || state.liked === on) {
+                    return;
                 }
+                var next = Object.assign({}, likesNow);
+                next[world.id] = { liked: on, likes: state.likes + (on ? 1 : -1) };
+                likesNow = next;
             });
         }
     }
@@ -272,33 +395,54 @@ Page {
 
     // ==== the page ====================================================================================================
 
-    // searching, and walking back and forth through the places you've been
-    Section {
-        ListRow {
-            label: "Search"
-            fill: true
-            Field {
-                id: searchField
-                Layout.fillWidth: true
-                horizontalAlignment: TextInput.AlignLeft
-                placeholderText: "worlds by name"
-                onTextChanged: searchDelay.restart()
-                onAccepted: { searchDelay.stop(); explore.search = text.trim(); explore.load(true); }
+    // pinned: searching; the view and the order; walking back and forth through the places you've been
+    header: [
+        Section {
+            ListRow {
+                label: "Search"
+                fill: true
+                Field {
+                    id: searchField
+                    Layout.fillWidth: true
+                    horizontalAlignment: TextInput.AlignLeft
+                    placeholderText: "worlds by name"
+                    onTextChanged: searchDelay.restart()
+                    onAccepted: { searchDelay.stop(); explore.search = text.trim(); explore.load(true); }
+                }
+            }
+        },
+        Flow {
+            Layout.fillWidth: true
+            Layout.topMargin: 10 * Theme.unit
+            spacing: 8 * Theme.unit
+
+            Segmented {
+                objectName: "viewPicker"
+                model: [{ text: "List", value: "list" }, { text: "Tiles", value: "tiles" }]
+                current: explore.view
+                onChosen: { explore.view = value; scrollToTop(); }
+            }
+            Segmented {
+                objectName: "sortPicker"
+                model: [{ text: "Relevance", value: "relevance" }, { text: "Likes", value: "likes" },
+                        { text: "People", value: "people" }, { text: "Name", value: "name" }]
+                current: explore.sort
+                onChosen: { explore.sort = value; scrollToTop(); }
+            }
+            CardButton {
+                visible: history.canGoBack
+                height: Theme.controlHeight
+                text: "‹ Back"
+                onPressed: AddressManager.goBack()
+            }
+            CardButton {
+                visible: history.canGoForward
+                height: Theme.controlHeight
+                text: "Forward ›"
+                onPressed: AddressManager.goForward()
             }
         }
-        ListRow {
-            action: true
-            label: "‹ Back"
-            visible: history.canGoBack
-            onClicked: AddressManager.goBack()
-        }
-        ListRow {
-            action: true
-            label: "Forward ›"
-            visible: history.canGoForward
-            onClicked: AddressManager.goForward()
-        }
-    }
+    ]
     Timer {
         id: searchDelay
         interval: 400
@@ -412,6 +556,22 @@ Page {
         }
     }
 
+    // likes: a heart and its count; a click likes or unlikes, signed in
+    component Likes: Text {
+        id: likes
+        property var world: ({})
+        readonly property var state: explore.likeState(world)
+        text: (state.liked ? "♥ " : "♡ ") + state.likes
+        color: state.liked ? Theme.destructive : Theme.secondaryText
+        font.pixelSize: Theme.bodySize
+        MouseArea {
+            anchors.fill: parent
+            anchors.margins: -6 * Theme.unit
+            enabled: AccountServices.loggedIn
+            onClicked: explore.like(likes.world, !likes.state.liked)
+        }
+    }
+
     // one world: its picture, name, author, likes, who's there, Hop; More opens the places and new instances
     component WorldCard: Section {
         id: card
@@ -419,32 +579,11 @@ Page {
         property var world: ({})
         property bool open: false
         property string status: ""
-        property bool liked: !!world.liked
-        property int likes: world.likes || 0
         readonly property var instances: world.instances || null
         readonly property bool compatible: explore.compatible(world.protocol)
-        readonly property bool ownServerOpen: !!world.online && !(instances && instances.instanceOnly)
         readonly property int people: explore.people(world)
-        readonly property var places: {
-            var list = [];
-            if (ownServerOpen) {
-                list.push({ name: "Always on", detail: "the world's own server · " + (world.numUsers || 0) + " here",
-                            people: world.numUsers || 0, instance: null, compatible: card.compatible });
-            }
-            ((instances && instances.list) || []).forEach(function (instance) {
-                var bits = [(instance.players || 0) + " here"];
-                if (instance.startedBy) bits.push("started by " + instance.startedBy);
-                if (!instance.latest) bits.push("an older version");
-                if (instance.editing) bits.push("being edited");
-                var ok = explore.compatible(instance.protocol);
-                if (!ok) bits.push("another version of Darkride");
-                list.push({ name: instance.visibility.charAt(0).toUpperCase() + instance.visibility.slice(1) + " instance",
-                            detail: bits.join(" · "), people: instance.players || 0, instance: instance, compatible: ok });
-            });
-            return list.sort(function (a, b) { return b.people - a.people; });
-        }
-        readonly property bool canHop: compatible && (places.some(function (p) { return p.compatible; })
-                                                      || !!(instances && instances.canStart))
+        readonly property var places: explore.places(world)
+        readonly property bool canHop: explore.canHop(world, places)
         readonly property string summary: {
             if (!compatible) return "Runs another version of Darkride.";
             if (people > 0) return people + (people === 1 ? " person here" : " people here");
@@ -455,74 +594,38 @@ Page {
 
         footer: status
 
-        // where the people are; else somewhere running; else a new public instance
-        function hop() {
-            var open = places.filter(function (p) { return p.compatible; });
-            var best = open.filter(function (p) { return p.people > 0; })[0]
-                || open.filter(function (p) { return p.instance === null; })[0]
-                || open.filter(function (p) { return p.instance && p.instance.visibility === "public"; })[0]
-                || (instances && instances.canStart ? null : open[0]);
-            if (best) {
-                join(best);
-            } else if (instances && instances.canStart) {
-                start("public");
-            }
-        }
-        function join(place) {
-            if (place.instance) {
-                explore.joinInstance(world, place.instance);
-            } else {
-                explore.joinWorld(world);
-            }
-        }
-        function start(visibility) {
-            status = "Starting a " + visibility + " instance…";
-            explore.startInstance(world, visibility, function (problem) { status = problem; });
+        function report(text) {
+            status = text;
         }
 
         Item {
             width: parent ? parent.width : 0
-            height: worldPicture.status === Image.Ready ? width * 0.42 : 0
-            clip: true
+            height: worldPicture.ready ? width * 0.42 : 0
             visible: height > 0
-            Image {
+            RoundedImage {
                 id: worldPicture
                 anchors.fill: parent
-                fillMode: Image.PreserveAspectCrop
-                asynchronous: true
+                roundBottom: false
                 source: card.world.id ? explore.picture(card.world.id) : ""
                 opacity: card.compatible ? 1 : 0.45
             }
         }
         ListRow {
             label: card.world.label || ""
-            detail: (card.world.username ? "by " + card.world.username + " · " : "") + card.summary
+            detail: explore.byline(card.world, card.summary)
+            detailFormat: Text.RichText
+            onLinkActivated: explore.openProfile(decodeURIComponent(link))
             clickable: true
             onClicked: card.open = !card.open
 
-            // likes: a heart and its count
-            Text {
-                text: (card.liked ? "♥ " : "♡ ") + card.likes
-                color: card.liked ? Theme.destructive : Theme.secondaryText
-                font.pixelSize: Theme.bodySize
-                MouseArea {
-                    anchors.fill: parent
-                    anchors.margins: -6 * Theme.unit
-                    enabled: AccountServices.loggedIn
-                    onClicked: {
-                        var on = !card.liked;
-                        explore.like(card.world, on, function () {
-                            card.liked = on;
-                            card.likes += on ? 1 : -1;
-                        });
-                    }
-                }
+            Likes {
+                world: card.world
             }
             CardButton {
                 text: explore.hoppingWorld === card.world.id ? "Hopping…" : "Hop"
                 strong: true
                 enabled: card.canHop && explore.hoppingWorld === ""
-                onPressed: card.hop()
+                onPressed: explore.hop(card.world, card.places, card.report)
             }
         }
         ListRow {
@@ -539,7 +642,7 @@ Page {
                 CardButton {
                     text: "Join"
                     enabled: modelData.compatible && explore.hoppingWorld === ""
-                    onPressed: card.join(modelData)
+                    onPressed: explore.join(card.world, modelData)
                 }
             }
         }
@@ -547,9 +650,9 @@ Page {
             visible: card.open && !!(card.instances && card.instances.canStart) && card.compatible
             label: "New instance"
             detail: "public: anyone · friends: your friends · private: only you"
-            CardButton { text: "Public"; enabled: explore.hoppingWorld === ""; onPressed: card.start("public") }
-            CardButton { text: "Friends"; enabled: explore.hoppingWorld === ""; onPressed: card.start("friends") }
-            CardButton { text: "Private"; enabled: explore.hoppingWorld === ""; onPressed: card.start("private") }
+            CardButton { text: "Public"; enabled: explore.hoppingWorld === ""; onPressed: explore.start(card.world, "public", card.report) }
+            CardButton { text: "Friends"; enabled: explore.hoppingWorld === ""; onPressed: explore.start(card.world, "friends", card.report) }
+            CardButton { text: "Private"; enabled: explore.hoppingWorld === ""; onPressed: explore.start(card.world, "private", card.report) }
         }
         ListRow {
             visible: !card.open && (card.places.length > 0 || !!(card.instances && card.instances.canStart))
@@ -559,21 +662,155 @@ Page {
         }
     }
 
+    // one world as a tile, three a row: its picture, name, author, likes, who's there, Hop; a click opens its card
+    component WorldTile: Rectangle {
+        id: tile
+        objectName: "worldTile"
+        property var world: ({})
+        property string status: ""
+        readonly property bool compatible: explore.compatible(world.protocol)
+        readonly property int people: explore.people(world)
+        readonly property var places: explore.places(world)
+        readonly property bool canHop: explore.canHop(world, places)
+
+        function report(text) {
+            status = text;
+        }
+
+        implicitHeight: tileColumn.implicitHeight
+        radius: Theme.cardRadius
+        color: tileArea.pressed ? Theme.cardPressed : Theme.card
+
+        MouseArea {
+            id: tileArea
+            anchors.fill: parent
+            onClicked: explore.openWorld(tile.world)
+        }
+
+        Column {
+            id: tileColumn
+            width: parent.width
+
+            RoundedImage {
+                width: parent.width
+                height: width * 0.6
+                roundBottom: false
+                placeholder: tile.world.label || ""
+                source: tile.world.id ? explore.picture(tile.world.id) : ""
+                opacity: tile.compatible ? 1 : 0.45
+            }
+
+            Column {
+                x: 10 * Theme.unit
+                width: parent.width - 2 * x
+                topPadding: 8 * Theme.unit
+                bottomPadding: 10 * Theme.unit
+                spacing: 2 * Theme.unit
+
+                Text {
+                    width: parent.width
+                    text: tile.world.label || ""
+                    color: Theme.text
+                    font.pixelSize: Theme.bodySize
+                    font.weight: Font.DemiBold
+                    elide: Text.ElideRight
+                }
+                Text {
+                    width: parent.width
+                    text: explore.byline(tile.world, !tile.compatible ? "another version"
+                        : tile.people > 0 ? tile.people + " here" : "")
+                    textFormat: Text.RichText
+                    color: Theme.secondaryText
+                    font.pixelSize: Theme.detailSize
+                    elide: Text.ElideRight
+                    onLinkActivated: explore.openProfile(decodeURIComponent(link))
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.NoButton
+                        cursorShape: parent.hoveredLink !== "" ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    }
+                }
+                Item {
+                    width: parent.width
+                    height: 6 * Theme.unit
+                }
+                Item {
+                    width: parent.width
+                    height: tileHop.height
+                    Likes {
+                        anchors.verticalCenter: parent.verticalCenter
+                        world: tile.world
+                    }
+                    CardButton {
+                        id: tileHop
+                        anchors.right: parent.right
+                        text: explore.hoppingWorld === tile.world.id ? "Hopping…" : "Hop"
+                        strong: true
+                        enabled: tile.canHop && explore.hoppingWorld === ""
+                        onPressed: explore.hop(tile.world, tile.places, tile.report)
+                    }
+                }
+                Text {
+                    visible: tile.status !== ""
+                    width: parent.width
+                    topPadding: 4 * Theme.unit
+                    text: tile.status
+                    color: Theme.secondaryText
+                    font.pixelSize: Theme.detailSize
+                    wrapMode: Text.WordWrap
+                }
+            }
+        }
+    }
+
     Section {
-        visible: explore.worlds.length === 0
+        visible: explore.worlds.length === 0 && explore.focused === null
         footer: explore.loading ? "…" : explore.status !== "" ? explore.status
             : explore.search !== "" ? "No world goes by that name."
             : root.currentTab === 1 ? "Worlds you like show here." : root.currentTab === 2 ? "Your private worlds show here."
             : "No worlds are open right now."
     }
 
+    // a world opened from its tile, alone, with the way back to the tiles
+    Section {
+        visible: explore.focused !== null
+        ListRow {
+            action: true
+            label: "‹ All Worlds"
+            onClicked: explore.focused = null
+        }
+    }
     Repeater {
-        model: explore.worlds
+        model: explore.focused !== null ? [explore.focused] : []
+        delegate: WorldCard { world: modelData; open: true }
+    }
+
+    Repeater {
+        model: explore.view === "list" && explore.focused === null ? explore.shown : []
         delegate: WorldCard { world: modelData }
     }
 
+    GridLayout {
+        visible: explore.view === "tiles" && explore.focused === null && explore.shown.length > 0
+        Layout.fillWidth: true
+        Layout.topMargin: 18 * Theme.unit
+        columns: width < 480 * Theme.unit ? 2 : 3
+        columnSpacing: Theme.gap
+        rowSpacing: Theme.gap
+
+        Repeater {
+            model: explore.view === "tiles" && explore.focused === null ? explore.shown : []
+            delegate: WorldTile {
+                world: modelData
+                Layout.fillWidth: true
+                Layout.preferredWidth: 1
+                Layout.alignment: Qt.AlignTop
+            }
+        }
+    }
+
     Section {
-        visible: explore.more
+        visible: explore.more && explore.focused === null
         ListRow {
             action: true
             label: explore.loading ? "Loading…" : "Show More Worlds"

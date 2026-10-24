@@ -2,11 +2,15 @@
 //  PeoplePanel.qml
 //  qml/darkride
 //
-//  Darkride's People panel, in the panels' iOS look (darkride/panel), with two tabs (Caity, 10-23/24):
+//  Darkride's People panel, in the panels' iOS look (darkride/panel), with three tabs (Caity, 10-23/24):
 //  Here: everyone in this world, with how loud they are now, your volume and mute for each, and a line of actions
 //    (Block; Mute for Everyone and Kick for whoever may kick here);
 //  Friends: requests to and from you, adding a friend by their exact username, and your friends, online first, with
-//    the world each is in and Join, and Remove.
+//    the world each is in and Join, and Remove; a name opens their profile;
+//  Profile: someone's profile (the metaverse's /api/user/<name>/profile): picture, names, About, since when, an AI
+//    resident's word and host; signed in, how you two stand (with the matching friend action), the friends you share,
+//    and online and where as they allow, with Join. Yours when no one is chosen. Explore opens it on an author: it
+//    sets io.darkride.peoplePanel.profile and the tab, and the bar opens this panel, which reads them as it shows.
 //  The friends are the metaverse's (/api/v1/friends and its requests, through MetaverseRequests); joining one is
 //  AddressManager.goToUser. There is no search for people by name: that is a privacy call (Caity's). It replaces
 //  High Fidelity's People app (pal.js and Pal.qml), whose connections the metaverse no longer has.
@@ -28,19 +32,48 @@ Page {
 
     anchors.fill: parent
     title: "People"
-    tabs: ["Here", "Friends"]
+    tabs: ["Here", "Friends", "Profile"]
 
     readonly property string tabSetting: "io.darkride.peoplePanel.tab"
-    Component.onCompleted: currentTab = Math.max(0, Math.min(1, Settings.getValue(tabSetting, 0)))
-    onCurrentTabChanged: {
-        Settings.setValue(tabSetting, currentTab);
-        if (currentTab === 1) {
-            friends.load();
+    readonly property string profileSetting: "io.darkride.peoplePanel.profile"
+
+    // the tab and the person, as saved (Explore may have changed them before asking for this panel)
+    function readSettings() {
+        profile.username = Settings.getValue(profileSetting, "");
+        var tab = Math.max(0, Math.min(2, Settings.getValue(tabSetting, 0)));
+        if (tab !== currentTab) {
+            currentTab = tab;
+        } else {
+            loadTab();
         }
     }
-    onVisibleChanged: {
-        if (visible && currentTab === 1) {
+    function loadTab() {
+        if (currentTab === 1) {
             friends.load();
+        } else if (currentTab === 2) {
+            profile.load();
+        }
+    }
+    // someone's profile, from a name here
+    function showProfile(username) {
+        profile.username = username;
+        Settings.setValue(profileSetting, username);
+        if (currentTab !== 2) {
+            currentTab = 2;
+        } else {
+            profile.load();
+        }
+        scrollToTop();
+    }
+
+    Component.onCompleted: readSettings()
+    onCurrentTabChanged: {
+        Settings.setValue(tabSetting, currentTab);
+        loadTab();
+    }
+    onVisibleChanged: {
+        if (visible) {
+            readSettings();
         }
     }
 
@@ -139,6 +172,9 @@ Page {
                     status = done(answer && answer.data ? answer.data : {});
                 }
                 load();
+                if (root.currentTab === 2) {
+                    profile.load();
+                }
             });
         }
 
@@ -177,6 +213,10 @@ Page {
         }
         function join(username) {
             AddressManager.goToUser(username);
+        }
+        // for the rows drawn by an inline component, which can't reach the page's id
+        function showProfile(username) {
+            root.showProfile(username);
         }
 
         onSignedInChanged: load()
@@ -223,6 +263,8 @@ Page {
               + (friend.ai ? " · AI resident" : "")
             : (friend.ai ? "AI resident · offline" : "offline")
         icon: friends.picture(friend)
+        clickable: true
+        onClicked: friends.showProfile(friend.username)
         RowButton {
             visible: friends.removing === friendRow.friend.username
             text: "Cancel"
@@ -265,6 +307,8 @@ Page {
                     label: modelData.username
                     detail: "wants to be friends"
                     icon: friends.picture(modelData)
+                    clickable: true
+                    onClicked: root.showProfile(modelData.username)
                     RowButton { text: "Decline"; onPressed: friends.decline(modelData.username) }
                     RowButton { text: "Accept"; strong: true; onPressed: friends.accept(modelData.username) }
                 }
@@ -275,6 +319,8 @@ Page {
                     label: modelData.username
                     detail: "you asked"
                     icon: friends.picture(modelData)
+                    clickable: true
+                    onClicked: root.showProfile(modelData.username)
                     RowButton { text: "Withdraw"; onPressed: friends.withdraw(modelData.username) }
                 }
             }
@@ -322,6 +368,234 @@ Page {
             Repeater {
                 model: friends.offline
                 delegate: FriendRow { friend: modelData }
+            }
+        }
+    }
+
+    // ==== Profile ====================================================================================================
+
+    QtObject {
+        id: profile
+
+        property string username: ""    // whose; "" for yours
+        property var data: null         // the metaverse's answer
+        property bool busy: false
+        property string status: ""
+        property bool confirmRemove: false
+
+        readonly property string whose: username !== "" ? username : (friends.signedIn ? AccountServices.username : "")
+        readonly property string relation: data && data.relation ? data.relation : "none"
+        readonly property bool mine: data !== null && relation === "self"
+
+        function load() {
+            confirmRemove = false;
+            if (whose === "") {
+                data = null;
+                status = "";
+                return;
+            }
+            busy = true;
+            var asked = whose;
+            MetaverseRequests.send("GET", "/api/user/" + encodeURIComponent(asked) + "/profile", null,
+                                   function (error, code, answer) {
+                if (asked !== whose) {
+                    return;   // someone else was chosen meanwhile
+                }
+                busy = false;
+                if (error) {
+                    data = null;
+                    status = code === 404 ? "There's no one called " + asked + "." : "Couldn't read the profile: " + error + ".";
+                    return;
+                }
+                data = answer;
+                status = "";
+            });
+        }
+
+        function since(date) {
+            var when = new Date(date);
+            return isNaN(when.getTime()) ? "" : when.toLocaleDateString(Qt.locale(), "MMMM yyyy");
+        }
+    }
+
+    Tab {
+        visible: root.currentTab === 2
+
+        Section {
+            visible: profile.whose === ""
+            footer: "Sign in to see your profile. A name in Friends, or an author's name in Explore, shows theirs here."
+        }
+        Section {
+            visible: profile.whose !== "" && profile.data === null
+            footer: profile.busy ? "…" : profile.status
+        }
+
+        // who they are
+        Section {
+            visible: profile.data !== null
+
+            Item {
+                width: parent.width
+                height: who.implicitHeight + 2 * Theme.cardPadding
+
+                RowLayout {
+                    id: who
+                    x: Theme.cardPadding
+                    y: Theme.cardPadding
+                    width: parent.width - 2 * Theme.cardPadding
+                    spacing: 14 * Theme.unit
+
+                    RoundedImage {
+                        Layout.preferredWidth: 72 * Theme.unit
+                        Layout.preferredHeight: 72 * Theme.unit
+                        radius: width / 2
+                        placeholder: profile.data ? profile.data.username : ""
+                        source: profile.data ? friends.picture(profile.data) : ""
+                    }
+                    Column {
+                        Layout.fillWidth: true
+                        spacing: 2 * Theme.unit
+
+                        Text {
+                            width: parent.width
+                            text: profile.data ? (profile.data.displayName || profile.data.username) : ""
+                            color: Theme.text
+                            font.pixelSize: 20 * Theme.unit
+                            font.bold: true
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            visible: !!profile.data && !!profile.data.displayName && profile.data.displayName !== profile.data.username
+                            text: profile.data ? profile.data.username : ""
+                            color: Theme.secondaryText
+                            font.pixelSize: Theme.bodySize
+                        }
+                        Text {
+                            visible: !!profile.data && profile.data.ai
+                            width: parent.width
+                            text: profile.data ? (profile.data.aiWord || "AI resident")
+                                + (profile.data.host ? " · hosted by " + profile.data.host : "") : ""
+                            color: Theme.tint
+                            font.pixelSize: Theme.detailSize
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            text: {
+                                if (!profile.data) return "";
+                                var bits = [];
+                                if (profile.data.online !== undefined) bits.push(profile.data.online ? "online" : "offline");
+                                var since = profile.since(profile.data.memberSince);
+                                if (since !== "") bits.push("here since " + since);
+                                return bits.join(" · ");
+                            }
+                            color: Theme.secondaryText
+                            font.pixelSize: Theme.detailSize
+                        }
+                    }
+                }
+            }
+        }
+
+        Section {
+            visible: profile.data !== null && !!profile.data.about
+            title: "About"
+
+            Item {
+                width: parent.width
+                height: aboutText.implicitHeight + 2 * Theme.rowPadding + 6 * Theme.unit
+                Text {
+                    id: aboutText
+                    x: Theme.cardPadding
+                    width: parent.width - 2 * Theme.cardPadding
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: profile.data ? profile.data.about || "" : ""
+                    color: Theme.text
+                    font.pixelSize: Theme.bodySize
+                    wrapMode: Text.WordWrap
+                    lineHeight: 1.15
+                }
+            }
+        }
+
+        // where they are, and you two (signed in; the metaverse leaves these out otherwise)
+        Section {
+            visible: profile.data !== null && !!profile.data.location
+            ListRow {
+                label: profile.data && profile.data.location ? "In " + profile.data.location.name : ""
+                RowButton {
+                    visible: !profile.mine
+                    text: "Join"
+                    strong: true
+                    onPressed: friends.join(profile.data.username)
+                }
+            }
+        }
+
+        Section {
+            visible: profile.data !== null && friends.signedIn && !profile.mine && profile.data.relation !== undefined
+            footer: friends.status
+
+            ListRow {
+                visible: profile.relation === "none"
+                action: true
+                label: "Send Friend Request"
+                onClicked: friends.request(profile.data.username)
+            }
+            ListRow {
+                visible: profile.relation === "requested"
+                label: "You asked to be friends"
+                RowButton { text: "Withdraw"; onPressed: friends.withdraw(profile.data.username) }
+            }
+            ListRow {
+                visible: profile.relation === "asked"
+                label: "Wants to be friends"
+                RowButton { text: "Decline"; onPressed: friends.decline(profile.data.username) }
+                RowButton { text: "Accept"; strong: true; onPressed: friends.accept(profile.data.username) }
+            }
+            ListRow {
+                visible: profile.relation === "friend"
+                label: "Friends"
+                RowButton {
+                    visible: profile.confirmRemove
+                    text: "Cancel"
+                    onPressed: profile.confirmRemove = false
+                }
+                RowButton {
+                    text: profile.confirmRemove ? "Remove them?" : "Remove"
+                    danger: true
+                    onPressed: {
+                        if (profile.confirmRemove) {
+                            profile.confirmRemove = false;
+                            friends.remove(profile.data.username);
+                        } else {
+                            profile.confirmRemove = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        Section {
+            visible: profile.data !== null && (profile.data.mutualFriends || []).length > 0
+            title: "Friends you share · " + (profile.data ? (profile.data.mutualFriends || []).length : 0)
+
+            Repeater {
+                model: profile.data ? profile.data.mutualFriends || [] : []
+                delegate: ListRow {
+                    label: modelData
+                    icon: friends.picture({ username: modelData })
+                    clickable: true
+                    onClicked: root.showProfile(modelData)
+                }
+            }
+        }
+
+        Section {
+            visible: friends.signedIn && profile.username !== "" && profile.username !== AccountServices.username
+            ListRow {
+                action: true
+                label: "Show My Profile"
+                onClicked: root.showProfile("")
             }
         }
     }
