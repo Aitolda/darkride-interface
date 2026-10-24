@@ -87,6 +87,10 @@
 #include "scripting/ControllerScriptingInterface.h"
 #include "scripting/DesktopScriptingInterface.h"
 #include "scripting/DiskCacheScriptingInterface.h"
+#include "avatar/AvatarThumbnails.h"
+#include "ui/Skins.h"
+#include "ui/MetaverseRequests.h"
+#include "ui/PanelTheme.h"
 #include "scripting/HMDScriptingInterface.h"
 #include "scripting/KeyboardScriptingInterface.h"
 #include "scripting/SelectionScriptingInterface.h"
@@ -264,6 +268,11 @@ void registerApplicationServices(int listenPort, const QString& defaultScriptsOv
     DependencyManager::set<TTSScriptingInterface>();
     DependencyManager::set<ChatScriptingInterface>();
     DependencyManager::set<DiskCacheScriptingInterface>();
+    DependencyManager::set<MetaverseRequests>();   // the QML panels' metaverse API calls
+    DependencyManager::set<AvatarThumbnails>();    // the QML panels' avatar pictures
+    DependencyManager::set<PanelTheme>();          // the QML panels' colour scheme
+    DependencyManager::set<Skins>();               // skins (ui/Skins.h), put on once the main window exists
+    PanelTheme::registerWithQml();
 
 
     // Last: the fade effect, the resource request observer, the keyboard and its API, grabbing.

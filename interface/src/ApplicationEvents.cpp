@@ -254,18 +254,28 @@ bool Application::eventFilter(QObject* object, QEvent* event) {
         }
         auto offscreenUi = getOffscreenUI();
         if (offscreenUi->shouldSwallowShortcut(event)) {
+            // An overlay item has the focus. It keeps the shortcut only if it claims it: a text field claims typing
+            // and its edit keys, a web page its edit shortcuts. Anything else (a button, a list, whatever panel was
+            // clicked last) leaves it to the menus. A focus left on any overlay item used to swallow every shortcut,
+            // so Cmd+B (Build Mode) and the rest worked only now and then (Caity, 10-24: "only toggles every 4th").
+            bool claimed = false;
             if (QApplication::focusWidget() == _glWidget && !offscreenUi->isPaused()) {
                 // The key press that follows goes on to the overlay's focused item (OffscreenUi filters the GL widget's
                 // events), so the item gets to claim the shortcut first, as it would as a widget of its own. A web page
                 // acts on an edit shortcut (paste, copy, cut, select all, undo) only if it claimed it here: on macOS it
-                // otherwise leaves them to the app's Edit menu, which a swallowed shortcut never reaches.
+                // otherwise leaves them to the app's Edit menu (which then asks the focused item, editFocusedItem).
                 event->ignore();
                 forwardingToOverlay = true;
                 QCoreApplication::sendEvent(offscreenUi->getWindow(), event);
                 forwardingToOverlay = false;
+                claimed = event->isAccepted();
             }
-            event->accept();
-            return true;
+            if (claimed) {
+                event->accept();
+                return true;
+            }
+            // with a native widget's focus (build mode's Inspector), the overlay item never gets the keys at all
+            event->ignore();
         }
 
         // Filter out captured keys before they're used for shortcut actions.

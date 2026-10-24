@@ -45,6 +45,8 @@
 #include "scripting/AccountServicesScriptingInterface.h"
 #include "scripting/HMDScriptingInterface.h"
 #include "scripting/TTSScriptingInterface.h"
+#include "ui/Skins.h"
+#include "ui/SystemToolbar.h"
 #include "ui/ResourceImageItem.h"
 #include "ui/AddressBarDialog.h"
 #include "ui/DialogsManager.h"
@@ -106,7 +108,6 @@ void Application::initializeUi() {
     OffscreenQmlSurface::addWhitelistContextHandler({
         QUrl{ "hifi/tablet/TabletAddressDialog.qml" },
         QUrl{ "hifi/Card.qml" },
-        QUrl{ "hifi/Pal.qml" },
         QUrl{ "hifi/NameCard.qml" },
         }, platformInfoCallback);
 
@@ -123,8 +124,12 @@ void Application::initializeUi() {
     {
         StartupProfiler::Scope step("initializeUi: the system tablet");
         auto tabletScriptingInterface = DependencyManager::get<TabletScriptingInterface>();
-        tabletScriptingInterface->getTablet(SYSTEM_TABLET);
+        auto systemTablet = tabletScriptingInterface->getTablet(SYSTEM_TABLET);
+        // the bar's buttons on a side of the window, when Settings puts them there (ui/SystemToolbar.h)
+        SystemToolbar::instance()->attach(_window, systemTablet);
     }
+    // the skin chosen last time, now the main window and the bar exist (ui/Skins.h)
+    DependencyManager::get<Skins>()->start(_window);
 
     auto offscreenUi = getOffscreenUI();
     connect(offscreenUi.data(), &hifi::qml::OffscreenSurface::rootContextCreated,

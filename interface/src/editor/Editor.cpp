@@ -10,6 +10,7 @@
 #include "ImpostorBaker.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <functional>
 
@@ -73,6 +74,7 @@
 #include <TrackCurve.h>
 #include <TrackEntityItem.h>
 
+#include <plugins/DisplayPlugin.h>
 #include "Application.h"
 #include "EntityClipboard.h"
 #include "avatar/AvatarManager.h"
@@ -265,6 +267,10 @@ void Editor::setReady() {
     }
 }
 
+static int64_t steadyNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 void Editor::setActive(bool active) {
     if (active == _active) {
         return;
@@ -273,6 +279,14 @@ void Editor::setActive(bool active) {
         // the menu's saved state, restored at startup: build mode always starts off
         Menu::getInstance()->setIsOptionChecked(MenuOption::BuildMode, false);
         return;
+    }
+    const int64_t toggleStartMs = steadyNowMs();
+    // the GL view keeps its size while the panels come or go, and takes the final one once, below: coming on, the
+    // panels arrived one by one, and the view and the overlay were resized five times over (10-24: a toggle's jank)
+    if (auto viewport = qApp->getPrimaryWidget()) {
+        if (auto container = qobject_cast<ViewportContainer*>(viewport->parentWidget())) {
+            container->setDeferResizes(true);
+        }
     }
     _active = active;
     if (active) {
@@ -349,13 +363,17 @@ void Editor::setActive(bool active) {
     // The panels take their places now, and the GL view its new size with them: left to the next layout pass, with
     // resizes held for the splitters, the view kept its old size for a moment (a stretched picture as build mode came
     // and went). Then, while the panels can be dragged, the view takes a new size only once the dragging stops.
+    // The layout settles with the view's resizes still held (from the top of setActive), and the view then takes
+    // its final size once, inside the guard.
     if (auto viewport = qApp->getPrimaryWidget()) {
         if (auto container = qobject_cast<ViewportContainer*>(viewport->parentWidget())) {
-            container->setDeferResizes(false);
             auto window = qApp->getWindow();
-            if (window && window->layout()) {
+            {
                 gl::ViewChangeGuard guard;
-                window->layout()->activate();
+                if (window && window->layout()) {
+                    window->layout()->activate();
+                }
+                container->setDeferResizes(false);
             }
             container->setDeferResizes(active);
         }
@@ -366,6 +384,42 @@ void Editor::setActive(bool active) {
     }
     Menu::getInstance()->setIsOptionChecked(MenuOption::BuildMode, active);
     emit activeChanged(active);
+    reportToggleTiming(active, toggleStartMs, steadyNowMs());
+}
+
+// One line a toggle: how long the shortcut's key waited before the client got it (its queue time), from then to
+// the toggle, the toggle's own work, and when the next frame begun after it was shown. The frame is watched for from
+// a short timer, so the line comes a moment after the toggle.
+void Editor::reportToggleTiming(bool active, int64_t startMs, int64_t endMs) {
+    auto plugin = qApp->getActiveDisplayPlugin();
+    if (!plugin) {
+        return;
+    }
+    QString key = "no key";
+    if (_toggleKeyArrivedMs >= 0 && startMs - _toggleKeyArrivedMs < 5000) {
+        // the key's own time is the system's uptime, the steady clock's base on macOS; a figure that makes no sense
+        // (another base) is left out
+        int64_t queued = _toggleKeyArrivedMs - _toggleKeyMadeMs;
+        key = (queued >= 0 && queued < 60000 ? QString("the key waited %1 ms to reach the client, ").arg(queued) : QString())
+            + QString("%1 ms from there to the toggle").arg(startMs - _toggleKeyArrivedMs);
+    }
+    _toggleKeyArrivedMs = -1;
+    const uint32_t presentsAtEnd = plugin->presentCount();
+    auto timer = new QTimer(this);
+    timer->setInterval(5);
+    connect(timer, &QTimer::timeout, this, [timer, plugin, presentsAtEnd, active, key, startMs, endMs] {
+        const int64_t now = steadyNowMs();
+        // the second present after the toggle: the first may be a frame begun before it
+        if (plugin->presentCount() >= presentsAtEnd + 2 || now - endMs > 5000) {
+            qCDebug(interfaceapp).noquote() << QString("Build mode %1: %2; the toggle took %3 ms; the next new frame was "
+                                                      "shown %4 ms after it")
+                .arg(active ? "on" : "off").arg(key).arg(endMs - startMs)
+                .arg(plugin->presentCount() >= presentsAtEnd + 2 ? QString::number(now - endMs) : QString("more than 5000"));
+            timer->stop();
+            timer->deleteLater();
+        }
+    });
+    timer->start();
 }
 
 void Editor::updateRenderMethod() {
@@ -675,6 +729,13 @@ void Editor::takeFocusUnlessTyping() {
 void Editor::showPanels(bool show) {
     if (!_panelsCreated) {
         return;
+    }
+    // An open popup (a dropdown's list in the Inspector) closes first, outside the guard: a combo box closing its
+    // list runs an event loop of its own on macOS (the chosen item's flash), and a QML surface rendered in that loop
+    // waits for its render thread, which waits for the GL lock the guard holds. Hiding the panels with the list open
+    // did that and froze the client (10-24: the Render Layer list open, Cmd+B).
+    for (int i = 0; i < 4 && QApplication::activePopupWidget(); i++) {
+        QApplication::activePopupWidget()->close();
     }
     gl::ViewChangeGuard guard;   // panels coming and going change the window round the GL view
     _hierarchy->setVisible(show);
@@ -3631,6 +3692,19 @@ bool Editor::eventFilter(QObject* watched, QEvent* event) {
             return true;
         }
         return false;
+    }
+    // the Build Mode shortcut (Cmd+B): when it was made and when it got here, for the toggle's log line. The first
+    // sight of it only: Qt offers a shortcut to more than one receiver.
+    if (event->type() == QEvent::ShortcutOverride) {
+        auto keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->key() == Qt::Key_B && (keyEvent->modifiers() & Qt::ControlModifier) && !keyEvent->isAutoRepeat()) {
+            int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (_toggleKeyArrivedMs < 0 || now - _toggleKeyArrivedMs > 100) {
+                _toggleKeyMadeMs = (int64_t)keyEvent->timestamp();
+                _toggleKeyArrivedMs = now;
+            }
+        }
     }
     // the camera keys (1 first person, 2 selfie, 3 look at) do nothing in build mode, which has its own camera:
     // a stray one (a number meant for a field) quietly changed the camera you came back to
