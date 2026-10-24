@@ -31,6 +31,9 @@
 namespace {
     const QString QML_TOOLBAR = "com.highfidelity.interface.toolbar.system";   // the floating bar (hifi/Desktop.qml)
     const int BUTTON = 48;              // as the QML bar draws them (hifi/toolbars/ToolbarButton.qml)
+    // in a column, on the left or the right: a skin's padding made a button 94 px tall, and ten no longer fitted a
+    // laptop's window (10-24)
+    const int SIDE_BUTTON = 36;
     const qreal RADIUS = 4.0;
     const qreal ACTIVE_PADDING = 8.0;
     const QStringList PLACES { "floating", "top", "left", "right", "bottom" };
@@ -121,7 +124,18 @@ SystemToolbar::SystemToolbar() : QToolBar("Buttons") {
     setIconSize(QSize(BUTTON, BUTTON));
     toggleViewAction()->setEnabled(false);   // the main window's toolbar menu doesn't hide it: Settings places it
     setSkinned(false);
+    connect(this, &QToolBar::orientationChanged, this, [this]() {
+        const QSize size(buttonSize(), buttonSize());
+        setIconSize(size);
+        for (QToolButton* button : findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly)) {
+            button->setIconSize(size);
+        }
+    });
     hide();
+}
+
+int SystemToolbar::buttonSize() const {
+    return orientation() == Qt::Vertical ? SIDE_BUTTON : BUTTON;
 }
 
 void SystemToolbar::setSkinned(bool skinned) {
@@ -157,7 +171,7 @@ void SystemToolbar::attach(QMainWindow* window, TabletProxy* tablet) {
 
 QString SystemToolbar::getPlace() const {
     const QString place = _placeSetting.get();
-    return PLACES.contains(place) ? place : "floating";
+    return PLACES.contains(place) ? place : "left";
 }
 
 void SystemToolbar::setPlace(const QString& place) {
@@ -183,9 +197,22 @@ void SystemToolbar::updateVisibility() {
     const bool desktopBar = _tablet && _tablet->getToolbarMode();   // not in VR
     const bool docked = isDocked();
     if (auto qmlToolbar = DependencyManager::get<ToolbarScriptingInterface>()->getToolbar(QML_TOOLBAR)) {
+        // the sign-in gate's word, as SignInGate wrote it before; whether the QML bar is the one in use is its own
+        // `shown` binding's (hifi/Desktop.qml: not while docked), which a C++ write would not remove, so both bars
+        // showed when this wrote `shown` (10-24)
         qmlToolbar->writeProperty("visible", _allowed && desktopBar && !docked);
     }
-    setVisible(_window && _allowed && desktopBar && docked);
+    const bool show = _window && _allowed && desktopBar && docked;
+    _wanted = show;
+    if (show != isVisible()) {
+        qCDebug(interfaceapp) << "The bar on a side:" << (show ? "shown" : "hidden") << getPlace()
+                              << "(allowed" << _allowed << ", desktop" << desktopBar << ")";
+    }
+    setVisible(show);
+}
+
+void SystemToolbar::setVisible(bool) {
+    QToolBar::setVisible(_wanted);   // whoever asks: Build mode's saved layout both showed and hid it (10-24)
 }
 
 bool SystemToolbar::event(QEvent* event) {
@@ -225,7 +252,7 @@ void SystemToolbar::rebuild() {
         }
         auto button = new QToolButton(this);
         button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-        button->setIconSize(QSize(BUTTON, BUTTON));
+        button->setIconSize(QSize(buttonSize(), buttonSize()));
         button->setAutoRaise(true);
         button->setFocusPolicy(Qt::NoFocus);
         QPointer<TabletButtonProxy> weak(proxy);
