@@ -130,6 +130,7 @@ private slots:
     void testObjectsAreReleased();
     void testScopedCallbacks();
     void testRunawayLoopIsInterrupted();
+    void testRunawayEntityScriptIsNamed();
 };
 
 #endif // hifi_JavaScriptGuestTests_h
