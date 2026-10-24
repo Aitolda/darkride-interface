@@ -780,8 +780,8 @@ Page {
             ListRow {
                 label: "Bar"
                 Segmented {
-                    model: [{ text: "Bottom", value: "bottom" }, { text: "Left", value: "left" },
-                            { text: "Top", value: "top" }, { text: "Right", value: "right" },
+                    model: [{ text: "Left", value: "left" }, { text: "Top", value: "top" },
+                            { text: "Right", value: "right" }, { text: "Bottom", value: "bottom" },
                             { text: "Floating", value: "floating" }]
                     current: SystemToolbar.place
                     onChosen: SystemToolbar.place = value

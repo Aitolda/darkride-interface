@@ -31,6 +31,9 @@
 namespace {
     const QString QML_TOOLBAR = "com.highfidelity.interface.toolbar.system";   // the floating bar (hifi/Desktop.qml)
     const int BUTTON = 48;              // as the QML bar draws them (hifi/toolbars/ToolbarButton.qml)
+    // in a column, on the left or the right: a skin's padding made a button 94 px tall, and ten no longer fitted a
+    // laptop's window (10-24)
+    const int SIDE_BUTTON = 36;
     const qreal RADIUS = 4.0;
     const qreal ACTIVE_PADDING = 8.0;
     const QStringList PLACES { "floating", "top", "left", "right", "bottom" };
@@ -121,7 +124,18 @@ SystemToolbar::SystemToolbar() : QToolBar("Buttons") {
     setIconSize(QSize(BUTTON, BUTTON));
     toggleViewAction()->setEnabled(false);   // the main window's toolbar menu doesn't hide it: Settings places it
     setSkinned(false);
+    connect(this, &QToolBar::orientationChanged, this, [this]() {
+        const QSize size(buttonSize(), buttonSize());
+        setIconSize(size);
+        for (QToolButton* button : findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly)) {
+            button->setIconSize(size);
+        }
+    });
     hide();
+}
+
+int SystemToolbar::buttonSize() const {
+    return orientation() == Qt::Vertical ? SIDE_BUTTON : BUTTON;
 }
 
 void SystemToolbar::setSkinned(bool skinned) {
@@ -157,7 +171,7 @@ void SystemToolbar::attach(QMainWindow* window, TabletProxy* tablet) {
 
 QString SystemToolbar::getPlace() const {
     const QString place = _placeSetting.get();
-    return PLACES.contains(place) ? place : "bottom";
+    return PLACES.contains(place) ? place : "left";
 }
 
 void SystemToolbar::setPlace(const QString& place) {
@@ -238,7 +252,7 @@ void SystemToolbar::rebuild() {
         }
         auto button = new QToolButton(this);
         button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-        button->setIconSize(QSize(BUTTON, BUTTON));
+        button->setIconSize(QSize(buttonSize(), buttonSize()));
         button->setAutoRaise(true);
         button->setFocusPolicy(Qt::NoFocus);
         QPointer<TabletButtonProxy> weak(proxy);

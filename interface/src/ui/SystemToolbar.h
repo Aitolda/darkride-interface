@@ -4,8 +4,8 @@
 //
 //  The bar of app buttons (the system tablet's: Audio, Settings, Snap, Avatar, People, Explore, Create...) as a
 //  native toolbar (QToolBar) on a side of the main window, so the 3D view sits beside it instead of under it (a
-//  player's ask, through Caity, 10-24). "top", "left", "right" or "bottom" (the default: Caity, 10-24, never the
-//  floating bar by default) docks this one there, and dragging it by its handle to another side moves it; place
+//  player's ask, through Caity, 10-24). "left" (the default: Caity, 10-24, never the floating bar by default, and at
+//  the bottom it crowds Build mode's Assets panel), "top", "right" or "bottom" docks this one there, and dragging it by its handle to another side moves it; place
 //  "floating" keeps the QML bar over the bottom of the view instead (hifi/Desktop.qml's sysToolbar, as before). The sign-in screen and VR hide whichever bar is in use: SignInGate says when a bar may show
 //  (setAllowed). Its look is the Qt style sheet's, so a skin reaches it. QML panels set the place (Settings).
 //
@@ -66,11 +66,12 @@ private:
     void refresh(QToolButton* button, TabletButtonProxy* proxy);
     void updateVisibility();
     void rememberArea();
+    int buttonSize() const;   // an icon's size: smaller in a column
     QPixmap buttonPicture(const QVariantMap& properties, bool active) const;
 
     QPointer<QMainWindow> _window;
     QPointer<TabletProxy> _tablet;
-    Setting::Handle<QString> _placeSetting { "toolbar/systemPlace", "bottom" };
+    Setting::Handle<QString> _placeSetting { "toolbar/systemPlace", "left" };
     // no bar until the sign-in gate says one may show (SignInGate::resumeAfterLoginDialogActionTaken), as the QML bar
     // always waited: not on the sign-in screen
     bool _allowed { false };
