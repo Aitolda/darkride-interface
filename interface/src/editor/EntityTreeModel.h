@@ -65,6 +65,10 @@ public:
     bool dropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column, const QModelIndex& parent) override;
     // the entity is the other, or below it
     bool isDescendantOf(const QUuid& id, const QUuid& ancestor) const;
+    // what the entity could not load (its model, image or textures, with the reasons; EntityRenderer::loadFailures),
+    // empty when nothing: its row's name is drawn red and the reasons are in its tooltip. The editor sets it
+    void setLoadProblem(const QUuid& id, const QString& problem);
+    QString loadProblem(const QUuid& id) const;
 
 signals:
     // the user typed a new name in the Hierarchy; the editor applies it (through undo)
@@ -87,6 +91,7 @@ private:
         bool locked { false };
         bool visible { true };
         quint64 created { 0 };
+        QString loadProblem;    // setLoadProblem
         QUuid parentID;
         Node* parent { nullptr };
         QVector<Node*> children;

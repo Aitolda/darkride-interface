@@ -177,6 +177,7 @@ void HTTPResourceRequest::onRequestFinished() {
     };
 
     const int statusCode = _reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    _statusCode = statusCode;
     switch(_reply->error()) {
         case QNetworkReply::NoError:
             if (_withAccessToken && statusCode >= 300 && statusCode < 400) {

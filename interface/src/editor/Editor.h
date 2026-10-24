@@ -131,6 +131,8 @@ public:
     // the selection and its descendants to an entities file at this path (Build > Export Selected Entities… once a
     // path is chosen); how many entities were written, -1 when nothing was
     int exportSelectionTo(const QString& path);
+    // what the entity could not load, as its Hierarchy row says (refreshLoadProblems); empty when nothing has failed
+    QString loadProblem(const QUuid& id) const;
     // a Build menu item that only works while build mode is on
     void addMenuAction(QAction* action);
 
@@ -224,6 +226,10 @@ private:
 
     // the Inspector: snapshots of the selection, and edits coming back from its fields
     void refreshInspector(bool selectionChanged);
+    // the Hierarchy's rows and the Inspector say what failed to load (EntityRenderer::loadFailures), once a second
+    void refreshLoadProblems();
+    // the selected entities' load failures, one line each (named when several are selected)
+    QString selectionLoadProblem() const;
     bool selectionSnapshots(QVector<EntityItemProperties>& snapshots, EntityTypes::EntityType& type, bool& multiple) const;
     void onInspectorEditBegan(const QString& key);
     void onInspectorLiveEdit(const QString& key, const QVariant& value);
@@ -342,6 +348,7 @@ private:
     glm::quat _axesOrientation;
     bool _axesValid { false };
     int _frameCounter { 0 };
+    float _loadCheckSeconds { 0.0f };   // since the last refreshLoadProblems
 
     // a click or a marquee in the viewport
     bool _clickPending { false };

@@ -349,6 +349,15 @@ public slots:
     Q_INVOKABLE int editorExportSelection(const QString& path);
 
     /**jsdoc
+     * What build mode's Hierarchy says the entity could not load (its row red, these lines in its tooltip): its model,
+     * image or textures that failed, with the reasons; empty when nothing has. Build mode checks once a second.
+     * @function Test.editorLoadProblem
+     * @param {Uuid} id - The entity.
+     * @returns {string} The failures, one per line.
+     */
+    Q_INVOKABLE QString editorLoadProblem(const QUuid& id);
+
+    /**jsdoc
      * Turns build mode on or off, as Build > Build Mode does.
      * @function Test.setBuildMode
      * @param {boolean} on - Whether build mode is on.

@@ -9,6 +9,8 @@
 #include "EntityTreeModel.h"
 
 #include <QtCore/QMimeData>
+#include <QtGui/QBrush>
+#include <QtGui/QColor>
 
 #include <EntityItem.h>
 #include <EntityTreeElement.h>
@@ -429,7 +431,15 @@ QVariant EntityTreeModel::data(const QModelIndex& index, int role) const {
         case Qt::EditRole:
             return node->name;
         case Qt::ToolTipRole:
-            return typeName + "  " + node->id.toString(QUuid::WithoutBraces);
+            return typeName + "  " + node->id.toString(QUuid::WithoutBraces) +
+                (node->loadProblem.isEmpty() ? QString() : "\nCouldn't load:\n" + node->loadProblem);
+        case Qt::ForegroundRole:
+            // an entity whose model, image or texture failed to load (Caity, 10-24: an Image that stayed blank and
+            // said nothing); the selected row keeps the style sheet's white
+            if (!node->loadProblem.isEmpty()) {
+                return QBrush(QColor(255, 107, 107));
+            }
+            return QVariant();
         case IdRole:
             return node->id;
         case TypeRole:
@@ -511,6 +521,21 @@ bool EntityTreeModel::dropMimeData(const QMimeData* data, Qt::DropAction action,
     // the editor makes the move (through undo) and the tree follows the entities: nothing is taken out here
     emit reparentRequested(draggedIds(data), idForIndex(parent));
     return true;
+}
+
+void EntityTreeModel::setLoadProblem(const QUuid& id, const QString& problem) {
+    Node* node = _nodes.value(id);
+    if (!node || node->loadProblem == problem) {
+        return;
+    }
+    node->loadProblem = problem;
+    QModelIndex index = indexFor(node);
+    emit dataChanged(index, index, { Qt::ForegroundRole, Qt::ToolTipRole });
+}
+
+QString EntityTreeModel::loadProblem(const QUuid& id) const {
+    Node* node = _nodes.value(id);
+    return node ? node->loadProblem : QString();
 }
 
 bool EntityTreeModel::isDescendantOf(const QUuid& id, const QUuid& ancestor) const {

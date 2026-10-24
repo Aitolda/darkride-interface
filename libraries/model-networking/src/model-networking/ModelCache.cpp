@@ -16,6 +16,7 @@
 #include <gpu/Batch.h>
 #include <gpu/Stream.h>
 
+#include <QSet>
 #include <QThreadPool>
 
 #include <Gzip.h>
@@ -495,6 +496,36 @@ void NetworkModel::setTextureLoadPriority(QObject* owner, float priority) const 
             });
         }
     }
+}
+
+QStringList NetworkModel::failedTextures() const {
+    QStringList failures;
+    QSet<QUrl> seen;   // a picture shared by several materials is said once
+    auto consider = [&](const std::shared_ptr<NetworkMaterial>& material) {
+        if (!material) {
+            return;
+        }
+        // the map itself (NetworkModel is a friend): build mode asks once a second for every model in view, and
+        // getTextures() copies it
+        for (const auto& entry : material->_textures) {
+            const auto& texture = entry.second.texture;
+            if (texture && texture->isFailed() && !seen.contains(texture->getURL())) {
+                seen.insert(texture->getURL());
+                failures << texture->getURL().fileName() + ": " + texture->getFailureReason();
+            }
+        }
+    };
+    for (auto& material : _materials) {
+        consider(material);
+    }
+    for (auto& materialMapping : _materialMapping) {
+        if (materialMapping.second) {
+            for (auto& materialPair : materialMapping.second->parsedMaterials.networkMaterials) {
+                consider(materialPair.second);
+            }
+        }
+    }
+    return failures;
 }
 
 bool NetworkModel::areTexturesLoaded() const {

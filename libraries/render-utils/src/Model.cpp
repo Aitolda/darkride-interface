@@ -86,6 +86,19 @@ Model::~Model() {
 
 AbstractViewStateInterface* Model::_viewState = NULL;
 
+QStringList Model::loadFailures() const {
+    QStringList failures;
+    if (_visualGeometryRequestFailed) {
+        QString reason = _renderWatcher.getFailureReason();
+        failures << "model " + _url.fileName() + ": " + (reason.isEmpty() ? QString("could not be loaded") : reason);
+    } else if (_renderGeometry) {
+        for (const auto& texture : _renderGeometry->failedTextures()) {
+            failures << "texture " + texture;
+        }
+    }
+    return failures;
+}
+
 bool Model::needsFixupInScene() const {
     return (_needsFixupInScene || !_addedToScene) && !_needsReload && isLoaded();
 }

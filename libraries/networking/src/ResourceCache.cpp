@@ -732,16 +732,18 @@ void Resource::allReferencesCleared() {
 void Resource::init(bool resetLoaded) {
     _startedLoading = false;
     _failedToLoad = false;
+    _failureReason.clear();
     if (resetLoaded) {
         _loaded = false;
     }
     _attempts = 0;
-    
+
     if (_url.isEmpty()) {
         _startedLoading = _loaded = true;
-        
+
     } else if (!(_url.isValid())) {
         _startedLoading = _failedToLoad = true;
+        _failureReason = "not a valid address";
     }
 }
 
@@ -765,6 +767,11 @@ void Resource::finishedLoading(bool success) {
         _loaded = true;
     } else {
         _failedToLoad = true;
+        if (_failureReason.isEmpty()) {
+            // it arrived, but the client could not make anything of it (a model or picture in a format it cannot read,
+            // a damaged file)
+            _failureReason = "could not be read";
+        }
     }
     emit finished(success);
 }
@@ -923,6 +930,21 @@ bool Resource::handleFailedRequest(ResourceRequest::Result result) {
             _attemptsRemaining = 0;
             QMetaEnum metaEnum = QMetaEnum::fromType<ResourceRequest::Result>();
             qCDebug(networking) << "Error loading:" << metaEnum.valueToKey(result) << "resource:" << _url.toString();
+            // the reason, for build mode: what went wrong, with the server's own status when it answered with one
+            // (some texture paths fail here after their request is gone)
+            QString what;
+            switch (result) {
+                case ResourceRequest::Result::HostNotFound: what = "host not found: " + _activeUrl.host(); break;
+                case ResourceRequest::Result::Timeout: what = "timed out"; break;
+                case ResourceRequest::Result::ServerUnavailable: what = "server unavailable"; break;
+                case ResourceRequest::Result::AccessDenied: what = "access denied"; break;
+                case ResourceRequest::Result::NotFound: what = "not found"; break;
+                case ResourceRequest::Result::InvalidURL: what = "not a valid address"; break;
+                case ResourceRequest::Result::RedirectFail: what = "redirected where it may not go"; break;
+                default: what = "could not be fetched"; break;
+            }
+            int statusCode = _request ? _request->getStatusCode() : 0;
+            _failureReason = statusCode >= 400 ? QString("%1 %2").arg(statusCode).arg(what) : what;
             auto error = (result == ResourceRequest::Timeout) ? QNetworkReply::TimeoutError
                                                               : QNetworkReply::UnknownNetworkError;
             emit failed(error);

@@ -15,6 +15,7 @@
 #include <QtWidgets/QGridLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QScrollArea>
+#include <QtWidgets/QStyle>
 #include <QtWidgets/QToolButton>
 #include <QtWidgets/QVBoxLayout>
 
@@ -76,6 +77,13 @@ InspectorPanel::InspectorPanel(QWidget* parent) : QDockWidget("Inspector", paren
     _title->setObjectName("EditorInspectorTitle");
     _title->setWordWrap(true);
     _contentLayout->addWidget(_title);
+    // what the selection could not load (setLoadProblem), under the title; hidden while nothing has failed
+    _loadProblem = new QLabel(_content);
+    _loadProblem->setObjectName("EditorInspectorLoadProblem");
+    _loadProblem->setWordWrap(true);
+    _loadProblem->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    _loadProblem->hide();
+    _contentLayout->addWidget(_loadProblem);
     _contentLayout->addStretch(1);
 
     _scroll->setWidget(_empty);
@@ -111,6 +119,18 @@ bool InspectorPanel::eventFilter(QObject* watched, QEvent* event) {
 QPixmap InspectorPanel::contentPicture() const {
     QWidget* shown = _scroll->widget();
     return shown ? shown->grab() : QPixmap();
+}
+
+void InspectorPanel::setLoadProblem(const QString& problem) {
+    if (_loadProblem->text() == problem && _loadProblem->isVisible() == !problem.isEmpty()) {
+        return;
+    }
+    _loadProblem->setText(problem.isEmpty() ? QString() : "Couldn't load:\n" + problem);
+    _loadProblem->setVisible(!problem.isEmpty());
+    // the name goes red with it, as the entity's row does in the Hierarchy
+    _title->setProperty("loadFailed", !problem.isEmpty());
+    _title->style()->unpolish(_title);
+    _title->style()->polish(_title);
 }
 
 void InspectorPanel::setSummary(const QString& text) {
@@ -155,21 +175,22 @@ void InspectorPanel::refreshValues(const QVector<EntityItemProperties>& snapshot
 }
 
 void InspectorPanel::rebuild(const QStringList& sections) {
-    // everything but the title and the stretch goes
+    // everything but the title, the load problem line and the stretch goes
+    const int KEPT_AT_TOP = 2;
     for (auto& row : _rows) {
         delete row.label;
         delete row.editor;
     }
     _rows.clear();
     _sections.clear();
-    while (_contentLayout->count() > 2) {
-        auto item = _contentLayout->takeAt(1);
+    while (_contentLayout->count() > KEPT_AT_TOP + 1) {
+        auto item = _contentLayout->takeAt(KEPT_AT_TOP);
         if (item->widget()) {
             item->widget()->deleteLater();
         }
         delete item;
     }
-    int position = 1;
+    int position = KEPT_AT_TOP;
     for (const auto& sectionId : sections) {
         if (auto widget = buildSection(sectionId, _content)) {
             _contentLayout->insertWidget(position++, widget);

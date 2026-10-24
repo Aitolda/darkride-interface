@@ -470,6 +470,10 @@ public:
     /// Checks whether the resource has failed to download.
     virtual bool isFailed() const { return _failedToLoad; }
 
+    // why it failed, for people ("404 Not Found", "403 Access Denied", "host not found: cdn.example.com", "could not be
+    // read"); empty unless it has failed. Build mode shows it on the entities whose model, image or texture this is
+    QString getFailureReason() const { return _failureReason; }
+
     /// For loading resources, returns the number of bytes received.
     qint64 getBytesReceived() const { return _bytesReceived; }
     
@@ -564,6 +568,7 @@ protected:
     // mips are being download.
     bool _startedLoading = false;
     bool _failedToLoad = false;
+    QString _failureReason;   // getFailureReason()
     bool _loaded = false;
 
     QHash<QPointer<QObject>, float> _loadPriorities;
