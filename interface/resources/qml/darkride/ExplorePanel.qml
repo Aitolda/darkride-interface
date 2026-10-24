@@ -43,6 +43,7 @@ Page {
         currentTab = Math.max(0, Math.min(2, Settings.getValue(tabSetting, 0)));
         explore.load(true);
         here.refresh();
+        history.refresh();
     }
     onCurrentTabChanged: {
         Settings.setValue(tabSetting, currentTab);
@@ -52,6 +53,7 @@ Page {
         if (visible) {
             explore.load(true);
             here.refresh();
+            history.refresh();
         }
     }
 
@@ -81,6 +83,13 @@ Page {
             var kind = root.kinds[root.currentTab];
             var path = kind === "liked" ? "/api/user/domains/liked" : kind === "private" ? "/api/user/domains/private"
                 : "/api/domains";
+            if (kind !== "popular" && !AccountServices.loggedIn) {
+                loading = false;
+                more = false;
+                worlds = [];
+                status = kind === "liked" ? "Sign in to see the worlds you've liked." : "Sign in to see your private worlds.";
+                return;
+            }
             var pending = kind === "popular" && page === 1 ? 2 : 1;
             var online = [];
             var withInstances = [];
@@ -187,13 +196,15 @@ Page {
         }
     }
 
-    Connections {
-        target: AddressManager
-        function onHostChanged() { explore.hoppingWorld = ""; here.refresh(); }
-    }
+    // AddressManager lives on the network thread, and QML may not connect to an object on another thread (the client
+    // aborts), so a world change is heard from Window and the history is read when it may have changed
     Connections {
         target: Window
-        function onDomainChanged() { explore.hoppingWorld = ""; here.refresh(); }
+        function onDomainChanged() { explore.hoppingWorld = ""; here.refresh(); history.refresh(); }
+    }
+    Connections {
+        target: AccountServices
+        function onLoggedInChanged() { explore.load(true); }
     }
 
     // ==== the instance you are in ======================================================================================
@@ -297,11 +308,10 @@ Page {
         id: history
         property bool canGoBack: false
         property bool canGoForward: false
-    }
-    Connections {
-        target: AddressManager
-        function onGoBackPossible(possible) { history.canGoBack = possible; }
-        function onGoForwardPossible(possible) { history.canGoForward = possible; }
+        function refresh() {
+            canGoBack = AddressManager.canGoBack();
+            canGoForward = AddressManager.canGoForward();
+        }
     }
 
     // the instance you're in

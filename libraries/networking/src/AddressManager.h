@@ -363,6 +363,13 @@ public slots:
     bool canGoBack() const;
 
     /**jsdoc
+     * Checks if going forward to the next location is possible.
+     * @function location.canGoForward
+     * @returns {boolean} <code>true</code> if going forward is possible, <code>false</code> if it isn't.
+     */
+    bool canGoForward() const;
+
+    /**jsdoc
      * Refreshes the current address, e.g., after connecting to a domain in order to position the user to the desired location.
      * @function location.refreshPreviousLookup
      * @deprecated This function is deprecated and will be removed.

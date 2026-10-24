@@ -928,6 +928,10 @@ bool AddressManager::canGoBack() const {
     return (_backStack.size() > 0);
 }
 
+bool AddressManager::canGoForward() const {
+    return (_forwardStack.size() > 0);
+}
+
 void AddressManager::reconnect() {
     LookupTrigger trigger = LookupTrigger::Internal;
     QUrl urlToRefresh = currentAddress(); // _lastVisitedURL;
