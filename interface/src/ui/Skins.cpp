@@ -471,6 +471,64 @@ QString styleSheet(const Skin& skin) {
     return sheet;
 }
 
+// Build mode's panels and toolbar keep their own dark style sheet on the main window (styles/editor.qss), and a
+// window's sheet beats the application's whatever the selectors: the skin's frames reached their fields and buttons
+// but its text colour didn't, light text on the skin's light fields (Caity, 10-24). So the skin's text colour goes on
+// the window too, wherever the skin frames a field, a tool button or a panel's title, one step more specific than the
+// editor's rules
+// ("QMainWindow" in front); a disabled button keeps the editor's grey (its :disabled is more specific still).
+QString editorSheet(const Skin& skin) {
+    const QString text = color(skin, "text");
+    const QString titleText = color(skin, "titleText").isEmpty() ? text : color(skin, "titleText");
+    QString sheet;
+    if (!titleText.isEmpty() && skin.frames.contains("panelTitle")) {
+        // the title's text takes the panel's own colour, not its ::title rule's
+        QStringList titles;
+        for (const QString panel : { "#EditorInspector", "#EditorHierarchy", "#EditorAssets" }) {
+            titles << "QMainWindow QDockWidget" + panel << "QMainWindow QDockWidget" + panel + "::title";
+        }
+        sheet += titles.join(", ") + " { color: " + titleText + "; }\n";
+    }
+    if (text.isEmpty()) {
+        return sheet;
+    }
+    QStringList fields, buttons;
+    for (const QString panel : { "#EditorInspector", "#EditorHierarchy", "#EditorAssets" }) {
+        for (const QString widget : { "QLineEdit", "QComboBox", "QSpinBox", "QDoubleSpinBox", "QPlainTextEdit", "QTextEdit" }) {
+            fields << "QMainWindow " + panel + " " + widget;
+        }
+    }
+    for (const QString bar : { "QToolBar#EditorToolBar", "QToolBar#EditorTerrainBar" }) {
+        buttons << "QMainWindow " + bar + " QToolButton";
+    }
+    if (skin.frames.contains("field")) {
+        sheet += fields.join(", ") + " { color: " + text + "; }\n";
+    }
+    if (skin.frames.contains("toolbar") || skin.frames.contains("toolButton")) {
+        sheet += buttons.join(", ") + " { color: " + text + "; }\n";
+    }
+    return sheet;
+}
+
+const QString WINDOW_SHEET_BEGIN { "/* skin: begin */" };
+const QString WINDOW_SHEET_END { "/* skin: end */" };
+
+// the main window's sheet (Build mode's is in it too) with the skin's part replaced
+void setWindowSheet(QMainWindow* window, const QString& part) {
+    QString sheet = window->styleSheet();
+    const int begin = sheet.indexOf(WINDOW_SHEET_BEGIN);
+    const int end = sheet.indexOf(WINDOW_SHEET_END);
+    if (begin >= 0 && end > begin) {
+        sheet.remove(begin, end + WINDOW_SHEET_END.length() - begin);
+    }
+    if (!part.isEmpty()) {
+        sheet += "\n" + WINDOW_SHEET_BEGIN + "\n" + part + WINDOW_SHEET_END;
+    }
+    if (sheet != window->styleSheet()) {
+        window->setStyleSheet(sheet);
+    }
+}
+
 // the QML panels' share: colours, and each frame's pictures as file: addresses with its slice and padding
 QVariantMap panelSkin(const Skin& skin) {
     QVariantMap frames;
@@ -719,6 +777,7 @@ void Skins::takeOff() {
     QApplication::setFont(_ownFont);
     SystemToolbar::instance()->setSkinned(false);
     if (_window) {
+        setWindowSheet(_window, QString());
         if (auto viewport = qobject_cast<ViewportContainer*>(_window->centralWidget())) {
             viewport->setStyleSheet(OWN_VIEWPORT_LOOK);
             viewport->setInset(QMargins());
@@ -752,6 +811,7 @@ QString Skins::apply(const QString& id) {
     qApp->setStyleSheet(styleSheet(skin));
 
     if (_window) {
+        setWindowSheet(_window, editorSheet(skin));
         if (auto viewport = qobject_cast<ViewportContainer*>(_window->centralWidget())) {
             if (skin.frames.contains("viewport")) {
                 const Frame& frame = skin.frames["viewport"];

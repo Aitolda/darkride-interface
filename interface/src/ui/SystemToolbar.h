@@ -4,9 +4,9 @@
 //
 //  The bar of app buttons (the system tablet's: Audio, Settings, Snap, Avatar, People, Explore, Create...) as a
 //  native toolbar (QToolBar) on a side of the main window, so the 3D view sits beside it instead of under it (a
-//  player's ask, through Caity, 10-24). place "floating" keeps the QML bar over the bottom of the view (hifi/Desktop.qml's
-//  sysToolbar, as before); "top", "left", "right" or "bottom" docks this one there, and dragging it by its handle to
-//  another side moves it. The sign-in screen and VR hide whichever bar is in use: SignInGate says when a bar may show
+//  player's ask, through Caity, 10-24). "top", "left", "right" or "bottom" (the default: Caity, 10-24, never the
+//  floating bar by default) docks this one there, and dragging it by its handle to another side moves it; place
+//  "floating" keeps the QML bar over the bottom of the view instead (hifi/Desktop.qml's sysToolbar, as before). The sign-in screen and VR hide whichever bar is in use: SignInGate says when a bar may show
 //  (setAllowed). Its look is the Qt style sheet's, so a skin reaches it. QML panels set the place (Settings).
 //
 //  Copyright 2026 Darkride.
@@ -54,6 +54,11 @@ signals:
 protected:
     bool event(QEvent* event) override;   // a drag by the handle let go: remember the side it went to
 
+public:
+    /// shown or hidden only as updateVisibility wants: Build mode's saved window layout (QMainWindow::restoreState)
+    /// holds this toolbar too, and restoring it showed this bar beside the floating one, or hid the docked one (10-24)
+    void setVisible(bool visible) override;
+
 private:
     SystemToolbar();
 
@@ -65,11 +70,11 @@ private:
 
     QPointer<QMainWindow> _window;
     QPointer<TabletProxy> _tablet;
-    Setting::Handle<QString> _placeSetting { "toolbar/systemPlace", "floating" };
+    Setting::Handle<QString> _placeSetting { "toolbar/systemPlace", "bottom" };
     // no bar until the sign-in gate says one may show (SignInGate::resumeAfterLoginDialogActionTaken), as the QML bar
-    // always waited: a docked bar shown at start-up and hidden by the sign-in screen resized the 3D view twice, and
-    // the sign-in dialog's clicks landed on a stale size (a bar at the bottom moved them off "Continue as", 10-24)
+    // always waited: not on the sign-in screen
     bool _allowed { false };
+    bool _wanted { false };   // updateVisibility's word, which setVisible keeps to
 };
 
 #endif // hifi_SystemToolbar_h

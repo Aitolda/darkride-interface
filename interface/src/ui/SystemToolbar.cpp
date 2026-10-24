@@ -157,7 +157,7 @@ void SystemToolbar::attach(QMainWindow* window, TabletProxy* tablet) {
 
 QString SystemToolbar::getPlace() const {
     const QString place = _placeSetting.get();
-    return PLACES.contains(place) ? place : "floating";
+    return PLACES.contains(place) ? place : "bottom";
 }
 
 void SystemToolbar::setPlace(const QString& place) {
@@ -189,11 +189,16 @@ void SystemToolbar::updateVisibility() {
         qmlToolbar->writeProperty("visible", _allowed && desktopBar && !docked);
     }
     const bool show = _window && _allowed && desktopBar && docked;
+    _wanted = show;
     if (show != isVisible()) {
         qCDebug(interfaceapp) << "The bar on a side:" << (show ? "shown" : "hidden") << getPlace()
                               << "(allowed" << _allowed << ", desktop" << desktopBar << ")";
     }
     setVisible(show);
+}
+
+void SystemToolbar::setVisible(bool) {
+    QToolBar::setVisible(_wanted);   // whoever asks: Build mode's saved layout both showed and hid it (10-24)
 }
 
 bool SystemToolbar::event(QEvent* event) {
