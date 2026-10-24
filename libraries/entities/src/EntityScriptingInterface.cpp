@@ -1317,18 +1317,25 @@ bool EntityScriptingInterface::reloadServerScripts(const QUuid& entityID) {
 bool EntityPropertyMetadataRequest::script(EntityItemID entityID, QScriptValue handler) {
     using LocalScriptStatusRequest = QFutureWatcher<QVariant>;
 
+    // The answer arrives after this request is gone (it lives on queryPropertyMetadata's stack), so the lambda keeps
+    // the engine itself; reading _engine there read through a dangling this, which crashed the client.
+    QPointer<BaseScriptEngine> engine = _engine;
     LocalScriptStatusRequest* request = new LocalScriptStatusRequest;
     QObject::connect(request, &LocalScriptStatusRequest::finished, _engine, [=]() mutable {
+        if (!engine) {
+            request->deleteLater();
+            return;
+        }
         auto details = request->result().toMap();
         QScriptValue err, result;
         if (details.contains("isError")) {
             if (!details.contains("message")) {
                 details["message"] = details["errorInfo"];
             }
-            err = _engine->makeError(_engine->toScriptValue(details));
+            err = engine->makeError(engine->toScriptValue(details));
         } else {
             details["success"] = true;
-            result = _engine->toScriptValue(details);
+            result = engine->toScriptValue(details);
         }
         callScopedHandlerObject(handler, err, result);
         request->deleteLater();
@@ -1353,7 +1360,7 @@ bool EntityPropertyMetadataRequest::serverScripts(EntityItemID entityID, QScript
     auto request = client->createScriptStatusRequest(entityID);
     QPointer<BaseScriptEngine> engine = _engine;
     QObject::connect(request, &GetScriptStatusRequest::finished, _engine, [=](GetScriptStatusRequest* request) mutable {
-        auto engine = _engine;
+        // the engine captured above: this request is gone by now, as in script()
         if (!engine) {
             qCDebug(entities) << __FUNCTION__ << " -- engine destroyed while inflight" << entityID;
             return;
