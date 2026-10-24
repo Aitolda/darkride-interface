@@ -76,7 +76,6 @@
 #include "scripting/ChatScriptingInterface.h"
 #include "scripting/DiskCacheScriptingInterface.h"
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-#include "SpeechRecognizer.h"
 #endif
 #include "ui/AvatarInputs.h"
 #include "ui/DialogsManager.h"
@@ -145,10 +144,6 @@ void Application::onDesktopRootContextCreated(QQmlContext* surfaceContext) {
     surfaceContext->setContextProperty("Users", DependencyManager::get<UsersScriptingInterface>().data());
 
     surfaceContext->setContextProperty("Camera", &_viewState.camera());
-
-#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-    surfaceContext->setContextProperty("SpeechRecognizer", DependencyManager::get<SpeechRecognizer>().data());
-#endif
 
     surfaceContext->setContextProperty("Overlays", &_overlays);
     surfaceContext->setContextProperty("Window", DependencyManager::get<WindowScriptingInterface>().data());
@@ -296,10 +291,6 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
     scriptEngine->registerGlobalObject("AvatarList", DependencyManager::get<AvatarManager>().data());
 
     scriptEngine->registerGlobalObject("Camera", &_viewState.camera());
-
-#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-    scriptEngine->registerGlobalObject("SpeechRecognizer", DependencyManager::get<SpeechRecognizer>().data());
-#endif
 
     ClipboardScriptingInterface* clipboardScriptable = new ClipboardScriptingInterface();
     scriptEngine->registerGlobalObject("Clipboard", clipboardScriptable);

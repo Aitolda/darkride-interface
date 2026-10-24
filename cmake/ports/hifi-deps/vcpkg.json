@@ -9,10 +9,6 @@
     "etc2comp",
     "glad",
     "glm",
-    {
-      "name": "hifi-audio-codec",
-      "platform": "!(osx & arm64)"
-    },
     "libsndfile",
     "nvtt",
     {
@@ -27,7 +23,6 @@
       "name": "tbb",
       "platform": "!android"
     },
-    "vhacd",
     {
       "name": "webrtc",
       "platform": "!android & !(osx & arm64)"

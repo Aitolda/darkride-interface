@@ -73,19 +73,6 @@ if (APPLE)
   list(APPEND INTERFACE_SRCS ${INTERFACE_OBJCPP_SRCS})
 endif ()
 
-# Add SpeechRecognizer if on Windows or OS X, otherwise remove
-if (WIN32)
-  # Use .cpp and .h files as is.
-elseif (APPLE)
-  get_filename_component(SPEECHRECOGNIZER_CPP "src/SpeechRecognizer.cpp" ABSOLUTE)
-  list(REMOVE_ITEM INTERFACE_SRCS ${SPEECHRECOGNIZER_CPP})
-else ()
-  get_filename_component(SPEECHRECOGNIZER_H "src/SpeechRecognizer.h" ABSOLUTE)
-  list(REMOVE_ITEM INTERFACE_SRCS ${SPEECHRECOGNIZER_H})
-  get_filename_component(SPEECHRECOGNIZER_CPP "src/SpeechRecognizer.cpp" ABSOLUTE)
-  list(REMOVE_ITEM INTERFACE_SRCS ${SPEECHRECOGNIZER_CPP})
-endif ()
-
 find_package(
   Qt5 COMPONENTS
   Gui Widgets Multimedia Network Qml Quick Script Svg
@@ -231,8 +218,6 @@ target_include_directories(${TARGET_NAME} PRIVATE "${CMAKE_BINARY_DIR}/libraries
 target_openssl()
 
 target_opengl()
-add_crashpad()
-target_breakpad()
 target_json()
 target_gifh()
 

@@ -242,8 +242,6 @@ public:
     bool getPreferAvatarFingerOverStylus() { return _preferAvatarFingerOverStylusSetting.get(); }
     void setPreferAvatarFingerOverStylus(bool value);
 
-    bool getMiniTabletEnabled() { return _miniTabletEnabledSetting.get(); }
-    void setMiniTabletEnabled(bool enabled);
 
     float getSettingConstrainToolbarPosition() { return _constrainToolbarPosition.get(); }
     void setSettingConstrainToolbarPosition(bool setting);
@@ -384,7 +382,6 @@ signals:
     void interstitialModeChanged(bool isInInterstitialMode);   // the domain session's, relayed: the Window scripting interface connects here before the session exists
     void worldLoadingChanged(bool isWorldLoading);   // the domain session's, relayed likewise
 
-    void miniTabletEnabledChanged(bool enabled);
     void awayStateWhenFocusLostInVRChanged(bool enabled);
 
 public slots:
@@ -592,7 +589,6 @@ private:
     Setting::Handle<bool> _constrainToolbarPosition;
     Setting::Handle<bool> _awayStateWhenFocusLostInVREnabled;
     Setting::Handle<QString> _preferredCursor;
-    Setting::Handle<bool> _miniTabletEnabledSetting;
     Setting::Handle<bool> _keepLogWindowOnTop{ "keepLogWindowOnTop", false };
     // TIVOLI SPECIFIC
     Setting::Handle<bool> _loadCompleteEntityTreeSetting; 

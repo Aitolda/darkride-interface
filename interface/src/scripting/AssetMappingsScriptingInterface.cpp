@@ -184,22 +184,6 @@ void AssetMappingsScriptingInterface::renameMapping(QString oldPath, QString new
     request->start();
 }
 
-void AssetMappingsScriptingInterface::setBakingEnabled(QStringList paths, bool enabled, QJSValue callback) {
-    auto assetClient = DependencyManager::get<AssetClient>();
-    auto request = assetClient->createSetBakingEnabledRequest(paths, enabled);
-
-    connect(request, &SetBakingEnabledRequest::finished, this, [callback](SetBakingEnabledRequest* request) mutable {
-        if (callback.isCallable()) {
-            QJSValueList args{ request->getErrorString() };
-            callback.call(args);
-        }
-
-        request->deleteLater();
-    });
-
-    request->start();
-}
-
 AssetMappingModel::AssetMappingModel() {
     setupRoles();
 
@@ -247,7 +231,6 @@ void AssetMappingModel::refresh() {
 
     connect(request, &GetAllMappingsRequest::finished, this, [this](GetAllMappingsRequest* request) mutable {
         if (request->getError() == MappingRequest::NoError) {
-            int numPendingBakes = 0;
             auto mappings = request->getMappings();
             auto existingPaths = _pathToItemMap.keys();
             for (auto& mapping : mappings) {
@@ -290,14 +273,6 @@ void AssetMappingModel::refresh() {
                         _pathToItemMap[fullPath] = lastItem;
                     } else {
                         lastItem = it.value();
-                    }
-
-                    // update status
-                    auto statusString = isFolder ? "--" : bakingStatusToString(mapping.second.status);
-                    lastItem->setData(statusString, Qt::UserRole + 5);
-                    lastItem->setData(mapping.second.bakingErrors, Qt::UserRole + 6);
-                    if (mapping.second.status == AssetUtils::Pending) {
-                        ++numPendingBakes;
                     }
                 }
 
@@ -346,11 +321,6 @@ void AssetMappingModel::refresh() {
                     item = nextItem;
                 }
             }
-
-            if (numPendingBakes != _numPendingBakes) {
-                _numPendingBakes = numPendingBakes;
-                emit numPendingBakesChanged(_numPendingBakes);
-            }
         } else {
             emit errorGettingMappings(request->getErrorString());
         }
@@ -379,6 +349,5 @@ void AssetMappingModel::clear() {
 void AssetMappingModel::setupRoles() {
     QHash<int, QByteArray> roleNames;
     roleNames[Qt::DisplayRole] = "name";
-    roleNames[Qt::UserRole + 5] = "baked";
     setItemRoleNames(roleNames);
 }

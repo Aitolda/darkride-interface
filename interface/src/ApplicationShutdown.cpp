@@ -50,11 +50,9 @@
 #include <display-plugins/CompositorHelper.h>
 #include "AudioClient.h"
 #include "avatar/AvatarManager.h"
-#include "CrashHandler.h"
 #include "scripting/Audio.h"
 #include "scripting/KeyboardScriptingInterface.h"
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-#include "SpeechRecognizer.h"
 #endif
 #include "ui/StandAloneJSConsole.h"
 #include "ui/Keyboard.h"
@@ -75,8 +73,6 @@ QSharedPointer<OffscreenUi> getOffscreenUI();      // Application.cpp's
 extern QTimer locationUpdateTimer;                 // ApplicationStartup.cpp's; the constructor starts it
 
 void Application::onAboutToQuit() {
-    setCrashAnnotation("shutdown", "1");
-
     // quickly save AvatarEntityData before the EntityTree is dismantled
     getMyAvatar()->saveAvatarEntityDataToSettings();
 

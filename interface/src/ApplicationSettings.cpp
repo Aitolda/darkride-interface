@@ -100,11 +100,6 @@ void Application::setAwayStateWhenFocusLostInVREnabled(bool enabled) {
     emit awayStateWhenFocusLostInVRChanged(enabled);
 }
 
-void Application::setMiniTabletEnabled(bool enabled) {
-    _miniTabletEnabledSetting.set(enabled);
-    emit miniTabletEnabledChanged(enabled);
-}
-
 void Application::loadSettings() {
 
     {

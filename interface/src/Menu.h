@@ -75,7 +75,6 @@ namespace MenuOption {
     const QString Collisions = "Collisions";
     const QString Connexion = "Activate 3D Connexion Devices";
     const QString Console = "Console...";
-    const QString ControlWithSpeech = "Enable Speech Control API";
     const QString CopyAddress = "Copy Address to Clipboard";
     const QString CopyPath = "Copy Path to Clipboard";
     const QString CoupleEyelids = "Couple Eyelids";
