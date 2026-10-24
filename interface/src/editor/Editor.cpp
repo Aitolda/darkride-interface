@@ -792,7 +792,7 @@ namespace {
             { "#404040", "cardPressed" }, { "#474747", "cardPressed" }, { "#505050", "cardPressed" },
             { "#1f1f1f", "separator" }, { "#232323", "separator" }, { "#262626", "separator" }, { "#2b2b2b", "separator" },
             { "#5a5a5a", "segmentThumb" }, { "#555555", "segmentThumb" },
-            { "#d2d2d2", "text" }, { "#c4c4c4", "text" },
+            { "#d2d2d2", "text" }, { "#c4c4c4", "text" }, { "#f0f0f0", "text" },
             { "#b8b8b8", "secondaryText" }, { "#9a9a9a", "secondaryText" }, { "#8f8f8f", "secondaryText" },
             { "#8a8a8a", "secondaryText" },
             { "#7a7a7a", "tertiaryText" }, { "#6a6a6a", "tertiaryText" },
