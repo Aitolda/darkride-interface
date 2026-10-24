@@ -129,6 +129,9 @@ Agent::Agent(ReceivedMessage& message) :
         { PacketType::OctreeStats, PacketType::EntityData, PacketType::EntityErase, PacketType::EntityQueryInitialResultsComplete },
         this, "handleOctreePacket");
     packetReceiver.registerListener(PacketType::SelectedAudioFormat, this, "handleSelectedAudioFormat");
+    // the mixer's audio in a codec this agent didn't choose: taken, as AudioClient does (handleMismatchAudioFormat)
+    connect(&_receivedAudioStream, &InboundAudioStream::mismatchedAudioCodec, this, &Agent::handleMismatchAudioFormat,
+            Qt::QueuedConnection);
 
     // 100Hz timer for audio
     const int TARGET_INTERVAL_MSEC = 10; // 10ms
@@ -356,6 +359,16 @@ void Agent::negotiateAudioFormat() {
 void Agent::handleSelectedAudioFormat(QSharedPointer<ReceivedMessage> message) {
     QString selectedCodecName = message->readString();
     selectAudioFormat(selectedCodecName);
+}
+
+// The mixer's answer to the negotiation can be lost: it can arrive before this agent knows the mixer as a node, and
+// nothing asks again. The mixer then sends its audio in the codec it chose while this agent still has none, and an
+// agent signed in as an AI resident (Auxi's body, 10-24) never heard and kept logging the mismatch. Since agents load
+// the codec plug-ins (opus-1's plug-in folder fix) they must negotiate like Interface; on a mismatch they take the
+// codec the mixer sends, as AudioClient::handleMismatchAudioFormat does, which also sets their own voice's encoder.
+void Agent::handleMismatchAudioFormat(SharedNodePointer node, const QString& currentCodec, const QString& receivedCodec) {
+    qDebug() << "The mixer sends" << receivedCodec << "where this agent has" << currentCodec << "- taking it";
+    selectAudioFormat(receivedCodec);
 }
 
 void Agent::selectAudioFormat(const QString& selectedCodecName) {
