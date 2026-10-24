@@ -916,6 +916,8 @@ void Application::updateRenderArgs(float deltaTime) {
             appRenderArgs._renderArgs._impostorAngleHalfTanSq = lodManager->getImpostorAngleHalfTanSq();
             appRenderArgs._renderArgs._impostorDebug = lodManager->getImpostorDebug();
             appRenderArgs._renderArgs._impostorCrossfade = lodManager->getImpostorCrossfade();
+            appRenderArgs._renderArgs._impostorMarch = lodManager->getImpostorMarch();
+            appRenderArgs._renderArgs._impostorMarchFootprints = lodManager->getImpostorMarchFootprints();
             appRenderArgs._renderArgs._meshLodErrorPixels = lodManager->getMeshLodErrorPixelsInEffect();
             appRenderArgs._renderArgs._meshLodForceLevel = lodManager->getMeshLodForceLevel();
             // GPU instancing (INSTANCING.md 3.6): Developer > Render > GPU Instancing, for comparing on and off (the
