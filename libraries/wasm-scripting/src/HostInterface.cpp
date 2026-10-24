@@ -29,6 +29,7 @@ namespace {
 const QString ALLOC_EXPORT = QStringLiteral("alloc");
 const QString FREE_EXPORT = QStringLiteral("free");
 const QString CALL_CALLBACK_EXPORT = QStringLiteral("call_callback");
+const QString INTERRUPTED_ENTITY_EXPORT = QStringLiteral("interrupted_entity");
 const int MAX_INVOKE_ARGUMENTS = 10;  // QMetaMethod::invoke's limit
 
 int64_t pack(int32_t pointer, int32_t length) {
@@ -91,6 +92,17 @@ void HostInterface::log(int level, const QString& text) const {
 }
 
 void HostInterface::fail(const QString& entry, const QString& error) {
+    if (_timeLimitHit) {
+        // the module ran past its time limit and unwound by itself: it runs on, and the engine hears which script
+        // was running rather than that the module failed
+        _timeLimitHit = false;
+        const QString entity = _timeLimitEntity;
+        _timeLimitEntity.clear();
+        if (_timeLimitHandler) {
+            _timeLimitHandler(entry, entity, error);
+            return;
+        }
+    }
     if (_failureHandler) {
         _failureHandler(entry, error);
     } else {
@@ -291,9 +303,39 @@ bool HostInterface::enterGuest(const QString& name, const std::vector<WasmValue>
     QString interruption = _instance.takeInterruptionReason();
     if (!interruption.isEmpty()) {
         error = interruption;
+        if (!_instance.isStopRequested()) {
+            // the time limit, not a stop: the module is whole; which script was running is its to say
+            _timeLimitHit = true;
+            _timeLimitEntity = takeInterruptedEntity();
+        }
         return false;
     }
     return true;
+}
+
+QString HostInterface::takeInterruptedEntity() {
+    if (!hasGuestExport(INTERRUPTED_ENTITY_EXPORT)) {
+        return QString();
+    }
+    std::vector<WasmValue> results;
+    QString error;
+    if (!_instance.call(INTERRUPTED_ENTITY_EXPORT, {}, results, error) || results.empty() || !std::holds_alternative<int64_t>(results[0])) {
+        return QString();
+    }
+    int64_t packed = std::get<int64_t>(results[0]);
+    if (packed == 0) {
+        return QString();
+    }
+    int32_t pointer = int32_t(uint32_t(uint64_t(packed) >> 32));
+    int32_t length = int32_t(uint32_t(uint64_t(packed) & 0xffffffffu));
+    QByteArray bytes = readBytes(pointer, length, error);
+    std::vector<WasmValue> ignored;
+    QString freeError;
+    _instance.call(FREE_EXPORT, { pointer, length }, ignored, freeError);
+    if (!error.isEmpty()) {
+        return QString();
+    }
+    return QCborValue::fromCbor(bytes).toString();
 }
 
 bool HostInterface::hasGuestExport(const QString& name) const {

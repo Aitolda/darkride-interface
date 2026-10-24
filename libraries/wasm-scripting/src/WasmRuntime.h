@@ -116,8 +116,10 @@ public:
     struct Limits {
         /// The most linear memory the instance may have; growth past it fails inside the module.
         int64_t memoryBytes { 256 * 1024 * 1024 };
-        /// A call into the instance that runs longer than this traps; zero is no limit (a requested stop still
-        /// interrupts the call).
+        /// A call into the instance that runs longer than this is interrupted (a trap, or for a cooperative module
+        /// the module's own unwinding); zero is no limit (a requested stop still interrupts the call). The time is
+        /// the module's own: what it spends in host functions does not count, so a slow download or a long host
+        /// call is not a runaway module.
         std::chrono::milliseconds callTimeout { 5000 };
     };
 
@@ -150,6 +152,8 @@ public:
     /// From any thread: the running call stops (with epoch interruption, it traps at the next epoch tick; with
     /// cooperative interruption, the module stops when it next asks), and every later call is refused.
     void requestStop();
+    /// Whether requestStop() was called.
+    bool isStopRequested() const;
     /// Whether the running call should stop now: a stop was requested, or the call has run past its time limit.
     /// A module compiled for cooperative interruption asks this often (the host interface's "interrupted" import);
     /// it is also where such a module's profile is sampled.

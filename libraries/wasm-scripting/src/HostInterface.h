@@ -48,6 +48,8 @@
 //      entity_has(ptr, len) -> i32        {"entity": id, "method": name}: 1 when the method exists
 //      entity_call(ptr, len) -> i64       {"entity": id, "method": name, "args": [...], "remoteCallerID"?: id};
 //                                         the method's result packed, or 0
+//      interrupted_entity() -> i64        the entity script that was running when the host last interrupted a
+//                                         call (the time limit), as a packed text, taken once; 0 for none
 //
 //  A method is named by its name ("getEntityProperties"; the overloads are tried in order, the first whose
 //  arguments convert wins), its signature ("add(int,int)") or its index from the description ("#12").
@@ -92,6 +94,11 @@ public:
     /// Told when a call into the module fails (a trap, a time limit, a missing export): the entry that failed
     /// and the error. The engine decides what to do with the script.
     using FailureHandler = std::function<void(const QString& entry, const QString& error)>;
+    /// Told when a call into a cooperative module ended at the module's time limit: the module unwound by itself
+    /// and runs on. `entity` is the entity script the module says was running (through its interrupted_entity
+    /// export; empty when the script itself was, or the module does not say). Without one, the failure handler
+    /// is told instead. The engine decides what to do with the script.
+    using TimeLimitHandler = std::function<void(const QString& entry, const QString& entity, const QString& reason)>;
 
     /// The relay must live on the thread the instance is used from.
     HostInterface(WasmInstance& instance, ObjectTable& objects, ValueCodec& codec, SignalRelay& relay);
@@ -99,6 +106,7 @@ public:
 
     void setLogger(Logger logger) { _logger = std::move(logger); }
     void setFailureHandler(FailureHandler handler) { _failureHandler = std::move(handler); }
+    void setTimeLimitHandler(TimeLimitHandler handler) { _timeLimitHandler = std::move(handler); }
 
     /// Defines the imports on the instance. Before instantiate().
     void install();
@@ -185,8 +193,15 @@ private:
     ObjectTable& _objects;
     ValueCodec& _codec;
     SignalRelay& _relay;
+    /// After a call ended at the module's time limit: the entity script the module names as the one that was
+    /// running (its interrupted_entity export, when it has one), cleared in the module.
+    QString takeInterruptedEntity();
+
     Logger _logger;
     FailureHandler _failureHandler;
+    TimeLimitHandler _timeLimitHandler;
+    bool _timeLimitHit { false };   // the call that just failed ended at the time limit, not by a stop or a trap
+    QString _timeLimitEntity;
     QHash<QPair<const QMetaObject*, QByteArray>, QVector<int>> _candidates;
     QHash<QPair<const QMetaObject*, int>, QVector<int>> _parameterTypes;
     mutable QHash<QPair<const QMetaObject*, QByteArray>, int> _propertyIndices;

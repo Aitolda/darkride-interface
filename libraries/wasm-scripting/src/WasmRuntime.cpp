@@ -263,6 +263,12 @@ struct WasmInstance::Impl {
     std::chrono::steady_clock::time_point callStarted;
     std::chrono::milliseconds callTimeout { 0 };
     int callDepth { 0 };
+    // The module's own time in the outermost call: the clock runs while the module runs and pauses while a host
+    // function does (the trampoline), so a slow host call does not count against the limit.
+    bool inGuest { false };
+    std::chrono::steady_clock::time_point guestSince;
+    std::chrono::nanoseconds guestTime { 0 };
+    bool limitReported { false };  // the time limit is reported once per outermost call
     wasmtime_guestprofiler_t* profiler { nullptr };
     std::chrono::steady_clock::time_point lastSample;
     QString interruptionReason; // why a cooperative module was last told to stop, until taken
@@ -282,8 +288,33 @@ struct WasmInstance::Impl {
         if (callDepth == 0) {
             callStarted = std::chrono::steady_clock::now();
             lastSample = callStarted;
+            guestTime = std::chrono::nanoseconds(0);
+            inGuest = false;
+            limitReported = false;
             wasmtime_context_set_epoch_deadline(context, 1);
         }
+    }
+
+    // The module starts or resumes running (a call into it, a host function returning to it).
+    void enterGuest() {
+        if (!inGuest) {
+            inGuest = true;
+            guestSince = std::chrono::steady_clock::now();
+        }
+    }
+    // The module stops running for now (a host function entered, a call into it returned).
+    void leaveGuest() {
+        if (inGuest) {
+            guestTime += std::chrono::steady_clock::now() - guestSince;
+            inGuest = false;
+        }
+    }
+    std::chrono::milliseconds guestElapsed() const {
+        std::chrono::nanoseconds total = guestTime;
+        if (inGuest) {
+            total += std::chrono::steady_clock::now() - guestSince;
+        }
+        return std::chrono::duration_cast<std::chrono::milliseconds>(total);
     }
 
     template <typename Function>
@@ -310,11 +341,8 @@ struct WasmInstance::Impl {
         if (stopRequested.load()) {
             return "the script was stopped";
         }
-        if (callTimeout.count() > 0) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - callStarted);
-            if (elapsed > callTimeout) {
-                return QString("a call into the script ran longer than its limit of %1 ms").arg(callTimeout.count());
-            }
+        if (callTimeout.count() > 0 && guestElapsed() > callTimeout) {
+            return QString("a call into the script ran longer than its limit of %1 ms").arg(callTimeout.count());
         }
         return QString();
     }
@@ -399,7 +427,10 @@ wasm_trap_t* hostFunctionTrampoline(void* env, wasmtime_caller_t* caller, const 
     std::vector<WasmValue>& out = scope.buffers.out;
     // While the host function runs, the instance works through the caller's context: a call back into the
     // module (the guest's alloc, a callback) and its memory accesses go through it, as wasmtime requires.
-    QString error = entry->instance->impl().withCallerContext(caller, [&] { return entry->function(*entry->instance, in, out); });
+    WasmInstance::Impl& impl = entry->instance->impl();
+    impl.leaveGuest();
+    QString error = impl.withCallerContext(caller, [&] { return entry->function(*entry->instance, in, out); });
+    impl.enterGuest();
     if (!error.isEmpty()) {
         QByteArray utf8 = error.toUtf8();
         return wasmtime_trap_new(utf8.constData(), static_cast<size_t>(utf8.size()));
@@ -482,8 +513,10 @@ bool WasmInstance::instantiate(QString& error) {
         }
     }
     _impl->beginCall(); // the module's start function runs now
+    _impl->enterGuest();
     wasm_trap_t* trap = nullptr;
     auto result = wasmtime_linker_instantiate(_impl->linker, _impl->context, _module->impl().module, &_impl->instance, &trap);
+    _impl->leaveGuest();
     if (result) {
         error = takeErrorText(result);
         return false;
@@ -548,8 +581,10 @@ bool WasmInstance::call(const QString& name, const std::vector<WasmValue>& args,
     }
     _impl->beginCall();
     ++_impl->callDepth;
+    _impl->enterGuest();
     wasm_trap_t* trap = nullptr;
     auto result = wasmtime_func_call(_impl->context, &function, in, args.size(), out, resultCount, &trap);
+    _impl->leaveGuest();
     --_impl->callDepth;
     if (result) {
         error = takeErrorText(result);
@@ -593,6 +628,10 @@ void WasmInstance::requestStop() {
     _impl->stopRequested = true;
 }
 
+bool WasmInstance::isStopRequested() const {
+    return _impl->stopRequested.load();
+}
+
 bool WasmInstance::interruptRequested() {
     if (_impl->profiler) {
         _impl->sample(_module->runtime()->settings().epochTick);
@@ -601,8 +640,14 @@ bool WasmInstance::interruptRequested() {
     if (reason.isEmpty()) {
         return false;
     }
-    if (_impl->interruptionReason.isEmpty()) {
+    // the time limit is recorded once per outermost call: a nested call (one made from a host function) unwinds
+    // first and is the one reported; the outer frames, told to stop too, end without a second report
+    const bool limit = !_impl->stopRequested.load();
+    if (_impl->interruptionReason.isEmpty() && !(limit && _impl->limitReported)) {
         _impl->interruptionReason = reason;
+    }
+    if (limit) {
+        _impl->limitReported = true;
     }
     return true;
 }

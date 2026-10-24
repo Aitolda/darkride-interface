@@ -277,6 +277,62 @@ void WasmRuntimeTests::testCooperativeTimeLimit() {
     }
 }
 
+namespace {
+
+// A cooperative module that first waits in a host function, then loops asking whether to stop.
+const QString WAIT_THEN_SPIN_MODULE = R"((module
+  (import "darkride" "interrupted" (func $interrupted (result i32)))
+  (import "test" "wait" (func $wait))
+  (func (export "wait_then_spin") (result i32)
+    (local $asked i32)
+    (call $wait)
+    (block $done
+      (loop $again
+        (local.set $asked (i32.add (local.get $asked) (i32.const 1)))
+        (br_if $done (call $interrupted))
+        (br $again)))
+    (local.get $asked))))";
+
+} // namespace
+
+// The time limit counts the module's own time: what it spends inside a host function (a download, a long host
+// call) does not count. A host function that sleeps 80 ms under a 40 ms limit: the call ends about 120 ms in,
+// not at 80, and the limit is the reason.
+void WasmRuntimeTests::testTimeLimitCountsModuleTimeOnly() {
+    auto runtime = makeRuntime();
+    QString error;
+    auto module = runtime->compileText(WAIT_THEN_SPIN_MODULE, error, WasmRuntime::Interruption::Cooperative);
+    QVERIFY2(module, qPrintable(error));
+    WasmInstance::Limits limits;
+    limits.callTimeout = std::chrono::milliseconds(40);
+    WasmInstance instance(module, limits);
+    instance.defineHostFunction("darkride", "interrupted", { {}, { WasmType::I32 } },
+                                [](WasmInstance& self, const std::vector<WasmValue>&, std::vector<WasmValue>& results) {
+                                    results.push_back(int32_t(self.interruptRequested() ? 1 : 0));
+                                    return QString();
+                                });
+    instance.defineHostFunction("test", "wait", { {}, {} }, [](WasmInstance&, const std::vector<WasmValue>&, std::vector<WasmValue>&) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        return QString();
+    });
+    QVERIFY2(instance.instantiate(error), qPrintable(error));
+    std::vector<WasmValue> results;
+    QElapsedTimer timer;
+    timer.start();
+    QVERIFY2(instance.call("wait_then_spin", {}, results, error), qPrintable(error));
+    qint64 elapsed = timer.elapsed();
+    QVERIFY2(elapsed >= 115 && elapsed < 1000, qPrintable(QString("took %1 ms (80 ms waiting in the host, then 40 ms of the module's own)").arg(elapsed)));
+    QString reason = instance.takeInterruptionReason();
+    QVERIFY2(reason.contains("limit of 40 ms"), qPrintable(reason));
+    QVERIFY(!instance.isStopRequested());
+    // and the module runs on: a second call gets its own 40 ms
+    timer.restart();
+    QVERIFY2(instance.call("wait_then_spin", {}, results, error), qPrintable(error));
+    elapsed = timer.elapsed();
+    QVERIFY2(elapsed >= 115 && elapsed < 1000, qPrintable(QString("the second call took %1 ms").arg(elapsed)));
+    QVERIFY(instance.takeInterruptionReason().contains("limit of 40 ms"));
+}
+
 void WasmRuntimeTests::testMemoryLimit() {
     auto runtime = makeRuntime();
     WasmInstance::Limits limits;
