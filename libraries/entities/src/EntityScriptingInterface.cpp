@@ -1232,7 +1232,29 @@ RayToEntityIntersectionResult EntityScriptingInterface::findRayIntersection(cons
     PROFILE_RANGE(script_entities, __FUNCTION__);
     QVector<EntityItemID> entitiesToInclude = qVectorEntityItemIDFromScriptValue(entityIdsToInclude);
     QVector<EntityItemID> entitiesToDiscard = qVectorEntityItemIDFromScriptValue(entityIdsToDiscard);
+    return findRayIntersectionInLists(ray, precisionPicking, entitiesToInclude, entitiesToDiscard, visibleOnly, collidableOnly);
+}
 
+RayToEntityIntersectionResult EntityScriptingInterface::findRayIntersectionVector(const PickRay& ray, bool precisionPicking,
+                                                                                  const QVector<QUuid>& entityIdsToInclude,
+                                                                                  const QVector<QUuid>& entityIdsToDiscard,
+                                                                                  bool visibleOnly, bool collidableOnly) const {
+    PROFILE_RANGE(script_entities, __FUNCTION__);
+    QVector<EntityItemID> entitiesToInclude;
+    QVector<EntityItemID> entitiesToDiscard;
+    for (const QUuid& id : entityIdsToInclude) {
+        entitiesToInclude << EntityItemID(id);
+    }
+    for (const QUuid& id : entityIdsToDiscard) {
+        entitiesToDiscard << EntityItemID(id);
+    }
+    return findRayIntersectionInLists(ray, precisionPicking, entitiesToInclude, entitiesToDiscard, visibleOnly, collidableOnly);
+}
+
+RayToEntityIntersectionResult EntityScriptingInterface::findRayIntersectionInLists(const PickRay& ray, bool precisionPicking,
+                                                                                   const QVector<EntityItemID>& entitiesToInclude,
+                                                                                   const QVector<EntityItemID>& entitiesToDiscard,
+                                                                                   bool visibleOnly, bool collidableOnly) const {
     unsigned int searchFilter = PickFilter::getBitMask(PickFilter::FlagBit::DOMAIN_ENTITIES) |
                                 PickFilter::getBitMask(PickFilter::FlagBit::AVATAR_ENTITIES);
 
@@ -1434,6 +1456,80 @@ bool EntityScriptingInterface::queryPropertyMetadata(const QUuid& entityID,
         engine->maybeEmitUncaughtException(__FUNCTION__);
         return false;
     }
+}
+
+bool EntityScriptingInterface::getServerScriptStatus(const QUuid& entityID, const ScriptCallback& callback) {
+    auto client = DependencyManager::get<EntityScriptClient>();
+    auto request = client->createScriptStatusRequest(entityID);
+    connect(request, &GetScriptStatusRequest::finished, this, [callback](GetScriptStatusRequest* request) {
+        const QString status = EntityScriptStatus_::valueToKey(request->getStatus()).toLower();
+        callback.post({ request->getResponseReceived(), request->getIsRunning(), status, request->getErrorInfo() });
+        request->deleteLater();
+    });
+    request->start();
+    return true;
+}
+
+bool EntityScriptingInterface::queryPropertyMetadata(const QUuid& entityID, const QString& property, const ScriptCallback& callback) {
+    // as EntityPropertyMetadataRequest answers a QtScript handler, with the error's fields and the result as maps
+    if (property == "script") {
+        using LocalScriptStatusRequest = QFutureWatcher<QVariant>;
+        LocalScriptStatusRequest* request = new LocalScriptStatusRequest;
+        QObject::connect(request, &LocalScriptStatusRequest::finished, this, [request, callback]() {
+            QVariantMap details = request->result().toMap();
+            if (details.contains("isError")) {
+                if (!details.contains("message")) {
+                    details["message"] = details["errorInfo"];
+                }
+                callback.post({ details, QVariant() });
+            } else {
+                details["success"] = true;
+                callback.post({ QVariant(), details });
+            }
+            request->deleteLater();
+        });
+        withEntitiesScriptEngine([&](QSharedPointer<EntitiesScriptEngineProvider> entitiesScriptEngine) {
+            if (entitiesScriptEngine) {
+                request->setFuture(entitiesScriptEngine->getLocalEntityScriptDetails(entityID));
+            }
+        });
+        if (!request->isStarted()) {
+            request->deleteLater();
+            QVariantMap error;
+            error["message"] = "Entities Scripting Provider unavailable";
+            error["name"] = "InternalError";
+            callback.post({ error, QVariant() });
+            return false;
+        }
+        return true;
+    }
+    if (property == "serverScripts") {
+        auto client = DependencyManager::get<EntityScriptClient>();
+        auto request = client->createScriptStatusRequest(entityID);
+        QObject::connect(request, &GetScriptStatusRequest::finished, this, [callback](GetScriptStatusRequest* request) {
+            QVariantMap details;
+            details["success"] = request->getResponseReceived();
+            details["isRunning"] = request->getIsRunning();
+            details["status"] = EntityScriptStatus_::valueToKey(request->getStatus()).toLower();
+            details["errorInfo"] = request->getErrorInfo();
+            if (!details["success"].toBool()) {
+                if (!details.contains("message") && details.contains("errorInfo")) {
+                    details["message"] = details["errorInfo"];
+                }
+                if (details["message"].toString().isEmpty()) {
+                    details["message"] = "entity server script details not found";
+                }
+                callback.post({ details, QVariant() });
+            } else {
+                callback.post({ QVariant(), details });
+            }
+            request->deleteLater();
+        });
+        request->start();
+        return true;
+    }
+    // any other property: the module's runtime throws before it calls this, as the QtScript form throws
+    return false;
 }
 
 bool EntityScriptingInterface::getServerScriptStatus(const QUuid& entityID, QScriptValue callback) {
@@ -2155,6 +2251,20 @@ bool EntityScriptingInterface::AABoxIntersectsCapsule(const glm::vec3& low,
     glm::vec3 penetration;
     AABox aaBox(low, dimensions);
     return aaBox.findCapsulePenetration(start, end, radius, penetration);
+}
+
+void EntityScriptingInterface::getMeshes(const QUuid& entityID, const ScriptCallback& callback) {
+    PROFILE_RANGE(script_entities, __FUNCTION__);
+    EntityItemPointer entity = static_cast<EntityItemPointer>(_entityTree->findEntityByEntityItemID(entityID));
+    MeshProxyList result;
+    if (!entity) {
+        qCDebug(entities) << "EntityScriptingInterface::getMeshes no entity with ID" << entityID;
+    }
+    if (entity && entity->getMeshes(result)) {
+        callback.call({ QVariant::fromValue(result), true });
+    } else {
+        callback.call({ QVariant(), false });
+    }
 }
 
 void EntityScriptingInterface::getMeshes(const QUuid& entityID, QScriptValue callback) {

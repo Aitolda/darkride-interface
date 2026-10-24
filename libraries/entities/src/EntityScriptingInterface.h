@@ -25,6 +25,7 @@
 #include <RegisteredMetaTypes.h>
 #include <PointerEvent.h>
 #include <PickFilter.h>
+#include <ScriptCallback.h>
 
 #include "LineEntityItem.h"
 #include "PolyLineEntityItem.h"
@@ -826,6 +827,13 @@ public slots:
             const QScriptValue& entityIdsToInclude = QScriptValue(), const QScriptValue& entityIdsToDiscard = QScriptValue(),
             bool visibleOnly = false, bool collidableOnly = false) const;
 
+    // findRayIntersection with the lists as lists of IDs, for the WebAssembly script engine (a name of its own, as
+    // setIgnoreItemsVector has: QtScript would find a same-named overload ambiguous with the QScriptValue one). Without
+    // it a module's call with lists reaches the shorter form and the lists are dropped.
+    Q_INVOKABLE RayToEntityIntersectionResult findRayIntersectionVector(const PickRay& ray, bool precisionPicking,
+            const QVector<QUuid>& entityIdsToInclude, const QVector<QUuid>& entityIdsToDiscard, bool visibleOnly,
+            bool collidableOnly) const;
+
     /**jsdoc
      * Reloads an entity's server entity script such that the latest version re-downloaded.
      * @function Entities.reloadServerScripts
@@ -853,6 +861,9 @@ public slots:
      *     information on the error.
      */
     Q_INVOKABLE bool getServerScriptStatus(const QUuid& entityID, QScriptValue callback);
+    // The same request for the WebAssembly script engine, the callback as a ScriptCallback (QtScript never picks this
+    // overload: it cannot make a ScriptCallback)
+    Q_INVOKABLE bool getServerScriptStatus(const QUuid& entityID, const ScriptCallback& callback);
 
     /**jsdoc
      * Gets metadata for certain entity properties such as <code>script</code> and <code>serverScripts</code>.
@@ -884,6 +895,9 @@ public slots:
      */
     Q_INVOKABLE bool queryPropertyMetadata(const QUuid& entityID, QScriptValue property, QScriptValue scopeOrCallback,
         QScriptValue methodOrName = QScriptValue());
+    // The same query for the WebAssembly script engine: the callback is called with (error, result), each a map or
+    // null; the module's runtime gives the scope forms and makes the error an Error, as makeError did
+    Q_INVOKABLE bool queryPropertyMetadata(const QUuid& entityID, const QString& property, const ScriptCallback& callback);
 
 
     /**jsdoc
@@ -1833,6 +1847,8 @@ public slots:
       */
     // FIXME move to a renderable entity interface
     Q_INVOKABLE void getMeshes(const QUuid& entityID, QScriptValue callback);
+    // The same for the WebAssembly script engine, the callback as a ScriptCallback, called before this returns
+    Q_INVOKABLE void getMeshes(const QUuid& entityID, const ScriptCallback& callback);
 
     /**jsdoc
      * Gets the object to world transform, excluding scale, of an entity.
@@ -2472,6 +2488,11 @@ private:
     EntityItemPointer checkForTreeEntityAndTypeMatch(const QUuid& entityID,
                                                      EntityTypes::EntityType entityType = EntityTypes::Unknown);
 
+
+    /// findRayIntersection's search, its lists read by the QtScript form or the WebAssembly engine's twin
+    RayToEntityIntersectionResult findRayIntersectionInLists(const PickRay& ray, bool precisionPicking,
+        const QVector<EntityItemID>& entitiesToInclude, const QVector<EntityItemID>& entitiesToDiscard, bool visibleOnly,
+        bool collidableOnly) const;
 
     /// actually does the work of finding the ray intersection, can be called in locking mode or tryLock mode
     RayToEntityIntersectionResult evalRayIntersectionWorker(const PickRay& ray, Octree::lockType lockType,
