@@ -3,7 +3,9 @@
 //  interface/src/editor
 //
 //  The Hierarchy's model: the domain's entities as a parent/child tree, kept live from the
-//  entity tree's signals, with a slow rescan behind them for what the signals miss.
+//  entity tree's signals, with a slow rescan behind them for what the signals miss. Entities the
+//  entity server listed but has not streamed to this client are rows too, not loaded (grey), until
+//  they arrive (NATIVE-EDITOR.md 8).
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -21,7 +23,9 @@
 #include <QtCore/QTimer>
 #include <QtCore/QUuid>
 
+#include <AACube.h>
 #include <EntityItemID.h>
+#include <EntityListMessage.h>
 #include <EntityTree.h>
 #include <EntityTypes.h>
 
@@ -34,7 +38,8 @@ public:
         TypeNameRole,
         LockedRole,
         VisibleRole,
-        CreatedRole     // when the entity was made (usecs): the Hierarchy lists siblings in that order, as Unity does
+        CreatedRole,    // when the entity was made (usecs): the Hierarchy lists siblings in that order, as Unity does
+        LoadedRole      // false for an entity the server listed that this client does not have
     };
 
     explicit EntityTreeModel(QObject* parent = nullptr);
@@ -46,6 +51,17 @@ public:
     QModelIndex indexForId(const QUuid& id) const;
     QUuid idForIndex(const QModelIndex& index) const;
     QList<QUuid> allIds() const;
+
+    // the entity server's list: what this client lacks becomes rows that are not loaded; rows that were not
+    // loaded and are no longer listed go
+    void setListed(const QVector<EntityListMessage::Record>& records);
+    bool hasList() const { return _hasList; }
+    // a row the client has the entity for (false for one it does not know at all)
+    bool isLoaded(const QUuid& id) const;
+    // a row that is not loaded: where the server keeps it, and its name as the row shows it
+    bool listedPlace(const QUuid& id, AACube& cube, QString& name) const;
+    int count() const { return _nodes.size(); }
+    int loadedCount() const;
 
     QModelIndex index(int row, int column, const QModelIndex& parent = QModelIndex()) const override;
     QModelIndex parent(const QModelIndex& index) const override;
@@ -75,6 +91,10 @@ signals:
     void renameRequested(const QUuid& id, const QString& name);
     // the user dragged entities onto another (or onto the empty space: a null parent); the editor moves them
     void reparentRequested(const QList<QUuid>& ids, const QUuid& parentId);
+    // a row that was not loaded has its entity now
+    void entityLoaded(const QUuid& id);
+    // the client's tree was emptied (a domain change, a reload): the server's list went with it
+    void listCleared();
 
 private slots:
     void onEntityAdded(const EntityItemID& id);
@@ -82,6 +102,7 @@ private slots:
     void flushEdits();
     void rescan();
     void rebuild();
+    void clearTree();
 
 private:
     struct Node {
@@ -93,6 +114,8 @@ private:
         quint64 created { 0 };
         QString loadProblem;    // setLoadProblem
         QUuid parentID;
+        bool loaded { true };
+        AACube cube;        // the server's query cube, for a row that is not loaded
         Node* parent { nullptr };
         QVector<Node*> children;
 
@@ -107,6 +130,10 @@ private:
 
     // reads name, type, locked, visible and parent under the tree's read lock; false if gone
     bool readEntity(const QUuid& id, Node& node) const;
+    static void fillNode(Node& node, const EntityItemPointer& entity);
+    static void fillNode(Node& node, const EntityListMessage::Record& record);
+    // takes the entity's fresh fields; a row that was not loaded is now
+    void refreshNode(Node* node, const Node& fresh);
     void insertNode(Node* node, Node* parent);
     void removeNode(Node* node);
     void moveNode(Node* node, Node* newParent);
@@ -116,6 +143,8 @@ private:
     EntityTreePointer _tree;
     std::unique_ptr<Node> _root;
     QHash<QUuid, Node*> _nodes;
+    QHash<QUuid, EntityListMessage::Record> _listed;
+    bool _hasList { false };
     QSet<QUuid> _pendingEdits;
     QTimer _editFlush;
     QTimer _rescan;

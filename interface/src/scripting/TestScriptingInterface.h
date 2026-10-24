@@ -12,6 +12,8 @@
 
 #include <functional>
 #include <QtCore/QObject>
+#include <QtCore/QUuid>
+#include <QtCore/QVariant>
 
 #include <glm/glm.hpp>
 
@@ -363,6 +365,23 @@ public slots:
      * @param {boolean} on - Whether build mode is on.
      */
     Q_INVOKABLE void setBuildMode(bool on);
+
+    /**jsdoc
+     * The build-mode Hierarchy's rows: how many in all and how many loaded, whether the entity server's list of every
+     * entity has arrived, the list request's state, and the editor's selection.
+     * @function Test.getHierarchyCounts
+     * @returns {object} <code>{ entities, loaded, listed, state, selected }</code>; <code>state</code> is "none",
+     *     "waiting", "answered" or "unanswered".
+     */
+    Q_INVOKABLE QVariantMap getHierarchyCounts();
+
+    /**jsdoc
+     * Does what a click on the entity's row in the build-mode Hierarchy does: selects it, or, for a row that is not
+     * loaded, flies the build camera to it and selects it when it arrives.
+     * @function Test.clickHierarchyRow
+     * @param {Uuid} id - The entity.
+     */
+    Q_INVOKABLE void clickHierarchyRow(const QUuid& id);
 
     /**jsdoc
      * Edits a property of the editor's selection as its Inspector field does when a list's + button or a field commits:

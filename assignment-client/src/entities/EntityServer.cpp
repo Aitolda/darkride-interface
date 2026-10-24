@@ -17,7 +17,10 @@
 #include <QJsonDocument>
 #include <QRandomGenerator>
 
+#include <EntityListMessage.h>
 #include <EntityTree.h>
+#include <EntityTreeElement.h>
+#include <MessagesClient.h>
 #include <ResourceCache.h>
 #include <ScriptCache.h>
 #include <plugins/PluginManager.h>
@@ -58,6 +61,7 @@ EntityServer::EntityServer(ReceivedMessage& message) :
         PacketType::EntityPhysics },
         this,
         "handleEntityPacket");
+    packetReceiver.registerListener(PacketType::MessagesData, this, "handleMessagesPacket");
 }
 
 EntityServer::~EntityServer() {
@@ -82,6 +86,79 @@ void EntityServer::handleEntityPacket(QSharedPointer<ReceivedMessage> message, S
     if (_octreeInboundPacketProcessor) {
         _octreeInboundPacketProcessor->queueReceivedPacket(message, senderNode);
     }
+}
+
+void EntityServer::handleMessagesPacket(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode) {
+    // any client may ask: the list says nothing a query with no view would not send it in full
+    if (!senderNode || senderNode->getType() != NodeType::Agent) {
+        return;
+    }
+    QString channel, text;
+    QByteArray data;
+    bool isText = false;
+    QUuid senderID;
+    MessagesClient::decodeMessagesPacket(message, channel, isText, text, data, senderID);
+    quint32 requestNumber = 0;
+    if (isText || channel != EntityListMessage::CHANNEL || !EntityListMessage::decodeRequest(data, requestNumber)) {
+        return;
+    }
+    const quint64 MIN_USECS_BETWEEN_ANSWERS = 2 * USECS_PER_SECOND;
+    QUuid nodeID = senderNode->getUUID();
+    auto& pacing = _entityListPacing[nodeID];
+    pacing.requestNumber = requestNumber;
+    if (pacing.scheduled) {
+        return;   // the answer on its way will carry this request's number
+    }
+    quint64 now = usecTimestampNow();
+    if (pacing.lastAnswer == 0 || now - pacing.lastAnswer >= MIN_USECS_BETWEEN_ANSWERS) {
+        sendEntityList(nodeID);
+        return;
+    }
+    pacing.scheduled = true;
+    int waitMs = (int)((MIN_USECS_BETWEEN_ANSWERS - (now - pacing.lastAnswer)) / USECS_PER_MSEC) + 1;
+    QTimer::singleShot(waitMs, this, [this, nodeID] { sendEntityList(nodeID); });
+}
+
+void EntityServer::sendEntityList(const QUuid& nodeID) {
+    auto nodeList = DependencyManager::get<NodeList>();
+    SharedNodePointer node = nodeList->nodeWithUUID(nodeID);
+    auto pacingIt = _entityListPacing.find(nodeID);
+    if (!node || pacingIt == _entityListPacing.end()) {
+        _entityListPacing.remove(nodeID);
+        return;
+    }
+    QVector<EntityListMessage::Record> records;
+    EntityTreePointer tree = std::static_pointer_cast<EntityTree>(_tree);
+    quint64 start = usecTimestampNow();
+    if (tree) {
+        tree->withReadLock([&] {
+            tree->recurseTreeWithOperation([&](const OctreeElementPointer& element, void*) {
+                auto entityElement = std::static_pointer_cast<EntityTreeElement>(element);
+                entityElement->forEachEntity([&](const EntityItemPointer& entity) {
+                    EntityListMessage::Record record;
+                    record.id = entity->getID();
+                    record.parentID = entity->getParentID();
+                    record.type = entity->getType();
+                    record.visible = entity->getVisible();
+                    record.locked = entity->getLocked();
+                    record.created = entity->getCreated();
+                    bool success = false;
+                    record.cube = entity->getQueryAACube(success);
+                    record.name = entity->getName();
+                    records << record;
+                });
+                return true;
+            });
+        });
+    }
+    QByteArray reply = EntityListMessage::encodeReply(pacingIt->requestNumber, records);
+    quint64 built = usecTimestampNow();
+    nodeList->sendPacketList(MessagesClient::encodeMessagesDataPacket(EntityListMessage::CHANNEL, reply,
+                                                                      nodeList->getSessionUUID()), *node);
+    pacingIt->lastAnswer = built;
+    pacingIt->scheduled = false;
+    qDebug() << "Sent the entity list to" << nodeID << ":" << records.size() << "entities," << reply.size() << "bytes,"
+             << (built - start) << "usecs to build";
 }
 
 std::unique_ptr<OctreeQueryNode> EntityServer::createOctreeQueryNode() {
@@ -364,6 +441,7 @@ void EntityServer::nodeKilled(SharedNodePointer node) {
         tree->deleteDescendantsOfAvatar(node->getUUID());
         tree->forgetAvatarID(node->getUUID());
     }
+    _entityListPacing.remove(node->getUUID());
     OctreeServer::nodeKilled(node);
 }
 

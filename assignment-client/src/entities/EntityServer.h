@@ -71,6 +71,8 @@ protected:
 
 private slots:
     void handleEntityPacket(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode);
+    // a client's request for the list of every entity (EntityListMessage.h), sent to us point to point
+    void handleMessagesPacket(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode);
 
 private:
     SimpleEntitySimulationPointer _entitySimulation;
@@ -78,6 +80,14 @@ private:
 
     QReadWriteLock _viewerSendingStatsLock;
     QMap<QUuid, QMap<QUuid, ViewerSendingStats>> _viewerSendingStats;
+    // one entity list per client at a time: a request soon after an answer is answered at the end of the wait, once
+    struct EntityListPacing {
+        quint64 lastAnswer { 0 };
+        quint32 requestNumber { 0 };
+        bool scheduled { false };
+    };
+    QHash<QUuid, EntityListPacing> _entityListPacing;
+    void sendEntityList(const QUuid& nodeID);
 };
 
 #endif  // hifi_EntityServer_h

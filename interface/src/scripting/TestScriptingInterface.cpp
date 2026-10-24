@@ -346,6 +346,23 @@ void TestScriptingInterface::setBuildMode(bool on) {
     DependencyManager::get<Editor>()->setActive(on);
 }
 
+QVariantMap TestScriptingInterface::getHierarchyCounts() {
+    if (QThread::currentThread() != thread()) {
+        QVariantMap result;
+        BLOCKING_INVOKE_METHOD(this, "getHierarchyCounts", Q_RETURN_ARG(QVariantMap, result));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->hierarchyCounts();
+}
+
+void TestScriptingInterface::clickHierarchyRow(const QUuid& id) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "clickHierarchyRow", Q_ARG(QUuid, id));
+        return;
+    }
+    DependencyManager::get<Editor>()->clickHierarchyRow(id);
+}
+
 void TestScriptingInterface::commitInspectorEdit(const QString& key, const QVariant& value) {
     if (QThread::currentThread() != thread()) {
         BLOCKING_INVOKE_METHOD(this, "commitInspectorEdit", Q_ARG(QString, key), Q_ARG(QVariant, value));
