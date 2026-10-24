@@ -463,9 +463,9 @@ export class ButtonManager {
 					if (qmlWindow != window) qmlWindow.setVisible(false);
 				}
 				if (window == null) makeWindow();
-				// as tall as a big panel, as wide as a small one: a settings page is a column
+				// as tall as a big panel; a column wide (a settings page), or wider for a big one (Explore's cards)
 				const size = this.getOptimalWindowSize(isPanel == "small");
-				const width = Math.min(size.x, 560);
+				const width = Math.min(size.x, isPanel == "big" ? 760 : 560);
 				window.setSize(width, this.getOptimalWindowSize(false).y);
 				window.setPosition(
 					Window.innerWidth / 2 - width / 2,

@@ -1,6 +1,5 @@
 import { SignalManager } from "../lib/signal-manager";
 import { ButtonManager } from "./button-manager";
-import { ExploreHandler } from "./web-event-handlers/explore";
 import { MarketHandler } from "./web-event-handlers/market";
 
 export class Buttons {
@@ -55,14 +54,14 @@ export class Buttons {
 			"small",
 		);
 
-		// explore
-		const explore = this.buttonManager.addWebButton(
+		// explore: Darkride's Explore panel (qml/darkride/ExplorePanel.qml): worlds, their instances, hops
+		const explore = this.buttonManager.addQmlButton(
 			"Explore",
 			Script.resolvePath("../assets/explore.png"),
 			null,
 			8,
+			Script.resourcesPath() + "qml/darkride/ExplorePanel.qml",
 			"big",
-			ExploreHandler,
 		);
 		// CTRL+L behaviour
 		const mapping = Controller.newMapping(this.exploreMappingName);

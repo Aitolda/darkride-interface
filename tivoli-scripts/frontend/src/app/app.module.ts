@@ -6,11 +6,6 @@ import { RouterModule, Routes } from "@angular/router";
 import { AppComponent } from "./app.component";
 
 const routes: Routes = [
-	{
-		path: "explore",
-		loadChildren: () =>
-			import("./explore/explore.module").then(m => m.ExploreModule),
-	},
 	// {
 	// 	path: "market",
 	// 	loadChildren: () =>

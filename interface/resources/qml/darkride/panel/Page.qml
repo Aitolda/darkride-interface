@@ -25,6 +25,22 @@ Rectangle {
 
     color: Theme.background
 
+    // closes the panel the page is on, as its close box does: a desktop window hides (the bar's button follows it);
+    // the tablet goes back to its home screen. Explore closes itself so a hop isn't watched from behind it.
+    function closePanel() {
+        for (var item = page.parent; item; item = item.parent) {
+            if (item.hasOwnProperty("shown") && item.windowClosed !== undefined) {
+                item.shown = false;
+                item.windowClosed();
+                return;
+            }
+        }
+        var tablet = Tablet.getTablet("com.highfidelity.interface.tablet.system");
+        if (tablet) {
+            tablet.gotoHomeScreen();
+        }
+    }
+
     QQC2.ScrollView {
         id: scroll
         objectName: "pageScroll"   // a test can scroll the page by it
