@@ -1782,6 +1782,13 @@ void Application::initializeGL() {
     // Enable this for debugging chromium
     // chromiumFlags << "--enable-logging" << "--log-level=0" << "--v=1";
 
+    // DARKRIDE_CHROMIUM_FLAGS adds switches of the caller's: QTWEBENGINE_CHROMIUM_FLAGS is set here, so switches on the
+    // command line or in that variable from outside never reach the web views (performance's VT-service tests, 10-25)
+    const QString extraChromiumFlags = qEnvironmentVariable("DARKRIDE_CHROMIUM_FLAGS").trimmed();
+    if (!extraChromiumFlags.isEmpty()) {
+        chromiumFlags << extraChromiumFlags.split(' ', Qt::SkipEmptyParts);
+    }
+
     // Ensure all Qt webengine processes launched from us have the appropriate command line flags
     if (!chromiumFlags.empty()) {
         qputenv("QTWEBENGINE_CHROMIUM_FLAGS", chromiumFlags.join(' ').toLocal8Bit());
