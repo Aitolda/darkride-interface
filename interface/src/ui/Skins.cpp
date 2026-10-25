@@ -545,7 +545,8 @@ void setWindowSheet(QMainWindow* window, const QString& part) {
     }
 }
 
-// the QML panels' share: colours, and each frame's pictures as file: addresses with its slice and padding
+// the QML panels' share: colours, each frame's pictures as file: addresses with its slice and padding, and the
+// decorations on a panel
 QVariantMap panelSkin(const Skin& skin) {
     QVariantMap frames;
     for (auto it = skin.frames.begin(); it != skin.frames.end(); ++it) {
@@ -557,8 +558,21 @@ QVariantMap panelSkin(const Skin& skin) {
         frame["padding"] = QVariantList { it->padding[0], it->padding[1], it->padding[2], it->padding[3] };
         frames[it.key()] = frame;
     }
+    // the decorations on a panel, which the QML panels draw over their frame (qml/darkride/panel/SkinDecorations.qml)
+    QVariantList decorations;
+    for (const auto& decoration : skin.decorations) {
+        if (decoration.on != "panel") {
+            continue;
+        }
+        decorations.append(QVariantMap {
+            { "source", QUrl::fromLocalFile(decoration.image).toString() },
+            { "at", decoration.at },
+            { "offset", QVariantList { decoration.offset.x(), decoration.offset.y() } },
+            { "size", decoration.size.isValid() ? QVariantList { decoration.size.width(), decoration.size.height() } : QVariantList() },
+            { "stretch", decoration.stretch } });
+    }
     return QVariantMap { { "name", skin.name }, { "colors", skin.colors }, { "frames", frames },
-                         { "fontFamily", skin.fontFamily } };
+                         { "fontFamily", skin.fontFamily }, { "decorations", decorations } };
 }
 
 }   // namespace
