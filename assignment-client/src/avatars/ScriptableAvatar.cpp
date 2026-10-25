@@ -364,6 +364,16 @@ void ScriptableAvatar::update(float deltatime) {
             _headJoints.clear();
             _neckJoints.clear();
             _loggedHeadHeight = false;
+            // the joints numbered as the skeleton numbers them, which is the order of _jointData and of every viewer's
+            // rig: an .fst's jointIndex lines can count differently (the default avatar's are 2 off from the Neck
+            // on), and Avatar.getJointIndex then named the wrong joint
+            QWriteLocker writeLock(&_jointDataLock);
+            _fstJointNames.clear();
+            _fstJointIndices.clear();
+            for (int i = 0; i < _animSkeleton->getNumJoints(); i++) {
+                _fstJointNames.append(_animSkeleton->getJointName(i));
+                _fstJointIndices.insert(_fstJointNames.last(), i + 1);
+            }
         }
         AnimPoseVec poses;
         bool ended = false;
