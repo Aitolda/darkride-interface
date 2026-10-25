@@ -110,6 +110,13 @@ public slots:
      */
     void playAvatarSound(SharedSoundPointer avatarSound) const { _agent->playAvatarSound(avatarSound); }
 
+    /*@jsdoc
+     * Stops the sound <code>playAvatarSound</code> is playing, if any. <code>avatarSoundFinished</code> is
+     * triggered with <code>false</code>.
+     * @function Agent.stopAvatarSound
+     */
+    void stopAvatarSound() const { _agent->stopAvatarSound(); }
+
     /**jsdoc
      * Takes what the agent has heard since the last call: the mixed audio the audio mixer sends this agent,
      * as 16-bit signed mono PCM at 24,000 Hz. Empty unless <code>isListeningToAudioStream == true</code>.
@@ -118,6 +125,32 @@ public slots:
      * @returns {ArrayBuffer} The audio heard since the last call.
      */
     QByteArray takeHeardAudio() const { return _agent->takeHeardAudio(); }
+
+signals:
+    /*@jsdoc
+     * Triggered when a sound <code>playAvatarSound</code> played is over: with <code>true</code> when it was
+     * played to its end, <code>false</code> when it was cut short (by <code>stopAvatarSound</code> or another
+     * <code>playAvatarSound</code>) or could not be loaded.
+     * @function Agent.avatarSoundFinished
+     * @param {boolean} completed - <code>true</code> if the sound was played to its end.
+     * @returns {Signal}
+     * @example <caption>Say one line, then the next.</caption>
+     * (function () {
+     *     Agent.isAvatar = true;
+     *     var lines = [SoundCache.getSound(Script.resolvePath("hello.wav")),
+     *                  SoundCache.getSound(Script.resolvePath("follow-me.wav"))];
+     *     Agent.avatarSoundFinished.connect(function (completed) {
+     *         lines.shift();
+     *         if (completed && lines.length > 0) {
+     *             Agent.playAvatarSound(lines[0]);
+     *         }
+     *     });
+     *     Script.setTimeout(function () { // Give the sounds time to load.
+     *         Agent.playAvatarSound(lines[0]);
+     *     }, 1000);
+     * }());
+     */
+    void avatarSoundFinished(bool completed);
 
 private:
     Agent* _agent;

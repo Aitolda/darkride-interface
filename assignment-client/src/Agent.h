@@ -68,6 +68,8 @@ public slots:
     void run() override;
 
     void playAvatarSound(SharedSoundPointer avatarSound);
+    // the sound playAvatarSound plays is cut short (avatarSoundFinished(false))
+    void stopAvatarSound();
 
     void setIsAvatar(bool isAvatar);
     bool isAvatar() const { return _isAvatar; }
@@ -82,6 +84,11 @@ public slots:
      * @returns {ArrayBuffer} The audio heard since the last call.
      */
     Q_INVOKABLE QByteArray takeHeardAudio();
+
+signals:
+    // a sound playAvatarSound played is over: completed when it was played to its end, not when it was cut short (by
+    // stopAvatarSound or another playAvatarSound) or could not be loaded
+    void avatarSoundFinished(bool completed);
 
 private slots:
     void requestScript();
@@ -117,6 +124,7 @@ private:
     QMutex _heardAudioMutex;
 
     void setAvatarSound(SharedSoundPointer avatarSound) { _avatarSound = avatarSound; }
+    void finishAvatarSound(bool completed);
 
     void queryAvatars();
 

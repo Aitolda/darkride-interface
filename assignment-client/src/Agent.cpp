@@ -147,12 +147,31 @@ void Agent::playAvatarSound(SharedSoundPointer sound) {
         QMetaObject::invokeMethod(this, "playAvatarSound", Q_ARG(SharedSoundPointer, sound));
         return;
     } else {
-        // TODO: seems to add occasional artifact in tests.  I believe it is
-        // correct to do this, but need to figure out for sure, so commenting this
-        // out until I verify.
-        // _numAvatarSoundSentBytes = 0;
+        // a sound still playing is cut short, and the new one starts at its beginning: kept at the old one's offset, a
+        // shorter sound was read from past its end
+        if (_avatarSound) {
+            finishAvatarSound(false);
+        }
         setAvatarSound(sound);
     }
+}
+
+void Agent::stopAvatarSound() {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "stopAvatarSound");
+        return;
+    }
+    if (_avatarSound) {
+        finishAvatarSound(false);
+    }
+}
+
+void Agent::finishAvatarSound(bool completed) {
+    _avatarSound.clear();
+    _numAvatarSoundSentBytes = 0;
+    _flushEncoder = true;
+    _shouldMuteRecordingAudio = false;
+    emit avatarSoundFinished(completed);
 }
 
 void Agent::handleOctreePacket(QSharedPointer<ReceivedMessage> message, SharedNodePointer senderNode) {
@@ -837,6 +856,10 @@ void Agent::processAgentAvatarAudio() {
         int16_t numAvailableSamples = AudioConstants::NETWORK_FRAME_SAMPLES_PER_CHANNEL;
         const int16_t* nextSoundOutput = NULL;
 
+        if (_avatarSound && _avatarSound->isFailed()) {
+            // a sound that could not be loaded never plays: it is over, not completed
+            finishAvatarSound(false);
+        }
         if (_avatarSound && _avatarSound->isReady()) {
             if (isPlayingRecording && !_shouldMuteRecordingAudio) {
                 _shouldMuteRecordingAudio = true;
@@ -862,15 +885,8 @@ void Agent::processAgentAvatarAudio() {
 
             _numAvatarSoundSentBytes += numAvailableBytes;
             if (_numAvatarSoundSentBytes == (int)audioData->getNumBytes()) {
-                // we're done with this sound object - so set our pointer back to NULL
-                // and our sent bytes back to zero
-                _avatarSound.clear();
-                _numAvatarSoundSentBytes = 0;
-                _flushEncoder = true;
-
-                if (_shouldMuteRecordingAudio) {
-                    _shouldMuteRecordingAudio = false;
-                }
+                // we're done with this sound object: played to its end
+                finishAvatarSound(true);
             }
         }
 
