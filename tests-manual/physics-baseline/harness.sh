@@ -73,13 +73,14 @@ wall() {
             > "$R/$1-home/config/Tivoli Cloud VR - dev/Interface.json"
 }
 
-# --pid $$: the lock is this runner's ($$ is the runner's shell in a background client too) and is freed when it exits
+# --pid $$: the lock is this runner's ($$ is the runner's shell in a background client too) and is freed when it exits;
+# LOCK_PID=<pid> ties it to another process instead (a launcher that returns while its client runs, as social's does)
 lock_take() {
     if [ ! -x "$MACHINE_LOCK" ]; then
-        [ -n "$_lock_said" ] || echo "no machine lock at $MACHINE_LOCK: going on without one"
+        [ -n "${_lock_said:-}" ] || echo "no machine lock at $MACHINE_LOCK: going on without one"
         _lock_said=1; return 0
     fi
-    "$MACHINE_LOCK" take "$SESSION" "${1:-test run $(basename "$R")}" "${2:-30}" --pid $$ ${3:+"$3"}
+    "$MACHINE_LOCK" take "$SESSION" "${1:-test run $(basename "$R")}" "${2:-30}" --pid "${LOCK_PID:-$$}" ${3:+"$3"}
 }
 
 lock_give() {
@@ -92,15 +93,21 @@ lock_give() {
 # Each logs "invalidated because the client process (pid N) ... exited" and stays alive. Only the helpers whose own log
 # names this client are stopped, by pid, after checking the pid is still that service: never another app's.
 stop_client_helpers() {
-    /usr/bin/log show --start "$2" --style compact --predicate \
+    _helpers=$(/usr/bin/log show --start "$2" --style compact --predicate \
         "(process == \"VTDecoderXPCService\" OR process == \"VTEncoderXPCService\" OR process == \"com.apple.SafariPlatformSupport.Helper\") AND eventMessage CONTAINS \"client process (pid $1)\"" \
         2>/dev/null |
-        grep -oE '(VTDecoderXPCService|VTEncoderXPCService|com\.apple\.SafariPlatformSupport\.Helper)\[[0-9]+' | sort -u |
-        while IFS='[' read -r _service _hpid; do
+        grep -oE '(VTDecoderXPCService|VTEncoderXPCService|com\.apple\.SafariPlatformSupport\.Helper)\[[0-9]+' | sort -u)
+    [ -n "$_helpers" ] || return 0
+    # SIGTERM, then after 3 s SIGKILL for any that's still alive and still that service (social's fallback)
+    for _signal in TERM KILL; do
+        [ "$_signal" = TERM ] || sleep 3
+        for _helper in $(printf '%s\n' "$_helpers"); do
+            _service=${_helper%%\[*}; _hpid=${_helper##*\[}
             if ps -o command= -p "$_hpid" 2>/dev/null | grep -q "$_service"; then
-                kill -TERM "$_hpid" && echo "stopped $_service $_hpid, left by client $1"
+                kill -"$_signal" "$_hpid" && echo "stopped $_service $_hpid ($_signal), left by client $1"
             fi
         done
+    done
 }
 
 client_start() {
@@ -131,7 +138,7 @@ client_start() {
         set -- --env "$_var=$_value" "$@"
     done
     : > "$_log"
-    if [ -n "$CLIENT_FOREGROUND" ]; then
+    if [ -n "${CLIENT_FOREGROUND:-}" ]; then
         # in front, for a client someone plays: macOS and Qt activate it as a normal launch would
         open -n -W --stdout "$_log" --stderr "$_log" "$@" &
     else
@@ -163,7 +170,7 @@ client() {
     XDG_CONFIG_HOME="$R/$_name-home/config" TIVOLI_APP_DATA_DIR="$R/$_name-home/data" \
         client_start "$R/$_name.log" --allowMultipleInstances --tokens "{}" "$@"
     _status=$?
-    [ -n "$KEEP_KTX" ] || rm -rf "$R/$_name-home/data/ktx_cache"
+    [ -n "${KEEP_KTX:-}" ] || rm -rf "$R/$_name-home/data/ktx_cache"
     return $_status
 }
 
