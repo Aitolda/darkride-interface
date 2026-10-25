@@ -39,11 +39,9 @@
 #include <QtWidgets/QAction>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QFileDialog>
-#include <QtWidgets/QInputDialog>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QMenu>
-#include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QTextEdit>
@@ -92,6 +90,7 @@
 #include "PropertySpec.h"
 #include "ui/AssetsPanel.h"
 #include "ui/PanelTheme.h"
+#include "ui/Popup.h"
 #include "ui/HierarchyPanel.h"
 #include "ui/InspectorPanel.h"
 #include "ui/PropertyEditors.h"
@@ -2277,18 +2276,8 @@ void Editor::rewriteStableLinks(const UserFiles& files) {
     qCDebug(interfaceapp) << "Use Stable Links:" << rewritten << "links in" << changed.size() << "entities;" << missing.size()
                           << "not in My Files;" << lockedLinks << "on locked entities";
 
-    // the report
-    QString summary;
-    if (rewritten > 0) {
-        summary = QString("%1 %2 to your files in %3 %4 now %5 the stable form, which keeps working when a file is moved or "
-                          "renamed. Undo puts them back.")
-                      .arg(rewritten).arg(rewritten == 1 ? "link" : "links").arg(changed.size())
-                      .arg(changed.size() == 1 ? "entity" : "entities").arg(rewritten == 1 ? "uses" : "use");
-    } else if (missing.isEmpty() && lockedLinks == 0) {
-        summary = "Nothing to change: no link in this world names one of your files by its path.";
-    } else {
-        summary = "No links were changed.";
-    }
+    // the report, in Darkride's popups (ui/Popup.h): a banner when every link it could change was changed, an alert
+    // with the reasons behind Details when some were left as they were
     QStringList notes;
     if (scriptsRestarting > 0) {
         notes << QString("%1 %2 with the new links.").arg(scriptsRestarting)
@@ -2307,21 +2296,34 @@ void Editor::rewriteStableLinks(const UserFiles& files) {
     }
     setStatus(rewritten > 0 ? QString("Use Stable Links: %1 %2 changed").arg(rewritten).arg(rewritten == 1 ? "link" : "links")
                             : QString("Use Stable Links: nothing changed"), STATUS_CLEAR_MS);
-    QMessageBox box(qApp->getWindow());
-    box.setWindowTitle(undoText);
-    box.setIcon(QMessageBox::Information);
-    box.setText(summary);
-    if (!notes.isEmpty()) {
-        box.setInformativeText(notes.join("\n\n"));
+    const int leftAlone = missing.size() + lockedLinks;
+    const QString title = QString("%1 %2 now stable").arg(rewritten).arg(rewritten == 1 ? "link" : "links");
+    const QString changedLine = QString("In %1 %2: %3 working when a file is moved or renamed. Undo puts %4 back.")
+                                    .arg(changed.size()).arg(changed.size() == 1 ? "entity" : "entities")
+                                    .arg(rewritten == 1 ? "it keeps" : "they keep").arg(rewritten == 1 ? "it" : "them");
+    if (leftAlone == 0) {
+        if (rewritten > 0) {
+            new popup::Banner(popup::appIcon(), title,
+                              changedLine + (scriptsRestarting > 0 ? " " + notes.first() : QString()), qApp->getWindow());
+        } else {
+            new popup::Banner(popup::appIcon(), "Nothing to change",
+                              "No link in this world names one of your files by its path.", qApp->getWindow());
+        }
+        return;
     }
+    QString details = (rewritten > 0 ? QStringList(changedLine) + notes : notes).join("\n\n");
     if (!missing.isEmpty()) {
         QStringList shown = missing.mid(0, MISSING_SHOWN);
         if (missing.size() > MISSING_SHOWN) {
             shown << QString("… and %1 more").arg(missing.size() - MISSING_SHOWN);
         }
-        box.setDetailedText(shown.join('\n'));
+        details += "\n\nNot in My Files:\n" + shown.join('\n');
     }
-    box.exec();
+    popup::Alert alert(popup::appIcon(), rewritten > 0 ? title : QString("No links were changed"),
+                       QString("%1 %2 left as %3 %4.").arg(leftAlone).arg(leftAlone == 1 ? "link was" : "links were")
+                           .arg(leftAlone == 1 ? "it" : "they").arg(leftAlone == 1 ? "was" : "were"),
+                       details, { { "OK", popup::Role::Default } }, qApp->getWindow());
+    alert.exec();
 }
 
 void Editor::frameSelection() {
@@ -2876,11 +2878,13 @@ void Editor::importEntitiesFromUrl() {
     if (!_active || !editable()) {
         return;
     }
-    bool ok = false;
-    QString url = QInputDialog::getText(qApp->getWindow(), "Import Entities from URL",
-        "Address of an entities file (.json, .json.gz or .svo):", QLineEdit::Normal, QString(), &ok).trimmed();
-    if (ok && !url.isEmpty()) {
-        importEntities(url);
+    const popup::Field field { "https://…", QString() };
+    popup::Alert alert(popup::appIcon(), "Import Entities from URL", "A link to an entities file: .json, .json.gz or .svo.",
+                       QString(), { { "Cancel", popup::Role::Cancel }, { "Import", popup::Role::Default } },
+                       qApp->getWindow(), &field);
+    alert.exec();
+    if (alert.answer() == 1) {
+        importEntities(alert.fieldText());
     }
 }
 
@@ -3224,10 +3228,12 @@ void Editor::createModelAt(const glm::vec3& point) {
     if (!_active || !editable()) {
         return;
     }
-    bool ok = false;
-    QString text = QInputDialog::getText(qApp->getWindow(), "Create Model", "Model URL (.glb, .gltf, .fbx or .obj):",
-        QLineEdit::Normal, QString(), &ok).trimmed();
-    if (!ok || text.isEmpty()) {
+    const popup::Field field { "https://…", QString() };
+    popup::Alert alert(popup::appIcon(), "Create Model", "A link to a .glb, .gltf, .fbx or .obj file.", QString(),
+                       { { "Cancel", popup::Role::Cancel }, { "Create", popup::Role::Default } }, qApp->getWindow(), &field);
+    alert.exec();
+    const QString text = alert.fieldText();
+    if (alert.answer() != 1 || text.isEmpty()) {
         return;
     }
     QUrl url(text);
