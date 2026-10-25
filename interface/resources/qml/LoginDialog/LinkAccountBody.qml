@@ -49,8 +49,19 @@ Item {
         readonly property int minHeight: 120
         readonly property int minHeightButton: 36
         property int maxHeight: root.height
+        property bool resizing: false
 
         function resize() {
+            // The desktop's page fills the window (LoginDialog.qml binds root's size to it): nothing to fit. And the size
+            // this works out is root's own plus a step (mainContainer follows root), so every call grew it: called a
+            // moment later (Qt.callLater, 10-25 morning), each call set off the next, at every pass of the event loop,
+            // the form slid off the bottom and the main thread never rested (Caity's MacBook, 10-25: only the navy
+            // showed, and nothing could be clicked). The tablet's and the headset's dialogs still fit their content,
+            // at once and once: root's change calls back here, and is let go.
+            if ((!root.isTablet && !root.isOverlay) || resizing) {
+                return;
+            }
+            resizing = true;
             maxWidth = root.width;
             maxHeight = root.height;
             var targetWidth = Math.max(titleWidth, mainContainer.width);
@@ -62,6 +73,7 @@ Item {
             }
 
             parent.height = root.height = Math.max(d.minHeight, Math.min(d.maxHeight, targetHeight)) + hifi.dimensions.contentSpacing.y;
+            resizing = false;
         }
     }
 
@@ -92,8 +104,7 @@ Item {
         id: mainContainer
         width: root.width
         height: root.height
-        // later, not in the change itself: resize() sets root's size, which this item's binds to (a binding loop)
-        onHeightChanged: Qt.callLater(d.resize); onWidthChanged: Qt.callLater(d.resize);
+        onHeightChanged: d.resize(); onWidthChanged: d.resize();
 
         LoginDialog.LoginDialogLightbox {
             id: lightboxPopup;
