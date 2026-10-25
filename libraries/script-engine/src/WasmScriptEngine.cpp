@@ -80,7 +80,10 @@ const QString ENTITY_UNLOAD_EXPORT = QStringLiteral("entity_unload");
 const QString ENTITY_HAS_EXPORT = QStringLiteral("entity_has");
 const QString ENTITY_CALL_EXPORT = QStringLiteral("entity_call");
 
-Setting::Handle<bool> runJavaScriptOnWebAssemblySetting { "scripting/runJavaScriptOnWebAssembly", false };
+// The way back to QtScript, off unless chosen (Developer > Scripting > Run JavaScript on QtScript). Its own key since
+// the flip (2026-10-25): the menu saved the old setting's state as "off" in every client that ever ran, so a new
+// default under the old key would never have reached them.
+Setting::Handle<bool> runJavaScriptOnQtScriptSetting { "scripting/runJavaScriptOnQtScript", false };
 
 // An instance as a callback target: a callback decoded by the instance's codec calls back through it. It
 // outlives the instance as a weak reference in the callbacks; a gone instance answers nothing.
@@ -203,15 +206,19 @@ std::shared_ptr<WasmRuntime> WasmScriptEngine::runtime() {
 }
 
 bool WasmScriptEngine::runJavaScriptOnWebAssembly() {
-    // DARKRIDE_RUN_JS_ON_WASM=1 in the environment turns the setting on for one process (test runs, a server)
+    // for one process (a server, a test run): DARKRIDE_RUN_JS_ON_QTSCRIPT=1 is the way back to QtScript, and
+    // DARKRIDE_RUN_JS_ON_WASM=1 or 0 chooses either engine; otherwise the setting, the new engine unless it says no
+    if (qEnvironmentVariable("DARKRIDE_RUN_JS_ON_QTSCRIPT") == "1") {
+        return false;
+    }
     if (qEnvironmentVariableIsSet("DARKRIDE_RUN_JS_ON_WASM")) {
         return qEnvironmentVariable("DARKRIDE_RUN_JS_ON_WASM") == "1";
     }
-    return runJavaScriptOnWebAssemblySetting.get();
+    return !runJavaScriptOnQtScriptSetting.get();
 }
 
 void WasmScriptEngine::setRunJavaScriptOnWebAssembly(bool on) {
-    runJavaScriptOnWebAssemblySetting.set(on);
+    runJavaScriptOnQtScriptSetting.set(!on);
 }
 
 namespace {

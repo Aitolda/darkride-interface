@@ -2447,7 +2447,7 @@ void ScriptEngine::loadEntityScript(const EntityItemID& entityID, const QString&
     if (WasmScriptEngine::isWasmScript(entityScript)) {
         // a module runs on the WebAssembly engine; this engine cannot host it
         newDetails.status = EntityScriptStatus::ERROR_LOADING_SCRIPT;
-        newDetails.errorInfo = "a WebAssembly entity script needs the entities engine on WebAssembly (Developer > Scripting > Run JavaScript on WebAssembly)";
+        newDetails.errorInfo = "a WebAssembly entity script needs the entities engine on WebAssembly (untick Developer > Scripting > Run JavaScript on QtScript)";
         setEntityScriptDetails(entityID, newDetails);
         scriptWarningMessage(QString("entity script %1 (%2): %3").arg(entityScript, entityID.toString(), newDetails.errorInfo));
         return;
