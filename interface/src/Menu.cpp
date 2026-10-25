@@ -384,6 +384,24 @@ Menu::Menu() {
     startupLocatiopnGroup->addAction(addCheckableActionToQMenuAndActionHash(startupLocationMenu, MenuOption::LastLocation, 0, 
         true));
 
+    // Navigate > Walk Through Walls: your avatar not colliding with the world (noclip; Caity, 10-25: it belongs where the
+    // settings are, with a key). The same switch as MyAvatar.collisionsEnabled, the Avatar panel's "Collide with the
+    // world" and Settings > General's: the item follows it whichever way it changes
+    navigateMenu->addSeparator();
+    {
+        auto myAvatar = DependencyManager::get<AvatarManager>()->getMyAvatar();
+        QAction* walkThroughWalls = addCheckableActionToQMenuAndActionHash(navigateMenu, MenuOption::WalkThroughWalls,
+            [](bool checked) {
+                DependencyManager::get<AvatarManager>()->getMyAvatar()->setCollisionsEnabled(!checked);
+            },
+            Qt::CTRL | Qt::SHIFT | Qt::Key_N, myAvatar && !myAvatar->getCollisionsEnabled());
+        if (myAvatar) {
+            connect(myAvatar.get(), &MyAvatar::collisionsEnabledChanged, walkThroughWalls, [walkThroughWalls](bool enabled) {
+                walkThroughWalls->setChecked(!enabled);
+            });
+        }
+    }
+
     // Settings menu ----------------------------------
     MenuWrapper* settingsMenu = addMenu("Settings");
 

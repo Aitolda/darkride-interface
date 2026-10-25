@@ -15,8 +15,9 @@
 #                                    client would otherwise hand its --url to one already running and exit) and
 #                                    --tokens "{}" (no sign-in), stdout and stderr to $R/<name>.log; the ktx cache
 #                                    is deleted when it exits (kept with KEEP_KTX=1, for a warm run of the same
-#                                    client next). Titled "Darkride - $SESSION - TEST, not yours" unless the runner
-#                                    passes its own --clientLabel. Takes the machine lock first (lock_take), unless
+#                                    client next). Titled "Darkride - $SESSION - TEST, not yours" ("QUIET TEST" while
+#                                    the lock is held --quiet) unless the runner passes its own --clientLabel; the
+#                                    client takes its Dock icon from those words (TestClientIcon.h). Takes the machine lock first (lock_take), unless
 #                                    this run holds it already. Environment set by the caller (TIVOLI_PACKET_LOSS,
 #                                    TIVOLI_PACKET_DELAY_MS) passes through. On macOS it starts in the background,
 #                                    never in front of the window the user is typing in (see client_start).
@@ -140,7 +141,8 @@ client_start() {
     fi
     # -DarkrideTestRun <log> marks this client's command line (an AppKit default nothing reads), so its pid can be
     # found while it runs: open's own pid is $!, and pgrep for the binary alone could find someone else's client
-    set -- -a "$_app" --args -DarkrideTestRun "$_log" -NSAutoFillHeuristicsEnabled NO "$@"
+    # --allowMultipleInstances always: without it a client hands its arguments to a Darkride already running and quits
+    set -- -a "$_app" --args -DarkrideTestRun "$_log" -NSAutoFillHeuristicsEnabled NO --allowMultipleInstances "$@"
     for _var in $(env | grep -E '^(TIVOLI|HIFI|DARKRIDE|QT|XDG|DYLD)_[A-Za-z0-9_]*=' | cut -d= -f1); do
         eval "_value=\${$_var}"
         set -- --env "$_var=$_value" "$@"
@@ -187,7 +189,10 @@ client() {
     _name=$1; shift
     wall "$_name"
     lock_take || return 1
-    DARKRIDE_CLIENT_LABEL=${DARKRIDE_CLIENT_LABEL:-"Darkride - $SESSION - TEST, not yours"} \
+    # QUIET in the title (and the Dock icon) while this run holds the machine lock for a quiet timing run
+    _test="TEST"
+    [ ! -x "$MACHINE_LOCK" ] || ! "$MACHINE_LOCK" quiet || _test="QUIET TEST"
+    DARKRIDE_CLIENT_LABEL=${DARKRIDE_CLIENT_LABEL:-"Darkride - $SESSION - $_test, not yours"} \
     XDG_CONFIG_HOME="$R/$_name-home/config" TIVOLI_APP_DATA_DIR="$R/$_name-home/data" \
         client_start "$R/$_name.log" --allowMultipleInstances --tokens "{}" "$@"
     _status=$?
