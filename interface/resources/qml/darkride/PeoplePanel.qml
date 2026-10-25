@@ -237,10 +237,10 @@ Page {
         function join(username) {
             AddressManager.goToUser(username);
         }
-        // what kind of account a friend is, for their row's detail: "AI resident", "⚙ bot" (scripted logic, not AI;
-        // metaverse sends kind, and ai only for an AI resident), or "" for a person
+        // what kind of account a friend is, for their row's detail: "⚙ bot" (scripted logic, not AI), "AI resident",
+        // or "" for a person. kind comes first: metaverse also sends a bot ai true, for older clients (Caity, 10-25)
         function kindWord(friend) {
-            return friend.ai ? "AI resident" : friend.kind === "bot" ? "\u2699 bot" : "";
+            return friend.kind === "bot" ? "\u2699 bot" : friend.ai ? "AI resident" : "";
         }
         // for the rows drawn by an inline component, which can't reach the page's id
         function showProfile(username) {
@@ -522,7 +522,7 @@ Page {
                             font.pixelSize: Theme.bodySize
                         }
                         // what kind of account: an AI resident, or a bot (scripted logic, not AI; Caity, 10-25: metaverse sends
-                        // kind "bot", with ai false); a person gets no line
+                        // kind "bot", and ai true for older clients, so kind comes first); a person gets no line
                         Text {
                             readonly property bool bot: !!profile.data && profile.data.kind === "bot"
                             visible: !!profile.data && (profile.data.ai || bot)
