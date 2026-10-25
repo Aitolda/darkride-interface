@@ -114,11 +114,13 @@ const QVector<EditorCreate::Item>& EditorCreate::items() {
         { "track", "Track", "", EntityTypes::Track },
         { "trackcar", "Track Car", "", EntityTypes::Shape },
         // ready-made things (Caity, 10-24): a mirror, and vehicles to drive at once, the Test Track's own as physics
-        // tuned them (tests-manual/physics-baseline: landrover.js, aircraft-rig.js, airship-rig.js; the monorail's
+        // tuned them (tests-manual/physics-baseline: landrover.js, kart-rig.js, aircraft-rig.js, airship-rig.js; the monorail's
         // loop and car). Later here: a scripted-avatar slot, a sound emitter, a wind source
         { "mirror", "Mirror", "Special items", EntityTypes::Shape, true },
         { "vehicle-car", "Car", "Special items/Vehicles", EntityTypes::Box, false, "editor/vehicles/car.json", 0.0f, false,
           "A four-wheeled car: get in its driver's seat to drive" },
+        { "vehicle-kart", "Go-kart", "Special items/Vehicles", EntityTypes::Box, false, "editor/vehicles/kart.json", 0.0f, false,
+          "A one-seat go-kart, small enough for a doorway" },
         { "vehicle-rail", "Rail", "Special items/Vehicles", EntityTypes::Track, false, "editor/vehicles/rail.json", 20.0f,
           false, "A loop of monorail track with a car that stops at its station: walk up the ramp to the platform to board" },
         { "vehicle-airship", "Airship", "Special items/Vehicles", EntityTypes::Box, false, "editor/vehicles/airship.json",
