@@ -37,6 +37,9 @@
     var CAMERA_BACK = 7.0;       // m behind the vehicle
     var CAMERA_UP = 2.5;         // m above it
     var CAMERA_RATE = 6.0;       // per second: how fast the camera settles behind the vehicle
+    var CAMERA_BACK_MIN = 3.2;   // m: a small vehicle's camera (a go-kart's) comes this close, and no closer
+    var CAMERA_UP_MIN = 1.5;     // m
+    var CAMERA_RATE_MAX = 9.0;   // per second: and settles this quickly
     var REVERSE_SPEED = 0.5;     // m/s: pressing against the direction of travel brakes above this speed
     var STAND_KEY = "f";
     var DRIVE_KEYS = [DriveKeys.TRANSLATE_X, DriveKeys.TRANSLATE_Y, DriveKeys.TRANSLATE_Z, DriveKeys.YAW, DriveKeys.STEP_YAW,
@@ -350,12 +353,17 @@
             }
             Entities.setVehicleControls(seated.vehicleID, { throttle: forward, steering: steering, brake: brake, handBrake: handBrake });
         }
-        // the chase camera, behind and above, settling at a rate so a bump does not swing it
-        var wanted = Vec3.sum(properties.position, Vec3.sum(Vec3.multiply(-CAMERA_BACK, front), { x: 0, y: CAMERA_UP, z: 0 }));
+        // the chase camera, behind and above, settling at a rate so a bump does not swing it: by the vehicle's length,
+        // the rover's (3.6 m) at CAMERA_BACK and CAMERA_UP, a go-kart's (1.45 m) low, near and quick
+        var length = properties.dimensions.z;
+        var back = Math.max(CAMERA_BACK_MIN, Math.min(CAMERA_BACK, 2.0 * length));
+        var up = Math.max(CAMERA_UP_MIN, Math.min(CAMERA_UP, 0.7 * length));
+        var rate = Math.max(CAMERA_RATE, Math.min(CAMERA_RATE_MAX, CAMERA_RATE * 3.6 / length));
+        var wanted = Vec3.sum(properties.position, Vec3.sum(Vec3.multiply(-back, front), { x: 0, y: up, z: 0 }));
         if (!cameraPosition) {
             cameraPosition = wanted;
         } else {
-            cameraPosition = Vec3.mix(cameraPosition, wanted, 1 - Math.exp(-dt * CAMERA_RATE));
+            cameraPosition = Vec3.mix(cameraPosition, wanted, 1 - Math.exp(-dt * rate));
         }
         var pivot = Vec3.sum(properties.position, { x: 0, y: 1, z: 0 });
         Camera.position = keptOutOfWalls(pivot, cameraPosition, dt);
