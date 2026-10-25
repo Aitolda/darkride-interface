@@ -116,6 +116,7 @@ using namespace std;
 
 QSharedPointer<OffscreenUi> getOffscreenUI();            // Application.cpp's
 QString labelledTitle(const QString& title);             // Display.cpp's: a window title with the client label
+void applyClientLabelIcon();                            // Display.cpp's: a test client's Dock icon, from the label
 
 QTimer locationUpdateTimer;   // started by the constructor, stopped in ApplicationShutdown.cpp
 
@@ -502,6 +503,7 @@ void Application::startServices() {
 
     StartupProfiler::phase("constructor: node list thread, address manager");
     _window->setWindowTitle(labelledTitle("Darkride"));
+    applyClientLabelIcon();
 
     Model::setAbstractViewStateInterface(this); // The model class will sometimes need to know view state details from us
 
