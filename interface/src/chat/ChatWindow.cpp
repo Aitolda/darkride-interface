@@ -26,6 +26,7 @@
 #include <QtGui/QPainter>
 #include <QtGui/QPainterPath>
 #include <QtGui/QResizeEvent>
+#include <QtGui/QScreen>
 #include <QtGui/QClipboard>
 #include <QtGui/QTextCursor>
 #include <QtGui/QTextFrame>
@@ -461,6 +462,20 @@ private:
     bool _releasing { false };
 };
 
+// the chat panel floating at its first size in the middle of the main window, kept on the main window's screen (a main
+// window near the screen's edge would have it hang off)
+static void placeFloating(QDockWidget* panel, QWidget* window) {
+    QRect screen = window->screen() ? window->screen()->availableGeometry() : QRect();
+    QRect rect(QPoint(), screen.isValid() ? FLOATING_SIZE.boundedTo(screen.size()) : FLOATING_SIZE);
+    rect.moveCenter(window->geometry().center());
+    if (screen.isValid()) {
+        rect.moveLeft(std::max(screen.left(), std::min(rect.left(), screen.right() + 1 - rect.width())));
+        rect.moveTop(std::max(screen.top(), std::min(rect.top(), screen.bottom() + 1 - rect.height())));
+    }
+    panel->resize(rect.size());
+    panel->move(rect.topLeft());
+}
+
 QDockWidget* ChatWindow::dock() {
     if (!_dock) {
         gl::ViewChangeGuard guard;
@@ -472,8 +487,7 @@ QDockWidget* ChatWindow::dock() {
         _dock->setFloating(true);
         QByteArray geometry = chatWindowGeometry.get();
         if (geometry.isEmpty() || !_dock->restoreGeometry(geometry)) {
-            _dock->resize(FLOATING_SIZE);
-            _dock->move(window->geometry().center() - _dock->rect().center());
+            placeFloating(_dock, window);
         }
         // shown by the main window's saved layout, or a drag: the chat in it, made the first time
         connect(_dock.data(), &QDockWidget::visibilityChanged, _dock.data(), [](bool visible) {
@@ -493,8 +507,7 @@ void ChatWindow::resetDock() {
     gl::ViewChangeGuard guard;
     QDockWidget* panel = dock();
     panel->setFloating(true);
-    panel->resize(FLOATING_SIZE);
-    panel->move(qApp->getWindow()->geometry().center() - panel->rect().center());
+    placeFloating(panel, qApp->getWindow());
 }
 
 ChatWindow* ChatWindow::content() {
