@@ -1,0 +1,148 @@
+{
+ "DataVersion": 0,
+ "Entities": [
+  {
+   "id": "{b9c9957d-8de5-4238-81d0-95131a81bb3e}",
+   "type": "Track",
+   "name": "Monorail loop",
+   "position": {
+    "x": 0,
+    "y": 4.0,
+    "z": 0
+   },
+   "dimensions": {
+    "x": 22.9,
+    "y": 10.0,
+    "z": 32.9
+   },
+   "trackPoints": [
+    {
+     "x": 10.0,
+     "y": 0,
+     "z": 0.0
+    },
+    {
+     "x": 10.0,
+     "y": 0,
+     "z": -5.0
+    },
+    {
+     "x": 7.071,
+     "y": 0,
+     "z": -12.071
+    },
+    {
+     "x": 0.0,
+     "y": 0,
+     "z": -15.0
+    },
+    {
+     "x": -7.071,
+     "y": 0,
+     "z": -12.071
+    },
+    {
+     "x": -10.0,
+     "y": 0,
+     "z": -5.0
+    },
+    {
+     "x": -10.0,
+     "y": 0,
+     "z": 5.0
+    },
+    {
+     "x": -7.071,
+     "y": 0,
+     "z": 12.071
+    },
+    {
+     "x": -0.0,
+     "y": 0,
+     "z": 15.0
+    },
+    {
+     "x": 7.071,
+     "y": 0,
+     "z": 12.071
+    },
+    {
+     "x": 10.0,
+     "y": 0,
+     "z": 5.0
+    }
+   ],
+   "trackBank": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "trackDwell": [
+    8.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "trackClosed": true,
+   "trackSpeed": 6,
+   "trackAcceleration": 1.2,
+   "trackProfile": "beam",
+   "trackWidth": 0.9,
+   "trackHeight": 1.1,
+   "trackClearance": 0.7,
+   "trackPylonSpacing": 12,
+   "trackPylonFloor": -4.0,
+   "color": {
+    "red": 215,
+    "green": 215,
+    "blue": 222
+   }
+  },
+  {
+   "id": "{bb1fb276-44f7-4b23-8cb1-d3c492290df5}",
+   "type": "Box",
+   "shape": "Cube",
+   "name": "Monorail car",
+   "position": {
+    "x": 10.0,
+    "y": 5.95,
+    "z": 0.0
+   },
+   "dimensions": {
+    "x": 2.4,
+    "y": 1.4,
+    "z": 6.8
+   },
+   "color": {
+    "red": 32,
+    "green": 52,
+    "blue": 124
+   },
+   "frame": true,
+   "trackID": "{b9c9957d-8de5-4238-81d0-95131a81bb3e}",
+   "trackOffset": 0,
+   "dynamic": false,
+   "collisionless": false,
+   "grab": {
+    "grabbable": false
+   }
+  }
+ ],
+ "Id": "{172ff9bc-abaa-4e86-8f85-befe7a7ffe43}",
+ "Version": 141
+}

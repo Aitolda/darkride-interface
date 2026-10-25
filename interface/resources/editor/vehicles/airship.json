@@ -1,0 +1,305 @@
+{
+ "DataVersion": 0,
+ "Entities": [
+  {
+   "id": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "type": "Box",
+   "shape": "Cube",
+   "name": "Airship",
+   "position": {
+    "x": 0,
+    "y": 0.25,
+    "z": 0
+   },
+   "dimensions": {
+    "x": 4,
+    "y": 0.4,
+    "z": 14
+   },
+   "color": {
+    "red": 120,
+    "green": 90,
+    "blue": 50
+   },
+   "dynamic": true,
+   "collisionless": false,
+   "gravity": {
+    "x": 0,
+    "y": -9.8,
+    "z": 0
+   },
+   "damping": 0.0,
+   "angularDamping": 0.05,
+   "friction": 0.6,
+   "restitution": 0.0,
+   "frame": true,
+   "grab": {
+    "grabbable": false
+   },
+   "vehicle": {
+    "type": "airship",
+    "mass": 1350,
+    "centerOfMass": {
+     "x": 0,
+     "y": -0.3,
+     "z": 0
+    },
+    "seats": "[{\"name\": \"helm\", \"position\": [0, 0.2, -4.6], \"yaw\": 0, \"driver\": true}]",
+    "envelopeVolume": 1500,
+    "centerOfBuoyancy": {
+     "x": 0,
+     "y": 7,
+     "z": 0
+    },
+    "gasDensity": 0.1786,
+    "maxThrust": 4000,
+    "maxVerticalThrust": 3000,
+    "thrustPoint": {
+     "x": 0,
+     "y": 0.5,
+     "z": 2
+    },
+    "dragArea": {
+     "x": 450,
+     "y": 300,
+     "z": 12
+    },
+    "angularDragArea": {
+     "x": 400000,
+     "y": 400000,
+     "z": 20000
+    },
+    "rudderArea": 12,
+    "elevatorArea": 12,
+    "finPoint": {
+     "x": 0,
+     "y": 7,
+     "z": 17
+    },
+    "maxFinAngle": 25,
+    "ballastRate": 20,
+    "ventRate": 0.01,
+    "ballast": 250,
+    "fill": 1
+   }
+  },
+  {
+   "id": "{46dfc8ce-6f51-44a3-aeb2-f74a5eb85a46}",
+   "type": "Shape",
+   "shape": "Sphere",
+   "name": "Airship envelope",
+   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "position": {
+    "x": 0,
+    "y": 7,
+    "z": 0
+   },
+   "dimensions": {
+    "x": 9,
+    "y": 9,
+    "z": 36
+   },
+   "color": {
+    "red": 220,
+    "green": 220,
+    "blue": 210
+   },
+   "dynamic": false,
+   "collisionless": true,
+   "grab": {
+    "grabbable": false
+   }
+  },
+  {
+   "id": "{3df58839-e738-4e52-ad06-7f1c25bf1e0f}",
+   "type": "Box",
+   "shape": "Cube",
+   "name": "Airship fin",
+   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "position": {
+    "x": 0,
+    "y": 7,
+    "z": 17
+   },
+   "dimensions": {
+    "x": 0.2,
+    "y": 6,
+    "z": 5
+   },
+   "color": {
+    "red": 180,
+    "green": 40,
+    "blue": 40
+   },
+   "dynamic": false,
+   "collisionless": true,
+   "grab": {
+    "grabbable": false
+   }
+  },
+  {
+   "id": "{718c7ae5-9611-499b-89f1-9ea4ae4a51e1}",
+   "type": "Box",
+   "shape": "Cube",
+   "name": "Airship fin",
+   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "position": {
+    "x": 0,
+    "y": 7,
+    "z": 17
+   },
+   "dimensions": {
+    "x": 6,
+    "y": 0.2,
+    "z": 5
+   },
+   "color": {
+    "red": 180,
+    "green": 40,
+    "blue": 40
+   },
+   "dynamic": false,
+   "collisionless": true,
+   "grab": {
+    "grabbable": false
+   }
+  },
+  {
+   "id": "{941a811a-c7c7-4332-a43c-1c6c1accca4b}",
+   "type": "Box",
+   "shape": "Cube",
+   "name": "Airship rail",
+   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "position": {
+    "x": 1.95,
+    "y": 0.7,
+    "z": 0
+   },
+   "dimensions": {
+    "x": 0.1,
+    "y": 1.0,
+    "z": 14
+   },
+   "color": {
+    "red": 80,
+    "green": 60,
+    "blue": 30
+   },
+   "dynamic": false,
+   "collisionless": false,
+   "grab": {
+    "grabbable": false
+   }
+  },
+  {
+   "id": "{d8b1cf08-94ee-432b-be12-07871c659969}",
+   "type": "Box",
+   "shape": "Cube",
+   "name": "Airship rail",
+   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "position": {
+    "x": -1.95,
+    "y": 0.7,
+    "z": 0
+   },
+   "dimensions": {
+    "x": 0.1,
+    "y": 1.0,
+    "z": 14
+   },
+   "color": {
+    "red": 80,
+    "green": 60,
+    "blue": 30
+   },
+   "dynamic": false,
+   "collisionless": false,
+   "grab": {
+    "grabbable": false
+   }
+  },
+  {
+   "id": "{cc4e8306-679b-43e3-883e-98bc070d5780}",
+   "type": "Box",
+   "shape": "Cube",
+   "name": "Airship rail",
+   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "position": {
+    "x": 0,
+    "y": 0.7,
+    "z": 6.95
+   },
+   "dimensions": {
+    "x": 4,
+    "y": 1.0,
+    "z": 0.1
+   },
+   "color": {
+    "red": 80,
+    "green": 60,
+    "blue": 30
+   },
+   "dynamic": false,
+   "collisionless": false,
+   "grab": {
+    "grabbable": false
+   }
+  },
+  {
+   "id": "{2094546b-9949-4aaf-8c5d-3e2074bac3aa}",
+   "type": "Box",
+   "shape": "Cube",
+   "name": "Airship rail",
+   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "position": {
+    "x": 0,
+    "y": 0.7,
+    "z": -6.95
+   },
+   "dimensions": {
+    "x": 4,
+    "y": 1.0,
+    "z": 0.1
+   },
+   "color": {
+    "red": 80,
+    "green": 60,
+    "blue": 30
+   },
+   "dynamic": false,
+   "collisionless": false,
+   "grab": {
+    "grabbable": false
+   }
+  },
+  {
+   "id": "{a17171ab-5f9e-4f97-89ff-689eba47a9a6}",
+   "type": "Box",
+   "shape": "Cube",
+   "name": "Airship helm",
+   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "position": {
+    "x": 0,
+    "y": 0.75,
+    "z": -5.6
+   },
+   "dimensions": {
+    "x": 0.3,
+    "y": 1.1,
+    "z": 0.3
+   },
+   "color": {
+    "red": 60,
+    "green": 40,
+    "blue": 20
+   },
+   "dynamic": false,
+   "collisionless": false,
+   "grab": {
+    "grabbable": false
+   }
+  }
+ ],
+ "Id": "{c156392a-a172-4bcc-a3e2-b0d2b945c498}",
+ "Version": 141
+}
