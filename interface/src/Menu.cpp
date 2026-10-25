@@ -260,6 +260,9 @@ Menu::Menu() {
     addCheckableActionToQMenuAndActionHash(viewMenu, MenuOption::CenterPlayerInView,
         0, true, qApp, SLOT(rotationModeChanged()));
 
+    // View > Camera Collision: the third-person camera stops short of walls instead of going through them
+    addCheckableActionToQMenuAndActionHash(viewMenu, MenuOption::CameraCollision, 0, true);
+
     // View > Enter First Person Mode in HMD
     addCheckableActionToQMenuAndActionHash(viewMenu, MenuOption::FirstPersonHMD, 0, true);
 

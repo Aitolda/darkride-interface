@@ -18,10 +18,20 @@
 
 #include <glm/gtx/transform.hpp>   // the one-argument translate and scale
 
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
+#include <Jolt/Physics/Collision/Shape/Shape.h>
+
 #include <controllers/UserInputMapper.h>
 #include <display-plugins/CompositorHelper.h>
+#include <EntityMotionState.h>
 #include <EntityScriptingInterface.h>
+#include <ObjectMotionState.h>
+#include <PhysicsCollisionGroups.h>
+#include <PhysicsEngine.h>
 #include <SecondaryCamera.h>
+#include <ShapeEntityItem.h>
 
 #include "Application.h"
 #include "avatar/AvatarManager.h"
@@ -231,6 +241,7 @@ void ViewState::updateCamera(RenderArgs& renderArgs, float deltaTime) {
     // Using the latter will cause the camera to wobble with idle animations,
     // or with changes from the face tracker
     CameraMode mode = _camera.getMode();
+    bool boomPlaced = false;   // the desktop's third-person boom, which camera collision keeps out of walls
     if (mode == CAMERA_MODE_FIRST_PERSON || mode == CAMERA_MODE_FIRST_PERSON_LOOK_AT) {
         _thirdPersonHMDCameraBoomValid= false;
         if (qApp->isHMDMode()) {
@@ -262,23 +273,27 @@ void ViewState::updateCamera(RenderArgs& renderArgs, float deltaTime) {
             _camera.setPosition(extractTranslation(worldCameraMat));
         } else {
             _thirdPersonHMDCameraBoomValid = false;
+            boomPlaced = true;
             if (mode == CAMERA_MODE_THIRD_PERSON) {
                 _camera.setOrientation(myAvatar->getHead()->getOrientation());
+                glm::vec3 pivot = myAvatar->getDefaultEyePosition();
                 if (qApp->isOptionChecked(MenuOption::CenterPlayerInView)) {
-                    _camera.setPosition(myAvatar->getDefaultEyePosition()
-                        + _camera.getOrientation() * boomOffset);
+                    _camera.setPosition(collideCameraBoom(pivot, pivot + _camera.getOrientation() * boomOffset, deltaTime));
                 } else {
-                    _camera.setPosition(myAvatar->getDefaultEyePosition()
-                        + myAvatar->getWorldOrientation() * boomOffset);
+                    _camera.setPosition(collideCameraBoom(pivot, pivot + myAvatar->getWorldOrientation() * boomOffset, deltaTime));
                 }
             } else {
                 glm::quat lookAtRotation = myAvatar->getLookAtRotation();
                 if (mode == CAMERA_MODE_SELFIE) {
                     lookAtRotation = lookAtRotation * glm::angleAxis(PI, myAvatar->getWorldOrientation() * Vectors::UP);
                 }
-                _camera.setPosition(myAvatar->getLookAtPivotPoint()
-                    + lookAtRotation * boomOffset);
-                _camera.lookAt(myAvatar->getLookAtPivotPoint());
+                glm::vec3 pivot = myAvatar->getLookAtPivotPoint();
+                glm::vec3 wanted = pivot + lookAtRotation * boomOffset;
+                // the orientation from where the camera wants to be: collision only shortens the boom, and may
+                // shorten it to nothing
+                _camera.setPosition(wanted);
+                _camera.lookAt(pivot);
+                _camera.setPosition(collideCameraBoom(pivot, wanted, deltaTime));
             }
         }
     } else if (mode == CAMERA_MODE_MIRROR) {
@@ -338,12 +353,79 @@ void ViewState::updateCamera(RenderArgs& renderArgs, float deltaTime) {
             }
         }
     }
+    if (!boomPlaced) {
+        _boomLength = -1.0f;   // the next third-person boom starts where it wants to be, not eased from an old length
+        _boomHeldIn = false;
+    }
     // Update camera position
     if (!qApp->isHMDMode()) {
         _camera.update();
     }
 
     renderArgs._cameraMode = (int8_t)_camera.getMode();
+}
+
+// What stops the third-person camera: what would stop you (the casts are made as your avatar's body: other avatars,
+// collisionless entities and entities that don't collide with you let it through), less what you can see through (a
+// shape entity that isn't opaque, such as glass) and small things that move (a ball rolling by shouldn't yank the view).
+class CameraBoomFilter : public JPH::BodyFilter {
+public:
+    bool ShouldCollideLocked(const JPH::Body& body) const override {
+        const float SMALL_MOVING_THING = 1.0f;   // m, the largest side of its bounding box
+        if (body.IsDynamic() && body.GetShape()->GetLocalBounds().GetSize().ReduceMax() < SMALL_MOVING_THING) {
+            return false;
+        }
+        if (auto motionState = dynamic_cast<EntityMotionState*>(PhysicsEngine::motionStateOf(body))) {
+            auto shape = std::dynamic_pointer_cast<ShapeEntityItem>(motionState->getEntity());
+            if (shape && shape->getAlpha() < 1.0f) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+glm::vec3 ViewState::collideCameraBoom(const glm::vec3& pivot, const glm::vec3& wanted, float deltaTime) {
+    const float EASE_OUT_TIME = 0.12f;   // s, the time constant of the way back out: 95 % in about 0.35 s
+    glm::vec3 boom = wanted - pivot;
+    float wantedLength = glm::length(boom);
+    PhysicsEnginePointer physicsEngine = qApp->getPhysicsEngine();
+    if (!physicsEngine || wantedLength < EPSILON || !qApp->isOptionChecked(MenuOption::CameraCollision)) {
+        _boomLength = wantedLength;
+        _boomHeldIn = false;
+        return wanted;
+    }
+    glm::vec3 direction = boom / wantedLength;
+
+    // a sphere round the camera's near plane, swept out from the pivot; and a ray, which finds what the sphere starts
+    // inside (a wall right behind your head)
+    float radius;
+    {
+        QMutexLocker viewLocker(&_mutex);
+        radius = glm::max(0.05f, 2.0f * _viewFrustum.getNearClip());
+    }
+    const int32_t group = BULLET_COLLISION_GROUP_MY_AVATAR;
+    const int32_t mask = BULLET_COLLISION_GROUP_STATIC | BULLET_COLLISION_GROUP_DYNAMIC | BULLET_COLLISION_GROUP_KINEMATIC;
+    CameraBoomFilter filter;
+    glm::vec3 offset = ObjectMotionState::getWorldOffset();   // world to the physics' coordinates
+    float allowed = wantedLength;
+    RayHit hit;
+    if (physicsEngine->castSphereClosestAllWorlds(pivot - offset, wanted - offset, radius, group, mask, &filter, hit)) {
+        allowed = hit.fraction * wantedLength;
+    }
+    if (physicsEngine->castRayClosestAllWorlds(pivot - offset, wanted - offset, group, mask, &filter, hit)) {
+        allowed = glm::min(allowed, hit.fraction * wantedLength - radius);
+    }
+    allowed = glm::clamp(allowed, 0.0f, wantedLength);
+
+    if (_boomLength < 0.0f || allowed <= _boomLength || !_boomHeldIn) {
+        _boomLength = allowed;   // in at once (a wall must never show for a frame), and the zoom followed as it is
+    } else {
+        _boomLength += (allowed - _boomLength) * (1.0f - glm::exp(-deltaTime / EASE_OUT_TIME));
+    }
+    const float SETTLED = 0.01f;   // m
+    _boomHeldIn = _boomLength < wantedLength - SETTLED;
+    return pivot + direction * _boomLength;
 }
 
 // the camera's mode and the View menu, kept in step
