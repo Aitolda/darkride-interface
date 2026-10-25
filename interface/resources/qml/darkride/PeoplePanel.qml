@@ -147,7 +147,7 @@ Page {
                 var where = friend.online
                     ? (friend.location && friend.location.name ? "in " + friend.location.name : "online")
                     : "offline";
-                return { key: friend.username, title: friend.username, subtitle: where + (friend.ai ? " · AI resident" : ""),
+                return { key: friend.username, title: friend.username, subtitle: where + (kindWord(friend) ? " · " + kindWord(friend) : ""),
                          picture: picture(friend), friend: friend };
             }).filter(friendBar.matches);
         }
@@ -237,6 +237,11 @@ Page {
         function join(username) {
             AddressManager.goToUser(username);
         }
+        // what kind of account a friend is, for their row's detail: "AI resident", "⚙ bot" (scripted logic, not AI;
+        // metaverse sends kind, and ai only for an AI resident), or "" for a person
+        function kindWord(friend) {
+            return friend.ai ? "AI resident" : friend.kind === "bot" ? "\u2699 bot" : "";
+        }
         // for the rows drawn by an inline component, which can't reach the page's id
         function showProfile(username) {
             root.showProfile(username);
@@ -283,8 +288,8 @@ Page {
         label: friend.username || ""
         detail: friend.online
             ? (friend.location && friend.location.name ? "in " + friend.location.name : "online")
-              + (friend.ai ? " · AI resident" : "")
-            : (friend.ai ? "AI resident · offline" : "offline")
+              + (friends.kindWord(friend) ? " · " + friends.kindWord(friend) : "")
+            : (friends.kindWord(friend) ? friends.kindWord(friend) + " · offline" : "offline")
         icon: friends.picture(friend)
         clickable: true
         onClicked: friends.showProfile(friend.username)
