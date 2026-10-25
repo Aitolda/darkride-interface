@@ -120,8 +120,10 @@ void SignInGate::pauseUntilLoginDetermined() {
     }
     qApp->getViewState().setModeKeepingPrevious(CAMERA_MODE_FIRST_PERSON_LOOK_AT);
 
-    // disconnect domain handler.
-    nodeList->getDomainHandler().disconnect("Pause until login determined");
+    // out of the domain, and not trying it again until the resume goes to the starting location: a plain disconnect
+    // kept checking in, and the API refresh went back to the last world every 2.5 s while the sign-in screen was up
+    // (#34; Caity, 10-25, after a logout from a world that had gone down). On the node list's thread, as its handler is
+    QMetaObject::invokeMethod(&nodeList->getDomainHandler(), "leave", Q_ARG(QString, "Pause until login determined"));
 
     // From now on, it's permissible to call resumeAfterLoginDialogActionTaken()
     _resumeSafeToRun = true;
