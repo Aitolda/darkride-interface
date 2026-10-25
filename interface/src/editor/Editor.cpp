@@ -2879,7 +2879,7 @@ void Editor::importEntitiesFromUrl() {
         return;
     }
     const popup::Field field { "https://…", QString() };
-    popup::Alert alert(popup::appIcon(), "Import Entities from URL", "A link to an entities file: .json, .json.gz or .svo.",
+    popup::Alert alert(popup::appIcon(), "Import Entities from URL", "A link to a .json, .json.gz or .svo file.",
                        QString(), { { "Cancel", popup::Role::Cancel }, { "Import", popup::Role::Default } },
                        qApp->getWindow(), &field);
     alert.exec();
