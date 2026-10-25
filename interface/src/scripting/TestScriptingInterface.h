@@ -283,6 +283,23 @@ public slots:
     Q_INVOKABLE void frameEditorSelection();
 
     /**jsdoc
+     * What the Inspector's Script or Server Script row says the script is doing now (its status line), for the
+     * entities selected in the editor.
+     * @function Test.editorScriptStatus
+     * @param {string} key - <code>"script"</code> or <code>"serverScripts"</code>.
+     * @returns {string} The status line, <code>""</code> when the row shows none.
+     */
+    Q_INVOKABLE QString editorScriptStatus(const QString& key);
+
+    /**jsdoc
+     * Presses Reload on the Inspector's Script or Server Script row, as a click would.
+     * @function Test.reloadEditorScript
+     * @param {string} key - <code>"script"</code> or <code>"serverScripts"</code>.
+     * @returns {boolean} Whether the row and its button were there to press.
+     */
+    Q_INVOKABLE bool reloadEditorScript(const QString& key);
+
+    /**jsdoc
      * Saves a picture of the Inspector's whole content, whatever is scrolled into view, as the panel draws it.
      * @function Test.saveInspectorPicture
      * @param {string} path - Where to save it (PNG).

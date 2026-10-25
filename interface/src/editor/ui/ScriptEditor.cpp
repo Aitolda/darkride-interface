@@ -15,6 +15,7 @@
 
 #include <QtCore/QDateTime>
 #include <QtCore/QPointer>
+#include <QtCore/QRegularExpression>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
@@ -62,6 +63,24 @@ bool isError(const QString& status) {
     return status == "error_loading_script" || status == "error_running_script";
 }
 
+// an engine's error for the status line: its first line, the error's name once ("SyntaxError: SyntaxError: …" from the
+// engine), and the line of the script it points at; the whole of it goes in the tooltip
+QString shortError(const QString& error, const QString& link) {
+    QString first = error.section('\n', 0, 0).trimmed();
+    const int colon = first.indexOf(": ");
+    if (colon > 0 && first.mid(colon + 2).startsWith(first.left(colon + 2))) {
+        first = first.mid(colon + 2);
+    }
+    if (!link.isEmpty()) {
+        const QRegularExpression at(QRegularExpression::escape(link) + ":(\\d+)(:\\d+)?");
+        const auto match = at.match(error);
+        if (match.hasMatch()) {
+            first += QString(" (line %1)").arg(match.captured(1));
+        }
+    }
+    return first;
+}
+
 }
 
 ScriptEditor::ScriptEditor(const PropertySpec& spec, QWidget* parent) : PropertyEditor(spec, parent) {
@@ -86,7 +105,8 @@ ScriptEditor::ScriptEditor(const PropertySpec& spec, QWidget* parent) : Property
     row->addWidget(_status, 1);
     _reload = new QPushButton("Reload", _statusRow);
     _reload->setToolTip(server() ? "Asks the script server to load this script again, from its link"
-                                 : "Loads this script again, from its link, for everyone in the world");
+                                 : "Loads this script again, from its link, for everyone in the world (a server script on the "
+                                   "entity starts again too)");
     row->addWidget(_reload, 0, Qt::AlignTop);
     layout->addWidget(_statusRow);
     _statusRow->hide();
@@ -238,7 +258,7 @@ void ScriptEditor::showStatus() {
         const Answer& answer = _answers.first();
         text = word(answer);
         if (!answer.running && !answer.error.isEmpty()) {
-            text += ": " + answer.error;
+            text += ": " + shortError(answer.error, _link);
             tip = answer.error;
         }
         state = answer.status == "running" ? "running" : (isError(answer.status) || answer.status.isEmpty()) ? "error" : "";
@@ -254,7 +274,7 @@ void ScriptEditor::showStatus() {
         }
         text = QString("Running in %1 of %2").arg(running).arg(asked);
         if (trouble) {
-            text += "; " + word(*trouble) + (trouble->error.isEmpty() ? QString() : ": " + trouble->error);
+            text += "; " + word(*trouble) + (trouble->error.isEmpty() ? QString() : ": " + shortError(trouble->error, _link));
             tip = trouble->error;
         }
         state = running == asked ? "running" : trouble && (isError(trouble->status) || trouble->status.isEmpty()) ? "error" : "";
@@ -281,8 +301,17 @@ QString ScriptEditor::statusText() const {
     return _statusRow->isVisible() ? _status->text() : QString();
 }
 
+bool ScriptEditor::pressReload() {
+    if (!_reload->isVisible() || !_reload->isEnabled()) {
+        return false;
+    }
+    _reload->click();
+    return true;
+}
+
 // Script: everyone's client loads it again when the entity's scriptTimestamp changes (as the old Create app's Reload
-// did); Server Script: the script server is asked to. Neither is an undo step: nothing about the world changes.
+// did), and the entity tree has the script server reload the entity's server script on that change too; Server
+// Script: the script server alone is asked to. Neither is an undo step: nothing about the world changes.
 void ScriptEditor::reload() {
     auto entities = DependencyManager::get<EntityScriptingInterface>();
     for (const auto& id : _ids) {

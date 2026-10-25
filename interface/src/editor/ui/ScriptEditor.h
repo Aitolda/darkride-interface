@@ -6,7 +6,7 @@
 //  link field, and under it what the script is doing now, from this client's entity script engine for Script and
 //  from the entity script server for Server Script ("Running", "Starting…", "Couldn't load: …", "Stopped with an
 //  error: …"), with Reload: Script's reloads it for everyone in the world (the entity's scriptTimestamp, as the old
-//  Create app did), Server Script's asks the server to load it again. The status is asked for every 2 s, only while
+//  Create app did; the entity's server script starts again too), Server Script's asks the server to load it again. The status is asked for every 2 s, only while
 //  the row is on screen with a link in it.
 //
 //  Copyright 2026 Darkride.
@@ -49,8 +49,10 @@ public:
     // the selected entities, whose scripts the status line is about
     void setEntities(const QList<QUuid>& ids);
 
-    // the status line as shown (a scripted test reads it)
+    // the status line as shown, and Reload pressed as a click would (false when it isn't there to press): for a
+    // scripted test
     QString statusText() const;
+    bool pressReload();
 
 protected:
     void showEvent(QShowEvent* event) override;

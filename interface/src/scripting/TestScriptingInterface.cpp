@@ -33,6 +33,7 @@
 #include "editor/Editor.h"
 #include "ui/Skins.h"
 #include "graphics/GraphicsEngine.h"
+#include "editor/ui/ScriptEditor.h"
 #include <EntityTreeRenderer.h>
 #include <RenderableEntityItem.h>
 
@@ -283,6 +284,40 @@ void TestScriptingInterface::frameEditorSelection() {
         return;
     }
     DependencyManager::get<Editor>()->frameSelection();
+}
+
+// the Inspector's row of that property, if it is a ScriptEditor
+static ScriptEditor* inspectorScriptRow(const QString& key) {
+    auto window = qApp->getWindow();
+    if (!window) {
+        return nullptr;
+    }
+    for (auto row : window->findChildren<ScriptEditor*>()) {
+        if (row->spec().key == key) {
+            return row;
+        }
+    }
+    return nullptr;
+}
+
+QString TestScriptingInterface::editorScriptStatus(const QString& key) {
+    if (QThread::currentThread() != thread()) {
+        QString result;
+        BLOCKING_INVOKE_METHOD(this, "editorScriptStatus", Q_RETURN_ARG(QString, result), Q_ARG(QString, key));
+        return result;
+    }
+    auto row = inspectorScriptRow(key);
+    return row ? row->statusText() : QString();
+}
+
+bool TestScriptingInterface::reloadEditorScript(const QString& key) {
+    if (QThread::currentThread() != thread()) {
+        bool result = false;
+        BLOCKING_INVOKE_METHOD(this, "reloadEditorScript", Q_RETURN_ARG(bool, result), Q_ARG(QString, key));
+        return result;
+    }
+    auto row = inspectorScriptRow(key);
+    return row && row->pressReload();
 }
 
 bool TestScriptingInterface::saveInspectorPicture(const QString& path) {
