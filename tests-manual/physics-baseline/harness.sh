@@ -125,6 +125,12 @@ client_start() {
         */Contents/MacOS/*) _app=${BIN%/Contents/MacOS/*} ;;
         *) _app="" ;;
     esac
+    # only a Darkride.app: build trees can still hold a pre-rename interface.app whose binary no longer matches the
+    # tree's libraries, and it crashes at load with a dialog in front (10-25 13:49); CLIENT_ANY_APP=1 to allow another
+    case "$_app" in
+        */Darkride.app|"") ;;
+        *) [ -n "${CLIENT_ANY_APP:-}" ] || { echo "client_start: $_app isn't a Darkride.app (a stale build?); CLIENT_ANY_APP=1 to start it anyway" >&2; return 1; } ;;
+    esac
     # open takes only absolute paths: a relative app is "Unable to find application", and nothing starts (physics)
     if [ -n "$_app" ]; then
         _app=$(cd "$_app" 2>/dev/null && pwd) || { echo "client_start: no app at $BIN" >&2; return 1; }
