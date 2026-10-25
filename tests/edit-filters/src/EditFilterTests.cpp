@@ -25,7 +25,7 @@
 #include <WasmEditFilterEngine.h>
 #include <WasmScriptEngine.h>
 
-QTEST_MAIN(EditFilterTests)
+QTEST_GUILESS_MAIN(EditFilterTests)
 
 namespace {
 

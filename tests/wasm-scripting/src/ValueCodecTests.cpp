@@ -24,7 +24,7 @@
 
 #include "TestObjects.h"
 
-QTEST_MAIN(ValueCodecTests)
+QTEST_GUILESS_MAIN(ValueCodecTests)
 
 namespace {
 
