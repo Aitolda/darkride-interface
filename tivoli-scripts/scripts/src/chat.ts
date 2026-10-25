@@ -152,12 +152,14 @@ class ChatHandler extends WebEventHandler {
 					(user && user.sessionDisplayName) ||
 					(cached && cached.username) ||
 					"anonymous";
-				// an AI resident's mark comes from the metaverse by session id, never from the
-				// message itself; the sender cannot set these (AI-FIRST-CLIENT.md §5, §10.4)
+				// an AI resident's or a bot's mark comes from the metaverse by session id, never from
+				// the message itself; the sender cannot set these (AI-FIRST-CLIENT.md §5, §10.4)
 				const mark =
-					cached && cached.ai
-						? { ai: true, aiWord: cached.aiWord, host: cached.host }
-						: { ai: false, aiWord: undefined, host: undefined };
+					cached && cached.bot
+						? { ai: false, bot: true, aiWord: undefined, host: cached.host }
+						: cached && cached.ai
+						? { ai: true, bot: false, aiWord: cached.aiWord, host: cached.host }
+						: { ai: false, bot: false, aiWord: undefined, host: undefined };
 				this.emitEvent("sendMessage", { ...data, username, ...mark });
 			}
 		});
