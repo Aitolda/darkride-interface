@@ -1,18 +1,29 @@
-# harness.sh: sourced by the physics-baseline runners (PHYSICS.md round 9). The pieces every runner needs, written
-# once: clients walled off from the user's own settings and identity, the sandbox started and stopped by the pids it
-# recorded, the earlier runs' entities taken out of its world, and each client's ktx cache deleted when it exits
-# (0.3 to 1.5 GB each; forty of them filled the disk on 10-18). POSIX sh, so the sh runners (run.sh, run-pair.sh)
-# and the zsh ones can all source it. The caller sets BIN (the client), R (the results dir), SANDBOX and
-# DOMAIN_SANDBOX before sourcing.
+# harness.sh: sourced by the physics-baseline runners (PHYSICS.md round 9), and the shared test launcher for any test
+# that starts clients on a shared machine. The pieces every runner needs, written once: clients walled off from the
+# user's own settings and identity, small in a corner, titled as tests and taking turns through the machine lock, the
+# sandbox started and stopped by the pids it recorded, the earlier runs' entities taken out of its world, and each
+# client's ktx cache deleted when it exits (0.3 to 1.5 GB each; forty of them filled the disk on 10-18). POSIX sh, so
+# the sh runners (run.sh, run-pair.sh) and the zsh ones can all source it. The caller sets BIN (the client), R (the
+# results dir), and if it likes SESSION (who runs the test: in the title and the lock), CLIENT_WINDOW, SANDBOX,
+# DOMAIN_SANDBOX and MACHINE_LOCK before sourcing.
 #
 #   wall <name>                      $R/<name>-home with config, data and snaps, Interface.json seeded with the
-#                                    snapshots folder (without it a folder dialog blocks the client)
+#                                    snapshots folder (without it a folder dialog blocks the client) and the window's
+#                                    place, CLIENT_WINDOW: 800 x 600 (the least the client takes) at the bottom right
+#                                    of a 1920 x 1080 screen unless the caller says otherwise
 #   client <name> <args...>          the client walled off in $R/<name>-home, --allowMultipleInstances (a second
 #                                    client would otherwise hand its --url to one already running and exit) and
 #                                    --tokens "{}" (no sign-in), stdout and stderr to $R/<name>.log; the ktx cache
 #                                    is deleted when it exits (kept with KEEP_KTX=1, for a warm run of the same
-#                                    client next). Environment set by the caller (TIVOLI_PACKET_LOSS,
+#                                    client next). Titled "Darkride - $SESSION - TEST, not yours" unless the runner
+#                                    passes its own --clientLabel. Takes the machine lock first (lock_take), unless
+#                                    this run holds it already. Environment set by the caller (TIVOLI_PACKET_LOSS,
 #                                    TIVOLI_PACKET_DELAY_MS) passes through.
+#   lock_take [purpose] [minutes] [--quiet]
+#                                    waits for the machine lock and holds it until this runner exits (or lock_give):
+#                                    one test with windows on the GPU at a time. --quiet for timing runs (no builds).
+#                                    Without the lock script (another machine) it says so and goes on.
+#   lock_give                        lets the machine lock go before the runner ends
 #   sandbox_stop                     stops this sandbox's servers by the pids in $SANDBOX/*.pid, each checked to be a
 #                                    domain-server or assignment-client of ours, and deletes the pid files
 #   sandbox_clean_world <name>...    takes the entities whose name starts with (or is) one of the names out of the
@@ -26,21 +37,41 @@
 #   wait_for_client <name> [s]       waits until the client's log says its physics is on (its loading screen has lifted:
 #                                    the world is in), up to s seconds (180): the second client of a pair must not start
 #                                    before the first has the world, or it misses the cabin (a cold cache under 5 % loss
-#                                    took 90 s to load the sandbox's world on 10-19, 20 s without loss)
+#                                    took 90 s to load the sandbox's world on 10-19, 20 s without loss). The time a
+#                                    client waits for the machine lock before it starts doesn't count.
 
 SANDBOX=${SANDBOX:-$HOME/tivoli-sandboxes/physics}
 DOMAIN_SANDBOX=${DOMAIN_SANDBOX:-$HOME/git/tivolicloud/domain-sandbox.sh}   # darkride-ops' sandbox starter
+MACHINE_LOCK=${MACHINE_LOCK:-$HOME/git/tivolicloud/machine-lock.sh}         # darkride-ops' lock for the shared Mac
+SESSION=${SESSION:-physics}
+CLIENT_WINDOW=${CLIENT_WINDOW:-@Rect(1110 470 800 600)}
 export HIFI_METAVERSE_URL=${HIFI_METAVERSE_URL:-https://vr.darkride.ai}
 
 wall() {
     mkdir -p "$R/$1-home/config/Tivoli Cloud VR - dev" "$R/$1-home/data" "$R/$1-home/snaps"
     [ -f "$R/$1-home/config/Tivoli Cloud VR - dev/Interface.json" ] ||
-        echo "{\"snapshotsLocation\": \"$R/$1-home/snaps\"}" > "$R/$1-home/config/Tivoli Cloud VR - dev/Interface.json"
+        echo "{\"snapshotsLocation\": \"$R/$1-home/snaps\", \"WindowGeometry\": \"$CLIENT_WINDOW\"}" \
+            > "$R/$1-home/config/Tivoli Cloud VR - dev/Interface.json"
+}
+
+# --pid $$: the lock is this runner's ($$ is the runner's shell in a background client too) and is freed when it exits
+lock_take() {
+    if [ ! -x "$MACHINE_LOCK" ]; then
+        [ -n "$_lock_said" ] || echo "no machine lock at $MACHINE_LOCK: going on without one"
+        _lock_said=1; return 0
+    fi
+    "$MACHINE_LOCK" take "$SESSION" "${1:-test run $(basename "$R")}" "${2:-30}" --pid $$ ${3:+"$3"}
+}
+
+lock_give() {
+    [ ! -x "$MACHINE_LOCK" ] || "$MACHINE_LOCK" give "$SESSION"
 }
 
 client() {
     _name=$1; shift
     wall "$_name"
+    lock_take || return 1
+    DARKRIDE_CLIENT_LABEL=${DARKRIDE_CLIENT_LABEL:-"Darkride - $SESSION - TEST, not yours"} \
     XDG_CONFIG_HOME="$R/$_name-home/config" TIVOLI_APP_DATA_DIR="$R/$_name-home/data" \
         "$BIN" --allowMultipleInstances --tokens "{}" "$@" > "$R/$_name.log" 2>&1
     _status=$?
@@ -96,6 +127,9 @@ sandbox_start() {
 
 wait_for_client() {
     _name=$1; _limit=${2:-180}; _i=0
+    # the log appears when the client starts, after its turn at the machine lock: the wait for that doesn't count
+    _w=0
+    while [ ! -f "$R/$_name.log" ] && [ "$_w" -lt 7200 ]; do _w=$((_w + 1)); sleep 1; done
     while [ "$_i" -lt "$_limit" ]; do
         grep -q "Physics enabled" "$R/$_name.log" 2>/dev/null && break
         _i=$((_i + 1)); sleep 1
