@@ -611,7 +611,9 @@ QCborValue encodeEntityPropertyFlags(const ValueCodec&, const EntityPropertyFlag
     return QCborMap();  // EntityItemProperties::entityPropertyFlagsToScriptValue gives an empty object
 }
 
-// EntityItemProperties::entityPropertyFlagsFromScriptValue: a property name or a list of them
+// EntityItemProperties::entityPropertyFlagsFromScriptValue: a property name or a list of them, by its rule
+// (addPropertyFlagsByName): a property's name ("position", "grab.grabbable") names one flag, a group's name alone
+// ("grab", "vehicle") every property of the group
 bool decodeEntityPropertyFlags(const ValueCodec& codec, const QCborValue& value, EntityPropertyFlags& flags) {
     QStringList names;
     if (value.isString()) {
@@ -625,6 +627,10 @@ bool decodeEntityPropertyFlags(const ValueCodec& codec, const QCborValue& value,
         EntityPropertyInfo propertyInfo;
         if (EntityItemProperties::getPropertyInfo(name, propertyInfo)) {
             flags << propertyInfo.propertyEnum;
+        } else if (!name.contains('.')) {
+            for (EntityPropertyList property : EntityItemProperties::getPropertiesOfGroup(name)) {
+                flags << property;
+            }
         }
     }
     return true;
