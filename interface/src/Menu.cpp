@@ -583,11 +583,11 @@ Menu::Menu() {
     addCheckableActionToQMenuAndActionHash(scriptingOptionsMenu, MenuOption::VerboseLogging, 0, false,
                                            qApp, SLOT(updateVerboseLogging()));
 
-    // Developer > Scripting > Run JavaScript on WebAssembly (which engine a .js client script loads on; takes effect
-    // for scripts loaded after the change)
-    addCheckableActionToQMenuAndActionHash(scriptingOptionsMenu, MenuOption::RunJavaScriptOnWebAssembly,
-                                           [](bool checked) { WasmScriptEngine::setRunJavaScriptOnWebAssembly(checked); },
-                                           0, WasmScriptEngine::runJavaScriptOnWebAssembly());
+    // Developer > Scripting > Run JavaScript on QtScript (the old engine): the way back from the WebAssembly engine, which
+    // .js client scripts load on otherwise; it takes effect for scripts loaded after the change
+    addCheckableActionToQMenuAndActionHash(scriptingOptionsMenu, MenuOption::RunJavaScriptOnQtScript,
+                                           [](bool checked) { WasmScriptEngine::setRunJavaScriptOnWebAssembly(!checked); },
+                                           0, !WasmScriptEngine::runJavaScriptOnWebAssembly());
 
     // Developer > UI >>>
     MenuWrapper* uiOptionsMenu = developerMenu->addMenu("UI");
