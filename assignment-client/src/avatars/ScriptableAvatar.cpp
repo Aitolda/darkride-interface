@@ -107,6 +107,174 @@ void ScriptableAvatar::stopAnimation() {
     _animation.clear();
 }
 
+void ScriptableAvatar::setHeadLookAt(const glm::vec3& lookAtTarget) {
+    std::lock_guard<std::mutex> lock(_lookAtMutex);
+    _headLookAtTarget = lookAtTarget;
+    _headLookAtAge = 0.0f;
+}
+
+glm::vec3 ScriptableAvatar::getHeadLookAt() const {
+    std::lock_guard<std::mutex> lock(_lookAtMutex);
+    return _headLookAtTarget;
+}
+
+void ScriptableAvatar::releaseHeadLookAtControl() {
+    std::lock_guard<std::mutex> lock(_lookAtMutex);
+    _headLookAtAge = LOOK_AT_CONTROL_SECONDS;
+}
+
+void ScriptableAvatar::setEyesLookAt(const glm::vec3& lookAtTarget) {
+    std::lock_guard<std::mutex> lock(_lookAtMutex);
+    _eyesLookAtTarget = lookAtTarget;
+    _eyesLookAtAge = 0.0f;
+}
+
+glm::vec3 ScriptableAvatar::getEyesLookAt() const {
+    std::lock_guard<std::mutex> lock(_lookAtMutex);
+    return _eyesLookAtTarget;
+}
+
+void ScriptableAvatar::releaseEyesLookAtControl() {
+    std::lock_guard<std::mutex> lock(_lookAtMutex);
+    _eyesLookAtAge = LOOK_AT_CONTROL_SECONDS;
+}
+
+ScriptableAvatar::LookAt ScriptableAvatar::advanceLookAt(float deltaTime) {
+    std::lock_guard<std::mutex> lock(_lookAtMutex);
+    _headLookAtAge = std::min(_headLookAtAge + deltaTime, LOOK_AT_CONTROL_SECONDS);
+    _eyesLookAtAge = std::min(_eyesLookAtAge + deltaTime, LOOK_AT_CONTROL_SECONDS);
+    LookAt lookAt;
+    lookAt.headControlled = _headLookAtAge < LOOK_AT_CONTROL_SECONDS;
+    lookAt.eyesControlled = _eyesLookAtAge < LOOK_AT_CONTROL_SECONDS;
+    lookAt.headTarget = _headLookAtTarget;
+    lookAt.eyesTarget = _eyesLookAtTarget;
+    return lookAt;
+}
+
+// The pose in _jointData (absolute rotations, relative translations; set by a clip that ended or by the script) as
+// relative poses on this skeleton, as a receiver's Rig::copyJointsFromJointData reads it
+AnimPoseVec ScriptableAvatar::posesFromJointData() const {
+    const int count = _animSkeleton->getNumJoints();
+    const AnimPoseVec& absoluteDefaults = _animSkeleton->getAbsoluteDefaultPoses();
+    AnimPoseVec poses = _animSkeleton->getRelativeDefaultPoses();
+    std::vector<glm::quat> rotations(count);
+    {
+        QReadLocker readLock(&_jointDataLock);
+        for (int i = 0; i < count; i++) {
+            bool have = i < _jointData.size();
+            rotations[i] = have && !_jointData[i].rotationIsDefaultPose ? _jointData[i].rotation
+                                                                         : absoluteDefaults[i].rot();
+            if (have && !_jointData[i].translationIsDefaultPose) {
+                poses[i].trans() = _jointData[i].translation;
+            }
+        }
+    }
+    _animSkeleton->convertAbsoluteRotationsToRelative(rotations);
+    for (int i = 0; i < count; i++) {
+        poses[i].rot() = rotations[i];
+    }
+    return poses;
+}
+
+bool ScriptableAvatar::headTurned() const {
+    return glm::abs(glm::dot(_headTurn, Quaternions::IDENTITY)) < 1.0f - EPSILON;
+}
+
+// The head and neck turn toward the script's target, within a head's range of the body's facing, eased. JointData
+// holds absolute rotations, so a turn is applied to a joint and every joint under it (their relative rotations, which
+// receivers work out, stay as animated).
+void ScriptableAvatar::applyLookAt(AnimPoseVec& absPoses, const LookAt& lookAt, float deltaTime) {
+    const int head = _animSkeleton->nameToJointIndex("Head");
+    if (head < 0 || head >= (int)absPoses.size()) {
+        return;
+    }
+    if (_headJoints.empty()) {
+        const int neck = _animSkeleton->nameToJointIndex("Neck");
+        for (int i = 0; i < (int)absPoses.size(); i++) {
+            for (int j = i; j >= 0; j = _animSkeleton->getParentIndex(j)) {
+                if (j == head) {
+                    _headJoints.push_back(i);
+                }
+                if (j == neck) {
+                    _neckJoints.push_back(i);
+                    break;
+                }
+            }
+        }
+    }
+
+    // the head in the world: the avatar's position is its hips', and the rig faces +z where the avatar faces -z; a head
+    // that comes out further than a tall avatar's from its hips (a skeleton in units this doesn't expect) is taken as a
+    // usual one's
+    const int hips = _animSkeleton->nameToJointIndex("Hips");
+    glm::vec3 headAboveHips = (absPoses[head].trans() - (hips >= 0 ? absPoses[hips].trans() : glm::vec3())) *
+        extractUniformScale(_animSkeleton->getGeometryOffset());
+    const float MAX_HEAD_ABOVE_HIPS = 1.5f;
+    if (glm::length(headAboveHips) <= MAX_HEAD_ABOVE_HIPS && headAboveHips.y > 0.0f) {
+        _headAboveHips = headAboveHips;
+    }
+    if (!_loggedHeadHeight) {
+        qCDebug(avatars) << "Avatar look-at: the head is" << _headAboveHips.y << "m above the hips at scale 1";
+        _loggedHeadHeight = true;
+    }
+    const glm::quat orientation = getWorldOrientation();
+    const glm::vec3 headPosition =
+        getWorldPosition() + orientation * (Quaternions::Y_180 * _headAboveHips * getDomainLimitedScale());
+
+    glm::quat wanted;
+    if (lookAt.headControlled) {
+        glm::vec3 toTarget = glm::inverse(orientation) * (lookAt.headTarget - headPosition);
+        if (glm::length(toTarget) > EPSILON) {
+            const float MAX_YAW = glm::radians(70.0f);
+            const float MAX_PITCH = glm::radians(40.0f);
+            float yaw = glm::clamp(atan2f(-toTarget.x, -toTarget.z), -MAX_YAW, MAX_YAW);
+            float pitch = glm::clamp(atan2f(toTarget.y, glm::length(glm::vec2(toTarget.x, toTarget.z))),
+                                     -MAX_PITCH, MAX_PITCH);
+            glm::quat inObjectFrame = glm::angleAxis(yaw, Vectors::UNIT_Y) * glm::angleAxis(pitch, Vectors::UNIT_X);
+            wanted = Quaternions::Y_180 * inObjectFrame * Quaternions::Y_180;
+        }
+    }
+    const float EASE_PER_SECOND = 6.0f;  // most of the way in half a second
+    _headTurn = glm::normalize(glm::slerp(_headTurn, wanted, 1.0f - expf(-EASE_PER_SECOND * deltaTime)));
+
+    if (headTurned()) {
+        const float NECK_SHARE = 0.4f;  // without a neck joint the head takes the whole turn
+        glm::quat neckTurn = glm::slerp(Quaternions::IDENTITY, _headTurn, NECK_SHARE);
+        glm::quat headTurn = _neckJoints.empty() ? _headTurn
+                                                 : glm::slerp(Quaternions::IDENTITY, _headTurn, 1.0f - NECK_SHARE);
+        for (int i : _neckJoints) {
+            absPoses[i].rot() = neckTurn * absPoses[i].rot();
+        }
+        for (int i : _headJoints) {
+            absPoses[i].rot() = headTurn * absPoses[i].rot();
+        }
+    }
+
+    aimEyes(lookAt, headPosition);
+}
+
+// The eyes look at the eyes' target, else the head's, else ahead of the head: everyone's client aims them at this
+// point (Head::getEyeRotation), and other scripts read it (lookAtPosition).
+void ScriptableAvatar::aimEyes(const LookAt& lookAt, const glm::vec3& headPosition) {
+    const glm::quat orientation = getWorldOrientation();
+    glm::vec3 lookAtPosition;
+    if (lookAt.eyesControlled) {
+        lookAtPosition = lookAt.eyesTarget;
+    } else if (lookAt.headControlled) {
+        lookAtPosition = lookAt.headTarget;
+    } else {
+        const float AHEAD_METRES = 3.0f;
+        glm::quat turnInObjectFrame = Quaternions::Y_180 * _headTurn * Quaternions::Y_180;
+        lookAtPosition = headPosition + orientation * (turnInObjectFrame * Vectors::FRONT) * AHEAD_METRES;
+    }
+    const float MOVED = 0.01f;
+    if (glm::distance(lookAtPosition, _lastLookAtPosition) > MOVED) {
+        lazyInitHeadData();
+        setLookAtPosition(lookAtPosition);
+        _lastLookAtPosition = lookAtPosition;
+    }
+}
+
 AnimationDetails ScriptableAvatar::getAnimationDetails() {
     if (QThread::currentThread() != thread()) {
         AnimationDetails result;
@@ -182,6 +350,9 @@ void ScriptableAvatar::update(float deltatime) {
         _bind = DependencyManager::get<AnimationCache>()->getAnimation(_skeletonFBXURL);
     }
 
+    const LookAt lookAt = advanceLookAt(deltatime);
+    bool jointsWritten = false;
+
     // Run animation: the frames retargeted onto this avatar's skeleton the way a client's AnimClip does it (2026-10-10:
     // composing the raw frames with the model's pre/post rotations and a fixed 1/100 scale crumpled the avatar), with a
     // crossfade between clips
@@ -190,6 +361,9 @@ void ScriptableAvatar::update(float deltatime) {
             _animSkeleton = std::make_shared<AnimSkeleton>(_bind->getHFMModel());
             _retargeted.clear();
             _lastPoses.clear();
+            _headJoints.clear();
+            _neckJoints.clear();
+            _loggedHeadHeight = false;
         }
         AnimPoseVec poses;
         bool ended = false;
@@ -221,7 +395,17 @@ void ScriptableAvatar::update(float deltatime) {
                 _fadeFromPoses.clear();
             }
         }
-        if (playing || haveFrom) {
+        // with no clip playing, the last pose (the default pose, for an avatar that never played one) holds while the
+        // head turns toward a target or back; otherwise the joints are left alone, since a script may pose them itself
+        // (Avatar.setJointRotation)
+        bool holding = !playing && !haveFrom && (lookAt.headControlled || headTurned());
+        if (holding) {
+            if (!_wroteJoints || _lastPoses.empty()) {
+                _lastPoses = posesFromJointData();                  // from the pose it has now: a hand pose stays
+            }
+            poses = _lastPoses;
+        }
+        if (playing || haveFrom || holding) {
             const int nJoints = _animSkeleton->getNumJoints();
             for (const QString& name : _maskedJoints) {                 // a masked joint keeps its default pose
                 int j = _animSkeleton->nameToJointIndex(name);
@@ -232,6 +416,8 @@ void ScriptableAvatar::update(float deltatime) {
             _lastPoses = poses;
             AnimPoseVec absPoses = poses;
             _animSkeleton->convertRelativePosesToAbsolute(absPoses);
+            applyLookAt(absPoses, lookAt, deltatime);
+            jointsWritten = true;
             QWriteLocker writeLock(&_jointDataLock);
             if (_jointData.size() != nJoints) {
                 _jointData.resize(nJoints);
@@ -253,6 +439,12 @@ void ScriptableAvatar::update(float deltatime) {
         if (playing && ended && !_fading) {
             _animation.clear();                                     // a clip that ends holds its last pose
         }
+    }
+    _wroteJoints = jointsWritten;
+    if (!jointsWritten) {
+        // no skeleton, or a pose left to the script: the eyes still look at their target, or ahead of the body
+        aimEyes(lookAt, getWorldPosition() +
+                        getWorldOrientation() * (Quaternions::Y_180 * _headAboveHips * getDomainLimitedScale()));
     }
 
     quint64 now = usecTimestampNow();
