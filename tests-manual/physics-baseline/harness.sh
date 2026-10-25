@@ -98,23 +98,40 @@ lock_give() {
 
 # stop_client_helpers <client pid> <since>: stops the macOS helper services a client left running when it quit
 # (performance, 2026-10-25): VTDecoderXPCService and VTEncoderXPCService (~31 MB a pair, from QtWebEngine checking the
-# video formats at start-up, whichever way the client was launched) and com.apple.SafariPlatformSupport.Helper.
+# video formats at start-up, whichever way the client was launched), com.apple.SafariPlatformSupport.Helper, and
+# MTLCompilerService (13-54 MB, left by a client that compiled shaders; performance, 10-25).
 # Each logs "invalidated because the client process (pid N) ... exited" and stays alive. Only the helpers whose own log
 # names this client are stopped, by pid, after checking the pid is still that service: never another app's.
 stop_client_helpers() {
     _helpers=$(/usr/bin/log show --start "$2" --style compact --predicate \
-        "(process == \"VTDecoderXPCService\" OR process == \"VTEncoderXPCService\" OR process == \"com.apple.SafariPlatformSupport.Helper\") AND eventMessage CONTAINS \"client process (pid $1)\"" \
+        "(process == \"VTDecoderXPCService\" OR process == \"VTEncoderXPCService\" OR process == \"com.apple.SafariPlatformSupport.Helper\" OR process == \"MTLCompilerService\") AND eventMessage CONTAINS \"client process (pid $1)\"" \
         2>/dev/null |
-        grep -oE '(VTDecoderXPCService|VTEncoderXPCService|com\.apple\.SafariPlatformSupport\.Helper)\[[0-9]+' | sort -u)
+        grep -oE '(VTDecoderXPCService|VTEncoderXPCService|com\.apple\.SafariPlatformSupport\.Helper|MTLCompilerService)\[[0-9]+' | sort -u)
     [ -n "$_helpers" ] || return 0
     # SIGTERM, then after 3 s SIGKILL for any that's still alive and still that service (social's fallback)
     for _signal in TERM KILL; do
         [ "$_signal" = TERM ] || sleep 3
         for _helper in $(printf '%s\n' "$_helpers"); do
             _service=${_helper%%\[*}; _hpid=${_helper##*\[}
-            if ps -o command= -p "$_hpid" 2>/dev/null | grep -q "$_service"; then
-                kill -"$_signal" "$_hpid" && echo "stopped $_service $_hpid ($_signal), left by client $1"
+            ps -o command= -p "$_hpid" 2>/dev/null | grep -q "$_service" || continue
+            # a service can serve several processes (an MTLCompilerService serves WindowServer too): kept while any
+            # peer of its own, other than this client, is still alive (performance's check, 10-25)
+            if [ "$_signal" = TERM ]; then
+                _started=$(date -j -f "%a %b %d %T %Y" "$(ps -o lstart= -p "$_hpid")" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
+                _others=$(/usr/bin/log show --start "${_started:-$2}" --style compact \
+                    --predicate "processID == $_hpid AND eventMessage CONTAINS \"peer[\"" 2>/dev/null |
+                    grep -oE 'peer\[[0-9]+' | grep -oE '[0-9]+' | sort -u | grep -vx "$1")
+                _busy=""
+                for _peer in $(printf '%s\n' "$_others"); do
+                    # ps, not kill -0: a peer can be another user's (WindowServer), which kill -0 can't signal
+                    ps -p "$_peer" > /dev/null 2>&1 && _busy="$_busy $_peer"
+                done
+                if [ -n "$_busy" ]; then
+                    echo "kept $_service $_hpid: it also serves$_busy"
+                    continue
+                fi
             fi
+            kill -"$_signal" "$_hpid" && echo "stopped $_service $_hpid ($_signal), left by client $1"
         done
     done
 }
