@@ -28,6 +28,8 @@
 #                                    client's exit status isn't (read its log). CLIENT_FOREGROUND=1 opens it in front
 #                                    instead, still through open (a client someone plays, or a timing run that needs
 #                                    the window on top). Elsewhere than macOS it runs the binary straight.
+#                                    The client's pid goes in <log>.pid while it runs; CLIENT_TIMEOUT=<s> stops a
+#                                    client still running after that long (SIGTERM, then SIGKILL after 5 s).
 #                                    client_start also passes -NSAutoFillHeuristicsEnabled NO (AppKit's argument domain;
 #                                    the client's own parser lists it as unknown and goes on): AutoFill starts a
 #                                    SafariPlatformSupport.Helper when the app becomes active, and the helper outlives
@@ -62,24 +64,31 @@
 SANDBOX=${SANDBOX:-$HOME/tivoli-sandboxes/physics}
 DOMAIN_SANDBOX=${DOMAIN_SANDBOX:-$HOME/git/tivolicloud/domain-sandbox.sh}   # darkride-ops' sandbox starter
 MACHINE_LOCK=${MACHINE_LOCK:-$HOME/git/tivolicloud/machine-lock.sh}         # darkride-ops' lock for the shared Mac
+# who runs the test, in the window title and the machine lock; physics' runners came first and keep the default
+[ -n "${SESSION:-}" ] || echo "harness.sh: SESSION not set, so titles and the machine lock say \"physics\" (set SESSION=<your session>)" >&2
 SESSION=${SESSION:-physics}
 CLIENT_WINDOW=${CLIENT_WINDOW:-@Rect(1110 470 800 600)}
 export HIFI_METAVERSE_URL=${HIFI_METAVERSE_URL:-https://vr.darkride.ai}
 
 wall() {
-    mkdir -p "$R/$1-home/config/Tivoli Cloud VR - dev" "$R/$1-home/data" "$R/$1-home/snaps"
-    [ -f "$R/$1-home/config/Tivoli Cloud VR - dev/Interface.json" ] ||
-        echo "{\"snapshotsLocation\": \"$R/$1-home/snaps\", \"WindowGeometry\": \"$CLIENT_WINDOW\"}" \
-            > "$R/$1-home/config/Tivoli Cloud VR - dev/Interface.json"
+    mkdir -p "$R/$1-home/data" "$R/$1-home/snaps"
+    # a dev build keeps its settings under "Tivoli Cloud VR - dev", a PRODUCTION build under "Tivoli Cloud VR" (avatars)
+    for _org in "Tivoli Cloud VR - dev" "Tivoli Cloud VR"; do
+        mkdir -p "$R/$1-home/config/$_org"
+        [ -f "$R/$1-home/config/$_org/Interface.json" ] ||
+            echo "{\"snapshotsLocation\": \"$R/$1-home/snaps\", \"WindowGeometry\": \"$CLIENT_WINDOW\"}" \
+                > "$R/$1-home/config/$_org/Interface.json"
+    done
 }
 
-# --pid $$: the lock is this runner's ($$ is the runner's shell in a background client too) and is freed when it exits
+# --pid $$: the lock is this runner's ($$ is the runner's shell in a background client too) and is freed when it exits;
+# LOCK_PID=<pid> ties it to another process instead (a launcher that returns while its client runs, as social's does)
 lock_take() {
     if [ ! -x "$MACHINE_LOCK" ]; then
-        [ -n "$_lock_said" ] || echo "no machine lock at $MACHINE_LOCK: going on without one"
+        [ -n "${_lock_said:-}" ] || echo "no machine lock at $MACHINE_LOCK: going on without one"
         _lock_said=1; return 0
     fi
-    "$MACHINE_LOCK" take "$SESSION" "${1:-test run $(basename "$R")}" "${2:-30}" --pid $$ ${3:+"$3"}
+    "$MACHINE_LOCK" take "$SESSION" "${1:-test run $(basename "$R")}" "${2:-30}" --pid "${LOCK_PID:-$$}" ${3:+"$3"}
 }
 
 lock_give() {
@@ -92,15 +101,21 @@ lock_give() {
 # Each logs "invalidated because the client process (pid N) ... exited" and stays alive. Only the helpers whose own log
 # names this client are stopped, by pid, after checking the pid is still that service: never another app's.
 stop_client_helpers() {
-    /usr/bin/log show --start "$2" --style compact --predicate \
+    _helpers=$(/usr/bin/log show --start "$2" --style compact --predicate \
         "(process == \"VTDecoderXPCService\" OR process == \"VTEncoderXPCService\" OR process == \"com.apple.SafariPlatformSupport.Helper\") AND eventMessage CONTAINS \"client process (pid $1)\"" \
         2>/dev/null |
-        grep -oE '(VTDecoderXPCService|VTEncoderXPCService|com\.apple\.SafariPlatformSupport\.Helper)\[[0-9]+' | sort -u |
-        while IFS='[' read -r _service _hpid; do
+        grep -oE '(VTDecoderXPCService|VTEncoderXPCService|com\.apple\.SafariPlatformSupport\.Helper)\[[0-9]+' | sort -u)
+    [ -n "$_helpers" ] || return 0
+    # SIGTERM, then after 3 s SIGKILL for any that's still alive and still that service (social's fallback)
+    for _signal in TERM KILL; do
+        [ "$_signal" = TERM ] || sleep 3
+        for _helper in $(printf '%s\n' "$_helpers"); do
+            _service=${_helper%%\[*}; _hpid=${_helper##*\[}
             if ps -o command= -p "$_hpid" 2>/dev/null | grep -q "$_service"; then
-                kill -TERM "$_hpid" && echo "stopped $_service $_hpid, left by client $1"
+                kill -"$_signal" "$_hpid" && echo "stopped $_service $_hpid ($_signal), left by client $1"
             fi
         done
+    done
 }
 
 client_start() {
@@ -131,7 +146,7 @@ client_start() {
         set -- --env "$_var=$_value" "$@"
     done
     : > "$_log"
-    if [ -n "$CLIENT_FOREGROUND" ]; then
+    if [ -n "${CLIENT_FOREGROUND:-}" ]; then
         # in front, for a client someone plays: macOS and Qt activate it as a normal launch would
         open -n -W --stdout "$_log" --stderr "$_log" "$@" &
     else
@@ -145,8 +160,21 @@ client_start() {
         _cpid=$(pgrep -f -- "-DarkrideTestRun $_log" | head -1)
         _i=$((_i + 1)); sleep 0.5
     done
+    # the client's pid beside its log, and CLIENT_TIMEOUT=<s>: SIGTERM after that long, SIGKILL 5 s later (the client
+    # has been seen to ignore SIGTERM); open -W alone would wait for ever (scripting's run-client.sh does the same)
+    _watch=""
+    if [ -n "$_cpid" ]; then
+        echo "$_cpid" > "$_log.pid"
+        if [ -n "${CLIENT_TIMEOUT:-}" ]; then
+            ( sleep "$CLIENT_TIMEOUT"; kill -0 "$_cpid" 2>/dev/null || exit 0
+              echo "client_start: client $_cpid still running after ${CLIENT_TIMEOUT}s: stopping it" >&2
+              kill -TERM "$_cpid"; sleep 5; kill -0 "$_cpid" 2>/dev/null && kill -KILL "$_cpid" ) &
+            _watch=$!
+        fi
+    fi
     wait $_opener
     _status=$?
+    [ -z "$_watch" ] || kill "$_watch" 2>/dev/null
     [ -z "$_cpid" ] || stop_client_helpers "$_cpid" "$_since"
     if [ -z "$_cpid" ]; then
         echo "client_start: no client started from $_app (open's status $_status); see above and $_log" >&2
@@ -163,7 +191,7 @@ client() {
     XDG_CONFIG_HOME="$R/$_name-home/config" TIVOLI_APP_DATA_DIR="$R/$_name-home/data" \
         client_start "$R/$_name.log" --allowMultipleInstances --tokens "{}" "$@"
     _status=$?
-    [ -n "$KEEP_KTX" ] || rm -rf "$R/$_name-home/data/ktx_cache"
+    [ -n "${KEEP_KTX:-}" ] || rm -rf "$R/$_name-home/data/ktx_cache"
     return $_status
 }
 
