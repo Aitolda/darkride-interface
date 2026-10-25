@@ -516,12 +516,15 @@ Page {
                             color: Theme.secondaryText
                             font.pixelSize: Theme.bodySize
                         }
+                        // what kind of account: an AI resident, or a bot (scripted logic, not AI; Caity, 10-25: metaverse sends
+                        // kind "bot", with ai false); a person gets no line
                         Text {
-                            visible: !!profile.data && profile.data.ai
+                            readonly property bool bot: !!profile.data && profile.data.kind === "bot"
+                            visible: !!profile.data && (profile.data.ai || bot)
                             width: parent.width
-                            text: profile.data ? (profile.data.aiWord || "AI resident")
+                            text: profile.data ? (bot ? "\u2699 bot" : (profile.data.aiWord || "AI resident"))
                                 + (profile.data.host ? " · hosted by " + profile.data.host : "") : ""
-                            color: Theme.tint
+                            color: bot ? Theme.secondaryText : Theme.tint
                             font.pixelSize: Theme.detailSize
                             elide: Text.ElideRight
                         }
