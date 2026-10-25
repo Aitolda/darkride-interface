@@ -317,6 +317,42 @@ public slots:
     Q_INVOKABLE bool saveWindowPicture(const QString& path);
 
     /**jsdoc
+     * Where the window's dock panels are (ui/WindowLayout.h): chat's ("chat") and Build mode's ("hierarchy",
+     * "inspector", "assets"), each <code>{ open, floating, area, x, y, width, height }</code> (area "left", "right",
+     * "top", "bottom" or "none"; x and y on the screen), and the side of the bar of app buttons ("bar").
+     * @function Test.windowLayout
+     * @returns {object} The panels, by name; a panel not made yet is missing.
+     */
+    Q_INVOKABLE QVariantMap windowLayout();
+
+    /**jsdoc
+     * Does what a dock panel's title bar button does (ui/DockTitleBar.h): "dock", "float" or "close".
+     * @function Test.dockAction
+     * @param {string} objectName - The panel's object name, such as "ChatDock".
+     * @param {string} action - "dock", "float" or "close".
+     * @returns {boolean} Whether the panel has such a title bar.
+     */
+    Q_INVOKABLE bool dockAction(const QString& objectName, const QString& action);
+
+    /**jsdoc
+     * Saves a picture of one dock panel as its widgets draw it, floating or docked, its title bar too.
+     * @function Test.saveDockPicture
+     * @param {string} objectName - The panel's object name, such as "ChatDock".
+     * @param {string} path - Where to save it (PNG).
+     * @returns {boolean} Whether it was saved.
+     */
+    Q_INVOKABLE bool saveDockPicture(const QString& objectName, const QString& path);
+
+    /**jsdoc
+     * Shows a count on the bar's Chat button's badge (ui/ChatButton.h), as chat's unread count would, until chat's
+     * next count.
+     * @function Test.setChatBadge
+     * @param {number} count - 0 shows none.
+     * @returns {boolean} Whether the bar has a Chat button.
+     */
+    Q_INVOKABLE bool setChatBadge(int count);
+
+    /**jsdoc
      * Answers the next of Darkride's alerts (ui/Popup.h) to open within 15 s, as a click would: after it has drawn,
      * saves its picture, types into its field, and presses the named button. Call it before what opens the alert
      * (an alert waits for its answer, so a call that opens one returns only once it is answered).

@@ -1059,6 +1059,8 @@ static int s_stableOrder = 1;
  * @property {boolean} buttonEnabled=true - <code>true</code> if the button is enabled, <code>false</code> if it is disabled.
  * @property {number} sortOrder=100 - Determines the order of the buttons: buttons with lower numbers appear before buttons
  *     with larger numbers.
+ * @property {number} badge=0 - A count shown in a red badge at the icon's top right, such as unread messages; none at
+ *     <code>0</code>.
  *
  * @property {boolean} inDebugMode - If <code>true</code> and the tablet is being used, the button's <code>isActive</code> 
  *     state toggles each time the button is clicked. <em>Tablet only.</em>

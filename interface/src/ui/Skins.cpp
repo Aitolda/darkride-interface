@@ -452,6 +452,8 @@ QString styleSheet(const Skin& skin) {
                    colorOf(text));
 
     sheet += rules(skin, "panelTitle", "QDockWidget::title", {}, "padding-left: 8px; ");
+    // the title bar of a panel that floats as well as docks, chat's (ui/DockTitleBar.h): the same frame
+    sheet += rules(skin, "panelTitle", "QWidget#DockTitleBar", {});
     if (!titleText.isEmpty()) {
         sheet += "QDockWidget { color: " + titleText + "; }\n";
     }

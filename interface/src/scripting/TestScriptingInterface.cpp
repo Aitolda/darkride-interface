@@ -19,8 +19,10 @@
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QDockWidget>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QPushButton>
+#include <QtWidgets/QToolBar>
 
 #include <shared/FileUtils.h>
 #include <shared/QtHelpers.h>
@@ -30,6 +32,7 @@
 #include <QtQuick/QQuickItem>
 #include <StatTracker.h>
 #include <Trace.h>
+#include <ui/TabletScriptingInterface.h>
 
 #include "Application.h"
 #include "InterfaceLogging.h"
@@ -39,6 +42,7 @@
 #include <display-plugins/OpenGLDisplayPlugin.h>
 
 #include "editor/Editor.h"
+#include "ui/DockTitleBar.h"
 #include "ui/Popup.h"
 #include "ui/Skins.h"
 #include "graphics/GraphicsEngine.h"
@@ -528,6 +532,107 @@ bool TestScriptingInterface::saveWindowPicture(const QString& path) {
     }
     QPixmap picture = window->grab();
     return !picture.isNull() && picture.save(path);
+}
+
+QVariantMap TestScriptingInterface::windowLayout() {
+    if (QThread::currentThread() != thread()) {
+        QVariantMap result;
+        BLOCKING_INVOKE_METHOD(this, "windowLayout", Q_RETURN_ARG(QVariantMap, result));
+        return result;
+    }
+    QVariantMap layout;
+    auto window = qApp->getWindow();
+    if (!window) {
+        return layout;
+    }
+    // a dock area and a toolbar area have the same values (Qt::LeftDockWidgetArea == Qt::LeftToolBarArea, ...)
+    auto areaName = [](int area) -> QString {
+        switch (area) {
+            case Qt::LeftDockWidgetArea: return "left";
+            case Qt::RightDockWidgetArea: return "right";
+            case Qt::TopDockWidgetArea: return "top";
+            case Qt::BottomDockWidgetArea: return "bottom";
+            default: return "none";
+        }
+    };
+    const QList<QPair<QString, QString>> PANELS { { "chat", "ChatDock" }, { "hierarchy", "EditorHierarchy" },
+                                                  { "inspector", "EditorInspector" }, { "assets", "EditorAssets" } };
+    for (const auto& panel : PANELS) {
+        auto dock = window->findChild<QDockWidget*>(panel.second);
+        if (!dock) {
+            continue;
+        }
+        const QRect place(dock->mapToGlobal(QPoint(0, 0)), dock->size());
+        layout[panel.first] = QVariantMap {
+            { "open", !dock->isHidden() },
+            { "floating", dock->isFloating() },
+            { "area", dock->isFloating() ? QString("none") : areaName(window->dockWidgetArea(dock)) },
+            { "x", place.x() }, { "y", place.y() }, { "width", place.width() }, { "height", place.height() },
+        };
+    }
+    if (auto bar = window->findChild<QToolBar*>("systemToolbar")) {
+        layout["bar"] = bar->isVisible() ? areaName(window->toolBarArea(bar)) : QString("hidden");
+    }
+    return layout;
+}
+
+bool TestScriptingInterface::dockAction(const QString& objectName, const QString& action) {
+    if (QThread::currentThread() != thread()) {
+        bool result = false;
+        BLOCKING_INVOKE_METHOD(this, "dockAction", Q_RETURN_ARG(bool, result), Q_ARG(QString, objectName),
+                               Q_ARG(QString, action));
+        return result;
+    }
+    auto window = qApp->getWindow();
+    auto dock = window ? window->findChild<QDockWidget*>(objectName) : nullptr;
+    auto titleBar = dock ? qobject_cast<DockTitleBar*>(dock->titleBarWidget()) : nullptr;
+    if (!titleBar) {
+        return false;
+    }
+    if (action == "close") {
+        titleBar->closePanel();
+    } else if ((action == "dock" && dock->isFloating()) || (action == "float" && !dock->isFloating())) {
+        titleBar->toggleFloating();
+    }
+    return true;
+}
+
+bool TestScriptingInterface::saveDockPicture(const QString& objectName, const QString& path) {
+    if (QThread::currentThread() != thread()) {
+        bool result = false;
+        BLOCKING_INVOKE_METHOD(this, "saveDockPicture", Q_RETURN_ARG(bool, result), Q_ARG(QString, objectName),
+                               Q_ARG(QString, path));
+        return result;
+    }
+    auto window = qApp->getWindow();
+    auto dock = window ? window->findChild<QDockWidget*>(objectName) : nullptr;
+    if (!dock || dock->isHidden()) {
+        return false;
+    }
+    QPixmap picture = dock->grab();
+    return !picture.isNull() && picture.save(path);
+}
+
+bool TestScriptingInterface::setChatBadge(int count) {
+    if (QThread::currentThread() != thread()) {
+        bool result = false;
+        BLOCKING_INVOKE_METHOD(this, "setChatBadge", Q_RETURN_ARG(bool, result), Q_ARG(int, count));
+        return result;
+    }
+    auto tablets = DependencyManager::get<TabletScriptingInterface>();
+    auto tablet = tablets ? tablets->getTablet("com.highfidelity.interface.tablet.system") : nullptr;
+    if (!tablet) {
+        return false;
+    }
+    auto model = tablet->getButtons();
+    for (int row = 0; row < model->rowCount(); row++) {
+        auto button = model->data(model->index(row), Qt::UserRole).value<TabletButtonProxy*>();
+        if (button && button->getProperties().value("text").toString() == "Chat") {
+            button->editProperties({ { "badge", count } });
+            return true;
+        }
+    }
+    return false;
 }
 
 void TestScriptingInterface::answerNextAlert(const QString& button, const QString& fieldText, const QString& picturePath) {
