@@ -385,6 +385,23 @@ public slots:
     Q_INVOKABLE void showSignInScreen();
 
     /**jsdoc
+     * Types into a text field of the desktop's QML panels (a SearchBar's "searchField"), as if typed: its text set.
+     * @function Test.setPanelText
+     * @param {string} objectName - The field's objectName; the first found in the desktop's panels.
+     * @param {string} text - What it holds after.
+     * @returns {boolean} Whether a field of that name was found.
+     */
+    Q_INVOKABLE bool setPanelText(const QString& objectName, const QString& text);
+
+    /**jsdoc
+     * Presses Return in a text field of the desktop's QML panels: its accepted signal.
+     * @function Test.acceptPanelText
+     * @param {string} objectName - The field's objectName.
+     * @returns {boolean} Whether a field of that name was found.
+     */
+    Q_INVOKABLE bool acceptPanelText(const QString& objectName);
+
+    /**jsdoc
      * Turns build mode on or off, as Build > Build Mode does.
      * @function Test.setBuildMode
      * @param {boolean} on - Whether build mode is on.
