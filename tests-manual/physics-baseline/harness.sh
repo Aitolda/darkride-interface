@@ -31,6 +31,8 @@
 #                                    the window on top). Elsewhere than macOS it runs the binary straight.
 #                                    The client's pid goes in <log>.pid while it runs; CLIENT_TIMEOUT=<s> stops a
 #                                    client still running after that long (SIGTERM, then SIGKILL after 5 s).
+#                                    CLIENT_OPEN_URL=<url> (macOS) gives the starting client a link the way a browser
+#                                    does (the get-URL Apple Event), to that bundle only; --url takes another path.
 #                                    client_start also passes -NSAutoFillHeuristicsEnabled NO (AppKit's argument domain;
 #                                    the client's own parser lists it as unknown and goes on): AutoFill starts a
 #                                    SafariPlatformSupport.Helper when the app becomes active, and the helper outlives
@@ -165,7 +167,12 @@ client_start() {
     # -DarkrideTestRun <log> marks this client's command line (an AppKit default nothing reads), so its pid can be
     # found while it runs: open's own pid is $!, and pgrep for the binary alone could find someone else's client
     # --allowMultipleInstances always: without it a client hands its arguments to a Darkride already running and quits
-    set -- -a "$_app" --args -DarkrideTestRun "$_log" -NSAutoFillHeuristicsEnabled NO --allowMultipleInstances "$@"
+    set -- --args -DarkrideTestRun "$_log" -NSAutoFillHeuristicsEnabled NO --allowMultipleInstances "$@"
+    # CLIENT_OPEN_URL=<url>: open hands the URL to this bundle as a link clicked in a browser does (the get-URL Apple
+    # Event, a QFileOpenEvent in the client) while it starts, whichever app the scheme's links go to and whether or not
+    # the bundle claims the scheme
+    [ -z "${CLIENT_OPEN_URL:-}" ] || set -- "$CLIENT_OPEN_URL" "$@"
+    set -- -a "$_app" "$@"
     for _var in $(env | grep -E '^(TIVOLI|HIFI|DARKRIDE|QT|XDG|DYLD)_[A-Za-z0-9_]*=' | cut -d= -f1); do
         eval "_value=\${$_var}"
         set -- --env "$_var=$_value" "$@"
