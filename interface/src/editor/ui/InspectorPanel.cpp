@@ -22,6 +22,7 @@
 #include "../PropertySpec.h"
 #include "PropertyEditors.h"
 #include "ImpostorEditor.h"
+#include "ScriptEditor.h"
 #include "TerrainCapsEditor.h"
 #include "TerrainLayersEditor.h"
 #include "TrackPointsEditor.h"
@@ -248,7 +249,7 @@ QWidget* InspectorPanel::buildSection(const QString& sectionId, QWidget* parent)
             || spec->kind == PropertyKind::TrackPoints;
         bool tall = spec->kind == PropertyKind::Json || spec->kind == PropertyKind::UserData
             || spec->kind == PropertyKind::CollisionMask || spec->kind == PropertyKind::TerrainLayers
-            || spec->kind == PropertyKind::Impostor || parts;
+            || spec->kind == PropertyKind::Impostor || parts || ScriptEditor::isFor(*spec);
         grid->addWidget(label, rowIndex, 0, Qt::AlignLeft | (tall ? Qt::AlignTop : Qt::AlignVCenter));
         if (spec->kind == PropertyKind::UserData || spec->kind == PropertyKind::TerrainLayers || spec->kind == PropertyKind::Impostor || parts) {
             grid->addWidget(editor, rowIndex, 0, 1, 2);   // its section's header names it: it takes the whole width
@@ -306,6 +307,14 @@ void InspectorPanel::applyValues(const QVector<EntityItemProperties>& snapshots,
         if (auto caps = qobject_cast<TerrainCapsEditor*>(row.editor)) {
             caps->showTerrain(snapshots.size() == 1 ? snapshots.first().getID() : QUuid(), snapshots.size() > 1);
             continue;
+        }
+        if (auto script = qobject_cast<ScriptEditor*>(row.editor)) {
+            // the entities its status line is about and its Reload reloads
+            QList<QUuid> ids;
+            for (const auto& snapshot : snapshots) {
+                ids << snapshot.getID();
+            }
+            script->setEntities(ids);
         }
         if (auto impostor = qobject_cast<ImpostorEditor*>(row.editor)) {
             // the entities its Bake button bakes, beside the entry it shows

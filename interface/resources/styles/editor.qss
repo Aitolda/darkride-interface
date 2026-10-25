@@ -175,6 +175,13 @@ QDockWidget#EditorHierarchy::title, QDockWidget#EditorInspector::title {
     color: #ff6b6b;
     padding: 2px 2px 4px 2px;
 }
+/* Script and Server Script: what the script is doing now (ScriptEditor), grey, red when it failed */
+#EditorInspector QLabel#EditorScriptStatus {
+    color: #8f8f8f;
+}
+#EditorInspector QLabel#EditorScriptStatus[state="error"] {
+    color: #ff6b6b;
+}
 #EditorInspector QLabel#EditorInspectorNote {
     color: #8f8f8f;
 }
