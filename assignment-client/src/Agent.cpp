@@ -346,6 +346,16 @@ void Agent::nodeActivated(SharedNodePointer activatedNode) {
     if (activatedNode->getType() == NodeType::AudioMixer) {
         negotiateAudioFormat();
     }
+    if (activatedNode->getType() == NodeType::AvatarMixer && _isAvatar) {
+        // an identity set before the mixer's socket was up went nowhere (sendIdentityPacket clears the change anyway),
+        // and the mixer shows nobody an avatar it has no identity for: send it again, as Interface does
+        // (DomainSession::nodeActivated). A restarted mixer gets it this way too. The avatar lives on the main thread.
+        auto scriptedAvatar = DependencyManager::get<ScriptableAvatar>();
+        QMetaObject::invokeMethod(scriptedAvatar.data(), [scriptedAvatar] {
+            scriptedAvatar->markIdentityDataChanged();
+            scriptedAvatar->resetLastSent();
+        });
+    }
 }
 
 void Agent::nodeKilled(SharedNodePointer killedNode) {
