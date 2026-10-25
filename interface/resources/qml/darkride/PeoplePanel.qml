@@ -147,7 +147,7 @@ Page {
                 var where = friend.online
                     ? (friend.location && friend.location.name ? "in " + friend.location.name : "online")
                     : "offline";
-                return { key: friend.username, title: friend.username, subtitle: where + (friend.ai ? " · AI resident" : ""),
+                return { key: friend.username, title: friend.username, subtitle: where + (kindWord(friend) ? " · " + kindWord(friend) : ""),
                          picture: picture(friend), friend: friend };
             }).filter(friendBar.matches);
         }
@@ -237,6 +237,11 @@ Page {
         function join(username) {
             AddressManager.goToUser(username);
         }
+        // what kind of account a friend is, for their row's detail: "⚙ bot" (scripted logic, not AI), "AI resident",
+        // or "" for a person. kind comes first: metaverse also sends a bot ai true, for older clients (Caity, 10-25)
+        function kindWord(friend) {
+            return friend.kind === "bot" ? "\u2699 bot" : friend.ai ? "AI resident" : "";
+        }
         // for the rows drawn by an inline component, which can't reach the page's id
         function showProfile(username) {
             root.showProfile(username);
@@ -283,8 +288,8 @@ Page {
         label: friend.username || ""
         detail: friend.online
             ? (friend.location && friend.location.name ? "in " + friend.location.name : "online")
-              + (friend.ai ? " · AI resident" : "")
-            : (friend.ai ? "AI resident · offline" : "offline")
+              + (friends.kindWord(friend) ? " · " + friends.kindWord(friend) : "")
+            : (friends.kindWord(friend) ? friends.kindWord(friend) + " · offline" : "offline")
         icon: friends.picture(friend)
         clickable: true
         onClicked: friends.showProfile(friend.username)
@@ -517,7 +522,7 @@ Page {
                             font.pixelSize: Theme.bodySize
                         }
                         // what kind of account: an AI resident, or a bot (scripted logic, not AI; Caity, 10-25: metaverse sends
-                        // kind "bot", with ai false); a person gets no line
+                        // kind "bot", and ai true for older clients, so kind comes first); a person gets no line
                         Text {
                             readonly property bool bot: !!profile.data && profile.data.kind === "bot"
                             visible: !!profile.data && (profile.data.ai || bot)
