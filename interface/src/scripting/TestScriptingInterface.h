@@ -378,6 +378,13 @@ public slots:
     Q_INVOKABLE QString editorLoadProblem(const QUuid& id);
 
     /**jsdoc
+     * Brings the sign-in screen up as signing out does: out of the world, the avatar hidden, the screen over the window.
+     * Scripts go on running. For a test client, which skips the screen at start (--tokens) and isn't signed out.
+     * @function Test.showSignInScreen
+     */
+    Q_INVOKABLE void showSignInScreen();
+
+    /**jsdoc
      * Turns build mode on or off, as Build > Build Mode does.
      * @function Test.setBuildMode
      * @param {boolean} on - Whether build mode is on.

@@ -426,6 +426,16 @@ QString TestScriptingInterface::editorLoadProblem(const QUuid& id) {
     return DependencyManager::get<Editor>()->loadProblem(id);
 }
 
+void TestScriptingInterface::showSignInScreen() {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "showSignInScreen");
+        return;
+    }
+    // as the logout path does (ApplicationStartup.cpp, AccountManager::logoutComplete)
+    qApp->getSignInGate().pauseUntilLoginDetermined();
+    qApp->getSignInGate().showLoginScreen();
+}
+
 bool TestScriptingInterface::saveWindowPicture(const QString& path) {
     if (QThread::currentThread() != thread()) {
         bool result = false;
