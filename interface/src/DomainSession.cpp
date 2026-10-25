@@ -1004,7 +1004,23 @@ void DomainSession::goToStartingLocation() {
         } else {
             addressLookupString = url.toString();
         }
+    } else if (!_startupLink.isEmpty()) {
+        // the link Darkride was opened with: there, as --url would, the entry on a first run included
+        QString link = _startupLink;
+        if (isWorldAddressScheme(QUrl(link).scheme())) {
+            addressLookupString = link;
+            _overrideEntry = true;
+        } else {
+            // a file opened with the app (dropped on its icon): opened as a drop is, once the app is up
+            QMetaObject::invokeMethod(qApp, [link] {
+                if (qApp->canAcceptURL(link)) {
+                    qApp->acceptURL(link);
+                }
+            }, Qt::QueuedConnection);
+        }
     }
+    _startupLink.clear();
+    _startingLocationChosen = true;
 
     // If this is a first run we short-circuit the address passed in
     if (qApp->firstRun().get()) {

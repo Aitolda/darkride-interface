@@ -237,7 +237,7 @@ const JSONCallbackParameters& AddressManager::apiCallbackParameters() {
 
 bool AddressManager::handleUrl(const QUrl& lookupUrlIn, LookupTrigger trigger) {
 
-    QUrl lookupUrl = lookupUrlIn;
+    QUrl lookupUrl = asHifiAddress(lookupUrlIn);   // tivoli:// and darkride:// world links go where hifi:// goes
 
     if (!lookupUrl.host().isEmpty() && !lookupUrl.path().isEmpty()) {
         // Assignment clients ping for empty url until assigned. Don't spam.
