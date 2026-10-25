@@ -4,8 +4,9 @@
 //
 //  The stand-in agent of avatar-sound.sh: an AI resident's recorded lines, played from its body. It plays a 1 s line to
 //  its end, cuts a 3 s line short with Agent.stopAvatarSound, cuts one short by playing another over it, and plays a
-//  line that can't be loaded, and prints each Agent.avatarSoundFinished with the time since its line started. The
-//  last line, "AVATAR-SOUND RESULT", says PASS when the five events came as expected: true, false, false, true, false.
+//  line that can't be loaded, then stops being an avatar in the middle of a line, and prints each
+//  Agent.avatarSoundFinished with the time since its line started. The last line, "AVATAR-SOUND RESULT", says PASS
+//  when the six events came as expected: true, false, false, true, false, false.
 //
 //  Copyright 2026 Darkride.
 //
@@ -14,7 +15,7 @@
 
 (function () {
     var BASE = Script.resolvePath("results/avatar-sound/");
-    var EXPECTED = [true, false, false, true, false];
+    var EXPECTED = [true, false, false, true, false, false];
     var oneSecond = SoundCache.getSound(BASE + "tone-1s.wav");
     var threeSeconds = SoundCache.getSound(BASE + "tone-3s.wav");
     var missing = SoundCache.getSound(BASE + "missing.wav");
@@ -51,6 +52,11 @@
         function () {
             waiting = 1;
             play(missing, "a line that can't be loaded");
+        },
+        function () {
+            waiting = 1;
+            play(threeSeconds, "3 s, no longer an avatar after 0.5 s");
+            Script.setTimeout(function () { Agent.isAvatar = false; }, 500);
         }
     ];
 

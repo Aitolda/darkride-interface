@@ -745,6 +745,8 @@ void Agent::setIsAvatar(bool isAvatar) {
                        scriptableAvatar.data(), &ScriptableAvatar::update);
 
             QMetaObject::invokeMethod(&_avatarAudioTimer, "stop");
+            // with the audio stopped, a line still playing would never end
+            stopAvatarSound();
         }
 
         _entityEditSender.setMyAvatar(nullptr);
@@ -855,6 +857,9 @@ void Agent::processAgentAvatarAudio() {
 
         int16_t numAvailableSamples = AudioConstants::NETWORK_FRAME_SAMPLES_PER_CHANNEL;
         const int16_t* nextSoundOutput = NULL;
+        // held until the packet is written: nextSoundOutput points into it, and a line that ends this frame lets its
+        // sound go
+        AudioDataPointer audioData;
 
         if (_avatarSound && _avatarSound->isFailed()) {
             // a sound that could not be loaded never plays: it is over, not completed
@@ -865,7 +870,7 @@ void Agent::processAgentAvatarAudio() {
                 _shouldMuteRecordingAudio = true;
             }
             
-            auto audioData = _avatarSound->getAudioData();
+            audioData = _avatarSound->getAudioData();
             nextSoundOutput = reinterpret_cast<const int16_t*>(audioData->rawData()
                     + _numAvatarSoundSentBytes);
 
