@@ -105,10 +105,8 @@ bool Application::event(QEvent* event) {
     }
 
     // a link (or a file) the app is opened with arrives as it starts, before the menu exists and before it can go
-    // anywhere: kept for the starting location (DomainSession::goToStartingLocation), which goes there. Not once
-    // start-up is over: a test run without --url never chooses a starting location
-    if (event->type() == QEvent::FileOpen && !_domainSession.startingLocationChosen() &&
-        !_signInGate.startUpFinished()) {
+    // anywhere: kept for the starting location (DomainSession::goToStartingLocation), which goes there
+    if (event->type() == QEvent::FileOpen && !_domainSession.startingLocationChosen()) {
         QUrl url = static_cast<QFileOpenEvent*>(event)->url();
         if (!url.isEmpty()) {
             _domainSession.keepStartupLink(url.toString());

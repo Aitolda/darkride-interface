@@ -970,6 +970,23 @@ void DomainSession::arrivedWithoutPhysics() {
     }
 }
 
+// a link or file the app was opened with, taken as a drop or a click is, once the app is up
+static void acceptLater(const QString& link) {
+    QMetaObject::invokeMethod(qApp, [link] {
+        if (qApp->canAcceptURL(link)) {
+            qApp->acceptURL(link);
+        }
+    }, Qt::QueuedConnection);
+}
+
+void DomainSession::noStartingLocation() {
+    if (!_startupLink.isEmpty()) {
+        acceptLater(_startupLink);
+        _startupLink.clear();
+    }
+    _startingLocationChosen = true;
+}
+
 void DomainSession::goToStartingLocation() {
     PROFILE_RANGE(render, __FUNCTION__);
 
@@ -1012,11 +1029,7 @@ void DomainSession::goToStartingLocation() {
             _overrideEntry = true;
         } else {
             // a file opened with the app (dropped on its icon): opened as a drop is, once the app is up
-            QMetaObject::invokeMethod(qApp, [link] {
-                if (qApp->canAcceptURL(link)) {
-                    qApp->acceptURL(link);
-                }
-            }, Qt::QueuedConnection);
+            acceptLater(link);
         }
     }
     _startupLink.clear();

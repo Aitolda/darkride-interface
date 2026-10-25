@@ -83,6 +83,9 @@ public:
     // the last place, home or the entry (goToStartingLocation).
     bool startingLocationChosen() const { return _startingLocationChosen; }
     void keepStartupLink(const QString& url) { _startupLink = url; }
+    // start-up that chooses no starting location (a test run without --url): a link the app was opened with is
+    // followed all the same
+    void noStartingLocation();
 
     // once a frame, from Application::update(), in this order
     void enablePhysicsWhenReady();        // the physics gate
