@@ -118,6 +118,7 @@ namespace MenuOption {
     const QString EchoServerAudio = "Echo Server Audio";
     const QString EnableFlying = "Enable Flying";
     const QString EnableAvatarCollisions = "Enable Avatar Collisions";
+    const QString WalkThroughWalls = "Walk Through Walls";
     const QString EnableInverseKinematics = "Enable Inverse Kinematics";
     const QString EntityScriptServerLog = "Entity Script Server Log";
     const QString ExpandMyAvatarSimulateTiming = "Expand /myAvatar/simulation";
