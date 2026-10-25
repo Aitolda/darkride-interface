@@ -2825,8 +2825,8 @@ private:
     // head, or all of it; set each frame by updateCloseCamera, with a margin so it doesn't flicker as the camera eases out
     enum class CloseCamera { None, Head, Body };
     void updateCloseCamera(const glm::vec3& cameraPosition);
-    // whether the camera is within margin (meters) of the box around the head and everything on it (hair, ears, eyes:
-    // the shapes of every bone in _headBoneSet, as they are posed now), in the head's frame
+    // whether the camera is within margin (meters) of the head or anything on it (hair, ears, eyes): of any bone in
+    // _headBoneSet, the box around its shape in its own frame, as it is posed now
     bool cameraNearHeadShapes(const glm::vec3& cameraPosition, float margin) const;
 
     void updateEyeContactTarget(float deltaTime);

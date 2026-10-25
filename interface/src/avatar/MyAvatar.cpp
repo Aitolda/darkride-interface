@@ -3619,21 +3619,14 @@ void MyAvatar::updateCloseCamera(const glm::vec3& cameraPosition) {
 bool MyAvatar::cameraNearHeadShapes(const glm::vec3& cameraPosition, float margin) const {
     const Rig& rig = _skeletonModel->getRig();
     const HFMModel& hfmModel = _skeletonModel->getHFMModel();
-    const int headJointIndex = rig.indexOfJoint("Head");
-    AnimPose headPose;
-    if (headJointIndex < 0 || !rig.getAbsoluteJointPoseInRigFrame(headJointIndex, headPose)) {
-        return false;
-    }
-    // the head's frame without its scale, so the box and the margin are in meters, as the rig's frame is (the
-    // camera goes into the rig's frame as in cameraInsideHead)
-    const AnimPose rigToHead = AnimPose(headPose.rot(), headPose.trans()).inverse();
+    // the camera in the rig's frame, as in cameraInsideHead
     const AnimPose rigToWorld = AnimPose(getWorldOrientation() * Quaternions::Y_180, getWorldPosition());
-    const glm::vec3 camera = rigToHead * (rigToWorld.inverse() * cameraPosition);
+    const glm::vec3 camera = rigToWorld.inverse() * cameraPosition;
 
-    // each bone's shape is the extreme points of the vertices it moves (HFMModel::computeKdops), in its own frame
-    glm::vec3 minimum(FLT_MAX);
-    glm::vec3 maximum(-FLT_MAX);
-    bool any = false;
+    // Each bone's shape is the extreme points of the vertices it moves (HFMModel::computeKdops), in its own frame: the
+    // camera is tried against each bone's box there, without its scale so the margin stays in meters. One box around
+    // all of them in the head's frame grew with the head's turn when long hair hangs on: hair that stays put while the
+    // head turns fills the box out towards a camera in front (seen with face tracking's head turn, 10-25).
     for (int jointIndex : _headBoneSet) {
         if (jointIndex < 0 || jointIndex >= (int)hfmModel.joints.size()) {
             continue;
@@ -3643,16 +3636,20 @@ bool MyAvatar::cameraNearHeadShapes(const glm::vec3& cameraPosition, float margi
         if (points.empty() || !rig.getAbsoluteJointPoseInRigFrame(jointIndex, jointPose)) {
             continue;
         }
-        const AnimPose jointToHead = rigToHead * jointPose;
+        const glm::vec3 cameraInJoint = glm::inverse(jointPose.rot()) * (camera - jointPose.trans());
+        glm::vec3 minimum(FLT_MAX);
+        glm::vec3 maximum(-FLT_MAX);
         for (const glm::vec3& point : points) {
-            const glm::vec3 inHead = jointToHead * point;
-            minimum = glm::min(minimum, inHead);
-            maximum = glm::max(maximum, inHead);
-            any = true;
+            const glm::vec3 scaled = jointPose.scale() * point;
+            minimum = glm::min(minimum, scaled);
+            maximum = glm::max(maximum, scaled);
+        }
+        if (glm::all(glm::greaterThan(cameraInJoint, minimum - glm::vec3(margin))) &&
+            glm::all(glm::lessThan(cameraInJoint, maximum + glm::vec3(margin)))) {
+            return true;
         }
     }
-    return any && glm::all(glm::greaterThan(camera, minimum - glm::vec3(margin))) &&
-        glm::all(glm::lessThan(camera, maximum + glm::vec3(margin)));
+    return false;
 }
 
 int MyAvatar::sendAvatarDataPacket(bool sendAll) {
