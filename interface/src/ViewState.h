@@ -29,6 +29,8 @@
 #define hifi_ViewState_h
 
 #include <QtCore/QMutex>
+#include <QtCore/QUuid>
+#include <QtCore/QVector>
 
 #include <glm/glm.hpp>
 
@@ -69,6 +71,12 @@ public:
     void rotationModeChanged() const;               // Center Player In View unchecked: the head pitch reset
     void setModeKeepingPrevious(CameraMode mode);   // the sign-in gate's: this mode now, the one before kept
     void restorePreviousMode();                     // the kept mode back
+
+    // camera collision's test (View > Camera Collision), the third-person camera's and Camera.collideBoom's: how far
+    // from the pivot toward where the camera wants to be it can stand without going into what would stop you, seeing
+    // through the ignored entities and their children; the whole length when nothing is in the way or the option is
+    // off. On the main thread (the physics' queries).
+    float allowedBoomLength(const glm::vec3& pivot, const glm::vec3& wanted, const QVector<QUuid>& ignore) const;
 
 private:
     void addSecondaryCameraView();   // the secondary camera's frustum among the conical views (was updateSecondaryCameraViewFrustum)

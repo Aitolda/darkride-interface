@@ -14,6 +14,8 @@
 //    small ball  a moving 0.3 m ball on the boom: ignored
 //    big box     a moving 1.5 m box on the boom: stops the camera
 //    off         View > Camera Collision unchecked, the wall behind: the camera goes through it, as before
+//    script      Camera.collideBoom (a script's chase camera): a wall on the boom shortens it; the wall named in its
+//                ignore list, or a parent of the wall named, lets it through; with the option off, the whole length
 //  Pictures of the wall case with the option on and off. Prints CAMERA-COLLISION lines; samples in
 //  camera-collision.json.
 //
@@ -171,6 +173,40 @@
         after(1.5, then);
     }
 
+    // Camera.collideBoom from this script's thread: a vehicle's chase camera asks it with the vehicle in its ignore list
+    function scriptBoom(next) {
+        if (typeof Camera.collideBoom !== "function") {
+            check(false, "script: no Camera.collideBoom in this build");
+            next();
+            return;
+        }
+        stand(0, function () {
+            var parent = add({ type: "Box", name: "camera-collision parent", position: { x: 0, y: 0.25, z: -6 },
+                               dimensions: { x: 0.5, y: 0.5, z: 0.5 }, dynamic: false, collisionless: false });
+            // the wall as the parent's child, its face 1 m behind the avatar as wall(1.0) puts it
+            var id = add({ type: "Box", name: "camera-collision wall", parentID: parent,
+                           localPosition: { x: 0, y: 2 - 0.25, z: 1.0 + WALL_THICKNESS / 2 + 6 },
+                           dimensions: { x: 8, y: 4, z: WALL_THICKNESS }, color: { red: 200, green: 120, blue: 60 },
+                           dynamic: false, collisionless: false });
+            after(1.5, function () {
+                var pivot = eye();
+                var wanted = Vec3.sum(pivot, { x: 0, y: 0, z: 3.0 });
+                var blocked = Camera.collideBoom(pivot, wanted, []);
+                var named = Camera.collideBoom(pivot, wanted, [id]);
+                var parentNamed = Camera.collideBoom(pivot, wanted, [parent]);
+                Menu.setIsOptionChecked(MENU_OPTION, false);
+                var off = Camera.collideBoom(pivot, wanted, []);
+                Menu.setIsOptionChecked(MENU_OPTION, true);
+                check(blocked < 1.0, "script: a wall 1 m behind holds a 3 m boom to " + blocked.toFixed(3) + " m");
+                check(Math.abs(named - 3.0) < 0.01, "script: the wall named in the ignore list lets it through: " + named.toFixed(3) + " m");
+                check(Math.abs(parentNamed - 3.0) < 0.01, "script: the wall's parent named lets it through: " + parentNamed.toFixed(3) + " m");
+                check(Math.abs(off - 3.0) < 0.01, "script: with the option off, the whole length: " + off.toFixed(3) + " m");
+                Entities.deleteEntity(parent);   // the wall goes with it, as its child
+                after(1.0, next);
+            });
+        });
+    }
+
     function pictures(next) {
         stand(0, function () {
             var id = wall(1.0);
@@ -236,6 +272,7 @@
                     next();
                 });
             },
+            scriptBoom,
             pictures,
             finish
         ]);

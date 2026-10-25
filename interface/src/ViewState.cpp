@@ -18,6 +18,8 @@
 
 #include <glm/gtx/transform.hpp>   // the one-argument translate and scale
 
+#include <QtCore/QSet>
+
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Body/BodyFilter.h>
@@ -365,37 +367,51 @@ void ViewState::updateCamera(RenderArgs& renderArgs, float deltaTime) {
     renderArgs._cameraMode = (int8_t)_camera.getMode();
 }
 
-// What stops the third-person camera: what would stop you (the casts are made as your avatar's body: other avatars,
-// collisionless entities and entities that don't collide with you let it through), less what you can see through (a
-// shape entity that isn't opaque, such as glass) and small things that move (a ball rolling by shouldn't yank the view).
+// What stops the camera: what would stop you (the casts are made as your avatar's body: other avatars, collisionless
+// entities and entities that don't collide with you let it through), less what you can see through (a shape entity that
+// isn't opaque, such as glass), small things that move (a ball rolling by shouldn't yank the view) and the entities the
+// caller names with their children (the vehicle a chase camera follows).
 class CameraBoomFilter : public JPH::BodyFilter {
 public:
+    explicit CameraBoomFilter(const QSet<QUuid>& ignored) : _ignored(ignored) {}
     bool ShouldCollideLocked(const JPH::Body& body) const override {
         const float SMALL_MOVING_THING = 1.0f;   // m, the largest side of its bounding box
         if (body.IsDynamic() && body.GetShape()->GetLocalBounds().GetSize().ReduceMax() < SMALL_MOVING_THING) {
             return false;
         }
         if (auto motionState = dynamic_cast<EntityMotionState*>(PhysicsEngine::motionStateOf(body))) {
-            auto shape = std::dynamic_pointer_cast<ShapeEntityItem>(motionState->getEntity());
+            const EntityItemPointer& entity = motionState->getEntity();
+            if (entity && _ignored.contains(entity->getID())) {
+                return false;
+            }
+            auto shape = std::dynamic_pointer_cast<ShapeEntityItem>(entity);
             if (shape && shape->getAlpha() < 1.0f) {
                 return false;
             }
         }
         return true;
     }
+private:
+    const QSet<QUuid>& _ignored;
 };
 
-glm::vec3 ViewState::collideCameraBoom(const glm::vec3& pivot, const glm::vec3& wanted, float deltaTime) {
-    const float EASE_OUT_TIME = 0.12f;   // s, the time constant of the way back out: 95 % in about 0.35 s
-    glm::vec3 boom = wanted - pivot;
-    float wantedLength = glm::length(boom);
+float ViewState::allowedBoomLength(const glm::vec3& pivot, const glm::vec3& wanted, const QVector<QUuid>& ignore) const {
+    float wantedLength = glm::distance(pivot, wanted);
     PhysicsEnginePointer physicsEngine = qApp->getPhysicsEngine();
     if (!physicsEngine || wantedLength < EPSILON || !qApp->isOptionChecked(MenuOption::CameraCollision)) {
-        _boomLength = wantedLength;
-        _boomHeldIn = false;
-        return wanted;
+        return wantedLength;
     }
-    glm::vec3 direction = boom / wantedLength;
+    QSet<QUuid> ignored;   // the named entities and their children (a vehicle's parts)
+    if (!ignore.isEmpty()) {
+        EntityTreePointer tree = qApp->getEntities()->getTree();
+        for (const QUuid& id : ignore) {
+            ignored.insert(id);
+            EntityItemPointer entity = tree ? tree->findEntityByID(id) : nullptr;
+            if (entity) {
+                entity->forEachDescendant([&](const SpatiallyNestablePointer& child) { ignored.insert(child->getID()); });
+            }
+        }
+    }
 
     // a sphere round the camera's near plane, swept out from the pivot; and a ray, which finds what the sphere starts
     // inside (a wall right behind your head)
@@ -406,7 +422,7 @@ glm::vec3 ViewState::collideCameraBoom(const glm::vec3& pivot, const glm::vec3& 
     }
     const int32_t group = BULLET_COLLISION_GROUP_MY_AVATAR;
     const int32_t mask = BULLET_COLLISION_GROUP_STATIC | BULLET_COLLISION_GROUP_DYNAMIC | BULLET_COLLISION_GROUP_KINEMATIC;
-    CameraBoomFilter filter;
+    CameraBoomFilter filter(ignored);
     glm::vec3 offset = ObjectMotionState::getWorldOffset();   // world to the physics' coordinates
     float allowed = wantedLength;
     RayHit hit;
@@ -416,8 +432,19 @@ glm::vec3 ViewState::collideCameraBoom(const glm::vec3& pivot, const glm::vec3& 
     if (physicsEngine->castRayClosestAllWorlds(pivot - offset, wanted - offset, group, mask, &filter, hit)) {
         allowed = glm::min(allowed, hit.fraction * wantedLength - radius);
     }
-    allowed = glm::clamp(allowed, 0.0f, wantedLength);
+    return glm::clamp(allowed, 0.0f, wantedLength);
+}
 
+glm::vec3 ViewState::collideCameraBoom(const glm::vec3& pivot, const glm::vec3& wanted, float deltaTime) {
+    const float EASE_OUT_TIME = 0.12f;   // s, the time constant of the way back out: 95 % in about 0.35 s
+    glm::vec3 boom = wanted - pivot;
+    float wantedLength = glm::length(boom);
+    if (wantedLength < EPSILON) {
+        _boomLength = wantedLength;
+        _boomHeldIn = false;
+        return wanted;
+    }
+    float allowed = allowedBoomLength(pivot, wanted, QVector<QUuid>());
     if (_boomLength < 0.0f || allowed <= _boomLength || !_boomHeldIn) {
         _boomLength = allowed;   // in at once (a wall must never show for a frame), and the zoom followed as it is
     } else {
@@ -425,7 +452,7 @@ glm::vec3 ViewState::collideCameraBoom(const glm::vec3& pivot, const glm::vec3& 
     }
     const float SETTLED = 0.01f;   // m
     _boomHeldIn = _boomLength < wantedLength - SETTLED;
-    return pivot + direction * _boomLength;
+    return pivot + (boom / wantedLength) * _boomLength;
 }
 
 // the camera's mode and the View menu, kept in step
