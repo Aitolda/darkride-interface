@@ -23,8 +23,13 @@
 #include <QScreen>
 #include <QTimer>
 #include <QToolButton>
+#include <QUrl>
+#include <QtWidgets/qdrawutil.h>
 
+#include <DependencyManager.h>
 #include <PathUtils.h>
+
+#include "PanelTheme.h"
 
 namespace popup {
 
@@ -38,30 +43,89 @@ const int SHADOW = 0;  // macOS draws a frameless window's shadow from its opaqu
 const int SHADOW = 24;  // elsewhere the popup paints its own
 #endif
 
-const char* const STYLE = R"(
-QLabel { background: transparent; }
-QLabel#title { color: #ffffff; font-size: 13px; font-weight: bold; }
-QLabel#text { color: rgba(255, 255, 255, 189); font-size: 11px; }
-QLabel#bannerTitle { color: #ffffff; font-size: 13px; font-weight: 600; }
-QLabel#bannerText { color: rgba(255, 255, 255, 189); font-size: 12px; }
-QToolButton#details { color: rgba(255, 255, 255, 189); font-size: 11px; border: none; background: transparent; padding: 2px 4px; }
-QPlainTextEdit#detailsText { color: rgba(255, 255, 255, 199); font-size: 11px; background: rgba(0, 0, 0, 71);
-    border: 1px solid rgba(255, 255, 255, 20); border-radius: 6px; padding: 4px 6px; }
-QLineEdit#field { color: #ffffff; font-size: 12px; background: rgba(0, 0, 0, 71); border: 1px solid rgba(255, 255, 255, 26);
-    border-radius: 5px; padding: 3px 6px; selection-background-color: #0b6bd8; }
-QLineEdit#field:focus { border: 1px solid rgba(10, 132, 255, 200); }
-QPushButton { color: #ffffff; font-size: 13px; border: none; border-radius: 7px; background: rgba(255, 255, 255, 36); padding: 0 10px; }
-QPushButton:pressed { background: rgba(255, 255, 255, 56); }
-QPushButton[role="default"] { background: #0b6bd8; }
-QPushButton[role="default"]:pressed { background: #0a5bb8; }
-QPushButton[role="default"]:disabled { background: rgba(255, 255, 255, 20); color: rgba(255, 255, 255, 77); }
-QPushButton[role="destructive"] { color: #ff453a; }
-QPushButton:focus { border: 2px solid rgba(10, 132, 255, 150); }
-)";
+// What a popup is drawn in: Darkride's own dark look, or while a skin is on (SKINS.md, stage 2) the skin's colours
+// where it gives them, its font, and its "popup" frame in place of the rounded panel
+std::shared_ptr<const Look> currentLook() {
+    auto look = std::make_shared<Look>();
+    const QVariantMap skin = DependencyManager::get<PanelTheme>()->getSkin();
+    if (skin.isEmpty()) {
+        return look;
+    }
+    const QVariantMap colors = skin.value("colors").toMap();
+    auto take = [&colors](QColor& target, const char* key) {
+        const QColor color(colors.value(key).toString());
+        if (color.isValid()) {
+            target = color;
+        }
+    };
+    take(look->panel, "card");
+    take(look->border, "separator");
+    take(look->title, "text");
+    take(look->text, "secondaryText");
+    take(look->well, "fill");
+    take(look->button, "fill");
+    take(look->buttonPressed, "cardPressed");
+    take(look->buttonText, "text");
+    take(look->tint, "tint");
+    take(look->destructive, "destructive");
+    look->font = skin.value("fontFamily").toString();
+    const QVariantMap frame = skin.value("frames").toMap().value("popup").toMap();
+    if (!frame.isEmpty()) {
+        auto margins = [](const QVariant& value) {
+            const QVariantList list = value.toList();
+            return list.size() == 4 ? QMargins(list[0].toInt(), list[1].toInt(), list[2].toInt(), list[3].toInt()) : QMargins();
+        };
+        look->frame = QPixmap(QUrl(frame.value("source").toString()).toLocalFile());
+        look->slice = margins(frame.value("slice"));
+        look->padding = margins(frame.value("padding"));
+    }
+    return look;
+}
 
-// The rounded panel every popup is drawn on, with its shadow where the system draws none.
-void paintPanel(QWidget* widget, qreal radius) {
+QString css(const QColor& color) {
+    return QString("rgba(%1, %2, %3, %4)").arg(color.red()).arg(color.green()).arg(color.blue()).arg(color.alpha());
+}
+
+QColor faded(QColor color, int alpha) {
+    color.setAlpha(color.alpha() * alpha / 255);
+    return color;
+}
+
+QString styleSheetFor(const Look& look) {
+    QString sheet = look.font.isEmpty() ? QString() : QString("* { font-family: \"%1\"; }\n").arg(look.font);
+    sheet += QString(R"(
+QLabel { background: transparent; }
+QLabel#title { color: %1; font-size: 13px; font-weight: bold; }
+QLabel#text { color: %2; font-size: 11px; }
+QLabel#bannerTitle { color: %1; font-size: 13px; font-weight: 600; }
+QLabel#bannerText { color: %2; font-size: 12px; }
+QToolButton#details { color: %2; font-size: 11px; border: none; background: transparent; padding: 2px 4px; }
+QPlainTextEdit#detailsText { color: %1; font-size: 11px; background: %3; border: 1px solid %4; border-radius: 6px; padding: 4px 6px; }
+QLineEdit#field { color: %1; font-size: 12px; background: %3; border: 1px solid %4; border-radius: 5px; padding: 3px 6px;
+    selection-background-color: %5; }
+QLineEdit#field:focus { border: 1px solid %5; }
+QPushButton { color: %6; font-size: 13px; border: none; border-radius: 7px; background: %7; padding: 0 10px; }
+QPushButton:pressed { background: %8; }
+QPushButton[role="default"] { color: #ffffff; background: %5; }
+QPushButton[role="default"]:pressed { background: %9; }
+QPushButton[role="default"]:disabled { background: %7; color: %10; }
+QPushButton[role="destructive"] { color: %11; }
+QPushButton:focus { border: 2px solid %12; }
+)")
+        .arg(css(look.title), css(look.text), css(look.well), css(look.border), css(look.tint), css(look.buttonText),
+             css(look.button), css(look.buttonPressed), css(look.tint.darker(115)))
+        .arg(css(faded(look.buttonText, 77)), css(look.destructive), css(faded(look.tint, 150)));
+    return sheet;
+}
+
+// The panel every popup is drawn on: the skin's popup frame, or a rounded panel with its shadow where the system
+// draws none.
+void paintPanel(QWidget* widget, qreal radius, const Look& look) {
     QPainter painter(widget);
+    if (!look.frame.isNull()) {
+        qDrawBorderPixmap(&painter, widget->rect().adjusted(SHADOW, SHADOW, -SHADOW, -SHADOW), look.slice, look.frame);
+        return;
+    }
     painter.setRenderHint(QPainter::Antialiasing);
     const QRectF panel = QRectF(widget->rect()).adjusted(SHADOW + 0.5, SHADOW + 0.5, -SHADOW - 0.5, -SHADOW - 0.5);
     painter.setPen(Qt::NoPen);
@@ -71,9 +135,15 @@ void paintPanel(QWidget* widget, qreal radius) {
         painter.drawRoundedRect(panel.adjusted(-spread, -spread + SHADOW / 3, spread, spread + SHADOW / 3),
                                 radius + spread, radius + spread);
     }
-    painter.setBrush(QColor(43, 43, 46));
-    painter.setPen(QPen(QColor(255, 255, 255, 26), 1.0));
+    painter.setBrush(look.panel);
+    painter.setPen(QPen(look.border, 1.0));
     painter.drawRoundedRect(panel, radius, radius);
+}
+
+// a popup's room inside its edge: its own, or more where the skin's frame asks for it
+QMargins inside(const Look& look, int left, int top, int right, int bottom) {
+    return QMargins(SHADOW + std::max(left, look.padding.left()), SHADOW + std::max(top, look.padding.top()),
+                    SHADOW + std::max(right, look.padding.right()), SHADOW + std::max(bottom, look.padding.bottom()));
 }
 
 // A popup's height for its fixed width. (adjustSize asks the layout for its height at the layout's own preferred
@@ -97,14 +167,14 @@ QPixmap sized(const QPixmap& picture, int points, qreal devicePixelRatio) {
 }
 
 // The Details fold-out's chevron, pointing right while closed and down while open.
-QIcon chevron(bool open) {
+QIcon chevron(bool open, const QColor& color) {
     const qreal ratio = 2.0;
     QPixmap pixmap(QSize(10, 10) * ratio);
     pixmap.setDevicePixelRatio(ratio);
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(QColor(255, 255, 255, 189), 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setPen(QPen(color, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     QPolygonF line;
     if (open) {
         line << QPointF(2.0, 3.5) << QPointF(5.0, 6.5) << QPointF(8.0, 3.5);
@@ -132,10 +202,12 @@ Alert::Alert(const QPixmap& picture, const QString& title, const QString& text, 
     setWindowModality(Qt::ApplicationModal);
     setWindowTitle(title);
     setFocusPolicy(Qt::StrongFocus);  // the alert holds the focus, so Return and Escape reach it
-    setStyleSheet(STYLE);
-    setFixedWidth(ALERT_WIDTH + 2 * SHADOW);
+    _look = currentLook();
+    setStyleSheet(styleSheetFor(*_look));
+    const QMargins margins = inside(*_look, 16, 20, 16, 16);
+    setFixedWidth(ALERT_WIDTH + margins.left() + margins.right() - 32);
     auto layout = new QVBoxLayout(this);
-    layout->setContentsMargins(SHADOW + 16, SHADOW + 20, SHADOW + 16, SHADOW + 16);
+    layout->setContentsMargins(margins);
     layout->setSpacing(0);
 
     auto pictureLabel = new QLabel();
@@ -161,7 +233,7 @@ Alert::Alert(const QPixmap& picture, const QString& title, const QString& text, 
         auto toggle = new QToolButton();
         toggle->setObjectName("details");
         toggle->setText("Details");
-        toggle->setIcon(chevron(false));
+        toggle->setIcon(chevron(false, _look->text));
         toggle->setIconSize(QSize(10, 10));
         toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         toggle->setLayoutDirection(Qt::RightToLeft);  // the chevron after the word
@@ -180,7 +252,7 @@ Alert::Alert(const QPixmap& picture, const QString& title, const QString& text, 
         QObject::connect(toggle, &QToolButton::clicked, this, [this, toggle, box]() {
             const bool open = !box->isVisible();
             box->setVisible(open);
-            toggle->setIcon(chevron(open));
+            toggle->setIcon(chevron(open, _look->text));
             fitHeight(this);
         });
     }
@@ -253,7 +325,7 @@ QString Alert::fieldText() const {
 }
 
 void Alert::paintEvent(QPaintEvent*) {
-    paintPanel(this, 12.0);
+    paintPanel(this, 12.0, *_look);
 }
 
 // Return is the default button, Escape the cancel button, as in every Mac alert. (The field passes both on.)
@@ -290,10 +362,12 @@ Banner::Banner(const QPixmap& picture, const QString& title, const QString& text
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
     setAttribute(Qt::WA_DeleteOnClose);
-    setStyleSheet(STYLE);
-    setFixedWidth(BANNER_WIDTH + 2 * SHADOW);
+    _look = currentLook();
+    setStyleSheet(styleSheetFor(*_look));
+    const QMargins margins = inside(*_look, 12, 10, 12, 10);
+    setFixedWidth(BANNER_WIDTH + margins.left() + margins.right() - 24);
     auto layout = new QHBoxLayout(this);
-    layout->setContentsMargins(SHADOW + 12, SHADOW + 10, SHADOW + 12, SHADOW + 10);
+    layout->setContentsMargins(margins);
     layout->setSpacing(10);
     auto pictureLabel = new QLabel();
     pictureLabel->setPixmap(sized(picture, 40, devicePixelRatioF()));
@@ -322,7 +396,7 @@ Banner::Banner(const QPixmap& picture, const QString& title, const QString& text
 }
 
 void Banner::paintEvent(QPaintEvent*) {
-    paintPanel(this, 14.0);
+    paintPanel(this, 14.0, *_look);
 }
 
 void Banner::mousePressEvent(QMouseEvent*) {

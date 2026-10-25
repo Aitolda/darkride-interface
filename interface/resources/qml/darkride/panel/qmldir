@@ -16,3 +16,4 @@ SearchBar 1.0 SearchBar.qml
 CollectionView 1.0 CollectionView.qml
 CollectionTile 1.0 CollectionTile.qml
 SkinFrame 1.0 SkinFrame.qml
+SkinDecorations 1.0 SkinDecorations.qml

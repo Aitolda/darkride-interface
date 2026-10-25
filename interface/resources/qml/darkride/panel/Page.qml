@@ -138,4 +138,10 @@ Rectangle {
             }
         }
     }
+
+    // a skin's flowers, grass or badges on the panel, over everything and never taking a click
+    SkinDecorations {
+        anchors.fill: parent
+        z: 2
+    }
 }

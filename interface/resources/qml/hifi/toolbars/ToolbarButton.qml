@@ -1,6 +1,7 @@
 import QtQuick 2.5
 import QtGraphicalEffects 1.12
 import TabletScriptingInterface 1.0
+import DarkridePanels 1.0
 
 Item {
     id: button
@@ -19,6 +20,16 @@ Item {
     property color defaultCaptionColor: "#ffffff"
     property color captionColor: defaultCaptionColor
     property color backgroundColor: "#1d1f21"
+
+    // a skin's bar button frame (SKINS.md "barButton", stage 2: "checked" while its app is open) and its text colour
+    // on the floating bar; the tablet's buttons keep their own look
+    readonly property var skinFrame: !isTablet && PanelTheme.skin && PanelTheme.skin.frames
+        ? (PanelTheme.skin.frames.barButton || null) : null
+    // the skin's text colour only where the skin draws behind the captions too (a "bar" or "barButton" frame): over
+    // the bar's own dark ground, a light skin's dark text didn't show (10-25)
+    readonly property bool skinDrawsBehind: !isTablet && !!PanelTheme.skin && !!PanelTheme.skin.frames
+        && !!(PanelTheme.skin.frames.barButton || PanelTheme.skin.frames.bar)
+    readonly property var skinText: skinDrawsBehind && PanelTheme.skin.colors ? PanelTheme.skin.colors.text : undefined
 
     property bool buttonEnabled: true
     property bool isActive: false
@@ -132,6 +143,20 @@ Item {
         visible: false
     }
 
+    // a skin's frame behind the whole button, icon and caption
+    BorderImage {
+        anchors.fill: parent
+        visible: !!button.skinFrame
+        source: !button.skinFrame ? ""
+            : button.isActive && button.skinFrame.checked ? button.skinFrame.checked
+            : button.isEntered && button.skinFrame.hover ? button.skinFrame.hover
+            : button.skinFrame.source
+        border.left: button.skinFrame ? button.skinFrame.slice[0] : 0
+        border.top: button.skinFrame ? button.skinFrame.slice[1] : 0
+        border.right: button.skinFrame ? button.skinFrame.slice[2] : 0
+        border.bottom: button.skinFrame ? button.skinFrame.slice[3] : 0
+    }
+
     // isactive background
     Rectangle {
         width: button.size
@@ -141,7 +166,7 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         
         color: Qt.rgba(0.6,0.6,0.6,0.6) // same as toolframedecoration handlecolor
-        visible: isActive
+        visible: isActive && !(button.skinFrame && button.skinFrame.checked)
 
         layer.enabled: true
         layer.effect: OpacityMask {
@@ -214,7 +239,7 @@ Item {
     // caption
     Text {
         id: caption
-        color: button.isActive ? "#fff" : captionColor
+        color: button.skinText !== undefined ? button.skinText : button.isActive ? "#fff" : captionColor
         text: (
             button.isActive ?
             (button.isEntered ? button.activeHoverText : button.activeText) :
