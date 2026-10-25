@@ -44,8 +44,6 @@
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QListView>
 #include <QtWidgets/QMenu>
-#include <QtWidgets/QMessageBox>
-#include <QtWidgets/QPushButton>
 #include <QtWidgets/QScrollBar>
 #include <QtWidgets/QSplitter>
 #include <QtWidgets/QStyle>
@@ -59,6 +57,7 @@
 #include <NetworkAccessManager.h>
 
 #include "../../InterfaceLogging.h"
+#include "../../ui/Popup.h"
 #include "../EditorCreate.h"
 #include "AssetThumbnails.h"
 
@@ -1363,16 +1362,15 @@ void AssetsPanel::deleteFiles(const QList<const UserFile*>& files) {
             question += QString(" The %1 hold %2 files.").arg(folders == 1 ? "folder" : "folders").arg(inside);
         }
     }
-    // The window as the parent (the dock's style sheet hid the highlight), with the question, the warning and a
-    // Cancel button: a box with Delete alone (1ba7996d09 lost these) made Delete its escape button, so Escape and
-    // closing the box deleted the files. Cancel is the default and the escape button, named outright.
-    QMessageBox box(QMessageBox::Warning, "Delete", question + "\n\nEvery world that uses them will lose them. This cannot be undone.",
-                    QMessageBox::Cancel, window());
-    QPushButton* deleteButton = box.addButton("Delete", QMessageBox::DestructiveRole);
-    box.setDefaultButton(QMessageBox::Cancel);
-    box.setEscapeButton(QMessageBox::Cancel);
-    box.exec();
-    if (box.clickedButton() != deleteButton) {
+    // Darkride's alert over the window (the dock's style sheet hid a box's highlight), with the warning and a Cancel
+    // button: a box with Delete alone (1ba7996d09 lost these) made Delete its escape button, so Escape and closing
+    // the box deleted the files. Delete is red; Return and Escape are Cancel.
+    const bool one = files.size() == 1 && !files.first()->folder;
+    popup::Alert alert(popup::appIcon(), question,
+                       QString("Every world that uses %1 will lose %1. This can't be undone.").arg(one ? "it" : "them"),
+                       QString(), { { "Cancel", popup::Role::Cancel }, { "Delete", popup::Role::Destructive } }, window());
+    alert.exec();
+    if (alert.answer() != 1) {
         return;
     }
     QStringList paths;

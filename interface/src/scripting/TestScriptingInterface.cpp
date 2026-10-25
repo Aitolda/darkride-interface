@@ -7,13 +7,20 @@
 //
 #include "TestScriptingInterface.h"
 
+#include <memory>
+
 #include <MeshPartPayload.h>
 
 #include <SpringBones.h>
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QDateTime>
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QThread>
+#include <QtCore/QTimer>
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QLineEdit>
+#include <QtWidgets/QPushButton>
 
 #include <shared/FileUtils.h>
 #include <shared/QtHelpers.h>
@@ -25,12 +32,14 @@
 #include <Trace.h>
 
 #include "Application.h"
+#include "InterfaceLogging.h"
 #include <QtGui/QPixmap>
 #include <plugins/DisplayPlugin.h>
 #include <display-plugins/DisplayLink.h>
 #include <display-plugins/OpenGLDisplayPlugin.h>
 
 #include "editor/Editor.h"
+#include "ui/Popup.h"
 #include "ui/Skins.h"
 #include "graphics/GraphicsEngine.h"
 #include <EntityTreeRenderer.h>
@@ -484,6 +493,75 @@ bool TestScriptingInterface::saveWindowPicture(const QString& path) {
     }
     QPixmap picture = window->grab();
     return !picture.isNull() && picture.save(path);
+}
+
+void TestScriptingInterface::answerNextAlert(const QString& button, const QString& fieldText, const QString& picturePath) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "answerNextAlert", Q_ARG(QString, button), Q_ARG(QString, fieldText),
+                               Q_ARG(QString, picturePath));
+        return;
+    }
+    // looked for every 100 ms on this thread, where an open alert's own event loop runs it; answered once it has been
+    // up 0.5 s, so the picture shows it drawn
+    auto timer = new QTimer(this);
+    auto seen = std::make_shared<int>(0);
+    auto started = QDateTime::currentMSecsSinceEpoch();
+    QObject::connect(timer, &QTimer::timeout, this, [timer, seen, started, button, fieldText, picturePath]() {
+        auto alert = dynamic_cast<popup::Alert*>(QApplication::activeModalWidget());
+        if (!alert || !alert->isVisible()) {
+            if (QDateTime::currentMSecsSinceEpoch() - started > 15000) {
+                qCWarning(interfaceapp) << "Test.answerNextAlert: no alert in 15 s";
+                timer->stop();
+                timer->deleteLater();
+            }
+            return;
+        }
+        if (++*seen < 5) {
+            return;
+        }
+        timer->stop();
+        timer->deleteLater();
+        auto field = alert->findChild<QLineEdit*>();
+        if (field && !fieldText.isEmpty()) {
+            field->setText(fieldText);
+        }
+        if (!picturePath.isEmpty()) {
+            alert->grab().save(picturePath);
+        }
+        for (auto pushButton : alert->findChildren<QPushButton*>()) {
+            if (pushButton->text() == button) {
+                qCInfo(interfaceapp) << "Test.answerNextAlert: pressing" << button << "on" << alert->windowTitle();
+                pushButton->click();
+                return;
+            }
+        }
+        qCWarning(interfaceapp) << "Test.answerNextAlert: no button" << button << "on" << alert->windowTitle();
+    });
+    timer->start(100);
+}
+
+int TestScriptingInterface::showAlert(const QString& title, const QString& text, const QString& details,
+                                      const QVariantList& buttons, const QString& fieldPlaceholder) {
+    if (QThread::currentThread() != thread()) {
+        int result = -1;
+        BLOCKING_INVOKE_METHOD(this, "showAlert", Q_RETURN_ARG(int, result), Q_ARG(QString, title), Q_ARG(QString, text),
+                               Q_ARG(QString, details), Q_ARG(QVariantList, buttons), Q_ARG(QString, fieldPlaceholder));
+        return result;
+    }
+    std::vector<popup::Button> list;
+    for (const auto& entry : buttons) {
+        const auto map = entry.toMap();
+        const QString role = map.value("role").toString();
+        list.push_back({ map.value("label").toString(), role == "default" ? popup::Role::Default
+                                                        : role == "cancel" ? popup::Role::Cancel
+                                                        : role == "destructive" ? popup::Role::Destructive
+                                                        : popup::Role::Plain });
+    }
+    const popup::Field field { fieldPlaceholder, QString() };
+    popup::Alert alert(popup::appIcon(), title, text, details, list, qApp->getWindow(),
+                       fieldPlaceholder.isEmpty() ? nullptr : &field);
+    alert.exec();
+    return alert.answer();
 }
 
 void TestScriptingInterface::dumpDraws(int frames) {
