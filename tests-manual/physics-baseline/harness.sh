@@ -142,6 +142,12 @@ client_start() {
         */Contents/MacOS/*) _app=${BIN%/Contents/MacOS/*} ;;
         *) _app="" ;;
     esac
+    # only a Darkride.app: build trees can still hold a pre-rename interface.app whose binary no longer matches the
+    # tree's libraries, and it crashes at load with a dialog in front (10-25 13:49); CLIENT_ANY_APP=1 to allow another
+    case "$_app" in
+        */Darkride.app|"") ;;
+        *) [ -n "${CLIENT_ANY_APP:-}" ] || { echo "client_start: $_app isn't a Darkride.app (a stale build?); CLIENT_ANY_APP=1 to start it anyway" >&2; return 1; } ;;
+    esac
     # open takes only absolute paths: a relative app is "Unable to find application", and nothing starts (physics)
     if [ -n "$_app" ]; then
         _app=$(cd "$_app" 2>/dev/null && pwd) || { echo "client_start: no app at $BIN" >&2; return 1; }
@@ -253,7 +259,9 @@ PY
 sandbox_start() {
     _build=$1; _port=$2
     python3 -c 'import json, os, sys; p = sys.argv[1]; c = json.load(open(p)) if os.path.exists(p) else {}; c.setdefault("physics_server", {})["enabled"] = True; json.dump(c, open(p, "w"), indent=2)' "$SANDBOX/domain-config.json"
-    "$DOMAIN_SANDBOX" physics "$_build" "$_port"
+    # the sandbox's name is its folder's (domain-sandbox.sh keeps ~/tivoli-sandboxes/<name>), so sandbox_stop and
+    # sandbox_clean_world, which use $SANDBOX, act on the same one (skunkworks, 10-25: it was always "physics")
+    "$DOMAIN_SANDBOX" "$(basename "$SANDBOX")" "$_build" "$_port"
     _i=0
     while [ "$_i" -lt 90 ]; do
         _i=$((_i + 1))
