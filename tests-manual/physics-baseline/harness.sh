@@ -140,7 +140,8 @@ client_start() {
     fi
     # -DarkrideTestRun <log> marks this client's command line (an AppKit default nothing reads), so its pid can be
     # found while it runs: open's own pid is $!, and pgrep for the binary alone could find someone else's client
-    set -- -a "$_app" --args -DarkrideTestRun "$_log" -NSAutoFillHeuristicsEnabled NO "$@"
+    # --allowMultipleInstances always: without it a client hands its arguments to a Darkride already running and quits
+    set -- -a "$_app" --args -DarkrideTestRun "$_log" -NSAutoFillHeuristicsEnabled NO --allowMultipleInstances "$@"
     for _var in $(env | grep -E '^(TIVOLI|HIFI|DARKRIDE|QT|XDG|DYLD)_[A-Za-z0-9_]*=' | cut -d= -f1); do
         eval "_value=\${$_var}"
         set -- --env "$_var=$_value" "$@"
