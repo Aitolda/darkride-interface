@@ -18,7 +18,15 @@
 #                                    client next). Titled "Darkride - $SESSION - TEST, not yours" unless the runner
 #                                    passes its own --clientLabel. Takes the machine lock first (lock_take), unless
 #                                    this run holds it already. Environment set by the caller (TIVOLI_PACKET_LOSS,
-#                                    TIVOLI_PACKET_DELAY_MS) passes through.
+#                                    TIVOLI_PACKET_DELAY_MS) passes through. On macOS it starts in the background,
+#                                    never in front of the window the user is typing in (see client_start).
+#   client_start <log> <args...>     starts $BIN with its output in <log> and waits for it to quit. On macOS, through
+#                                    `open -g -n -W` with Qt's activation switched off: a binary run straight from a
+#                                    shell is brought to the front by macOS at launch and by Qt when it has launched,
+#                                    and takes the keyboard. open passes on only the environment it's given, so the
+#                                    TIVOLI_, HIFI_, DARKRIDE_, QT_, XDG_ and DYLD_ variables are handed over; the
+#                                    client's exit status isn't (read its log). CLIENT_FOREGROUND=1 runs the binary
+#                                    straight, as before (a client that must be in front, say for a timing run).
 #   lock_take [purpose] [minutes] [--quiet]
 #                                    waits for the machine lock and holds it until this runner exits (or lock_give):
 #                                    one test with windows on the GPU at a time. --quiet for timing runs (no builds).
@@ -67,13 +75,34 @@ lock_give() {
     [ ! -x "$MACHINE_LOCK" ] || "$MACHINE_LOCK" give "$SESSION"
 }
 
+client_start() {
+    _log=$1; shift
+    case "$BIN" in
+        */Contents/MacOS/*) _app=${BIN%/Contents/MacOS/*} ;;
+        *) _app="" ;;
+    esac
+    if [ -n "$CLIENT_FOREGROUND" ] || [ -z "$_app" ] || [ "$(uname)" != Darwin ]; then
+        "$BIN" "$@" > "$_log" 2>&1
+        return $?
+    fi
+    set -- -a "$_app" --args "$@"
+    for _var in $(env | grep -E '^(TIVOLI|HIFI|DARKRIDE|QT|XDG|DYLD)_[A-Za-z0-9_]*=' | cut -d= -f1); do
+        eval "_value=\${$_var}"
+        set -- --env "$_var=$_value" "$@"
+    done
+    : > "$_log"
+    QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 QT_MAC_SET_RAISE_PROCESS=0 \
+        open -g -n -W --env QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 --env QT_MAC_SET_RAISE_PROCESS=0 \
+            --stdout "$_log" --stderr "$_log" "$@"
+}
+
 client() {
     _name=$1; shift
     wall "$_name"
     lock_take || return 1
     DARKRIDE_CLIENT_LABEL=${DARKRIDE_CLIENT_LABEL:-"Darkride - $SESSION - TEST, not yours"} \
     XDG_CONFIG_HOME="$R/$_name-home/config" TIVOLI_APP_DATA_DIR="$R/$_name-home/data" \
-        "$BIN" --allowMultipleInstances --tokens "{}" "$@" > "$R/$_name.log" 2>&1
+        client_start "$R/$_name.log" --allowMultipleInstances --tokens "{}" "$@"
     _status=$?
     [ -n "$KEEP_KTX" ] || rm -rf "$R/$_name-home/data/ktx_cache"
     return $_status
