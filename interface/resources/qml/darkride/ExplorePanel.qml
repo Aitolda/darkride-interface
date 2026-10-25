@@ -125,8 +125,12 @@ Page {
                 done();
             });
             if (pending === 2) {
-                // the worlds that open as instances are listed with the online ones, whether or not anyone is in them
-                MetaverseRequests.send("GET", "/api/worlds?search=" + encodeURIComponent(search), null,
+                // the worlds that open as instances are listed with the online ones, whether or not anyone is in them.
+                // The protocol tells the metaverse this is a client that greys out other versions' worlds itself: a
+                // list asked without it (1.0.2's Explore) leaves out the always-on worlds that run ahead, the beta's
+                // Test Track first (Caity, 10-25: "hide it")
+                MetaverseRequests.send("GET", "/api/worlds?search=" + encodeURIComponent(search) +
+                                       "&protocol=" + encodeURIComponent(root.protocol), null,
                                        function (error, code, data) {
                     withInstances = !error && Array.isArray(data) ? data : [];
                     done();
