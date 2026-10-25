@@ -222,8 +222,9 @@ class Message {
 		public extras: {
 			me?: boolean;
 			tts?: boolean;
-			// an AI resident, as the metaverse marks it (set by the script, never by the sender)
+			// an AI resident or a bot, as the metaverse marks it (set by the script, never by the sender)
 			ai?: boolean;
+			bot?: boolean;
 			aiWord?: string;
 			host?: string;
 		} = {},
@@ -291,8 +292,11 @@ export class ChatService {
 
 	readonly messageShownTime = 1000 * 20; // how long till messages fade out
 
-	// the line under an AI resident's name: "✦ language model · hosted by caitlyn"
-	markLine(extras: { aiWord?: string; host?: string }) {
+	// the line under an AI resident's name: "✦ language model · hosted by caitlyn", or for a bot
+	// "⚙ bot · hosted by madders" (U+2699 alone: with U+FE0F it is drawn as a colour emoji)
+	markLine(extras: { bot?: boolean; aiWord?: string; host?: string }) {
+		if (extras.bot)
+			return "\u2699 bot" + (extras.host ? " · hosted by " + extras.host : "");
 		return (
 			"✦ " +
 			(extras.aiWord || "AI resident") +

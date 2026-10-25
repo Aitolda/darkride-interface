@@ -36,6 +36,13 @@
 				matTooltipPosition="above"
 				>AI</span
 			>
+			<span
+				class="badge bot"
+				*ngIf="message.extras.bot"
+				[matTooltip]="chatService.markLine(message.extras)"
+				matTooltipPosition="above"
+				>BOT</span
+			>
 			{{ message.type == "message" ? message.username + ":" : "" }}
 		</div>
 		<span [class.username]="message.type == 'announcement'">
