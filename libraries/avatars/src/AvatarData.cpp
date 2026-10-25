@@ -1342,9 +1342,11 @@ int AvatarData::parseDataFromBuffer(const QByteArray& buffer) {
         sourceBuffer += sizeof(AvatarDataPacket::FaceTrackerInfo);
 
         PACKET_READ_CHECK(FaceTrackerCoefficients, coefficientsSize);
-        _headData->_blendshapeCoefficients.resize(std::min(numCoefficients, (int)Blendshapes::BlendshapeCount));  // make sure there's room for the copy!
+        // the head holds at most BlendshapeCount; any coefficients after those are skipped
+        const int numKept = std::min(numCoefficients, (int)Blendshapes::BlendshapeCount);
+        _headData->_blendshapeCoefficients.resize(numKept);
         //only copy the blendshapes to headData, not the procedural face info
-        memcpy(_headData->_blendshapeCoefficients.data(), sourceBuffer, coefficientsSize);
+        memcpy(_headData->_blendshapeCoefficients.data(), sourceBuffer, numKept * sizeof(float));
         sourceBuffer += coefficientsSize;
 
         int numBytesRead = sourceBuffer - startSection;
