@@ -28,7 +28,7 @@
 
 #include "SameVariant.h"
 
-QTEST_MAIN(EntityPropertiesConversionTests)
+QTEST_GUILESS_MAIN(EntityPropertiesConversionTests)
 
 namespace {
 

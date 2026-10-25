@@ -10,7 +10,7 @@
 
 #include <QtScript/QScriptEngine>
 
-QTEST_MAIN(QtScriptOverloadTests)
+QTEST_GUILESS_MAIN(QtScriptOverloadTests)
 
 namespace {
 

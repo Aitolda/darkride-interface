@@ -20,7 +20,7 @@
 
 #include "TestObjects.h"
 
-QTEST_MAIN(HostInterfaceTests)
+QTEST_GUILESS_MAIN(HostInterfaceTests)
 
 namespace {
 
