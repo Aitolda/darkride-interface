@@ -584,10 +584,18 @@ Menu::Menu() {
                                            qApp, SLOT(updateVerboseLogging()));
 
     // Developer > Scripting > Run JavaScript on QtScript (the old engine): the way back from the WebAssembly engine, which
-    // .js client scripts load on otherwise; it takes effect for scripts loaded after the change
-    addCheckableActionToQMenuAndActionHash(scriptingOptionsMenu, MenuOption::RunJavaScriptOnQtScript,
-                                           [](bool checked) { WasmScriptEngine::setRunJavaScriptOnWebAssembly(!checked); },
-                                           0, !WasmScriptEngine::runJavaScriptOnWebAssembly());
+    // .js client scripts load on otherwise; it takes effect for scripts loaded after the change. Without the runtime
+    // file every JavaScript script runs on QtScript, so the item shows ticked and can't be changed; it has its own name,
+    // since a menu item's name is its saved key and a saved tick would turn a later client with the file to QtScript
+    if (WasmScriptEngine::hasJavaScriptGuest()) {
+        addCheckableActionToQMenuAndActionHash(scriptingOptionsMenu, MenuOption::RunJavaScriptOnQtScript,
+                                               [](bool checked) { WasmScriptEngine::setRunJavaScriptOnWebAssembly(!checked); },
+                                               0, !WasmScriptEngine::runJavaScriptOnWebAssembly());
+    } else {
+        action = addCheckableActionToQMenuAndActionHash(scriptingOptionsMenu, MenuOption::RunJavaScriptOnQtScriptNoRuntime,
+                                                        0, true);
+        action->setEnabled(false);
+    }
 
     // Developer > UI >>>
     MenuWrapper* uiOptionsMenu = developerMenu->addMenu("UI");
