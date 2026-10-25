@@ -11,8 +11,11 @@
 
 #include "ScriptableAvatar.h"
 
+#include <QCoreApplication>
 #include <QDebug>
+#include <QFileInfo>
 #include <QThread>
+#include <mutex>
 #include <glm/gtx/transform.hpp>
 
 #include <shared/QtHelpers.h>
@@ -25,6 +28,23 @@
 #include <EntityItem.h>
 #include <EntityItemProperties.h>
 
+// The .fst to read the skeleton from: the avatar's own, or, for the default avatar (a qrc: URL, and an assignment
+// client carries no qrc resources), the copy beside the assignment client (CMakeLists.txt). The wire still says
+// "default" (getWireSafeSkeletonModelURL), so every viewer draws its own default avatar, which this skeleton animates.
+static QUrl skeletonFSTURL(const QUrl& skeletonModelURL) {
+    if (skeletonModelURL == AvatarData::defaultFullAvatarModelUrl()) {
+        const QString builtIn = QCoreApplication::applicationDirPath() + "/resources/meshes/defaultAvatar_full.fst";
+        if (QFileInfo::exists(builtIn)) {
+            return QUrl::fromLocalFile(builtIn);
+        }
+        static std::once_flag warned;
+        std::call_once(warned, [&builtIn] {
+            qCWarning(avatars) << "No default avatar at" << builtIn
+                               << "- an agent with no model of its own won't animate";
+        });
+    }
+    return skeletonModelURL;
+}
 
 ScriptableAvatar::ScriptableAvatar() {
     _clientTraitsHandler.reset(new ClientTraitsHandler(this));
@@ -474,7 +494,8 @@ void ScriptableAvatar::updateJointMappings() {
         _jointData.clear();
     }
 
-    if (_skeletonModelURL.fileName().toLower().endsWith(".fst")) {
+    const QUrl fstURL = skeletonFSTURL(_skeletonModelURL);
+    if (fstURL.fileName().toLower().endsWith(".fst")) {
         ////
         // TODO: Should we rely upon HTTPResourceRequest for ResourceRequestObserver instead?
         // HTTPResourceRequest::doSend() covers all of the following and
@@ -482,11 +503,11 @@ void ScriptableAvatar::updateJointMappings() {
         // want to add a HTTPResourceRequest::doSend() method that does
         // connects.
         QNetworkAccessManager& networkAccessManager = NetworkAccessManager::getInstance();
-        QNetworkRequest networkRequest = QNetworkRequest(_skeletonModelURL);
+        QNetworkRequest networkRequest = QNetworkRequest(fstURL);
         networkRequest.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
         networkRequest.setHeader(QNetworkRequest::UserAgentHeader, TIVOLI_CLOUD_VR_USER_AGENT);
         DependencyManager::get<ResourceRequestObserver>()->update(
-            _skeletonModelURL, -1, "AvatarData::updateJointMappings");
+            fstURL, -1, "AvatarData::updateJointMappings");
         QNetworkReply* networkReply = networkAccessManager.get(networkRequest);
         //
         ////
@@ -498,7 +519,7 @@ void ScriptableAvatar::setJointMappingsFromNetworkReply() {
     QNetworkReply* networkReply = static_cast<QNetworkReply*>(sender());
     // before we process this update, make sure that the skeleton model URL hasn't changed
     // since we made the FST request
-    if (networkReply->url() != _skeletonModelURL) {
+    if (networkReply->url() != skeletonFSTURL(_skeletonModelURL)) {
         qCDebug(avatars) << "Refusing to set joint mappings for FST URL that does not match the current URL";
         networkReply->deleteLater();
         return;
@@ -511,7 +532,7 @@ void ScriptableAvatar::setJointMappingsFromNetworkReply() {
             if (line.startsWith("filename")) {
                 int filenameIndex = line.indexOf('=') + 1;
                 if (filenameIndex > 0) {
-                    _skeletonFBXURL = _skeletonModelURL.resolved(QString(line.mid(filenameIndex).trimmed()));
+                    _skeletonFBXURL = networkReply->url().resolved(QString(line.mid(filenameIndex).trimmed()));
                 }
             }
             if (!line.startsWith("jointIndex")) {
