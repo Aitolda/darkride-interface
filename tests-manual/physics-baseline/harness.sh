@@ -28,6 +28,8 @@
 #                                    client's exit status isn't (read its log). CLIENT_FOREGROUND=1 opens it in front
 #                                    instead, still through open (a client someone plays, or a timing run that needs
 #                                    the window on top). Elsewhere than macOS it runs the binary straight.
+#                                    The client's pid goes in <log>.pid while it runs; CLIENT_TIMEOUT=<s> stops a
+#                                    client still running after that long (SIGTERM, then SIGKILL after 5 s).
 #                                    client_start also passes -NSAutoFillHeuristicsEnabled NO (AppKit's argument domain;
 #                                    the client's own parser lists it as unknown and goes on): AutoFill starts a
 #                                    SafariPlatformSupport.Helper when the app becomes active, and the helper outlives
@@ -152,8 +154,21 @@ client_start() {
         _cpid=$(pgrep -f -- "-DarkrideTestRun $_log" | head -1)
         _i=$((_i + 1)); sleep 0.5
     done
+    # the client's pid beside its log, and CLIENT_TIMEOUT=<s>: SIGTERM after that long, SIGKILL 5 s later (the client
+    # has been seen to ignore SIGTERM); open -W alone would wait for ever (scripting's run-client.sh does the same)
+    _watch=""
+    if [ -n "$_cpid" ]; then
+        echo "$_cpid" > "$_log.pid"
+        if [ -n "${CLIENT_TIMEOUT:-}" ]; then
+            ( sleep "$CLIENT_TIMEOUT"; kill -0 "$_cpid" 2>/dev/null || exit 0
+              echo "client_start: client $_cpid still running after ${CLIENT_TIMEOUT}s: stopping it" >&2
+              kill -TERM "$_cpid"; sleep 5; kill -0 "$_cpid" 2>/dev/null && kill -KILL "$_cpid" ) &
+            _watch=$!
+        fi
+    fi
     wait $_opener
     _status=$?
+    [ -z "$_watch" ] || kill "$_watch" 2>/dev/null
     [ -z "$_cpid" ] || stop_client_helpers "$_cpid" "$_since"
     if [ -z "$_cpid" ]; then
         echo "client_start: no client started from $_app (open's status $_status); see above and $_log" >&2
