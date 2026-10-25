@@ -30,4 +30,8 @@ echo "client: $BIN"
 echo "world: $URL"
 echo "terrain: $TERRAIN_URL"
 echo "aboard, click the ship for the helm: W/S throttle (X cuts), A/D rudder, up/down elevator, Space/C up and down, B ballast, V vent, F leave; R fresh ship, T to the pad"
-"$BIN" --allowMultipleInstances --url "$URL" --testScript "$R/airship-playground.js" > "$R/client.log" 2>&1 || true
+# started through harness.sh's client_start, as every client on the shared Mac is (engine bug #29: a client run straight
+# from a shell leaves helper processes behind); your own settings, not walled off, and no machine lock: you play it.
+# It opens behind the terminal: click its window to fly.
+. "$D/harness.sh"
+client_start "$R/client.log" --allowMultipleInstances --url "$URL" --testScript "$R/airship-playground.js" || true
