@@ -300,6 +300,33 @@ public slots:
     Q_INVOKABLE bool saveWindowPicture(const QString& path);
 
     /**jsdoc
+     * Answers the next of Darkride's alerts (ui/Popup.h) to open within 15 s, as a click would: after it has drawn,
+     * saves its picture, types into its field, and presses the named button. Call it before what opens the alert
+     * (an alert waits for its answer, so a call that opens one returns only once it is answered).
+     * @function Test.answerNextAlert
+     * @param {string} button - The label of the button to press.
+     * @param {string} [fieldText=""] - What to type into the alert's field first, if it has one.
+     * @param {string} [picturePath=""] - Where to save the alert's picture (PNG), if anywhere.
+     */
+    Q_INVOKABLE void answerNextAlert(const QString& button, const QString& fieldText = QString(),
+                                     const QString& picturePath = QString());
+
+    /**jsdoc
+     * Shows one of Darkride's alerts (ui/Popup.h) with Darkride's logo, and waits for its answer: a look at the alert's
+     * design without the action that asks it. Answer it with Test.answerNextAlert, called first.
+     * @function Test.showAlert
+     * @param {string} title - The bold line.
+     * @param {string} text - The short line under it.
+     * @param {string} details - What the Details fold-out holds ("" for none).
+     * @param {object[]} buttons - Each <code>{ label, role }</code>, role "default", "cancel", "plain" or
+     *     "destructive".
+     * @param {string} [fieldPlaceholder] - Given, the alert has a field with this placeholder.
+     * @returns {number} The pressed button's place in the list, -1 for none.
+     */
+    Q_INVOKABLE int showAlert(const QString& title, const QString& text, const QString& details,
+                              const QVariantList& buttons, const QString& fieldPlaceholder = QString());
+
+    /**jsdoc
      * Chooses a control point of the Track selected on its own in the editor (-1 for none), as a click on its diamond
      * does: bright in the viewport, the Move gizmo on it, the Inspector's Points list on its row.
      * @function Test.chooseTrackPoint
