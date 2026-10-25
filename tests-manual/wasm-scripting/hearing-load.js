@@ -8,7 +8,9 @@
 //  getMultipleEntityProperties) every two seconds. Every 30 s a LOAD line counts the requests and, on a guest that
 //  has __guestMemory, the guest's heap. The posts go to http-echo.py on 127.0.0.1:43110, nobody's bridge.
 //
-//  Distributed under the Apache License, Version 2.0.
+//  Copyright 2026 Darkride.
+//
+//  Distributed under the MIT License.
 //
 
 (function () {
