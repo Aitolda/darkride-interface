@@ -14,6 +14,7 @@
 //  Copyright 2026 Darkride.
 //
 //  Distributed under the MIT License.
+//  See the accompanying file LICENSE-MIT or https://opensource.org/licenses/MIT
 //
 
 #ifndef hifi_Popup_h
