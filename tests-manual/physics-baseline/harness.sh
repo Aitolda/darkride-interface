@@ -69,10 +69,14 @@ CLIENT_WINDOW=${CLIENT_WINDOW:-@Rect(1110 470 800 600)}
 export HIFI_METAVERSE_URL=${HIFI_METAVERSE_URL:-https://vr.darkride.ai}
 
 wall() {
-    mkdir -p "$R/$1-home/config/Tivoli Cloud VR - dev" "$R/$1-home/data" "$R/$1-home/snaps"
-    [ -f "$R/$1-home/config/Tivoli Cloud VR - dev/Interface.json" ] ||
-        echo "{\"snapshotsLocation\": \"$R/$1-home/snaps\", \"WindowGeometry\": \"$CLIENT_WINDOW\"}" \
-            > "$R/$1-home/config/Tivoli Cloud VR - dev/Interface.json"
+    mkdir -p "$R/$1-home/data" "$R/$1-home/snaps"
+    # a dev build keeps its settings under "Tivoli Cloud VR - dev", a PRODUCTION build under "Tivoli Cloud VR" (avatars)
+    for _org in "Tivoli Cloud VR - dev" "Tivoli Cloud VR"; do
+        mkdir -p "$R/$1-home/config/$_org"
+        [ -f "$R/$1-home/config/$_org/Interface.json" ] ||
+            echo "{\"snapshotsLocation\": \"$R/$1-home/snaps\", \"WindowGeometry\": \"$CLIENT_WINDOW\"}" \
+                > "$R/$1-home/config/$_org/Interface.json"
+    done
 }
 
 # --pid $$: the lock is this runner's ($$ is the runner's shell in a background client too) and is freed when it exits;
