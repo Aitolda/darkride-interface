@@ -464,6 +464,14 @@ bool TestScriptingInterface::acceptPanelText(const QString& objectName) {
     return field && QMetaObject::invokeMethod(field, "accepted");
 }
 
+void TestScriptingInterface::editorCreate(const QString& key) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "editorCreate", Q_ARG(QString, key));
+        return;
+    }
+    DependencyManager::get<Editor>()->create(key);
+}
+
 bool TestScriptingInterface::saveWindowPicture(const QString& path) {
     if (QThread::currentThread() != thread()) {
         bool result = false;

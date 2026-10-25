@@ -402,6 +402,15 @@ public slots:
     Q_INVOKABLE bool acceptPanelText(const QString& objectName);
 
     /**jsdoc
+     * Does what an item of build mode's Create menu does: makes the entity (or a ready-made family of them, a vehicle),
+     * placed at the middle of the view, selected, one undo step.
+     * @function Test.editorCreate
+     * @param {string} key - The item's key in the catalogue (editor/EditorCreate.cpp): <code>"cube"</code>,
+     *     <code>"vehicle-car"</code>, …
+     */
+    Q_INVOKABLE void editorCreate(const QString& key);
+
+    /**jsdoc
      * Turns build mode on or off, as Build > Build Mode does.
      * @function Test.setBuildMode
      * @param {boolean} on - Whether build mode is on.
