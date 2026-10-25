@@ -906,6 +906,29 @@ static bool closestInAllWorlds(const PhysicsWorld* root, const Frames& frames,
     return result.hit;
 }
 
+glm::vec3 PhysicsEngine::sphereOutOfOverlapsAllWorlds(const glm::vec3& center, float radius, int32_t group, int32_t mask,
+                                                      const JPH::BodyFilter* bodyFilter) const {
+    const int ROUNDS = 4;
+    const float SLOP = 0.002f;   // m, past the surface, so the next round finds it clear
+    glm::vec3 position = center;
+    for (int round = 0; round < ROUNDS; ++round) {
+        glm::vec3 push(0.0f);
+        if (_rootWorld) {
+            push += _rootWorld->sphereOverlapPush(position, radius, group, mask, bodyFilter);
+        }
+        for (const auto& entry : _frameWorlds) {
+            const PhysicsWorld* world = entry.second.get();
+            push += world->getFrameRotation() * world->sphereOverlapPush(world->toLocal(position), radius, group, mask, bodyFilter);
+        }
+        float length = glm::length(push);
+        if (length < EPSILON) {
+            break;
+        }
+        position += push * ((length + SLOP) / length);
+    }
+    return position;
+}
+
 bool PhysicsEngine::castRayClosestAllWorlds(const glm::vec3& start, const glm::vec3& end, int32_t group, int32_t mask,
                                             const JPH::BodyFilter* bodyFilter, RayHit& result) const {
     return closestInAllWorlds(_rootWorld.get(), _frameWorlds, start, end,

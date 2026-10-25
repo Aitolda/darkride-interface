@@ -191,6 +191,10 @@ public:
     // finds that one.
     bool castSphereClosest(const glm::vec3& start, const glm::vec3& end, float radius, int32_t group, int32_t mask,
                            const JPH::BodyFilter* bodyFilter, RayHit& result) const;
+    // the way out for a sphere of the radius at the centre, filtered as the casts are: the sum, over the bodies it
+    // overlaps, of the push along each one's shortest way out (zero when it touches nothing)
+    glm::vec3 sphereOverlapPush(const glm::vec3& center, float radius, int32_t group, int32_t mask,
+                                const JPH::BodyFilter* bodyFilter) const;
 
     void debugDraw(uint32_t mode, PhysicsDebugDraw* renderer);
 

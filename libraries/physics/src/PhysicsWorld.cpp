@@ -913,6 +913,34 @@ public:
 };
 }
 
+glm::vec3 PhysicsWorld::sphereOverlapPush(const glm::vec3& center, float radius, int32_t group, int32_t mask,
+                                          const JPH::BodyFilter* bodyFilter) const {
+    if (!_system || radius <= 0.0f) {
+        return glm::vec3(0.0f);
+    }
+    JPH::ObjectLayer layer = JoltLayers::layerFor(group, mask);
+    JPH::DefaultBroadPhaseLayerFilter broadPhaseFilter(_layers->objectVsBroadPhase, layer);
+    JPH::DefaultObjectLayerFilter objectLayerFilter(_layers->objectLayerPairs, layer);
+    JPH::BodyFilter noBodyFilter;
+
+    JPH::SphereShape sphere(radius);
+    sphere.SetEmbedded();   // on the stack, not reference counted
+    JPH::CollideShapeSettings settings;
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+    _system->GetNarrowPhaseQueryNoLock().CollideShape(&sphere, JPH::Vec3::sReplicate(1.0f),
+                                                      JPH::RMat44::sTranslation(glmToJoltR(center)), settings,
+                                                      JPH::RVec3::sZero(), collector, broadPhaseFilter, objectLayerFilter,
+                                                      bodyFilter ? *bodyFilter : noBodyFilter);
+    glm::vec3 push(0.0f);
+    for (const JPH::CollideShapeResult& hit : collector.mHits) {
+        glm::vec3 axis = joltToGLM(hit.mPenetrationAxis);   // the way the body would move out of the sphere
+        if (hit.mPenetrationDepth > 0.0f && glm::length(axis) > 0.0f) {
+            push -= glm::normalize(axis) * hit.mPenetrationDepth;
+        }
+    }
+    return push;
+}
+
 bool PhysicsWorld::castSphereClosest(const glm::vec3& start, const glm::vec3& end, float radius, int32_t group,
                                      int32_t mask, const JPH::BodyFilter* bodyFilter, RayHit& result) const {
     result = RayHit();

@@ -395,7 +395,11 @@ private:
     const QSet<QUuid>& _ignored;
 };
 
-float ViewState::allowedBoomLength(const glm::vec3& pivot, const glm::vec3& wanted, const QVector<QUuid>& ignore) const {
+float ViewState::allowedBoomLength(const glm::vec3& pivot, const glm::vec3& wanted, const QVector<QUuid>& ignore,
+                                   glm::vec3* clearPivot) const {
+    if (clearPivot) {
+        *clearPivot = pivot;
+    }
     float wantedLength = glm::distance(pivot, wanted);
     PhysicsEnginePointer physicsEngine = qApp->getPhysicsEngine();
     if (!physicsEngine || wantedLength < EPSILON || !qApp->isOptionChecked(MenuOption::CameraCollision)) {
@@ -413,26 +417,42 @@ float ViewState::allowedBoomLength(const glm::vec3& pivot, const glm::vec3& want
         }
     }
 
-    // a sphere round the camera's near plane, swept out from the pivot; and a ray, which finds what the sphere starts
-    // inside (a wall right behind your head)
+    // The probe: a sphere round the camera's near plane, out to its corners (at a wide field of view on a wide window
+    // they reach well past twice the near clip), swept out from the pivot. Its start is first moved out of whatever it
+    // overlaps: a pivot pressed against a wall (Caity's strafing, 10-25) would otherwise start the sphere inside the
+    // wall, and the sweep skips what it starts inside. So the camera never stands nearer a wall than the probe's radius.
+    // A ray from the same start guards a thin wall the sphere could straddle.
     float radius;
     {
         QMutexLocker viewLocker(&_mutex);
-        radius = glm::max(0.05f, 2.0f * _viewFrustum.getNearClip());
+        float nearClip = _viewFrustum.getNearClip();
+        float halfHeight = nearClip * tanf(glm::radians(0.5f * _viewFrustum.getFieldOfView()));
+        float halfWidth = halfHeight * _viewFrustum.getAspectRatio();
+        const float MARGIN = 1.1f;
+        radius = glm::max(2.0f * nearClip, MARGIN * sqrtf(nearClip * nearClip + halfHeight * halfHeight + halfWidth * halfWidth));
     }
     const int32_t group = BULLET_COLLISION_GROUP_MY_AVATAR;
     const int32_t mask = BULLET_COLLISION_GROUP_STATIC | BULLET_COLLISION_GROUP_DYNAMIC | BULLET_COLLISION_GROUP_KINEMATIC;
     CameraBoomFilter filter(ignored);
     glm::vec3 offset = ObjectMotionState::getWorldOffset();   // world to the physics' coordinates
-    float allowed = wantedLength;
+    glm::vec3 start = physicsEngine->sphereOutOfOverlapsAllWorlds(pivot - offset, radius, group, mask, &filter) + offset;
+    if (clearPivot) {
+        *clearPivot = start;
+    }
+    float startLength = glm::distance(start, wanted);
+    if (startLength < EPSILON) {
+        return 0.0f;
+    }
+    float fraction = 1.0f;
     RayHit hit;
-    if (physicsEngine->castSphereClosestAllWorlds(pivot - offset, wanted - offset, radius, group, mask, &filter, hit)) {
-        allowed = hit.fraction * wantedLength;
+    if (physicsEngine->castSphereClosestAllWorlds(start - offset, wanted - offset, radius, group, mask, &filter, hit)) {
+        fraction = hit.fraction;
     }
-    if (physicsEngine->castRayClosestAllWorlds(pivot - offset, wanted - offset, group, mask, &filter, hit)) {
-        allowed = glm::min(allowed, hit.fraction * wantedLength - radius);
+    if (physicsEngine->castRayClosestAllWorlds(start - offset, wanted - offset, group, mask, &filter, hit)) {
+        fraction = glm::min(fraction, hit.fraction - radius / startLength);
     }
-    return glm::clamp(allowed, 0.0f, wantedLength);
+    // as a length from the pivot the caller gave (the start is at most a few centimetres from it)
+    return glm::clamp(fraction, 0.0f, 1.0f) * (clearPivot ? startLength : wantedLength);
 }
 
 glm::vec3 ViewState::collideCameraBoom(const glm::vec3& pivot, const glm::vec3& wanted, float deltaTime) {
@@ -444,7 +464,15 @@ glm::vec3 ViewState::collideCameraBoom(const glm::vec3& pivot, const glm::vec3& 
         _boomHeldIn = false;
         return wanted;
     }
-    float allowed = allowedBoomLength(pivot, wanted, QVector<QUuid>());
+    glm::vec3 start = pivot;   // the pivot moved out of a wall it was pressed against
+    float allowed = allowedBoomLength(pivot, wanted, QVector<QUuid>(), &start);
+    boom = wanted - start;
+    wantedLength = glm::length(boom);
+    if (wantedLength < EPSILON) {
+        _boomLength = 0.0f;
+        _boomHeldIn = false;
+        return start;
+    }
     if (_boomLength < 0.0f || allowed <= _boomLength || !_boomHeldIn) {
         _boomLength = allowed;   // in at once (a wall must never show for a frame), and the zoom followed as it is
     } else {
@@ -452,7 +480,7 @@ glm::vec3 ViewState::collideCameraBoom(const glm::vec3& pivot, const glm::vec3& 
     }
     const float SETTLED = 0.01f;   // m
     _boomHeldIn = _boomLength < wantedLength - SETTLED;
-    return pivot + (boom / wantedLength) * _boomLength;
+    return start + (boom / wantedLength) * _boomLength;
 }
 
 // the camera's mode and the View menu, kept in step
