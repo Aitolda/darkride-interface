@@ -236,7 +236,9 @@ PY
 sandbox_start() {
     _build=$1; _port=$2
     python3 -c 'import json, os, sys; p = sys.argv[1]; c = json.load(open(p)) if os.path.exists(p) else {}; c.setdefault("physics_server", {})["enabled"] = True; json.dump(c, open(p, "w"), indent=2)' "$SANDBOX/domain-config.json"
-    "$DOMAIN_SANDBOX" physics "$_build" "$_port"
+    # the sandbox's name is its folder's (domain-sandbox.sh keeps ~/tivoli-sandboxes/<name>), so sandbox_stop and
+    # sandbox_clean_world, which use $SANDBOX, act on the same one (skunkworks, 10-25: it was always "physics")
+    "$DOMAIN_SANDBOX" "$(basename "$SANDBOX")" "$_build" "$_port"
     _i=0
     while [ "$_i" -lt 90 ]; do
         _i=$((_i + 1))
