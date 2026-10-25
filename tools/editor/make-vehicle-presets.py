@@ -163,7 +163,7 @@ def rail():
     # a short closed loop of monorail beam, 4 m up on pylons (2.2 m of headroom under the beam): two 10 m straights
     # joined by 10 m-radius half circles, at 6 m/s (0.37 g in the turns: the train doesn't slow for curves, and the
     # beam isn't banked); a station mid-straight, its first point, where the car waits 8 s; and the car there.
-    # Not boardable yet: the cabin's walls and roof and the station's platform and ramp are still to come
+    # The car has a glass cabin with doors; the station a platform level with its floor and a ramp up to it
     height = 4.0
     radius, straight = 10.0, 10.0
     half = straight * 0.5
@@ -189,13 +189,48 @@ def rail():
         "color": {"red": 215, "green": 215, "blue": 222},
     }
     first = points[0]
+    hull = (2.4, 1.4, 6.8)          # straddles the beam; its top is the cabin's floor, 0.7 m over the ride line
     car = {
         "id": new_id(), "type": "Box", "shape": "Cube", "name": "Monorail car",
-        "position": vec(first[0], height + 1.1 * 0.5 + 0.7 + 1.4 * 0.5, first[2]), "dimensions": vec(2.4, 1.4, 6.8),
+        # on the ride line, where the train keeps it: its floor level with the platform from the start
+        "position": vec(first[0], height, first[2]), "dimensions": vec(*hull),
         "color": {"red": 32, "green": 52, "blue": 124}, "frame": True, "trackID": track["id"], "trackOffset": 0,
         "dynamic": False, "collisionless": False, "grab": {"grabbable": False},
     }
-    return [track, car]
+    entities = [track, car]
+    # the cabin: glass walls with a door gap in the middle of each long side, and a roof (the monorail's)
+    wall_height, wall_thickness, door_width = 1.9, 0.04, 2.0
+    glass, roof = {"red": 190, "green": 215, "blue": 235}, {"red": 40, "green": 44, "blue": 52}
+    floor_y = hull[1] * 0.5
+    wall_y = floor_y + wall_height * 0.5
+    half_x, half_z = hull[0] * 0.5, hull[2] * 0.5
+    panel_length = half_z - door_width * 0.5
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            entities.append(part(car, "Monorail car wall", vec(sx * (half_x - wall_thickness * 0.5), wall_y,
+                                                              sz * (half_z - panel_length * 0.5)),
+                                 vec(wall_thickness, wall_height, panel_length), glass, collisionless=False, alpha=0.32))
+    for sz in (-1, 1):
+        entities.append(part(car, "Monorail car wall", vec(0, wall_y, sz * (half_z - wall_thickness * 0.5)),
+                             vec(hull[0], wall_height, wall_thickness), glass, collisionless=False, alpha=0.32))
+    entities.append(part(car, "Monorail car roof", vec(0, floor_y + wall_height + 0.03, 0), vec(hull[0], 0.06, hull[2]),
+                         roof, collisionless=False))
+    # the station: a platform outside the loop, beside the car's stop, its top level with the cabin's floor, and a ramp
+    # from its end down to the ground, about 13 m long so it stays near 20 degrees (physics, 10-25)
+    platform = (3.0, 0.4, 10.0)
+    top = height + floor_y
+    side = half_x + platform[0] * 0.5 + 0.05
+    entities.append({"id": new_id(), "type": "Box", "shape": "Cube", "name": "Monorail platform",
+                     "position": vec(first[0] + side, top - platform[1] * 0.5, first[2]), "dimensions": vec(*platform),
+                     "color": {"red": 72, "green": 74, "blue": 80}, "collisionless": False, "grab": {"grabbable": False}})
+    run = 13.0
+    pitch = math.atan2(top, run)   # +pitch about x raises the ramp's -z end, the platform's
+    entities.append({"id": new_id(), "type": "Box", "shape": "Cube", "name": "Monorail ramp",
+                     "position": vec(first[0] + side, top * 0.5 - 0.1, first[2] + platform[2] * 0.5 + run * 0.5),
+                     "rotation": {"x": math.sin(pitch * 0.5), "y": 0.0, "z": 0.0, "w": math.cos(pitch * 0.5)},
+                     "dimensions": vec(platform[0], 0.2, math.hypot(run, top)),
+                     "color": {"red": 64, "green": 66, "blue": 72}, "collisionless": False, "grab": {"grabbable": False}})
+    return entities
 
 
 def main():

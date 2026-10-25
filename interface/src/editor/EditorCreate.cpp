@@ -120,7 +120,7 @@ const QVector<EditorCreate::Item>& EditorCreate::items() {
         { "vehicle-car", "Car", "Special items/Vehicles", EntityTypes::Box, false, "editor/vehicles/car.json", 0.0f, false,
           "A four-wheeled car: get in its driver's seat to drive" },
         { "vehicle-rail", "Rail", "Special items/Vehicles", EntityTypes::Track, false, "editor/vehicles/rail.json", 20.0f,
-          false, "A loop of monorail track with a car that rides it (no platform to board it from yet)" },
+          false, "A loop of monorail track with a car that stops at its station: walk up the ramp to the platform to board" },
         { "vehicle-airship", "Airship", "Special items/Vehicles", EntityTypes::Box, false, "editor/vehicles/airship.json",
           25.0f, false, "A small airship with a deck to walk on, 36 m long: it goes 25 m ahead of you" },
         { "vehicle-aircraft", "Aircraft", "Special items/Vehicles", EntityTypes::Box, false, "editor/vehicles/aircraft.json",

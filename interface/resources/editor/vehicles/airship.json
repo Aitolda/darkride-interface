@@ -2,7 +2,7 @@
  "DataVersion": 0,
  "Entities": [
   {
-   "id": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "id": "{031b3ecc-950c-480c-ae49-db059df98b86}",
    "type": "Box",
    "shape": "Cube",
    "name": "Airship",
@@ -84,11 +84,11 @@
    }
   },
   {
-   "id": "{46dfc8ce-6f51-44a3-aeb2-f74a5eb85a46}",
+   "id": "{7e7f0ed0-fd4d-4da2-b02a-2c033576ea6d}",
    "type": "Shape",
    "shape": "Sphere",
    "name": "Airship envelope",
-   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "parentID": "{031b3ecc-950c-480c-ae49-db059df98b86}",
    "position": {
     "x": 0,
     "y": 7,
@@ -111,11 +111,11 @@
    }
   },
   {
-   "id": "{3df58839-e738-4e52-ad06-7f1c25bf1e0f}",
+   "id": "{0917572b-d387-476f-b09a-00e9c60a17a5}",
    "type": "Box",
    "shape": "Cube",
    "name": "Airship fin",
-   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "parentID": "{031b3ecc-950c-480c-ae49-db059df98b86}",
    "position": {
     "x": 0,
     "y": 7,
@@ -138,11 +138,11 @@
    }
   },
   {
-   "id": "{718c7ae5-9611-499b-89f1-9ea4ae4a51e1}",
+   "id": "{2adb0233-b066-4ef9-9076-8528f51e0959}",
    "type": "Box",
    "shape": "Cube",
    "name": "Airship fin",
-   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "parentID": "{031b3ecc-950c-480c-ae49-db059df98b86}",
    "position": {
     "x": 0,
     "y": 7,
@@ -165,11 +165,11 @@
    }
   },
   {
-   "id": "{941a811a-c7c7-4332-a43c-1c6c1accca4b}",
+   "id": "{917681e3-84f5-45b5-bc65-e1415eda2298}",
    "type": "Box",
    "shape": "Cube",
    "name": "Airship rail",
-   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "parentID": "{031b3ecc-950c-480c-ae49-db059df98b86}",
    "position": {
     "x": 1.95,
     "y": 0.7,
@@ -192,11 +192,11 @@
    }
   },
   {
-   "id": "{d8b1cf08-94ee-432b-be12-07871c659969}",
+   "id": "{05559264-5bb9-4c29-9a16-ac7c50fe04ad}",
    "type": "Box",
    "shape": "Cube",
    "name": "Airship rail",
-   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "parentID": "{031b3ecc-950c-480c-ae49-db059df98b86}",
    "position": {
     "x": -1.95,
     "y": 0.7,
@@ -219,11 +219,11 @@
    }
   },
   {
-   "id": "{cc4e8306-679b-43e3-883e-98bc070d5780}",
+   "id": "{2aa93d22-629f-4501-9203-db804a1ed700}",
    "type": "Box",
    "shape": "Cube",
    "name": "Airship rail",
-   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "parentID": "{031b3ecc-950c-480c-ae49-db059df98b86}",
    "position": {
     "x": 0,
     "y": 0.7,
@@ -246,11 +246,11 @@
    }
   },
   {
-   "id": "{2094546b-9949-4aaf-8c5d-3e2074bac3aa}",
+   "id": "{31455647-e0b6-47b8-a905-96a92e2eb49d}",
    "type": "Box",
    "shape": "Cube",
    "name": "Airship rail",
-   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "parentID": "{031b3ecc-950c-480c-ae49-db059df98b86}",
    "position": {
     "x": 0,
     "y": 0.7,
@@ -273,11 +273,11 @@
    }
   },
   {
-   "id": "{a17171ab-5f9e-4f97-89ff-689eba47a9a6}",
+   "id": "{ad5a034c-695c-41f5-816b-152cc9ede2b3}",
    "type": "Box",
    "shape": "Cube",
    "name": "Airship helm",
-   "parentID": "{a4a773b7-3bac-4e22-acc7-17137d1561c7}",
+   "parentID": "{031b3ecc-950c-480c-ae49-db059df98b86}",
    "position": {
     "x": 0,
     "y": 0.75,
@@ -300,6 +300,6 @@
    }
   }
  ],
- "Id": "{c156392a-a172-4bcc-a3e2-b0d2b945c498}",
+ "Id": "{e5d3b30b-7a39-47c9-873f-bacd580958d7}",
  "Version": 141
 }

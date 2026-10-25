@@ -2,7 +2,7 @@
  "DataVersion": 0,
  "Entities": [
   {
-   "id": "{371bd590-537a-445c-ba39-bf1be3df3b7f}",
+   "id": "{0e804b00-2576-436f-9935-5f21fb5eed6e}",
    "type": "Box",
    "shape": "Cube",
    "name": "Aircraft",
@@ -80,11 +80,11 @@
    }
   },
   {
-   "id": "{add932ea-e27c-4bbf-9f38-10cd62998513}",
+   "id": "{b15eac7f-d9fd-4256-97f2-dfaabfa96cf0}",
    "type": "Box",
    "shape": "Cube",
    "name": "Aircraft wing",
-   "parentID": "{371bd590-537a-445c-ba39-bf1be3df3b7f}",
+   "parentID": "{0e804b00-2576-436f-9935-5f21fb5eed6e}",
    "position": {
     "x": 0,
     "y": 0.25,
@@ -107,11 +107,11 @@
    }
   },
   {
-   "id": "{11be861f-ed1c-4cea-8a15-4e3b10194717}",
+   "id": "{b3f43dea-3ce1-4b64-9122-e304b88181a8}",
    "type": "Box",
    "shape": "Cube",
    "name": "Aircraft fin",
-   "parentID": "{371bd590-537a-445c-ba39-bf1be3df3b7f}",
+   "parentID": "{0e804b00-2576-436f-9935-5f21fb5eed6e}",
    "position": {
     "x": 0,
     "y": 0.9,
@@ -134,11 +134,11 @@
    }
   },
   {
-   "id": "{eddf1927-b95d-4400-9ea9-4300cae67a24}",
+   "id": "{9e9bfcb0-f67c-4d43-8c7d-a8b929920fd1}",
    "type": "Box",
    "shape": "Cube",
    "name": "Aircraft tailplane",
-   "parentID": "{371bd590-537a-445c-ba39-bf1be3df3b7f}",
+   "parentID": "{0e804b00-2576-436f-9935-5f21fb5eed6e}",
    "position": {
     "x": 0,
     "y": 0.5,
@@ -161,11 +161,11 @@
    }
   },
   {
-   "id": "{f2f18170-fd10-48fc-8f21-60875a6d82eb}",
+   "id": "{44e341df-aa19-4071-85b4-bf0a643a32bc}",
    "type": "Box",
    "shape": "Cube",
    "name": "Aircraft rail",
-   "parentID": "{371bd590-537a-445c-ba39-bf1be3df3b7f}",
+   "parentID": "{0e804b00-2576-436f-9935-5f21fb5eed6e}",
    "position": {
     "x": 1.15,
     "y": 0.6,
@@ -188,11 +188,11 @@
    }
   },
   {
-   "id": "{b4e8ba9e-b3ec-42b8-9bd7-6f2a3302612a}",
+   "id": "{1f8d39df-e60b-40dc-b91b-4bffd4c15ae4}",
    "type": "Box",
    "shape": "Cube",
    "name": "Aircraft rail",
-   "parentID": "{371bd590-537a-445c-ba39-bf1be3df3b7f}",
+   "parentID": "{0e804b00-2576-436f-9935-5f21fb5eed6e}",
    "position": {
     "x": -1.15,
     "y": 0.6,
@@ -215,11 +215,11 @@
    }
   },
   {
-   "id": "{a5e2d084-81fa-4d35-85f6-3379581ca9b2}",
+   "id": "{6ed74c32-3e88-427f-924d-200e07162d0f}",
    "type": "Box",
    "shape": "Cube",
    "name": "Aircraft rail",
-   "parentID": "{371bd590-537a-445c-ba39-bf1be3df3b7f}",
+   "parentID": "{0e804b00-2576-436f-9935-5f21fb5eed6e}",
    "position": {
     "x": 0,
     "y": 0.6,
@@ -242,11 +242,11 @@
    }
   },
   {
-   "id": "{4f422301-3add-4c97-849a-ac72f3ed4deb}",
+   "id": "{f42f2b51-317b-46e2-bf66-a8cd439999b6}",
    "type": "Box",
    "shape": "Cube",
    "name": "Aircraft rail",
-   "parentID": "{371bd590-537a-445c-ba39-bf1be3df3b7f}",
+   "parentID": "{0e804b00-2576-436f-9935-5f21fb5eed6e}",
    "position": {
     "x": 0,
     "y": 0.6,
@@ -269,11 +269,11 @@
    }
   },
   {
-   "id": "{412ff7ec-10a7-4f95-b344-95d37a9efab1}",
+   "id": "{3ce0aa3e-1636-4679-93df-04c164f35b00}",
    "type": "Box",
    "shape": "Cube",
    "name": "Aircraft helm",
-   "parentID": "{371bd590-537a-445c-ba39-bf1be3df3b7f}",
+   "parentID": "{0e804b00-2576-436f-9935-5f21fb5eed6e}",
    "position": {
     "x": 0,
     "y": 0.7,
@@ -296,6 +296,6 @@
    }
   }
  ],
- "Id": "{82e80970-5fc1-4d6c-a1fa-6dc7cbc22589}",
+ "Id": "{bdc3d0b1-2f5b-4119-a43e-eca392f9a35b}",
  "Version": 141
 }
