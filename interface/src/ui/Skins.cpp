@@ -461,6 +461,31 @@ QString styleSheet(const Skin& skin) {
     }
     sheet += rules(skin, "card", "QGroupBox", {});
 
+    // checkboxes: the system's box is drawn for Darkride's dark panels, and its white tick all but vanished on a light
+    // skin (Sunny Yogurt's Inspector, 10-24); with a skin's colours they are drawn in them: an empty box on the card
+    // colour, a ticked one filled with the tint and a white tick
+    const QString tint = color(skin, "tint");
+    if (!tint.isEmpty()) {
+        auto first = [&skin](std::initializer_list<const char*> keys, const QString& otherwise) {
+            for (const char* key : keys) {
+                const QString value = color(skin, key);
+                if (!value.isEmpty()) {
+                    return value;
+                }
+            }
+            return otherwise;
+        };
+        const QString box = first({ "card", "fill", "background" }, "#ffffff");
+        const QString edge = first({ "tertiaryText", "secondaryText", "text" }, "#8a8a8a");
+        const QString faint = first({ "fill", "separator" }, box);
+        sheet += "QCheckBox::indicator { width: 13px; height: 13px; border-radius: 3px; border: 1px solid " + edge +
+                 "; background: " + box + "; }\n";
+        sheet += "QCheckBox::indicator:checked { background: " + tint + "; border-color: " + tint +
+                 "; image: url(:/styles/skin-check.svg); }\n";
+        sheet += "QCheckBox::indicator:disabled { background: " + faint + "; }\n";
+        sheet += "QCheckBox::indicator:checked:disabled { background: " + edge + "; border-color: " + edge + "; }\n";
+    }
+
     sheet += rules(skin, "button", "QPushButton",
                    { { "hover", "QPushButton:hover" }, { "pressed", "QPushButton:pressed" },
                      { "checked", "QPushButton:checked" }, { "disabled", "QPushButton:disabled" } },
