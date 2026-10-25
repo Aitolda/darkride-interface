@@ -244,6 +244,8 @@ signals:
     void redirectErrorStateChanged(bool isInErrorState);
 
     void limitOfSilentDomainCheckInsReached();
+    /// leave() is done: out of the domain on purpose, with nothing to time out (ConnectionMonitor)
+    void left();
 
 private:
     bool reasonSuggestsLogin(ConnectionRefusedReason reasonCode);
