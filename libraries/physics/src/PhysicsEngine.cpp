@@ -362,6 +362,9 @@ void PhysicsEngine::processTransaction(PhysicsEngine::Transaction& transaction) 
             removeDynamicsForObject(object);
             world->removeObject(object);
         }
+        // its contacts in the other worlds too, before its motion state is deleted: a frame's interior part is in the
+        // contacts of the world its frame stands in, through the frame's copy of its interior (round 8)
+        removeContactsInEveryWorld(object);
         unregisterFrame(object->getObjectID());
     }
 
@@ -422,6 +425,14 @@ void PhysicsEngine::dropEmptyWorlds() {
         } else {
             ++itr;
         }
+    }
+}
+
+// private
+void PhysicsEngine::removeContactsInEveryWorld(ObjectMotionState* motionState) {
+    _rootWorld->removeContacts(motionState);
+    for (auto& entry : _frameWorlds) {
+        entry.second->removeContacts(motionState);
     }
 }
 
