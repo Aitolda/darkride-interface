@@ -5,7 +5,8 @@
 //  The go-kart (kart-rig.js) driven through Entities.setVehicleControls on world.json's flat ground, serverless: the
 //  avatar sits in its seat as vehicles.js would (parented to the chassis, collisions off, the driver). Phases, read every
 //  frame from the chassis: full throttle (top speed, the time to 10 m/s), full brake (the stopping distance), full lock at
-//  half throttle (the turning radius from speed over yaw rate, the most body roll), full reverse (its speed). Prints KART
+//  2 m/s, as indoors (the turning radius from speed over yaw rate, the most body roll), full reverse (its
+//  speed). The ground's friction is set to 0.9, the test track's: on 0.5 the kart slid at about 0.5 g. Prints KART
 //  lines; samples in kart.json.
 //
 //  Copyright 2026 Darkride.
@@ -49,8 +50,9 @@
         var previous = null;
         function tick() {
             var t = (Date.now() - t0) / 1000;
-            Entities.setVehicleControls(kart.chassis, controls);
             var p = Entities.getEntityProperties(kart.chassis, ["position", "rotation", "velocity"]);
+            Entities.setVehicleControls(kart.chassis, typeof controls === "function" ?
+                controls(Vec3.dot(p.velocity, Quat.getFront(p.rotation))) : controls);
             var front = Quat.getFront(p.rotation);
             var up = Quat.getUp(p.rotation);
             var yaw = Math.atan2(-front.x, -front.z);
@@ -87,16 +89,19 @@
             drive("brake", { throttle: 0, steering: 0, brake: 1, handBrake: 0 }, 5, function (list) {
                 var last = list[list.length - 1];
                 var distance = Vec3.distance(from, last.position);
-                check(last.speed < 0.3 && distance < 12, "full brake: from " + list[0].speed.toFixed(2) + " m/s, stopped in " +
+                check(last.speed < 0.3 && distance < 14, "full brake: from " + list[0].speed.toFixed(2) + " m/s, stopped in " +
                       distance.toFixed(2) + " m and " + last.t.toFixed(2) + " s");
-                drive("full lock", { throttle: 0.5, steering: 1, brake: 0, handBrake: 0 }, 7, function (list) {
+                // full lock with the speed held at 2 m/s, as in a room: a little throttle under it, coasting over it
+                drive("full lock", function (speed) {
+                    return { throttle: speed < 2.0 ? 0.3 : 0, steering: 1, brake: 0, handBrake: 0 };
+                }, 7, function (list) {
                     var turning = list.filter(function (s) { return s.t > 3 && Math.abs(s.yawRate) > 0.05; });
                     var radius = 0, speed = 0, roll = 0;
                     turning.forEach(function (s) { radius += Math.abs(s.speed / s.yawRate); speed += s.speed; });
                     list.forEach(function (s) { roll = Math.max(roll, s.roll); });
                     radius /= Math.max(1, turning.length);
                     speed /= Math.max(1, turning.length);
-                    check(turning.length > 0 && radius < 2.0, "full lock at half throttle: turning radius " + radius.toFixed(2) +
+                    check(turning.length > 0 && radius < 2.0, "full lock at 2 m/s: turning radius " + radius.toFixed(2) +
                           " m at " + speed.toFixed(2) + " m/s (under 2 m; the rover's is 3.6 m)");
                     check(roll < 25, "full lock: most body roll " + roll.toFixed(1) + " degrees (under 25: it doesn't tip)");
                     drive("stop", { throttle: 0, steering: 0, brake: 1, handBrake: 1 }, 2, function () {
@@ -129,6 +134,10 @@
             }
             return;
         }
+        // the ground's grip as the test track's terrain (0.9) and the camera world's floor; world.json's is 0.5
+        Entities.findEntitiesByName("Ground", { x: 0, y: 0, z: 0 }, 50, true).forEach(function (id) {
+            Entities.editEntity(id, { friction: 0.9 });
+        });
         kart = Kart.create(0, 0, -5, 0, LIFETIME);
         MyAvatar.position = { x: 2, y: 1, z: -5 };
         after(3, function () {

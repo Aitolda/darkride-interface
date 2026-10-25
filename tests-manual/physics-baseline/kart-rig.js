@@ -4,8 +4,8 @@
 //
 //  The go-kart (Caity, 2026-10-25: "small as possible while counting as a vehicle ... mario kart"), as entities: a Box
 //  chassis with the vehicle group and four Cylinder wheels as children, one seat. Small enough for a 1.2 m corridor and
-//  a 1.4 m door (0.86 m over the wheels, 1.45 m long), a 1.0 m wheelbase and 40 degrees of steering (about 1.2 m round
-//  the rear axle; the Land Rover's is 3.6 m), one gear, rear drive, 12.7 m/s at the top of its revs, and its centre of
+//  a 1.4 m door (0.86 m over the wheels, 1.45 m long), a 1.0 m wheelbase and 45 degrees of steering (about 1.0 m round
+//  the rear axle; the Land Rover's is 3.6 m), one gear, rear drive, about 12 m/s at the top of its revs, and its centre of
 //  mass under the axles so a sharp turn doesn't tip it. The test track's kart pad and the Create menu's go-kart use
 //  these numbers. Script.include this; it defines Kart.
 //
@@ -34,14 +34,17 @@ var Kart = (function () {
 
     var SEATS = [{ name: "driver", position: [0, 0.06, 0.12], yaw: 0, driver: true }];
 
-    // the vehicle group: 150 kg; 14 N m at the engine through 7.5 to the rear wheels, 1,500 to 6,500 rpm (12.7 m/s), half
-    // that speed in reverse; brakes for about 1 g, the hand brake on the rear; a stiff, short suspension (6 cm, 3 Hz)
+    // the vehicle group: 150 kg; 60 N m at the engine through 3.66 to the rear wheels, 1,000 to 3,000 rpm (about 12 m/s),
+    // half that in reverse; brakes for about 1 g, the hand brake on the rear; a stiff, short suspension (6 cm, 3 Hz).
+    // A small engine needs the torque: the engine's own friction (Jolt's default inertia 0.5 kg m^2 and damping 0.2)
+    // costs 0.1 N m per rad/s of its speed, 31 N m at 3,000 rpm; 14 N m at 6,500 rpm (the first try) never got past
+    // 1,500 rpm, 3 m/s.
     var SPEC = {
         type: "wheeled", mass: 150, centerOfMass: { x: 0, y: -0.12, z: 0 },
         wheels: JSON.stringify(wheels()), seats: JSON.stringify(SEATS),
-        maxSteerAngle: 40, maxTorque: 14, minRPM: 1500, maxRPM: 6500,
-        gearRatios: JSON.stringify([1.0]), reverseGearRatio: 2.0, finalDriveRatio: 7.5,
-        maxBrakeTorque: 45, maxHandBrakeTorque: 90, driveType: "rear",
+        maxSteerAngle: 45, maxTorque: 60, minRPM: 1000, maxRPM: 3000,
+        gearRatios: JSON.stringify([1.0]), reverseGearRatio: 2.0, finalDriveRatio: 3.66,
+        maxBrakeTorque: 150, maxHandBrakeTorque: 150, driveType: "rear",
         suspensionFrequency: 3.0, suspensionDamping: 0.7
     };
 
