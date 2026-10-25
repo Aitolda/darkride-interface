@@ -25,9 +25,10 @@
 #                                    shell is brought to the front by macOS at launch and by Qt when it has launched,
 #                                    and takes the keyboard. open passes on only the environment it's given, so the
 #                                    TIVOLI_, HIFI_, DARKRIDE_, QT_, XDG_ and DYLD_ variables are handed over; the
-#                                    client's exit status isn't (read its log). CLIENT_FOREGROUND=1 runs the binary
-#                                    straight, as before (a client that must be in front, say for a timing run).
-#                                    client() also passes -NSAutoFillHeuristicsEnabled NO (AppKit's argument domain;
+#                                    client's exit status isn't (read its log). CLIENT_FOREGROUND=1 opens it in front
+#                                    instead, still through open (a client someone plays, or a timing run that needs
+#                                    the window on top). Elsewhere than macOS it runs the binary straight.
+#                                    client_start also passes -NSAutoFillHeuristicsEnabled NO (AppKit's argument domain;
 #                                    the client's own parser lists it as unknown and goes on): AutoFill starts a
 #                                    SafariPlatformSupport.Helper when the app becomes active, and the helper outlives
 #                                    the client; 422 of them used up launchservicesd and brought a Mac down
@@ -109,7 +110,7 @@ client_start() {
         *) _app="" ;;
     esac
     _since=$(date '+%Y-%m-%d %H:%M:%S')
-    if [ -n "$CLIENT_FOREGROUND" ] || [ -z "$_app" ] || [ "$(uname)" != Darwin ]; then
+    if [ -z "$_app" ] || [ "$(uname)" != Darwin ]; then
         "$BIN" "$@" > "$_log" 2>&1 &
         _cpid=$!
         wait $_cpid
@@ -119,15 +120,20 @@ client_start() {
     fi
     # -DarkrideTestRun <log> marks this client's command line (an AppKit default nothing reads), so its pid can be
     # found while it runs: open's own pid is $!, and pgrep for the binary alone could find someone else's client
-    set -- -a "$_app" --args -DarkrideTestRun "$_log" "$@"
+    set -- -a "$_app" --args -DarkrideTestRun "$_log" -NSAutoFillHeuristicsEnabled NO "$@"
     for _var in $(env | grep -E '^(TIVOLI|HIFI|DARKRIDE|QT|XDG|DYLD)_[A-Za-z0-9_]*=' | cut -d= -f1); do
         eval "_value=\${$_var}"
         set -- --env "$_var=$_value" "$@"
     done
     : > "$_log"
-    QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 QT_MAC_SET_RAISE_PROCESS=0 \
-        open -g -n -W --env QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 --env QT_MAC_SET_RAISE_PROCESS=0 \
-            --stdout "$_log" --stderr "$_log" "$@" &
+    if [ -n "$CLIENT_FOREGROUND" ]; then
+        # in front, for a client someone plays: macOS and Qt activate it as a normal launch would
+        open -n -W --stdout "$_log" --stderr "$_log" "$@" &
+    else
+        QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 QT_MAC_SET_RAISE_PROCESS=0 \
+            open -g -n -W --env QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 --env QT_MAC_SET_RAISE_PROCESS=0 \
+                --stdout "$_log" --stderr "$_log" "$@" &
+    fi
     _opener=$!
     _cpid=""; _i=0
     while [ -z "$_cpid" ] && [ "$_i" -lt 120 ] && kill -0 $_opener 2>/dev/null; do
@@ -144,7 +150,7 @@ client() {
     lock_take || return 1
     DARKRIDE_CLIENT_LABEL=${DARKRIDE_CLIENT_LABEL:-"Darkride - $SESSION - TEST, not yours"} \
     XDG_CONFIG_HOME="$R/$_name-home/config" TIVOLI_APP_DATA_DIR="$R/$_name-home/data" \
-        client_start "$R/$_name.log" -NSAutoFillHeuristicsEnabled NO --allowMultipleInstances --tokens "{}" "$@"
+        client_start "$R/$_name.log" --allowMultipleInstances --tokens "{}" "$@"
     _status=$?
     [ -n "$KEEP_KTX" ] || rm -rf "$R/$_name-home/data/ktx_cache"
     return $_status
