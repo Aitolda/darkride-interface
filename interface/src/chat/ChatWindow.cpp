@@ -25,10 +25,13 @@
 #include <QtGui/QMovie>
 #include <QtGui/QPainter>
 #include <QtGui/QPainterPath>
+#include <QtGui/QResizeEvent>
 #include <QtGui/QClipboard>
 #include <QtGui/QTextCursor>
 #include <QtGui/QTextFrame>
+#include <QtWidgets/QAbstractButton>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QDockWidget>
 #include <QtWidgets/QGraphicsOpacityEffect>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
@@ -57,18 +60,36 @@
 #include "Application.h"
 #include "InterfaceLogging.h"
 #include "MainWindow.h"
+#include "ui/PanelTheme.h"
 
-// the web chat's colours (darkride_chat client/src/style.css), from the Darkride website's
-static const QColor COLOUR_SIDEBAR("#171b2d");
-static const QColor COLOUR_PAGE("#1c2136");
-static const QColor COLOUR_SURFACE("#242a44");
-static const QColor COLOUR_SELECTION("#333a5a");
-static const QColor COLOUR_TEXT("#f4f6f8");
-static const QColor COLOUR_MUTED("#9aa1bd");
-static const QColor COLOUR_CYAN("#00afff");
-static const QColor COLOUR_RED("#ff5555");
+// the web chat's colours (darkride_chat client/src/style.css), from the Darkride website's; under a skin, the skin's
+// own colours take their places (ChatWindow::applyColours, from COLOURS below)
+static QColor COLOUR_SIDEBAR;
+static QColor COLOUR_PAGE;
+static QColor COLOUR_SURFACE;
+static QColor COLOUR_SELECTION;
+static QColor COLOUR_TEXT;
+static QColor COLOUR_MUTED;
+static QColor COLOUR_CYAN;
+static QColor COLOUR_RED;
+static QColor COLOUR_CHIP;        // a reaction
+static QColor COLOUR_CHIP_MINE;   // a reaction of yours
+static QColor COLOUR_RAIL;        // the darkest: who you are, menus, fields
 static const QColor COLOUR_VIOLET("#a548ff");
 static const QColor COLOUR_GREEN("#50fa7b");
+// each colour's value in Darkride's own look, and the skin colour (PanelTheme::COLOR_KEYS) that replaces it
+static const struct {
+    QColor* colour;
+    const char* own;
+    const char* skin;
+} COLOURS[] = {
+    { &COLOUR_SIDEBAR, "#171b2d", "card" },        { &COLOUR_PAGE, "#1c2136", "background" },
+    { &COLOUR_SURFACE, "#242a44", "fill" },        { &COLOUR_SELECTION, "#333a5a", "cardPressed" },
+    { &COLOUR_TEXT, "#f4f6f8", "text" },           { &COLOUR_MUTED, "#9aa1bd", "secondaryText" },
+    { &COLOUR_CYAN, "#00afff", "tint" },           { &COLOUR_RED, "#ff5555", "destructive" },
+    { &COLOUR_CHIP, "#2b3150", "fill" },           { &COLOUR_CHIP_MINE, "#1d3a5f", "cardPressed" },
+    { &COLOUR_RAIL, "#10142a", "card" },
+};
 // a person's or room's own colour behind its first letter, as the web chat picks it (avatar.ts)
 static const char* AVATAR_COLOURS[] = { "#0090d6", "#8a3bdc", "#2f9e5b", "#d4692b", "#c43f82", "#23a39a" };
 
@@ -76,16 +97,21 @@ static const char* AVATAR_COLOURS[] = { "#0090d6", "#8a3bdc", "#2f9e5b", "#d4692
 static const qint64 GROUP_GAP_MS = 7 * 60 * 1000;
 // a click each in a message's menu, as in the web client (client/src/emoji.ts)
 static const QStringList QUICK_REACTIONS { "\U0001F44D", "\u2764\uFE0F", "\U0001F602", "\U0001F62E", "\U0001F622", "\U0001F389" };
-static const QColor COLOUR_CHIP("#2b3150");
 // the sidebar's first row, the Friends page
 static const QString FRIENDS_ROW = "friends:";
 // a friend's lists again at most this often when the window comes forward
 static const qint64 FRIENDS_FRESH_MS = 15 * 1000;
 static const int FRIENDS_REFRESH_MS = 60 * 1000;
-static const QColor COLOUR_CHIP_MINE("#1d3a5f");
-// a message's picture fits in this, as Discord's do in a narrower column
+// a message's picture fits in this, as Discord's do in a narrower column (narrow: the chat panel docked beside the
+// 3D view, one column at a time)
 static const QSize PICTURE_MAX(400, 300);
+static const QSize PICTURE_MAX_NARROW(220, 220);
 static const QSize PICTURE_UNKNOWN(300, 200);
+// the rooms' column; narrower than this and a readable conversation beside it, the chat shows one at a time
+static const int SIDEBAR_WIDTH = 240;
+static const int NARROW_WIDTH = 720;
+// the chat panel floating, the first time: as big as the chat window was before it could dock
+static const QSize FLOATING_SIZE(940, 640);
 // a GIF bigger than this shows as its first frame from a thumbnail rather than playing
 static const qint64 GIF_PLAY_MAX_BYTES = 12 * 1024 * 1024;
 static const int AVATAR_FETCH_SIZE = 96;
@@ -230,13 +256,14 @@ static QImage boxedImage(const QImage& image, const QSize& box, qreal pixelRatio
     return boxed;
 }
 
-// a picture's size in the conversation: its own, made to fit PICTURE_MAX, never enlarged
-static QSize pictureBox(QSize size) {
+// a picture's size in the conversation: its own, made to fit max, never enlarged (PICTURE_UNKNOWN, made to fit, when
+// its message didn't say)
+static QSize pictureBox(QSize size, const QSize& max) {
     if (size.width() <= 0 || size.height() <= 0) {
-        return PICTURE_UNKNOWN;
+        size = PICTURE_UNKNOWN;
     }
-    if (size.width() > PICTURE_MAX.width() || size.height() > PICTURE_MAX.height()) {
-        size.scale(PICTURE_MAX, Qt::KeepAspectRatio);
+    if (size.width() > max.width() || size.height() > max.height()) {
+        size.scale(max, Qt::KeepAspectRatio);
     }
     return size.expandedTo(QSize(16, 16));
 }
@@ -377,92 +404,143 @@ public:
 // --- the window ---------------------------------------------------------------------------------------------------
 
 QPointer<ChatWindow> ChatWindow::_instance;
+QPointer<QDockWidget> ChatWindow::_dock;
+
+// The "Chat" dock panel. Its own window coming or going beside the viewer's changes the GL view's surface on macOS, so
+// its float and close buttons, a double-click on its title and the end of a drag that docks it are handled under
+// gl::ViewChangeGuard, as the main window's own layout changes are (Application::notify): opening chat crashed in
+// Apple's GL driver as Build mode's panels had.
+class ChatDock : public QDockWidget {
+public:
+    explicit ChatDock(QWidget* parent) : QDockWidget("Chat", parent) {
+        setObjectName("ChatDock");
+        setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+        setFeatures(DockWidgetClosable | DockWidgetMovable | DockWidgetFloatable);
+        for (auto button : findChildren<QAbstractButton*>()) {
+            button->installEventFilter(this);
+        }
+    }
+
+protected:
+    bool event(QEvent* event) override {
+        switch (event->type()) {
+            case QEvent::MouseButtonDblClick:
+            case QEvent::MouseButtonRelease:
+            case QEvent::NonClientAreaMouseButtonDblClick:
+            case QEvent::NonClientAreaMouseButtonRelease:
+            case QEvent::Close: {
+                gl::ViewChangeGuard guard(event->type());
+                return QDockWidget::event(event);
+            }
+            default:
+                return QDockWidget::event(event);
+        }
+    }
+
+    // a title button acts on its release: delivered to it here, under the guard
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::MouseButtonRelease && !_releasing) {
+            gl::ViewChangeGuard guard(event->type());
+            _releasing = true;
+            QCoreApplication::sendEvent(watched, event);
+            _releasing = false;
+            return true;
+        }
+        return QDockWidget::eventFilter(watched, event);
+    }
+
+    // where it floats, for the next start (the main window's saved layout, when it has one, places it after)
+    void hideEvent(QHideEvent* event) override {
+        if (isFloating()) {
+            chatWindowGeometry.set(saveGeometry());
+        }
+        QDockWidget::hideEvent(event);
+    }
+
+private:
+    bool _releasing { false };
+};
+
+QDockWidget* ChatWindow::dock() {
+    if (!_dock) {
+        gl::ViewChangeGuard guard;
+        MainWindow* window = qApp->getWindow();
+        _dock = new ChatDock(window);
+        // hidden before it joins the main window, so it never shows there by itself; floating, as chat was before
+        _dock->hide();
+        window->addDockWidget(Qt::RightDockWidgetArea, _dock);
+        _dock->setFloating(true);
+        QByteArray geometry = chatWindowGeometry.get();
+        if (geometry.isEmpty() || !_dock->restoreGeometry(geometry)) {
+            _dock->resize(FLOATING_SIZE);
+            _dock->move(window->geometry().center() - _dock->rect().center());
+        }
+        // shown by the main window's saved layout, or a drag: the chat in it, made the first time
+        connect(_dock.data(), &QDockWidget::visibilityChanged, _dock.data(), [](bool visible) {
+            if (visible) {
+                content();
+            }
+        });
+        // for a crash report: whether chat was in the main window or its own when it happened
+        connect(_dock.data(), &QDockWidget::topLevelChanged, _dock.data(), [](bool floating) {
+            qCDebug(interfaceapp) << "chat panel" << (floating ? "floating" : "docked");
+        });
+    }
+    return _dock;
+}
+
+void ChatWindow::resetDock() {
+    gl::ViewChangeGuard guard;
+    QDockWidget* panel = dock();
+    panel->setFloating(true);
+    panel->resize(FLOATING_SIZE);
+    panel->move(qApp->getWindow()->geometry().center() - panel->rect().center());
+}
+
+ChatWindow* ChatWindow::content() {
+    if (!_instance) {
+        gl::ViewChangeGuard guard;
+        _instance = new ChatWindow(dock());
+        _dock->setWidget(_instance);
+        qCDebug(interfaceapp) << "chat panel made," << (_dock->isFloating() ? "floating" : "docked");
+    }
+    return _instance;
+}
 
 QKeySequence ChatWindow::shortcut() {
     return QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D);
 }
 
 void ChatWindow::toggle() {
-    // a window coming or going beside the viewer's also changes the GL view's surface on macOS: no frame is drawn to
-    // it meanwhile (gl::ViewChangeGuard); opening chat crashed in Apple's GL driver as build mode's panels had
+    // a window coming or going beside the viewer's, or a panel in it, changes the GL view: no frame is drawn to it
+    // meanwhile (gl::ViewChangeGuard; see ChatDock)
     gl::ViewChangeGuard guard;
-    if (!_instance) {
-        _instance = new ChatWindow(qApp->getWindow());
-    }
-    if (_instance->isVisible() && _instance->isActiveWindow()) {
-        _instance->hide();
+    QDockWidget* panel = dock();
+    ChatWindow* chat = content();
+    if (panel->isVisible() && chat->isVisible() && chat->isActiveWindow()) {
+        panel->hide();
         return;
     }
-    _instance->show();
-    _instance->raise();
-    _instance->activateWindow();
-    if (_instance->_composer->isEnabled()) {
-        _instance->_composer->setFocus();
+    panel->show();
+    // in front of the other windows when floating; docked among others as tabs, the tab in front
+    panel->raise();
+    if (panel->isFloating()) {
+        panel->activateWindow();
+    }
+    if (chat->_composer->isEnabled()) {
+        chat->_composer->setFocus();
     }
 }
 
-ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
+ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     setObjectName("DarkrideChat");
-    setWindowTitle("Darkride Chat");
-    setMinimumSize(640, 420);
-    resize(940, 640);
-    setStyleSheet(QString(R"(
-        #DarkrideChat { background: %1; }
-        #ChatSidebar { background: %2; }
-        #ChatSidebarHead, #ChatRoomHead {
-            color: %3; font-size: 15px; font-weight: 500; padding: 0 16px;
-            border-bottom: 1px solid rgba(0, 0, 0, 0.35);
-        }
-        #ChatRooms { background: %2; border: none; outline: 0; }
-        #ChatMe { background: #10142a; }
-        #ChatMeName { color: %3; font-size: 14px; font-weight: 500; }
-        #ChatMeStatus { color: %4; font-size: 12px; }
-        #ChatState { color: %4; font-size: 15px; }
-        #ChatTimeline { background: %1; border: none; }
-        #ChatComposer {
-            background: %5; color: %3; border: none; border-radius: 8px; padding: 8px 12px; font-size: 15px;
-            selection-background-color: %6;
-        }
-        #ChatComposerNote { color: %4; font-size: 12px; }
-        QPushButton {
-            background: %7; color: #091023; border: none; border-radius: 4px; padding: 7px 16px; font-weight: 500;
-        }
-        QPushButton:hover { background: #33c0ff; }
-        QPushButton#ChatDecline { background: %5; color: %3; }
-        QMenu { background: #10142a; color: %3; border: 1px solid rgba(0, 0, 0, 0.5); padding: 6px; font-size: 14px; }
-        QMenu::item { padding: 6px 28px 6px 10px; border-radius: 3px; }
-        QMenu::item:selected { background: %7; color: #091023; }
-        QMenu::item:disabled { color: %4; }
-        QMenu::separator { height: 1px; background: rgba(255, 255, 255, 0.08); margin: 4px 6px; }
-        #ChatFriends { background: %1; border: none; outline: 0; }
-        #ChatFriendName { color: %3; font-size: 15px; font-weight: 500; }
-        #ChatFriendStatus { color: %4; font-size: 12px; }
-        #ChatFriendsHeading { color: %4; font-size: 12px; font-weight: 600; }
-        #ChatFriendsNote { color: %4; font-size: 13px; }
-        #ChatAddFriendTitle { color: %3; font-size: 16px; font-weight: 600; }
-        QLineEdit#ChatAddFriendName {
-            background: #10142a; color: %3; border: 1px solid rgba(0, 0, 0, 0.5); border-radius: 8px; padding: 10px 12px;
-            font-size: 15px; selection-background-color: %6;
-        }
-        QPushButton#ChatTab { background: transparent; color: %4; padding: 4px 10px; }
-        QPushButton#ChatTab:hover { background: rgba(255, 255, 255, 0.06); color: %3; }
-        QPushButton#ChatTab:checked { background: %6; color: %3; }
-        QPushButton#ChatAddTab { background: #248046; color: white; padding: 4px 10px; }
-        QPushButton#ChatAddTab:checked { background: transparent; color: %8; }
-        QPushButton#ChatRowButton { background: %5; color: %3; padding: 6px 12px; }
-        QPushButton#ChatRowButton:hover { background: %6; }
-        QPushButton#ChatRowAccept { background: #248046; color: white; padding: 6px 12px; }
-        QToolButton#ChatQuickReaction {
-            background: %5; border: none; border-radius: 4px; font-size: 20px; min-width: 34px; min-height: 34px;
-        }
-        QToolButton#ChatQuickReaction:hover { background: %6; }
-        QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
-        QScrollBar::handle:vertical { background: %2; border-radius: 4px; min-height: 30px; }
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
-    )")
-                      .arg(COLOUR_PAGE.name(), COLOUR_SIDEBAR.name(), COLOUR_TEXT.name(), COLOUR_MUTED.name(),
-                           COLOUR_SURFACE.name(), COLOUR_SELECTION.name(), COLOUR_CYAN.name(), COLOUR_GREEN.name()));
+    setAttribute(Qt::WA_StyledBackground);
+    setMinimumSize(300, 360);
+    _pictureMax = PICTURE_MAX;
+    applyColours();
+    if (auto theme = DependencyManager::get<PanelTheme>()) {
+        connect(theme.data(), &PanelTheme::changed, this, &ChatWindow::applyColours);
+    }
 
     auto layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -472,7 +550,8 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
     auto sidebar = new QWidget(this);
     sidebar->setObjectName("ChatSidebar");
     sidebar->setAttribute(Qt::WA_StyledBackground);
-    sidebar->setFixedWidth(240);
+    sidebar->setFixedWidth(SIDEBAR_WIDTH);
+    _sidebar = sidebar;
     auto sidebarLayout = new QVBoxLayout(sidebar);
     sidebarLayout->setContentsMargins(0, 0, 0, 0);
     sidebarLayout->setSpacing(0);
@@ -516,14 +595,30 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
 
     // the right: the room's name, then its conversation and the message box (or why there is none)
     auto main = new QWidget(this);
+    _main = main;
     auto mainLayout = new QVBoxLayout(main);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
-    _roomTitle = new QLabel(main);
-    _roomTitle->setObjectName("ChatRoomHead");
-    _roomTitle->setFixedHeight(48);
+    auto roomHead = new QWidget(main);
+    roomHead->setObjectName("ChatRoomHead");
+    roomHead->setAttribute(Qt::WA_StyledBackground);
+    roomHead->setFixedHeight(48);
+    auto roomHeadLayout = new QHBoxLayout(roomHead);
+    roomHeadLayout->setContentsMargins(0, 0, 0, 0);
+    roomHeadLayout->setSpacing(0);
+    _roomsButton = new QToolButton(roomHead);
+    _roomsButton->setObjectName("ChatRoomsButton");
+    _roomsButton->setText(QString::fromUtf8("\u2039"));   // ‹
+    _roomsButton->setToolTip("Channels and direct messages");
+    _roomsButton->setCursor(Qt::PointingHandCursor);
+    _roomsButton->hide();
+    roomHeadLayout->addWidget(_roomsButton);
+    _roomTitle = new QLabel(roomHead);
+    _roomTitle->setObjectName("ChatRoomTitle");
     _roomTitle->setTextFormat(Qt::PlainText);
-    mainLayout->addWidget(_roomTitle);
+    roomHeadLayout->addWidget(_roomTitle, 1);
+    mainLayout->addWidget(roomHead);
+    connect(_roomsButton, &QToolButton::clicked, this, [this] { showRooms(true); });
     _pages = new QStackedWidget(main);
     mainLayout->addWidget(_pages, 1);
     layout->addWidget(main, 1);
@@ -588,8 +683,6 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
     _timeline->setOpenLinks(false);
     _timeline->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     _timeline->document()->setDocumentMargin(0);
-    _timeline->document()->setDefaultStyleSheet(
-        QString("a { color: %1; text-decoration: none; } body { color: %2; }").arg(COLOUR_CYAN.name(), COLOUR_TEXT.name()));
     conversationLayout->addWidget(_timeline, 1);
     auto composerArea = new QWidget(conversation);
     auto composerLayout = new QVBoxLayout(composerArea);
@@ -725,12 +818,19 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
             selectRoom(item->data(RoomIdRole).toString());
         }
     });
+    connect(_roomList, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+        if (item && item->data(RoomKindRole).toString() != "header") {
+            showRooms(false);
+        }
+    });
 
     // the menu's shortcut hides it again from here too (on Windows the menu's shortcuts work only in the main window)
     auto hideShortcut = new QShortcut(shortcut(), this);
-    connect(hideShortcut, &QShortcut::activated, this, [this] {
+    connect(hideShortcut, &QShortcut::activated, this, [] {
         gl::ViewChangeGuard guard;
-        hide();
+        if (_dock) {
+            _dock->hide();
+        }
     });
 
     if (auto service = DependencyManager::get<ChatService>()) {
@@ -771,10 +871,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent, Qt::Tool) {
         });
     }
 
-    QByteArray geometry = chatWindowGeometry.get();
-    if (!geometry.isEmpty()) {
-        restoreGeometry(geometry);
-    }
+    applyColours();
     fitComposer();
     updateState();
 }
@@ -1110,7 +1207,7 @@ QString ChatWindow::mediaHtml(const QJsonObject& item) {
         key = "file|" + compactJson(source);   // the whole GIF, to play it
         shownSource = source;
     } else if (kind == "image" || kind == "video") {
-        QSize box = pictureBox(own);
+        QSize box = pictureBox(own, _pictureMax);
         if (!thumbnail.isNull() && !thumbnail.isUndefined() && (encrypted || kind == "video")) {
             // an encrypted picture's server can't make thumbnails of it: the sender's own, decrypted here
             key = "file|" + compactJson(thumbnail);
@@ -1128,7 +1225,7 @@ QString ChatWindow::mediaHtml(const QJsonObject& item) {
 
     QString html;
     if (!key.isEmpty()) {
-        QSize box = pictureBox(_pictureSizes.value(key, own));
+        QSize box = pictureBox(_pictureSizes.value(key, own), _pictureMax);
         QUrl resource("picture:" + QString::number(qHash(key + QString("|%1x%2").arg(box.width()).arg(box.height()))));
         _pictureUses.insert(key, { resource, box, false });
         if (_mediaFiles.contains(key)) {
@@ -1239,7 +1336,8 @@ void ChatWindow::showPicture(const QString& key, const QString& path) {
     if (own.isValid() && !_pictureSizes.contains(key)) {
         // a message that didn't say how big its picture is: laid out again at the picture's own size
         QList<PictureUse> uses = _pictureUses.values(key);
-        if (!uses.isEmpty() && uses.first().box == PICTURE_UNKNOWN && pictureBox(own) != PICTURE_UNKNOWN) {
+        QSize unknown = pictureBox(QSize(), _pictureMax);
+        if (!uses.isEmpty() && uses.first().box == unknown && pictureBox(own, _pictureMax) != unknown) {
             _pictureSizes.insert(key, own);
             QTimer::singleShot(0, this, [this] { renderTimeline(); });
             return;
@@ -1607,7 +1705,8 @@ void ChatWindow::deleteMessage(const QJsonObject& item) {
 
 void ChatWindow::markReadIfSeen() {
     auto service = DependencyManager::get<ChatService>();
-    if (!service || _room.isEmpty() || !isVisible() || !isActiveWindow() || _pages->currentIndex() != 2) {
+    // the conversation in sight: not behind the rooms (narrow), another panel's tab or a window in front
+    if (!service || _room.isEmpty() || !_timeline->isVisible() || !isActiveWindow() || _pages->currentIndex() != 2) {
         return;
     }
     QScrollBar* scroll = _timeline->verticalScrollBar();
@@ -1664,17 +1763,43 @@ void ChatWindow::showEvent(QShowEvent* event) {
     _friendsTimer->start();
 }
 
-void ChatWindow::closeEvent(QCloseEvent* event) {
-    // the close button hides it, under the guard (toggle)
-    event->ignore();
-    gl::ViewChangeGuard guard;
-    hide();
-}
-
 void ChatWindow::hideEvent(QHideEvent* event) {
     _friendsTimer->stop();
-    saveGeometrySetting();
     QWidget::hideEvent(event);
+}
+
+void ChatWindow::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    setNarrow(event->size().width() < NARROW_WIDTH);
+}
+
+void ChatWindow::setNarrow(bool narrow) {
+    if (narrow == _narrow) {
+        return;
+    }
+    _narrow = narrow;
+    if (narrow) {
+        _sidebar->setMinimumWidth(0);
+        _sidebar->setMaximumWidth(QWIDGETSIZE_MAX);
+    } else {
+        _sidebar->setFixedWidth(SIDEBAR_WIDTH);
+    }
+    // the conversation first, or the rooms when there is none to show yet
+    showRooms(_room.isEmpty() && !_friendsShown && _pages->currentIndex() == 2);
+    _pictureMax = narrow ? PICTURE_MAX_NARROW : PICTURE_MAX;
+    if (!_items.isEmpty()) {
+        renderTimeline();
+    }
+}
+
+void ChatWindow::showRooms(bool rooms) {
+    _roomsShown = _narrow && rooms;
+    _sidebar->setVisible(!_narrow || _roomsShown);
+    _main->setVisible(!_roomsShown);
+    _roomsButton->setVisible(_narrow && !_roomsShown);
+    if (!_roomsShown) {
+        markReadIfSeen();
+    }
 }
 
 void ChatWindow::changeEvent(QEvent* event) {
@@ -1957,6 +2082,94 @@ void ChatWindow::showAvailabilityMenu() {
     menu->popup(_me->mapToGlobal(QPoint(8, -menu->sizeHint().height())));
 }
 
-void ChatWindow::saveGeometrySetting() {
-    chatWindowGeometry.set(saveGeometry());
+void ChatWindow::applyColours() {
+    // the skin on (PanelTheme carries it; empty when none is) puts its colours in the chat's places, where it has them
+    auto theme = DependencyManager::get<PanelTheme>();
+    QVariantMap skin = theme ? theme->getSkin() : QVariantMap();
+    QVariantMap skinColours = skin.value("colors").toMap();
+    for (const auto& colour : COLOURS) {
+        QColor skinColour(skinColours.value(colour.skin).toString());
+        *colour.colour = skinColour.isValid() ? skinColour : QColor(colour.own);
+    }
+
+    // the chat's own areas, in either look
+    QString sheet = QString(R"(
+        #DarkrideChat { background: %1; }
+        #ChatSidebar { background: %2; }
+        #ChatSidebarHead, #ChatRoomHead { border-bottom: 1px solid rgba(0, 0, 0, 0.35); }
+        #ChatSidebarHead, #ChatRoomTitle { color: %3; font-size: 15px; font-weight: 500; padding: 0 16px; }
+        QToolButton#ChatRoomsButton {
+            background: transparent; color: %3; border: none; font-size: 26px; padding: 0 0 4px 12px;
+        }
+        QToolButton#ChatRoomsButton:hover { color: %7; }
+        #ChatRooms { background: %2; border: none; outline: 0; }
+        #ChatMe { background: %8; }
+        #ChatMeName { color: %3; font-size: 14px; font-weight: 500; }
+        #ChatMeStatus { color: %4; font-size: 12px; }
+        #ChatState { color: %4; font-size: 15px; }
+        #ChatTimeline { background: %1; border: none; }
+        #ChatComposer {
+            background: %5; color: %3; border: none; border-radius: 8px; padding: 8px 12px; font-size: 15px;
+            selection-background-color: %6;
+        }
+        #ChatComposerNote { color: %4; font-size: 12px; }
+        #ChatFriends { background: %1; border: none; outline: 0; }
+        #ChatFriendName { color: %3; font-size: 15px; font-weight: 500; }
+        #ChatFriendStatus { color: %4; font-size: 12px; }
+        #ChatFriendsHeading { color: %4; font-size: 12px; font-weight: 600; }
+        #ChatFriendsNote { color: %4; font-size: 13px; }
+        #ChatAddFriendTitle { color: %3; font-size: 16px; font-weight: 600; }
+        QPushButton#ChatTab { background: transparent; color: %4; padding: 4px 10px; }
+        QPushButton#ChatTab:hover { background: rgba(255, 255, 255, 0.06); color: %3; }
+        QPushButton#ChatTab:checked { background: %6; color: %3; }
+        QPushButton#ChatRowButton { background: %5; color: %3; padding: 6px 12px; }
+        QPushButton#ChatRowButton:hover { background: %6; }
+        QToolButton#ChatQuickReaction {
+            background: %5; border: none; border-radius: 4px; font-size: 20px; min-width: 34px; min-height: 34px;
+        }
+        QToolButton#ChatQuickReaction:hover { background: %6; }
+    )")
+                        .arg(COLOUR_PAGE.name(), COLOUR_SIDEBAR.name(), COLOUR_TEXT.name(), COLOUR_MUTED.name(),
+                             COLOUR_SURFACE.name(), COLOUR_SELECTION.name(), COLOUR_CYAN.name(), COLOUR_RAIL.name());
+    // Darkride's own buttons, menus, fields and scroll bars; under a skin, its frames draw them (Skins' style sheet)
+    if (skin.isEmpty()) {
+        sheet += QString(R"(
+        QPushButton {
+            background: %5; color: #091023; border: none; border-radius: 4px; padding: 7px 16px; font-weight: 500;
+        }
+        QPushButton:hover { background: #33c0ff; }
+        QPushButton#ChatDecline { background: %4; color: %2; }
+        QPushButton#ChatAddTab { background: #248046; color: white; padding: 4px 10px; }
+        QPushButton#ChatAddTab:checked { background: transparent; color: %6; }
+        QPushButton#ChatRowAccept { background: #248046; color: white; padding: 6px 12px; }
+        QMenu { background: %1; color: %2; border: 1px solid rgba(0, 0, 0, 0.5); padding: 6px; font-size: 14px; }
+        QMenu::item { padding: 6px 28px 6px 10px; border-radius: 3px; }
+        QMenu::item:selected { background: %5; color: #091023; }
+        QMenu::item:disabled { color: %3; }
+        QMenu::separator { height: 1px; background: rgba(255, 255, 255, 0.08); margin: 4px 6px; }
+        QLineEdit#ChatAddFriendName {
+            background: %1; color: %2; border: 1px solid rgba(0, 0, 0, 0.5); border-radius: 8px; padding: 10px 12px;
+            font-size: 15px; selection-background-color: %7;
+        }
+        QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
+        QScrollBar::handle:vertical { background: %8; border-radius: 4px; min-height: 30px; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
+    )")
+                     .arg(COLOUR_RAIL.name(), COLOUR_TEXT.name(), COLOUR_MUTED.name(), COLOUR_SURFACE.name(),
+                          COLOUR_CYAN.name(), COLOUR_GREEN.name(), COLOUR_SELECTION.name(), COLOUR_SIDEBAR.name());
+    }
+    setStyleSheet(sheet);
+
+    // the conversation and the rooms are drawn with the colours themselves
+    if (_timeline) {
+        _timeline->document()->setDefaultStyleSheet(QString("a { color: %1; text-decoration: none; } body { color: %2; }")
+                                                         .arg(COLOUR_CYAN.name(), COLOUR_TEXT.name()));
+        if (!_items.isEmpty()) {
+            renderTimeline();
+        }
+    }
+    if (_roomList) {
+        _roomList->viewport()->update();
+    }
 }

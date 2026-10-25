@@ -187,6 +187,7 @@ void ChatService::freeLibrary() {
     _libraryUser.clear();
     _syncState.clear();
     _rooms = QJsonArray();
+    countUnread();
     _spaces = QJsonArray();
     _profileName.clear();
     _profileAvatar.clear();
@@ -217,6 +218,7 @@ void ChatService::handleEvent(const QByteArray& json) {
         if (_state == State::Ready) {
             emit roomsChanged(_rooms);
         }
+        countUnread();
     } else if (kind == "timeline") {
         if (_state == State::Ready) {
             emit timelineChanged(event.value("room").toString(), event.value("items").toArray());
@@ -300,6 +302,22 @@ void ChatService::setState(State state, const QString& text) {
     _stateText = text;
     qCDebug(chat_service) << "chat:" << state << text;
     emit stateChanged(state);
+    countUnread();
+}
+
+void ChatService::countUnread() {
+    int count = 0;
+    if (_state == State::Ready) {
+        for (const auto& value : _rooms) {
+            QJsonObject room = value.toObject();
+            int notifications = room.value("notifications").toInt();
+            count += notifications > 0 ? notifications : room.value("dm").toBool() ? room.value("unread").toInt() : 0;
+        }
+    }
+    if (count != _unreadCount) {
+        _unreadCount = count;
+        emit unreadCountChanged(count);
+    }
 }
 
 void ChatService::command(const QJsonObject& command) {

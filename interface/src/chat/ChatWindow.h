@@ -2,9 +2,11 @@
 //  ChatWindow.h
 //  interface/src/chat
 //
-//  Darkride chat's window (View > Chat): the channels and direct messages down the left, the conversation and the
-//  message box on the right, as the web chat at chat.darkride.ai lays them out. A window of its own beside the
-//  viewer's, so opening it never resizes the 3D view. ChatService (libraries/chat) does the talking.
+//  Darkride chat (View > Chat): the channels and direct messages down the left, the conversation and the message box
+//  on the right, as the web chat at chat.darkride.ai lays them out. It lives in a dock panel, "Chat" (Caity's "GO CHAT
+//  DOCKING", 2026-10-25): floating in its own window as before, so opening it never resizes the 3D view, until the
+//  player drags it into the main window beside Build mode's panels. Narrower than the two columns need, it shows one
+//  at a time. Under a skin it takes the skin's colours. ChatService (libraries/chat) does the talking.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -23,6 +25,7 @@
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QWidget>
 
+class QDockWidget;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -33,23 +36,32 @@ class QPushButton;
 class QStackedWidget;
 class QTextBrowser;
 class QTimer;
+class QToolButton;
 
 class ChatWindow : public QWidget {
     Q_OBJECT
 public:
-    // View > Chat: shows the window (made the first time), or hides it when it is already in front
+    // View > Chat: shows the chat panel (its content made the first time), or hides it when it is already in front
     static void toggle();
+    // the "Chat" dock panel (object name "ChatDock", for the main window's saved layout), made hidden and floating the
+    // first time; cheap, so the layout's restore can place it before chat is ever opened
+    static QDockWidget* dock();
+    // the chat panel back to where it starts (Build > Reset Panels): floating, at its first size in the middle of the
+    // main window; shown or hidden as it was
+    static void resetDock();
     static QKeySequence shortcut();
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;
-    void closeEvent(QCloseEvent* event) override;
     void changeEvent(QEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     explicit ChatWindow(QWidget* parent);
+    // the chat in the dock panel, made the first time it shows
+    static ChatWindow* content();
 
     void updateState();
     void updateRooms(const QJsonArray& rooms);
@@ -90,7 +102,12 @@ private:
     void askFriends(bool now = false);
     void markReadIfSeen();
     void fitComposer();
-    void saveGeometrySetting();
+    // the colours of Darkride's own look, or the skin's over them, into the style sheet, the room list and the
+    // conversation; again when the skin changes
+    void applyColours();
+    // narrower than both columns: one at a time, the rooms or the conversation (with a way back to the rooms)
+    void setNarrow(bool narrow);
+    void showRooms(bool rooms);
 
     // a person's or room's round picture: theirs once fetched (mxc), until then the first letter of the name on a
     // colour of their own; avatarSource names it in the conversation's document, at 40 px
@@ -106,7 +123,14 @@ private:
     void openMedia(const QJsonObject& media, const QString& name);
 
     static QPointer<ChatWindow> _instance;
+    static QPointer<QDockWidget> _dock;
 
+    QWidget* _sidebar { nullptr };
+    QWidget* _main { nullptr };
+    QToolButton* _roomsButton { nullptr };      // narrow: back to the rooms
+    bool _narrow { false };
+    bool _roomsShown { false };                 // narrow: the rooms are up, not the conversation
+    QSize _pictureMax;                          // a message's picture fits in this (narrower when narrow)
     QLabel* _spaceTitle { nullptr };
     QListWidget* _roomList { nullptr };
     QLabel* _userAvatar { nullptr };
