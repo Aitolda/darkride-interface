@@ -1080,6 +1080,9 @@ WrittenAvatar writeAvatar(const unity::Package& package, const AvatarSource& ava
     }
     // the rest of the face, for face tracking, on the shapes the procedural face leaves alone
     faceLines << unity::faceTrackingShapeLines(shapes, faceLines);
+    // and the brows' lift, the smile, the wide eyes (and a blink or jaw the rules above didn't give), which only face
+    // tracking moves: the procedural face's talking and blinking leave them alone
+    faceLines << unity::faceTrackingOnlyShapeLines(shapes, faceLines);
     // of the face's 52 (ARKit's set): the ten UserBlendshapes after TongueOut are no face
     notes << QString("face tracking: %1 of %2 face shapes").arg(unity::countFaceShapes(faceLines)).arg((int)Blendshapes::UserBlendshape0);
 

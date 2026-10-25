@@ -22,10 +22,16 @@ namespace unity {
 // Only the shapes the engine's own procedural face never drives: with face tracking off they stay at 0 and change
 // nothing, and the avatar's own animations of the same shape keys add to them rather than being replaced. The blink,
 // the wide eyes, the brows' lift, the smile, the jaw, the funnel and the upper lip (Head::simulate drives those from
-// the voice and the blink) are left to the importer's existing rules.
+// the voice and the blink) are left to the importer's existing rules and to faceTrackingOnlyShapeLines.
 QStringList faceTrackingShapeLines(const QSet<QString>& shapes, const QStringList& alreadyMapped);
 
-// how many of the engine's 52 face shapes the lines name (each engine name once), for the import's notes
-int countFaceShapes(const QStringList& bsLines);
+// The `faceTrackingBs` lines for those twelve procedurally driven shapes, where the existing rules (alreadyMapped) left
+// them out: the same matching, but the engine moves them only with face tracking or a script, never from the voice
+// or the automatic blink (SkeletonModel), so an anime face doesn't grin and lift its brows while its owner talks.
+QStringList faceTrackingOnlyShapeLines(const QSet<QString>& shapes, const QStringList& alreadyMapped);
+
+// how many of the engine's 52 face shapes the lines name (each engine name once, bs and faceTrackingBs lines), for the
+// import's notes
+int countFaceShapes(const QStringList& lines);
 
 }  // namespace unity
