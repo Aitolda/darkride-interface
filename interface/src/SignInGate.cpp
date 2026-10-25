@@ -198,6 +198,9 @@ void SignInGate::resumeAfterLoginDialogActionTaken() {
         // This is done so we don't get a "connection time-out" message when we haven't passed in a URL.
         if (ClientOptions::get().hasUrl) {
             QMetaObject::invokeMethod(&qApp->getDomainSession(), &DomainSession::goToStartingLocation, Qt::QueuedConnection);
+        } else {
+            // stays put, but follows a link it was opened with (nothing happens without one)
+            qApp->getDomainSession().noStartingLocation();
         }
     } else {
         QMetaObject::invokeMethod(&qApp->getDomainSession(), &DomainSession::goToStartingLocation, Qt::QueuedConnection);
