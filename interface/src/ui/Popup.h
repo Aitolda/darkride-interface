@@ -9,6 +9,7 @@
 //  further detail sits behind a small Details fold-out, in a scrolling field; a question that needs a word or a link
 //  has one field under the line. A success gets no alert but a banner in the window's corner that fades by itself.
 //  The viewer's other popups share this design in QML (interface/resources/qml/dialogs/alert/AlertPanel.qml).
+//  While a skin is on, a popup takes the skin's colours, font and "popup" frame (SKINS.md, stage 2).
 //  Moved out of the avatar importer (10-25) so build mode's questions use it too.
 //
 //  Copyright 2026 Darkride.
@@ -20,9 +21,12 @@
 #ifndef hifi_Popup_h
 #define hifi_Popup_h
 
+#include <memory>
 #include <vector>
 
+#include <QColor>
 #include <QDialog>
+#include <QMargins>
 #include <QPixmap>
 #include <QString>
 #include <QWidget>
@@ -37,6 +41,24 @@ enum class Role { Default, Cancel, Plain, Destructive };
 struct Button {
     QString label;  // "&&" for an ampersand: a button reads "&" as a keyboard shortcut mark
     Role role;
+};
+
+// What a popup is drawn in: Darkride's own colours, or a skin's (read when the popup opens)
+struct Look {
+    QColor panel { 43, 43, 46 };
+    QColor border { 255, 255, 255, 26 };
+    QColor title { 255, 255, 255 };
+    QColor text { 255, 255, 255, 189 };
+    QColor well { 0, 0, 0, 71 };            // under the field and the details
+    QColor button { 255, 255, 255, 36 };
+    QColor buttonPressed { 255, 255, 255, 56 };
+    QColor buttonText { 255, 255, 255 };
+    QColor tint { 0x0b, 0x6b, 0xd8 };       // the default button
+    QColor destructive { 0xff, 0x45, 0x3a };
+    QString font;                           // the skin's font family; "" for the system's
+    QPixmap frame;                          // the skin's "popup" frame, drawn 9-slice, in place of the rounded panel
+    QMargins slice;
+    QMargins padding;
 };
 
 // The one field of a question that needs a word or a link; the default button waits until it holds something.
@@ -64,6 +86,7 @@ private:
     int _cancel { -1 };
     QLineEdit* _field { nullptr };
     QPushButton* _defaultButton { nullptr };
+    std::shared_ptr<const Look> _look;
 };
 
 // A note that comes and goes in the top right corner of the window: clicked, it goes at once.
@@ -77,6 +100,8 @@ protected:
 
 private:
     void fade(qreal to, int milliseconds, bool thenClose = false);
+
+    std::shared_ptr<const Look> _look;
 };
 
 // Darkride's logo, the picture of a popup with no subject of its own.

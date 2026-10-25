@@ -51,7 +51,7 @@ const QStringList ALLOWED_SUFFIXES { "json", "png", "jpg", "jpeg", "ttf", "otf",
 const QString SKIN_FILE = "skin.json";
 const QStringList FRAME_PARTS { "window", "menuBar", "menu", "menuItem", "bar", "barButton", "toolbar", "toolButton",
                                 "viewport", "panel", "panelTitle", "card", "button", "field", "tab", "scrollBar",
-                                "scrollHandle", "statusBar" };
+                                "scrollHandle", "statusBar", "popup" };
 const QStringList FRAME_STATES { "image", "hover", "pressed", "checked", "disabled" };
 const QStringList PLACES { "top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom",
                            "bottom-right" };
