@@ -7,10 +7,6 @@
 
 # Webcam face tracking (src/FaceTrackingPlugin.h): MediaPipe's face landmarker on TensorFlow Lite (release's port,
 # cmake/macros/TargetTflite.cmake), the camera through QtMultimedia. Mac and Windows (plugins/CMakeLists.txt).
-if (NOT COMMAND target_tflite)
-  message(WARNING "Face tracking left out: this tree has no TensorFlow Lite port yet (target_tflite)")
-  return()
-endif()
 
 set(TARGET_NAME face-tracking-plugin)
 
