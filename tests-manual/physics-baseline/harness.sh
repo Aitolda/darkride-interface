@@ -15,8 +15,9 @@
 #                                    client would otherwise hand its --url to one already running and exit) and
 #                                    --tokens "{}" (no sign-in), stdout and stderr to $R/<name>.log; the ktx cache
 #                                    is deleted when it exits (kept with KEEP_KTX=1, for a warm run of the same
-#                                    client next). Titled "Darkride - $SESSION - TEST, not yours" unless the runner
-#                                    passes its own --clientLabel. Takes the machine lock first (lock_take), unless
+#                                    client next). Titled "Darkride - $SESSION - TEST, not yours" ("QUIET TEST" while
+#                                    the lock is held --quiet) unless the runner passes its own --clientLabel; the
+#                                    client takes its Dock icon from those words (TestClientIcon.h). Takes the machine lock first (lock_take), unless
 #                                    this run holds it already. Environment set by the caller (TIVOLI_PACKET_LOSS,
 #                                    TIVOLI_PACKET_DELAY_MS) passes through. On macOS it starts in the background,
 #                                    never in front of the window the user is typing in (see client_start).
@@ -187,7 +188,10 @@ client() {
     _name=$1; shift
     wall "$_name"
     lock_take || return 1
-    DARKRIDE_CLIENT_LABEL=${DARKRIDE_CLIENT_LABEL:-"Darkride - $SESSION - TEST, not yours"} \
+    # QUIET in the title (and the Dock icon) while this run holds the machine lock for a quiet timing run
+    _test="TEST"
+    [ ! -x "$MACHINE_LOCK" ] || ! "$MACHINE_LOCK" quiet || _test="QUIET TEST"
+    DARKRIDE_CLIENT_LABEL=${DARKRIDE_CLIENT_LABEL:-"Darkride - $SESSION - $_test, not yours"} \
     XDG_CONFIG_HOME="$R/$_name-home/config" TIVOLI_APP_DATA_DIR="$R/$_name-home/data" \
         client_start "$R/$_name.log" --allowMultipleInstances --tokens "{}" "$@"
     _status=$?
