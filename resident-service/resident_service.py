@@ -426,6 +426,7 @@ class Body:
         self.driver: Session | None = None
         self.grace: asyncio.Task | None = None
         self.rate: int | None = None                  # the perception rate last asked of the body, ms
+        self.leaving = False                          # the service asked it to leave
         self.next_id = 0
         self.pending: dict = {}                       # body request id -> (future, session)
         self.long_running: dict = {}                  # body request id -> (session, program id, method), for `re`
@@ -734,6 +735,7 @@ class Service:
     async def stop_body(self, body: Body):
         link = body.link
         if link is not None:
+            body.leaving = True
             await self.body_request(body, "leave", {})        # the body stops being an avatar and ends its script
             try:
                 await asyncio.wait_for(link.wait_closed(), 2)
@@ -746,6 +748,7 @@ class Service:
         if body.proc is not None:
             await self.launcher.stop(body.proc)
         body.proc, body.link, body.token = None, None, None
+        body.leaving = False
         body.joined.clear()
         if self.bodies.get(body.resident) is body and body.driver is None:
             del self.bodies[body.resident]
@@ -854,8 +857,8 @@ class Service:
             if driver is not None:
                 await driver.perceived(body)
             return
-        if method == "bye":                           # leaving on its own (domain lost, kicked)
-            log.warning("the body of %s is leaving: %s", body.resident, p.get("reason"))
+        if method == "bye":                           # leaving: asked to, or on its own (domain lost, kicked)
+            (log.info if body.leaving else log.warning)("the body of %s is leaving: %s", body.resident, p.get("reason"))
             await ws.close(1000, "bye")
             return
         if driver is None:
