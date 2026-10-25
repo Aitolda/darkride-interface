@@ -111,6 +111,8 @@ static const QSize PICTURE_UNKNOWN(300, 200);
 // the rooms' column; narrower than this and a readable conversation beside it, the chat shows one at a time
 static const int SIDEBAR_WIDTH = 240;
 static const int NARROW_WIDTH = 720;
+// shorter than this, the message box grows to three lines at most
+static const int SHORT_HEIGHT = 360;
 // the chat panel floating, the first time: as big as the chat window was before it could dock
 static const QSize FLOATING_SIZE(940, 640);
 // a GIF bigger than this shows as its first frame from a thumbnail rather than playing
@@ -548,7 +550,8 @@ void ChatWindow::toggle() {
 ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     setObjectName("DarkrideChat");
     setAttribute(Qt::WA_StyledBackground);
-    setMinimumSize(300, 360);
+    // docked under Build mode's Inspector, on a laptop's height: the room's name, a little conversation, the message box
+    setMinimumSize(300, 200);
     _pictureMax = PICTURE_MAX;
     applyColours();
     if (auto theme = DependencyManager::get<PanelTheme>()) {
@@ -1733,8 +1736,9 @@ void ChatWindow::markReadIfSeen() {
 }
 
 void ChatWindow::fitComposer() {
-    // one line to start, growing with what's typed up to eight
-    int lines = std::min(8, std::max(1, (int)_composer->document()->size().height()));
+    // one line to start, growing with what's typed up to eight (three in a short panel, so the conversation stays)
+    int maxLines = height() < SHORT_HEIGHT ? 3 : 8;
+    int lines = std::min(maxLines, std::max(1, (int)_composer->document()->size().height()));
     int height = lines * _composer->fontMetrics().lineSpacing() + 2 * (int)_composer->document()->documentMargin() + 18;
     _composer->setFixedHeight(height);
 }
@@ -1784,6 +1788,9 @@ void ChatWindow::hideEvent(QHideEvent* event) {
 void ChatWindow::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
     setNarrow(event->size().width() < NARROW_WIDTH);
+    if ((event->size().height() < SHORT_HEIGHT) != (event->oldSize().height() < SHORT_HEIGHT)) {
+        fitComposer();
+    }
 }
 
 void ChatWindow::setNarrow(bool narrow) {
