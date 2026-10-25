@@ -109,6 +109,11 @@ client_start() {
         */Contents/MacOS/*) _app=${BIN%/Contents/MacOS/*} ;;
         *) _app="" ;;
     esac
+    # open takes only absolute paths: a relative app is "Unable to find application", and nothing starts (physics)
+    if [ -n "$_app" ]; then
+        _app=$(cd "$_app" 2>/dev/null && pwd) || { echo "client_start: no app at $BIN" >&2; return 1; }
+    fi
+    case "$_log" in /*) ;; *) _log="$(pwd)/$_log" ;; esac
     _since=$(date '+%Y-%m-%d %H:%M:%S')
     if [ -z "$_app" ] || [ "$(uname)" != Darwin ]; then
         "$BIN" "$@" > "$_log" 2>&1 &
@@ -141,7 +146,13 @@ client_start() {
         _i=$((_i + 1)); sleep 0.5
     done
     wait $_opener
+    _status=$?
     [ -z "$_cpid" ] || stop_client_helpers "$_cpid" "$_since"
+    if [ -z "$_cpid" ]; then
+        echo "client_start: no client started from $_app (open's status $_status); see above and $_log" >&2
+        [ "$_status" != 0 ] || _status=1
+    fi
+    return $_status
 }
 
 client() {
