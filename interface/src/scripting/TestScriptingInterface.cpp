@@ -575,6 +575,42 @@ void TestScriptingInterface::answerNextAlert(const QString& button, const QStrin
     timer->start(100);
 }
 
+void TestScriptingInterface::answerNextPrompt(const QString& text) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "answerNextPrompt", Q_ARG(QString, text));
+        return;
+    }
+    // looked for every 100 ms on this thread, where a waiting prompt's own loop runs it, as answerNextAlert does
+    auto timer = new QTimer(this);
+    auto started = QDateTime::currentMSecsSinceEpoch();
+    QObject::connect(timer, &QTimer::timeout, this, [timer, started, text]() {
+        QQuickItem* dialog = nullptr;
+        if (QQuickItem* desktop = DependencyManager::get<OffscreenUi>()->getDesktop()) {
+            for (QQuickItem* item : desktop->findChildren<QQuickItem*>()) {
+                if (QString(item->metaObject()->className()).startsWith("QueryDialog")) {
+                    dialog = item;
+                    break;
+                }
+            }
+        }
+        if (!dialog) {
+            if (QDateTime::currentMSecsSinceEpoch() - started > 15000) {
+                qCWarning(interfaceapp) << "Test.answerNextPrompt: no prompt in 15 s";
+                timer->stop();
+                timer->deleteLater();
+            }
+            return;
+        }
+        timer->stop();
+        timer->deleteLater();
+        qCInfo(interfaceapp) << "Test.answerNextPrompt: answering" << text;
+        // as the prompt's own accept() (dialogs/QueryDialog.qml): its answer, then it goes
+        QMetaObject::invokeMethod(dialog, "selected", Q_ARG(QVariant, QVariant(text)));
+        dialog->deleteLater();
+    });
+    timer->start(100);
+}
+
 int TestScriptingInterface::showAlert(const QString& title, const QString& text, const QString& details,
                                       const QVariantList& buttons, const QString& fieldPlaceholder) {
     if (QThread::currentThread() != thread()) {
