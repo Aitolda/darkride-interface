@@ -14,7 +14,8 @@
 //    small ball  a moving 0.3 m ball on the boom: ignored
 //    big box     a moving 1.5 m box on the boom: stops the camera
 //    off         View > Camera Collision unchecked, the wall behind: the camera goes through it, as before
-//    strafe in   strafing sideways into a corridor whose back wall comes in from the side of the boom
+//    strafe in   strafing sideways into a corridor whose back wall comes in from the side of the boom; and
+//                close beside that wall, as Caity was (the wall's end passes between her and the camera)
 //    strafe along strafing into a wall beside the avatar and along it, pressed against it
 //    turn at end turning on the spot at a thin wall's end, so the boom sweeps across the wall's narrow side
 //    angled      pressed against a wall with the head turned towards it, the boom running back into the wall
@@ -262,6 +263,17 @@
             });
         });
     }
+    // Caity's case (10-25): close beside the corridor's back wall, side-on, strafing into the corridor with the camera at
+    // its full distance behind, so the wall's end passes between the avatar and the camera
+    function strafeInClose(next) {
+        stand(0.3, function () {
+            box("corridor back", { x: 4.0, y: 1.5, z: 0.75 }, { x: 6.0, y: 3.0, z: 0.3 });
+            box("corridor front", { x: 4.0, y: 1.5, z: -0.75 }, { x: 6.0, y: 3.0, z: 0.3 });
+            after(1.0, function () {
+                nearPlaneCase("strafe in close", 5.0, function () { strafe(1.0); }, next);
+            });
+        });
+    }
     // strafing left into a wall beside the avatar (along z) and on along it, pressed against it
     function strafeAlong(next) {
         stand(0, function () {
@@ -408,6 +420,7 @@
                 });
             },
             strafeIn,
+            strafeInClose,
             strafeAlong,
             turnAtEnd,
             angledIntoWall,
