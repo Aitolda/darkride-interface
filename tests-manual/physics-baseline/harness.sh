@@ -25,8 +25,19 @@
 #                                    shell is brought to the front by macOS at launch and by Qt when it has launched,
 #                                    and takes the keyboard. open passes on only the environment it's given, so the
 #                                    TIVOLI_, HIFI_, DARKRIDE_, QT_, XDG_ and DYLD_ variables are handed over; the
-#                                    client's exit status isn't (read its log). CLIENT_FOREGROUND=1 runs the binary
-#                                    straight, as before (a client that must be in front, say for a timing run).
+#                                    client's exit status isn't (read its log). CLIENT_FOREGROUND=1 opens it in front
+#                                    instead, still through open (a client someone plays, or a timing run that needs
+#                                    the window on top). Elsewhere than macOS it runs the binary straight.
+#                                    client_start also passes -NSAutoFillHeuristicsEnabled NO (AppKit's argument domain;
+#                                    the client's own parser lists it as unknown and goes on): AutoFill starts a
+#                                    SafariPlatformSupport.Helper when the app becomes active, and the helper outlives
+#                                    the client; 422 of them used up launchservicesd and brought a Mac down
+#                                    (2026-10-25). The background launch never activates it; this covers a click.
+#                                    When the client has quit, the macOS helper services it left running are stopped
+#                                    (stop_client_helpers), whichever way it was launched.
+#   stop_client_helpers <pid> <since>
+#                                    stops the VT decoder and encoder services and the Safari helper whose own logs
+#                                    name client <pid> since <since> ("YYYY-mm-dd HH:MM:SS"), and nothing else
 #   lock_take [purpose] [minutes] [--quiet]
 #                                    waits for the machine lock and holds it until this runner exits (or lock_give):
 #                                    one test with windows on the GPU at a time. --quiet for timing runs (no builds).
@@ -75,25 +86,73 @@ lock_give() {
     [ ! -x "$MACHINE_LOCK" ] || "$MACHINE_LOCK" give "$SESSION"
 }
 
+# stop_client_helpers <client pid> <since>: stops the macOS helper services a client left running when it quit
+# (performance, 2026-10-25): VTDecoderXPCService and VTEncoderXPCService (~31 MB a pair, from QtWebEngine checking the
+# video formats at start-up, whichever way the client was launched) and com.apple.SafariPlatformSupport.Helper.
+# Each logs "invalidated because the client process (pid N) ... exited" and stays alive. Only the helpers whose own log
+# names this client are stopped, by pid, after checking the pid is still that service: never another app's.
+stop_client_helpers() {
+    /usr/bin/log show --start "$2" --style compact --predicate \
+        "(process == \"VTDecoderXPCService\" OR process == \"VTEncoderXPCService\" OR process == \"com.apple.SafariPlatformSupport.Helper\") AND eventMessage CONTAINS \"client process (pid $1)\"" \
+        2>/dev/null |
+        grep -oE '(VTDecoderXPCService|VTEncoderXPCService|com\.apple\.SafariPlatformSupport\.Helper)\[[0-9]+' | sort -u |
+        while IFS='[' read -r _service _hpid; do
+            if ps -o command= -p "$_hpid" 2>/dev/null | grep -q "$_service"; then
+                kill -TERM "$_hpid" && echo "stopped $_service $_hpid, left by client $1"
+            fi
+        done
+}
+
 client_start() {
     _log=$1; shift
     case "$BIN" in
         */Contents/MacOS/*) _app=${BIN%/Contents/MacOS/*} ;;
         *) _app="" ;;
     esac
-    if [ -n "$CLIENT_FOREGROUND" ] || [ -z "$_app" ] || [ "$(uname)" != Darwin ]; then
-        "$BIN" "$@" > "$_log" 2>&1
-        return $?
+    # open takes only absolute paths: a relative app is "Unable to find application", and nothing starts (physics)
+    if [ -n "$_app" ]; then
+        _app=$(cd "$_app" 2>/dev/null && pwd) || { echo "client_start: no app at $BIN" >&2; return 1; }
     fi
-    set -- -a "$_app" --args "$@"
+    case "$_log" in /*) ;; *) _log="$(pwd)/$_log" ;; esac
+    _since=$(date '+%Y-%m-%d %H:%M:%S')
+    if [ -z "$_app" ] || [ "$(uname)" != Darwin ]; then
+        "$BIN" "$@" > "$_log" 2>&1 &
+        _cpid=$!
+        wait $_cpid
+        _status=$?
+        [ "$(uname)" != Darwin ] || stop_client_helpers "$_cpid" "$_since"
+        return $_status
+    fi
+    # -DarkrideTestRun <log> marks this client's command line (an AppKit default nothing reads), so its pid can be
+    # found while it runs: open's own pid is $!, and pgrep for the binary alone could find someone else's client
+    set -- -a "$_app" --args -DarkrideTestRun "$_log" -NSAutoFillHeuristicsEnabled NO "$@"
     for _var in $(env | grep -E '^(TIVOLI|HIFI|DARKRIDE|QT|XDG|DYLD)_[A-Za-z0-9_]*=' | cut -d= -f1); do
         eval "_value=\${$_var}"
         set -- --env "$_var=$_value" "$@"
     done
     : > "$_log"
-    QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 QT_MAC_SET_RAISE_PROCESS=0 \
-        open -g -n -W --env QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 --env QT_MAC_SET_RAISE_PROCESS=0 \
-            --stdout "$_log" --stderr "$_log" "$@"
+    if [ -n "$CLIENT_FOREGROUND" ]; then
+        # in front, for a client someone plays: macOS and Qt activate it as a normal launch would
+        open -n -W --stdout "$_log" --stderr "$_log" "$@" &
+    else
+        QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 QT_MAC_SET_RAISE_PROCESS=0 \
+            open -g -n -W --env QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 --env QT_MAC_SET_RAISE_PROCESS=0 \
+                --stdout "$_log" --stderr "$_log" "$@" &
+    fi
+    _opener=$!
+    _cpid=""; _i=0
+    while [ -z "$_cpid" ] && [ "$_i" -lt 120 ] && kill -0 $_opener 2>/dev/null; do
+        _cpid=$(pgrep -f -- "-DarkrideTestRun $_log" | head -1)
+        _i=$((_i + 1)); sleep 0.5
+    done
+    wait $_opener
+    _status=$?
+    [ -z "$_cpid" ] || stop_client_helpers "$_cpid" "$_since"
+    if [ -z "$_cpid" ]; then
+        echo "client_start: no client started from $_app (open's status $_status); see above and $_log" >&2
+        [ "$_status" != 0 ] || _status=1
+    fi
+    return $_status
 }
 
 client() {
