@@ -25,8 +25,11 @@ Item {
     // on the floating bar; the tablet's buttons keep their own look
     readonly property var skinFrame: !isTablet && PanelTheme.skin && PanelTheme.skin.frames
         ? (PanelTheme.skin.frames.barButton || null) : null
-    readonly property var skinText: !isTablet && PanelTheme.skin && PanelTheme.skin.colors
-        ? PanelTheme.skin.colors.text : undefined
+    // the skin's text colour only where the skin draws behind the captions too (a "bar" or "barButton" frame): over
+    // the bar's own dark ground, a light skin's dark text didn't show (10-25)
+    readonly property bool skinDrawsBehind: !isTablet && !!PanelTheme.skin && !!PanelTheme.skin.frames
+        && !!(PanelTheme.skin.frames.barButton || PanelTheme.skin.frames.bar)
+    readonly property var skinText: skinDrawsBehind && PanelTheme.skin.colors ? PanelTheme.skin.colors.text : undefined
 
     property bool buttonEnabled: true
     property bool isActive: false
