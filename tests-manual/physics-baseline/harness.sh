@@ -64,6 +64,8 @@
 SANDBOX=${SANDBOX:-$HOME/tivoli-sandboxes/physics}
 DOMAIN_SANDBOX=${DOMAIN_SANDBOX:-$HOME/git/tivolicloud/domain-sandbox.sh}   # darkride-ops' sandbox starter
 MACHINE_LOCK=${MACHINE_LOCK:-$HOME/git/tivolicloud/machine-lock.sh}         # darkride-ops' lock for the shared Mac
+# who runs the test, in the window title and the machine lock; physics' runners came first and keep the default
+[ -n "${SESSION:-}" ] || echo "harness.sh: SESSION not set, so titles and the machine lock say \"physics\" (set SESSION=<your session>)" >&2
 SESSION=${SESSION:-physics}
 CLIENT_WINDOW=${CLIENT_WINDOW:-@Rect(1110 470 800 600)}
 export HIFI_METAVERSE_URL=${HIFI_METAVERSE_URL:-https://vr.darkride.ai}
