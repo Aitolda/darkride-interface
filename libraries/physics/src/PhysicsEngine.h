@@ -196,6 +196,7 @@ private:
     void stepOnce(float dt);
     void feedFrameTransforms();
     void dropEmptyWorlds();
+    void removeContactsInEveryWorld(ObjectMotionState* motionState);
     void rehomeObjects();
     void registerFrame(ObjectMotionState* frameState);
     void unregisterFrame(const QUuid& frameID);
