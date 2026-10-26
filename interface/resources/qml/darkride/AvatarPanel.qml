@@ -248,6 +248,7 @@ Page {
         id: thumb
 
         property string pending: ""     // a picture taken or chosen, not saved yet (a file:// address here)
+        property bool fromFile: false   // the pending picture was chosen from this computer (not taken)
         property bool busy: false
         property bool choosing: false   // the file dialog is ours (Window answers every browseAsync)
         property string status: ""
@@ -264,6 +265,7 @@ Page {
                     return;
                 }
                 pending = url;
+                fromFile = false;
                 status = "";
             });
         }
@@ -282,6 +284,7 @@ Page {
                     return;
                 }
                 pending = url;
+                fromFile = true;
                 status = "";
             });
         }
@@ -399,6 +402,7 @@ Page {
         Section {
             visible: thumb.pending !== ""
             title: "New picture"
+            rightsLine: thumb.fromFile
             Item {
                 width: parent ? parent.width : 0
                 height: width * 0.75
@@ -549,6 +553,7 @@ Page {
         Section {
             title: "Body"
             footer: "Put This Avatar in My Files uploads an avatar that is on this computer, so everyone can see it."
+            rightsLine: true
 
             ListRow {
                 label: "Scale"

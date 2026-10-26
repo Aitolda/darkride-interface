@@ -74,6 +74,9 @@ public:
 
     int answer() const { return _answer; }
     QString fieldText() const;  // trimmed; empty without a field
+    // the rights line (RightsLine.h) in small grey text under the buttons, for an alert whose default button puts
+    // something where others see it
+    void addRightsLine();
 
 protected:
     void paintEvent(QPaintEvent*) override;

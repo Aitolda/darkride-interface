@@ -149,6 +149,10 @@ public:
     // press on the gizmo would (a move handle, or a rotate ring when rotate), every call applies the delta or the
     // rotation about the selection's centre as the pointer's motion would, final takes the undo step as the release would
     void dragSelectionForTest(const glm::vec3& delta, const glm::quat& rotationDelta, bool rotate, bool begin, bool final);
+    // files from this computer uploaded into the Assets panel's folder, as its Upload… does, and the status bar's text
+    // (Test.editorUploadFiles, Test.editorStatus)
+    void uploadFilesForTest(const QStringList& localPaths);
+    QString statusForTest() const;
 
 public slots:
     void setActive(bool active);

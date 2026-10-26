@@ -30,6 +30,7 @@
 #include <ShapeInfo.h>
 
 #include "InterfaceLogging.h"
+#include "ui/RightsLine.h"
 
 namespace {
     const glm::u8vec3 SHAPE_COLOR { 190, 190, 190 };       // Unity's default material, more or less
@@ -79,6 +80,12 @@ namespace {
         return p;
     }
 
+}
+
+QString EditorUpload::uploadingStatus(const QString& fileName, int percent, const QString& more, bool fromComputer) {
+    QString status = percent >= 100 ? QString("Processing %1…%2").arg(fileName, more)
+                                    : QString("Uploading %1 %2%%3").arg(fileName).arg(percent).arg(more);
+    return fromComputer ? status + " · " + rights::sentence() : status;
 }
 
 QString EditorUpload::safeFileName(const QString& name) {

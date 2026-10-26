@@ -2164,6 +2164,16 @@ QPixmap Editor::inspectorPicture() const {
     return _inspector ? _inspector->contentPicture() : QPixmap();
 }
 
+void Editor::uploadFilesForTest(const QStringList& localPaths) {
+    if (_assets) {
+        _assets->uploadFilesForTest(localPaths);
+    }
+}
+
+QString Editor::statusForTest() const {
+    return _statusLabel ? _statusLabel->text() : QString();
+}
+
 void Editor::dragSelectionForTest(const glm::vec3& delta, const glm::quat& rotationDelta, bool rotate, bool begin, bool final) {
     if (!_active) {
         setActive(true);
@@ -3751,15 +3761,15 @@ void Editor::beginUpload(const QString& localPath, const glm::vec3& point, bool 
 
 void Editor::showUploadProgress(EditorUpload* upload) {
     ++_uploadsActive;
-    setStatus("Uploading " + upload->fileName() + " 0%");
+    setStatus(EditorUpload::uploadingStatus(upload->fileName(), 0, QString(), true));
     connect(upload, &EditorUpload::progress, this, [this, upload](qint64 sent, qint64 total) {
         if (total <= 0) {
             return;
         }
         if (sent >= total) {
-            setStatus("Processing " + upload->fileName() + "…");   // sent; the server is storing it
+            setStatus(EditorUpload::uploadingStatus(upload->fileName(), 100, QString(), true));
         } else {
-            setStatus(QString("Uploading %1 %2%").arg(upload->fileName()).arg((int)(sent * 100 / total)));
+            setStatus(EditorUpload::uploadingStatus(upload->fileName(), (int)(sent * 100 / total), QString(), true));
         }
     });
     connect(upload, &EditorUpload::failed, this, [this, upload](const QString& error) {
