@@ -41,6 +41,24 @@ QString typeNameOf(int typeId) {
     return name ? QString::fromUtf8(name) : QString("type %1").arg(typeId);
 }
 
+// An enum of the method's own class that Qt hasn't registered by name (Q_ENUM registers it only on first use, so
+// "Probe::Mode" can be unknown to QMetaType::type): carried as its number, as QtScript carries it (it, too, looks
+// the name up among the class's enumerators).
+bool isOwnEnum(const QMetaMethod& method, QByteArray name) {
+    const QMetaObject* meta = method.enclosingMetaObject();
+    if (!meta) {
+        return false;
+    }
+    int scope = name.lastIndexOf("::");
+    if (scope != -1) {
+        if (name.left(scope) != meta->className()) {
+            return false;
+        }
+        name = name.mid(scope + 2);
+    }
+    return meta->indexOfEnumerator(name.constData()) != -1;
+}
+
 // A parameter's type id. moc leaves an enum declared with its unqualified name ("Mode") unresolved; the
 // registered name is the qualified one ("Probe::Mode"), so that is tried with the method's class scope. A
 // pointer to a const object ("const AudioEffectOptions*") is registered, if at all, without the const.
@@ -56,6 +74,26 @@ int parameterTypeOf(const QMetaMethod& method, int index) {
     type = QMetaType::type(name.constData());
     if (type == QMetaType::UnknownType && !name.contains("::") && method.enclosingMetaObject()) {
         type = QMetaType::type((QByteArray(method.enclosingMetaObject()->className()) + "::" + name).constData());
+    }
+    if (type == QMetaType::UnknownType && isOwnEnum(method, name)) {
+        type = QMetaType::Int;
+    }
+    return type;
+}
+
+// The return type's id, the same way: a method returning its class's own enum ("Mode") was refused as a type the host
+// interface cannot carry (Performance.getRefreshRateRegime, once it returned Performance's own enum, 2026-10-26).
+int returnTypeOf(const QMetaMethod& method) {
+    int type = method.returnType();
+    if (type != QMetaType::UnknownType) {
+        return type;
+    }
+    QByteArray name = method.typeName();
+    if (!name.contains("::") && method.enclosingMetaObject()) {
+        type = QMetaType::type((QByteArray(method.enclosingMetaObject()->className()) + "::" + name).constData());
+    }
+    if (type == QMetaType::UnknownType && isOwnEnum(method, name)) {
+        type = QMetaType::Int;
     }
     return type;
 }
@@ -705,7 +743,7 @@ QVariant HostInterface::invoke(QObject* object, int methodIndex, const QVector<i
         generic[i] = QGenericArgument(QMetaType::typeName(type), type == QMetaType::QVariant ? &converted[i] : converted[i].constData());
     }
 
-    const int returnType = method.returnType();
+    const int returnType = returnTypeOf(method);
     bool invoked = false;
     QVariant result;
     if (returnType == QMetaType::Void) {
@@ -717,7 +755,8 @@ QVariant HostInterface::invoke(QObject* object, int methodIndex, const QVector<i
         return QVariant();
     } else {
         void* buffer = QMetaType::create(returnType);
-        QGenericReturnArgument returnArgument(QMetaType::typeName(returnType), buffer);
+        // the method's own spelling of the type: QMetaMethod::invoke compares it with the name given here
+        QGenericReturnArgument returnArgument(method.typeName(), buffer);
         invoked = method.invoke(object, Qt::DirectConnection, returnArgument, generic[0], generic[1], generic[2], generic[3],
                                 generic[4], generic[5], generic[6], generic[7], generic[8], generic[9]);
         if (invoked) {

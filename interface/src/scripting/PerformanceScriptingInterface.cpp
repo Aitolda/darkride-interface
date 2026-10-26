@@ -73,10 +73,10 @@ int PerformanceScriptingInterface::getActiveRefreshRate() const {
     return qApp->getRefreshRateManager().getActiveRefreshRate();
 }
 
-RefreshRateManager::UXMode PerformanceScriptingInterface::getUXMode() const {
-    return qApp->getRefreshRateManager().getUXMode();
+PerformanceScriptingInterface::UXMode PerformanceScriptingInterface::getUXMode() const {
+    return (PerformanceScriptingInterface::UXMode)qApp->getRefreshRateManager().getUXMode();
 }
 
-RefreshRateManager::RefreshRateRegime PerformanceScriptingInterface::getRefreshRateRegime() const {
-    return qApp->getRefreshRateManager().getRefreshRateRegime();
+PerformanceScriptingInterface::RefreshRateRegime PerformanceScriptingInterface::getRefreshRateRegime() const {
+    return (PerformanceScriptingInterface::RefreshRateRegime)qApp->getRefreshRateManager().getRefreshRateRegime();
 }
