@@ -20,13 +20,14 @@
 #include <QtWidgets/QVBoxLayout>
 
 #include "../EntityTreeModel.h"
+#include "../../ui/DockTitleBar.h"
 
 HierarchyPanel::HierarchyPanel(QWidget* parent) : QDockWidget("Hierarchy", parent) {
     setObjectName("EditorHierarchy");
-    setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    // fixed in place: docking a floating panel back reparents it across native windows, and the GL
-    // view (a native window itself) does not survive that; it can be closed and reopened
-    setFeatures(QDockWidget::DockWidgetClosable);
+    // anywhere, floating or docked, tabbed with another panel (dockable panels, step 2): every change of its window
+    // under the GL view's guard (ui/DockTitleBar.h), which once was why it was fixed in place
+    setFeatures(DockWidgetClosable | DockWidgetMovable | DockWidgetFloatable);
+    DockTitleBar::attach(this);
     setMinimumWidth(220);
 
     auto body = new QWidget(this);

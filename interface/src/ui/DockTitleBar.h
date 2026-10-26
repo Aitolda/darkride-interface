@@ -29,6 +29,11 @@ class DockTitleBar : public QWidget {
 public:
     explicit DockTitleBar(QDockWidget* dock);
 
+    /// gives a dock panel this title bar, and puts its float and close buttons, a double-click on its title and the end
+    /// of a drag that docks it under gl::ViewChangeGuard: a panel's own window coming or going beside the viewer's
+    /// changes the GL view's surface on macOS (as chat's ChatDock and ui/QmlDock do in their own event handlers)
+    static void attach(QDockWidget* dock);
+
     /// the buttons' actions (a double-click on the bar floats or docks too)
     void toggleFloating();
     void closePanel();

@@ -28,6 +28,7 @@
 #include "TrackPointsEditor.h"
 #include "UserDataEditor.h"
 #include "VehiclePartsEditor.h"
+#include "../../ui/DockTitleBar.h"
 
 namespace {
     const QString NULL_UUID = QUuid().toString(QUuid::WithoutBraces);
@@ -43,8 +44,8 @@ namespace {
 
 InspectorPanel::InspectorPanel(QWidget* parent) : QDockWidget("Inspector", parent) {
     setObjectName("EditorInspector");
-    setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    setFeatures(QDockWidget::DockWidgetClosable);   // fixed in place, see HierarchyPanel
+    setFeatures(DockWidgetClosable | DockWidgetMovable | DockWidgetFloatable);   // anywhere, see HierarchyPanel
+    DockTitleBar::attach(this);
     setMinimumWidth(340);   // room for a label and three vector fields
 
     auto body = new QWidget(this);

@@ -61,6 +61,7 @@
 #include "../../ui/RightsLine.h"
 #include "../EditorCreate.h"
 #include "AssetThumbnails.h"
+#include "../../ui/DockTitleBar.h"
 
 const char* AssetItemModel::ASSET_MIME_TYPE = "application/x-darkride-asset";
 
@@ -503,9 +504,9 @@ bool AssetItemModel::dropMimeData(const QMimeData* data, Qt::DropAction action, 
 
 AssetsPanel::AssetsPanel(QWidget* parent) : QDockWidget("My Files", parent) {
     setObjectName("EditorAssets");
-    setAllowedAreas(Qt::BottomDockWidgetArea);
-    // fixed in place, as the other panels are (see HierarchyPanel): it can be closed and comes back with build mode
-    setFeatures(QDockWidget::DockWidgetClosable);
+
+    setFeatures(DockWidgetClosable | DockWidgetMovable | DockWidgetFloatable);   // anywhere, see HierarchyPanel
+    DockTitleBar::attach(this);
     setMinimumHeight(150);
 
     _files = new UserFiles(this);

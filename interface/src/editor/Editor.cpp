@@ -717,11 +717,7 @@ void Editor::createPanels() {
     _inspector->hide();
     qApp->installEventFilter(this);
 
-    // a saved layout from before the panels were fixed can still float them, and one saved with both toolbars on
-    // one row would keep them there
-    _hierarchy->setFloating(false);
-    _inspector->setFloating(false);
-    _assets->setFloating(false);
+    // a layout saved with both toolbars on one row would keep them there
     placeToolBars();
     updateTerrainBar();   // the saved layout knows nothing of the tool
 }

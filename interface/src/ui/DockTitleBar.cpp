@@ -9,12 +9,14 @@
 
 #include "DockTitleBar.h"
 
+#include <QtCore/QCoreApplication>
 #include <QtCore/QEvent>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QPainter>
 #include <QtGui/QPainterPath>
 #include <QtGui/QScreen>
+#include <QtWidgets/QAbstractButton>
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
@@ -100,7 +102,9 @@ namespace {
         sheet += "}\n";
         sheet += "QWidget#DockTitleBar QLabel { color: " + titleText +
                  "; font-size: 12px; background: transparent; }\n";
-        sheet += "QWidget#DockTitleBar QToolButton { border: none; border-radius: 3px; background: transparent; }\n";
+        // padding and margin too: a panel's own buttons (Build mode's Inspector and My Files) have theirs padded
+        sheet += "QWidget#DockTitleBar QToolButton { border: none; border-radius: 3px; background: transparent;"
+                 " padding: 0; margin: 0; }\n";
         sheet += "QWidget#DockTitleBar QToolButton:hover { background: rgba(255, 255, 255, 0.10); }\n";
         sheet += "QWidget#DockTitleBar QToolButton:pressed { background: rgba(255, 255, 255, 0.18); }\n";
         return sheet;
@@ -114,6 +118,52 @@ namespace {
         button->setIconSize(QSize(ICON, ICON));
         button->setToolTip(tip);
         return button;
+    }
+}
+
+namespace {
+    // the events that end in a panel's window coming or going, handled under the guard: the event is sent again from
+    // inside it, and that second pass goes through
+    class ViewChangeFilter : public QObject {
+    public:
+        using QObject::QObject;
+
+    protected:
+        bool eventFilter(QObject* watched, QEvent* event) override {
+            switch (event->type()) {
+                case QEvent::MouseButtonDblClick:
+                case QEvent::MouseButtonRelease:
+                case QEvent::NonClientAreaMouseButtonDblClick:
+                case QEvent::NonClientAreaMouseButtonRelease:
+                case QEvent::Close:
+                    if (!_inside) {
+                        gl::ViewChangeGuard guard(event->type());
+                        _inside = true;
+                        QCoreApplication::sendEvent(watched, event);
+                        _inside = false;
+                        return true;
+                    }
+                    break;
+                default:
+                    break;
+            }
+            return false;
+        }
+
+    private:
+        bool _inside { false };
+    };
+}
+
+void DockTitleBar::attach(QDockWidget* dock) {
+    if (!dock || qobject_cast<DockTitleBar*>(dock->titleBarWidget())) {
+        return;
+    }
+    dock->setTitleBarWidget(new DockTitleBar(dock));
+    auto filter = new ViewChangeFilter(dock);
+    dock->installEventFilter(filter);
+    for (auto button : dock->titleBarWidget()->findChildren<QAbstractButton*>()) {
+        button->installEventFilter(filter);
     }
 }
 
