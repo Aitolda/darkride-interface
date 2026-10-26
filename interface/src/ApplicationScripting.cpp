@@ -77,6 +77,7 @@
 #include "scripting/DiskCacheScriptingInterface.h"
 #include "avatar/AvatarThumbnails.h"
 #include "ui/MetaverseRequests.h"
+#include "ui/Panels.h"
 #include "ui/Skins.h"
 #include "ui/SystemToolbar.h"
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
@@ -372,6 +373,7 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
     scriptEngine->registerGlobalObject("Pointers", DependencyManager::get<PointerScriptingInterface>().data());
     scriptEngine->registerGlobalObject("TextToSpeech", DependencyManager::get<TTSScriptingInterface>().data());
     scriptEngine->registerGlobalObject("Chat", DependencyManager::get<ChatScriptingInterface>().data());
+    scriptEngine->registerGlobalObject("Panels", DependencyManager::get<Panels>().data());
     scriptEngine->registerGlobalObject("DiskCache", DependencyManager::get<DiskCacheScriptingInterface>().data());
 
     // Caches

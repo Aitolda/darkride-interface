@@ -24,6 +24,7 @@
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QStyle>
 #include <QtWidgets/QToolBar>
+#include <QtWidgets/QToolButton>
 
 #include <shared/FileUtils.h>
 #include <shared/QtHelpers.h>
@@ -41,12 +42,13 @@
 #include <plugins/DisplayPlugin.h>
 #include <display-plugins/DisplayLink.h>
 #include <display-plugins/OpenGLDisplayPlugin.h>
+#include <gl/GLHelpers.h>
 
 #include "avatar/AvatarImporter.h"
 #include "editor/Editor.h"
 #include "ui/DockTitleBar.h"
-#include "ui/Popup.h"
 #include "ui/QmlDock.h"
+#include "ui/Popup.h"
 #include "ui/Skins.h"
 #include "graphics/GraphicsEngine.h"
 #include "editor/ui/ScriptEditor.h"
@@ -582,19 +584,28 @@ QVariantMap TestScriptingInterface::windowLayout() {
     };
     const QList<QPair<QString, QString>> PANELS { { "chat", "ChatDock" }, { "hierarchy", "EditorHierarchy" },
                                                   { "inspector", "EditorInspector" }, { "assets", "EditorAssets" },
-                                                  { "people", "PeopleDock" } };
+                                                  { "settings", "SettingsDock" }, { "avatar", "AvatarDock" },
+                                                  { "people", "PeopleDock" }, { "explore", "ExploreDock" } };
     for (const auto& panel : PANELS) {
         auto dock = window->findChild<QDockWidget*>(panel.second);
         if (!dock) {
             continue;
         }
         const QRect place(dock->mapToGlobal(QPoint(0, 0)), dock->size());
-        layout[panel.first] = QVariantMap {
+        QVariantMap entry {
             { "open", !dock->isHidden() },
+            // in sight: tabbed behind another, a docked panel is visible to Qt but moved out of sight
+            { "visible", dock->isVisible() && !dock->visibleRegion().isEmpty() },
             { "floating", dock->isFloating() },
             { "area", dock->isFloating() ? QString("none") : areaName(window->dockWidgetArea(dock)) },
             { "x", place.x() }, { "y", place.y() }, { "width", place.width() }, { "height", place.height() },
         };
+        // a QML panel's page: made the first time it shows, hidden with its panel (ui/QmlDock.h)
+        if (auto qmlDock = qobject_cast<QmlDock*>(dock)) {
+            entry["made"] = qmlDock->panel() != nullptr;
+            entry["pageVisible"] = qmlDock->panel() && qmlDock->panel()->isVisible();
+        }
+        layout[panel.first] = entry;
     }
     if (auto bar = window->findChild<QToolBar*>("systemToolbar")) {
         layout["bar"] = bar->isVisible() ? areaName(window->toolBarArea(bar)) : QString("hidden");
@@ -602,19 +613,6 @@ QVariantMap TestScriptingInterface::windowLayout() {
     // the width of the edges between the panels and the 3D view, which a drag resizes them by
     layout["separator"] = window->style()->pixelMetric(QStyle::PM_DockWidgetSeparatorExtent, nullptr, window);
     return layout;
-}
-
-bool TestScriptingInterface::toggleQmlDock(const QString& name) {
-    if (QThread::currentThread() != thread()) {
-        bool result = false;
-        BLOCKING_INVOKE_METHOD(this, "toggleQmlDock", Q_RETURN_ARG(bool, result), Q_ARG(QString, name));
-        return result;
-    }
-    QmlDock* dock = QmlDock::get(name);
-    if (dock) {
-        dock->toggle();
-    }
-    return dock != nullptr;
 }
 
 bool TestScriptingInterface::dockAction(const QString& objectName, const QString& action) {
@@ -632,10 +630,42 @@ bool TestScriptingInterface::dockAction(const QString& objectName, const QString
     }
     if (action == "close") {
         titleBar->closePanel();
+    } else if (action.startsWith("tab:")) {
+        // docked as a tab behind another docked panel, as a drag onto its title does
+        auto other = window->findChild<QDockWidget*>(action.mid(4));
+        if (!other || other->isFloating()) {
+            return false;
+        }
+        gl::ViewChangeGuard guard;
+        window->tabifyDockWidget(other, dock);
+        other->raise();
     } else if ((action == "dock" && dock->isFloating()) || (action == "float" && !dock->isFloating())) {
         titleBar->toggleFloating();
     }
     return true;
+}
+
+QVariantMap TestScriptingInterface::barButton(const QString& text, bool click) {
+    if (QThread::currentThread() != thread()) {
+        QVariantMap result;
+        BLOCKING_INVOKE_METHOD(this, "barButton", Q_RETURN_ARG(QVariantMap, result), Q_ARG(QString, text),
+                               Q_ARG(bool, click));
+        return result;
+    }
+    auto window = qApp->getWindow();
+    auto bar = window ? window->findChild<QToolBar*>("systemToolbar") : nullptr;
+    if (!bar) {
+        return QVariantMap();
+    }
+    for (auto button : bar->findChildren<QToolButton*>()) {
+        if (button->text() == text) {
+            if (click) {
+                button->click();
+            }
+            return QVariantMap { { "active", button->property("active").toBool() } };
+        }
+    }
+    return QVariantMap();
 }
 
 bool TestScriptingInterface::saveDockPicture(const QString& objectName, const QString& path) {

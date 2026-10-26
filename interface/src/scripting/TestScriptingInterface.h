@@ -327,21 +327,24 @@ public slots:
     Q_INVOKABLE QVariantMap windowLayout();
 
     /**jsdoc
-     * Does what a dock panel's title bar button does (ui/DockTitleBar.h): "dock", "float" or "close".
+     * Does what a dock panel's title bar button does (ui/DockTitleBar.h): "dock", "float" or "close"; or
+     * "tab:<object name>", tabbed behind that docked panel, as a drag onto its title does.
      * @function Test.dockAction
      * @param {string} objectName - The panel's object name, such as "ChatDock".
-     * @param {string} action - "dock", "float" or "close".
+     * @param {string} action - "dock", "float", "close" or "tab:<object name>".
      * @returns {boolean} Whether the panel has such a title bar.
      */
     Q_INVOKABLE bool dockAction(const QString& objectName, const QString& action);
 
     /**jsdoc
-     * Opens a QML panel in its dock panel (ui/QmlDock.h), or closes it when it's in front, as View > Panels does.
-     * @function Test.toggleQmlDock
-     * @param {string} name - The panel: "People".
-     * @returns {boolean} Whether there is such a panel.
+     * Finds a button on the docked bar (ui/SystemToolbar.h) by its text, and clicks it as the mouse would.
+     * @function Test.barButton
+     * @param {string} text - The button's text, such as "People".
+     * @param {boolean} [click=false] - Whether to click it.
+     * @returns {object} <code>{ active }</code>, whether it shows active (before the click's effect); empty when there's
+     *     no such button.
      */
-    Q_INVOKABLE bool toggleQmlDock(const QString& name);
+    Q_INVOKABLE QVariantMap barButton(const QString& text, bool click = false);
 
     /**jsdoc
      * Saves a picture of one dock panel as its widgets draw it, floating or docked, its title bar too.

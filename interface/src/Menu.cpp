@@ -59,6 +59,8 @@
 #include "scripting/HMDScriptingInterface.h"
 #include "ui/DialogsManager.h"
 #include "chat/ChatWindow.h"
+#include "ui/Panels.h"
+#include "ui/WindowLayout.h"
 #include "ui/StandAloneJSConsole.h"
 #include "InterfaceLogging.h"
 #include "LocationBookmarks.h"
@@ -270,9 +272,46 @@ Menu::Menu() {
 
     viewMenu->addSeparator();
 
-    // View > Chat: Darkride chat's window (chat/ChatWindow.h)
-    action = addActionToQMenuAndActionHash(viewMenu, MenuOption::Chat, ChatWindow::shortcut());
-    connect(action, &QAction::triggered, [] { ChatWindow::toggle(); });
+    // View > Panels: every panel of the window, ticked while open, wherever it is (ui/Panels.h). Choosing one opens it
+    // or closes it; chat's keeps its shortcut and its own toggle, which brings it in front first and puts the keyboard
+    // in its message box (chat/ChatWindow.h)
+    {
+        auto panels = DependencyManager::get<Panels>();
+        MenuWrapper* panelsMenu = viewMenu->addMenu("Panels");
+        QHash<QString, QAction*> panelActions;
+        for (const QString& name : panels->names()) {
+            auto panelAction = new QAction(name, this);
+            panelAction->setCheckable(true);
+            panelAction->setChecked(panels->isOpen(name));
+            // the saved layout opens the panels, after sign-in; until then there are none (as there's no bar)
+            panelAction->setProperty(TICK_NOT_SAVED, true);
+            panelAction->setEnabled(false);
+            connect(WindowLayout::instance(), &WindowLayout::restored, panelAction, [panelAction] {
+                panelAction->setEnabled(true);
+            });
+            if (name == "Chat") {
+                panelAction->setShortcut(ChatWindow::shortcut());
+            }
+            // the tick is the panel's: chat's toggle may only bring it in front
+            connect(panelAction, &QAction::triggered, panels.data(), [panels, name, panelAction](bool checked) {
+                if (name == "Chat") {
+                    panels->toggle(name);
+                } else if (checked) {
+                    panels->open(name);
+                } else {
+                    panels->close(name);
+                }
+                panelAction->setChecked(panels->isOpen(name));
+            });
+            panelsMenu->addAction(panelAction);
+            panelActions[name] = panelAction;
+        }
+        connect(panels.data(), &Panels::openChanged, this, [panelActions](const QString& name, bool open) {
+            if (QAction* panelAction = panelActions.value(name)) {
+                panelAction->setChecked(open);
+            }
+        });
+    }
 
     // Build menu ----------------------------------
     MenuWrapper* buildMenu = addMenu("Build");

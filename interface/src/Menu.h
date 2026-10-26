@@ -71,7 +71,6 @@ namespace MenuOption {
     const QString CalibrateCamera = "Calibrate Camera";
     const QString CameraCollision = "Camera Collision";
     const QString CenterPlayerInView = "Center Player In View";
-    const QString Chat = "Chat...";
     const QString ClearDiskCaches = "Clear Disk Caches (requires restart)";
     const QString Collisions = "Collisions";
     const QString Connexion = "Activate 3D Connexion Devices";

@@ -19,6 +19,7 @@
 #include "Application.h"
 #include "DockTitleBar.h"
 #include "InterfaceLogging.h"
+#include "Panels.h"
 #include "SystemToolbar.h"
 #include "chat/ChatWindow.h"
 
@@ -68,6 +69,8 @@ void WindowLayout::restore() {
             qCWarning(interfaceapp) << "The window's saved layout could not be read; the panels start where they start";
         }
     }
+    // the QML panels' docks, which the layout shows where they were if they were open
+    DependencyManager::get<Panels>()->restore();
     // the bar's side is its own setting's, which Settings may have changed since the layout was saved
     SystemToolbar::instance()->restorePlace();
     qCDebug(interfaceapp) << "The window's layout:"
