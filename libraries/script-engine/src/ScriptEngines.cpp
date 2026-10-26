@@ -181,7 +181,7 @@ void ScriptEngines::shutdownScripting() {
 
     // We need to wait for each engine we stopped to be done running before we proceed, because we don't want any of
     // the scripts final "scriptEnding()" or pending "update()" methods from accessing any application state after we
-    // leave this stopAllScripts() method. Every one of them is waited on, not just those still running: a script that
+    // leave this shutdownScripting() method. Every one of them is waited on, not just those still running: a script that
     // finished while we waited on an earlier one still has its thread to quit and join, which takes no time.
     for (const auto& scriptEngine : stoppedEngines) {
         QString scriptName = scriptEngine->getFilename();

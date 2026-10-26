@@ -76,17 +76,18 @@ extern QTimer locationUpdateTimer;                 // ApplicationStartup.cpp's; 
 // Quitting takes a moment (scripts stop, the domain is told, settings are saved), and the window stops drawing
 // at once, which looks like a hang: a notice says Darkride is closing, until the process ends
 static void showClosingNotice(QWidget* window) {
+    // A minimized or hidden window has no hang to explain
+    if (!window || !window->isVisible() || window->isMinimized()) {
+        return;
+    }
     auto notice = new QLabel(nullptr, Qt::SplashScreen | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     notice->setText("<div style='font-size: 17px;'>Closing Darkride&hellip;</div>"
                     "<div style='font-size: 12px; color: #a0a4ab; margin-top: 6px;'>Saving your settings and disconnecting</div>");
     notice->setAlignment(Qt::AlignCenter);
     notice->setStyleSheet("QLabel { background-color: #14161a; color: #e8e8ea; border: 1px solid #3a3d44; padding: 22px 44px; }");
     notice->adjustSize();
-    if (window && window->isVisible()) {
-        notice->move(window->frameGeometry().center() - notice->rect().center());
-    }
+    notice->move(window->frameGeometry().center() - notice->rect().center());
     notice->show();
-    notice->raise();
     notice->repaint();
     QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 }
@@ -173,10 +174,6 @@ void Application::cleanupBeforeQuit() {
 
     // FIXME: Something is still holding on to the ScriptEnginePointers contained in ScriptEngines, and they hold backpointers to ScriptEngines,
     // so this doesn't shut down properly
-
-    // CPM Commenting this out below makes much faster shutdown and takes care of the 30s shutdown delay
-    // It does come at the expense of scripts not being able to shut down promptly.  TO DO
-    // Look at the ScriptEngine shutdownScripting() function itself and see if there's a way to speed it up
 
     DependencyManager::get<ScriptEngines>()->shutdownScripting(); // stop all currently running global scripts
 

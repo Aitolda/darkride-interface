@@ -542,7 +542,7 @@ void ScriptEngine::waitTillDoneRunning() {
                 }
             }
 
-            // NOTE: This will be called on the main application thread (among other threads) from stopAllScripts.
+            // NOTE: This will be called on the main application thread (among other threads) from shutdownScripting.
             //       The thread will need to continue to process events, because
             //       the scripts will likely need to marshall messages across to the main thread, e.g.
             //       if they access Settings or Menu in any of their shutdown code. So:
