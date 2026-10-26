@@ -672,6 +672,38 @@ void Agent::setIsListeningToAudioStream(bool isListeningToAudioStream) {
     _isListeningToAudioStream = isListeningToAudioStream;
 }
 
+// an entity parented to this agent's own avatar had no parent here (the avatar list holds only the others): it sat at
+// the origin, the entity server filed it there, and visitors near the agent never got it
+void Agent::setAvatarAsParent(bool isParent) {
+    if (isParent && !_avatarAsParent) {
+        _avatarAsParent = std::shared_ptr<SpatiallyNestable>(DependencyManager::get<ScriptableAvatar>().data(),
+                                                             [](SpatiallyNestable*) {});
+    } else if (!isParent && _avatarAsParent) {
+        if (_avatarAsParent.use_count() > 1) {
+            // a copy kept past here would point at the avatar after the DependencyManager deletes it
+            qWarning() << "Agent: the avatar is still held in" << _avatarAsParent.use_count() - 1
+                       << "places as it stops being a parent";
+        }
+        _avatarAsParent.reset();
+    }
+    if (DependencyManager::isSet<AssignmentParentFinder>()) {
+        DependencyManager::get<AssignmentParentFinder>()->setOwnAvatar(_avatarAsParent);
+    }
+}
+
+void Agent::updateAvatarChildren() {
+    // an avatar without children (most) costs nothing here
+    if (!_avatarAsParent || !_avatarAsParent->hasChildren()) {
+        return;
+    }
+    EntityTreePointer tree = _entityViewer.getTree();
+    if (tree) {
+        tree->withWriteLock([&] {
+            tree->updateEntityQueryAACube(_avatarAsParent, &_entityEditSender, false, true);
+        });
+    }
+}
+
 void Agent::setIsNoiseGateEnabled(bool isNoiseGateEnabled) {
     if (QThread::currentThread() != thread()) {
         QMetaObject::invokeMethod(this, "setIsNoiseGateEnabled", Q_ARG(bool, isNoiseGateEnabled));
@@ -704,6 +736,7 @@ void Agent::setIsAvatar(bool isAvatar) {
 
             connect(_scriptEngine.data(), &ScriptEngine::update,
                     scriptableAvatar.data(), &ScriptableAvatar::update, Qt::QueuedConnection);
+            connect(_scriptEngine.data(), &ScriptEngine::update, this, &Agent::updateAvatarChildren);
 
             // tell the avatarAudioTimer to start ticking
             QMetaObject::invokeMethod(&_avatarAudioTimer, "start");
@@ -717,7 +750,9 @@ void Agent::setIsAvatar(bool isAvatar) {
         }
 
         _entityEditSender.setMyAvatar(scriptableAvatar.data());
+        setAvatarAsParent(true);
     } else {
+        setAvatarAsParent(false);
         if (_avatarQueryTimer) {
             _avatarQueryTimer->stop();
             delete _avatarQueryTimer;
@@ -753,6 +788,7 @@ void Agent::setIsAvatar(bool isAvatar) {
 
             disconnect(_scriptEngine.data(), &ScriptEngine::update,
                        scriptableAvatar.data(), &ScriptableAvatar::update);
+            disconnect(_scriptEngine.data(), &ScriptEngine::update, this, &Agent::updateAvatarChildren);
 
             QMetaObject::invokeMethod(&_avatarAudioTimer, "stop");
             // with the audio stopped, a line still playing would never end
@@ -988,6 +1024,9 @@ void Agent::processAgentAvatarAudio() {
 }
 
 void Agent::aboutToFinish() {
+    // before the parent finder and the avatar go
+    setAvatarAsParent(false);
+
     // our entity tree is going to go away so tell that to the EntityScriptingInterface
     DependencyManager::get<EntityScriptingInterface>()->setEntityTree(nullptr);
 
