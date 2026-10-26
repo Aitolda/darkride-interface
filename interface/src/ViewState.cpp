@@ -48,6 +48,48 @@ static std::shared_ptr<MyAvatar> getMyAvatar() {
     return DependencyManager::get<AvatarManager>()->getMyAvatar();
 }
 
+// TIVOLI_CAMERA_TRACE=<file>, a test switch (off unless set): while the avatar sits in a vehicle, one line per frame for
+// the chase camera's judder at speed (physics, 2026-10-26): the time, the frame's dt, the camera as this frame shows it,
+// the vehicle as drawn this frame, the substeps simulated so far, the leftover time past the last one and the correction
+// still being blended in. Written at the end of updateCamera, so camera and vehicle are the frame's own pair.
+static void traceVehicleCamera(const Camera& camera, float deltaTime) {
+    static FILE* file = nullptr;
+    static bool opened = false;
+    if (!opened) {
+        opened = true;
+        QByteArray path = qgetenv("TIVOLI_CAMERA_TRACE");
+        if (!path.isEmpty() && (file = fopen(path.constData(), "w"))) {
+            fprintf(file, "# t_us dt mode cam_x cam_y cam_z cam_qw cam_qx cam_qy cam_qz "
+                "veh_x veh_y veh_z veh_qw veh_qx veh_qy veh_qz substeps leftover correction\n");
+        }
+    }
+    if (!file) {
+        return;
+    }
+    QUuid parentID = getMyAvatar()->getParentID();
+    EntityTreePointer tree = qApp->getEntities()->getTree();
+    EntityItemPointer vehicle = (tree && !parentID.isNull()) ? tree->findEntityByID(parentID) : nullptr;
+    while (vehicle && !vehicle->isVehicle()) {   // a seat that is a child of the vehicle
+        vehicle = tree->findEntityByID(vehicle->getParentID());
+    }
+    if (!vehicle) {
+        return;
+    }
+    glm::vec3 cameraPosition = camera.getPosition();
+    glm::quat cameraRotation = camera.getOrientation();
+    glm::vec3 position = vehicle->getWorldPosition();
+    glm::quat rotation = vehicle->getWorldOrientation();
+    auto motionState = static_cast<EntityMotionState*>(vehicle->getPhysicsInfo());
+    PhysicsEnginePointer physicsEngine = qApp->getPhysicsEngine();
+    fprintf(file, "%llu %.6f %d %.4f %.4f %.4f %.6f %.6f %.6f %.6f %.4f %.4f %.4f %.6f %.6f %.6f %.6f %u %.6f %.4f\n",
+        (unsigned long long)usecTimestampNow(), deltaTime, (int)camera.getMode(),
+        cameraPosition.x, cameraPosition.y, cameraPosition.z, cameraRotation.w, cameraRotation.x, cameraRotation.y, cameraRotation.z,
+        position.x, position.y, position.z, rotation.w, rotation.x, rotation.y, rotation.z,
+        physicsEngine ? physicsEngine->getNumSubsteps() : 0u, ObjectMotionState::getLeftoverTime(),
+        motionState ? motionState->getCorrectionDistance() : 0.0f);
+    fflush(file);
+}
+
 void ViewState::copyViewFrustum(ViewFrustum& viewOut) const {
     QMutexLocker viewLocker(&_mutex);
     viewOut = _viewFrustum;
@@ -368,6 +410,7 @@ void ViewState::updateCamera(RenderArgs& renderArgs, float deltaTime) {
     if (!qApp->isHMDMode()) {
         _camera.update();
     }
+    traceVehicleCamera(_camera, deltaTime);
 
     renderArgs._cameraMode = (int8_t)_camera.getMode();
 }
