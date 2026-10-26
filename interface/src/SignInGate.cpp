@@ -16,6 +16,7 @@
 #include "SignInGate.h"
 
 #include <QtCore/QThread>
+#include <QtQuick/QQuickItem>
 
 #include <AccountManager.h>
 #include <AddressManager.h>
@@ -24,6 +25,7 @@
 #include <EntityScriptingInterface.h>
 #include <MainWindow.h>
 #include <MessagesClient.h>
+#include <OffscreenUi.h>
 #include <PathUtils.h>
 #include <ScriptEngines.h>
 #include <shared/GlobalAppProperties.h>
@@ -32,6 +34,7 @@
 #include "Application.h"
 #include "avatar/AvatarManager.h"
 #include "ClientOptions.h"
+#include "InterfaceLogging.h"
 #include "ui/Skins.h"
 #include "editor/Editor.h"
 #include "ui/SystemToolbar.h"
@@ -74,6 +77,13 @@ void SignInGate::showLoginScreen() {
     _poppedUpSetting.set(_poppedUp);
     dialogsManager->showLoginDialog();
     StartupProfiler::instant("sign-in dialog opened");
+    if (!_pageCheck.isActive()) {
+        _pageCheck.setInterval(1000);
+        connect(&_pageCheck, &QTimer::timeout, this, &SignInGate::checkSignInPage, Qt::UniqueConnection);
+        _pageMissingFor = 0;
+        _pageState.clear();
+        _pageCheck.start();
+    }
     emit loginDialogFocusEnabled();
     qApp->getWindow()->setWindowTitle(labelledTitle("Darkride"));
 }
@@ -144,6 +154,8 @@ void SignInGate::resumeAfterLoginDialogActionTaken() {
         _resumeWasPostponed = true;
         return;
     }
+
+    _pageCheck.stop();
 
     // either bar, floating or on a side, may show now (each still waits for the desktop: none in VR), and the skin
     SystemToolbar::instance()->setAllowed(true);
@@ -326,6 +338,42 @@ void SignInGate::update() {
     if (!_loginDialogID.isNull()) {
         _loginStateManager.update(getMyAvatar()->getDominantHand(), _loginDialogID);
         updateLoginDialogPosition();
+    }
+}
+
+void SignInGate::checkSignInPage() {
+    if (!_signInPending || !_poppedUp || qApp->isHMDMode()) {
+        _pageCheck.stop();
+        return;
+    }
+    auto offscreenUi = DependencyManager::get<OffscreenUi>();
+    QQuickItem* root = offscreenUi ? offscreenUi->getRootItem() : nullptr;
+    // the desktop's sign-in page, by the object name HIFI_QML_DEF gives it (LoginDialog::NAME is private)
+    QQuickItem* page = root ? root->findChild<QQuickItem*>("LoginDialog") : nullptr;
+    // on screen: there, shown, not see-through, with some of it inside the window's UI
+    QRectF place;
+    bool shown = false;
+    if (page && root) {
+        place = page->mapRectToItem(root, QRectF(0, 0, page->width(), page->height()));
+        shown = page->isVisible() && page->opacity() > 0.01 && place.intersects(QRectF(0, 0, root->width(), root->height()));
+    }
+    const QString state = !root ? "no UI root" : !page ? "no page" :
+        QString("page %1, opacity %2, at %3,%4 %5x%6 of %7x%8").arg(page->isVisible() ? "visible" : "hidden")
+            .arg(page->opacity()).arg(place.x()).arg(place.y()).arg(place.width()).arg(place.height())
+            .arg(root->width()).arg(root->height());
+    if (state != _pageState) {
+        _pageState = state;
+        qCDebug(interfaceapp) << "Sign-in page:" << state;
+    }
+    if (shown) {
+        _pageMissingFor = 0;
+        return;
+    }
+    if (++_pageMissingFor >= 2) {
+        qCWarning(interfaceapp) << "Sign-in page: not on screen for 2 s while signing in; putting it back";
+        _pageMissingFor = 0;
+        DependencyManager::get<DialogsManager>()->showLoginDialog();
+        emit loginDialogFocusEnabled();
     }
 }
 
