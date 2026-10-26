@@ -266,8 +266,8 @@ QToolBar#EditorToolBar::separator, QToolBar#EditorTerrainBar::separator {
 /* the splitters between the panels and the viewport */
 QMainWindow::separator {
     background: #232323;
-    width: 2px;
-    height: 2px;
+    width: 4px;     /* as MainWindow's own (libraries/ui/src/MainWindow.cpp): wide enough to grab */
+    height: 4px;
 }
 QMainWindow::separator:hover {
     background: #2c5d87;

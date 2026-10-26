@@ -22,6 +22,7 @@
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QPushButton>
+#include <QtWidgets/QStyle>
 #include <QtWidgets/QToolBar>
 
 #include <shared/FileUtils.h>
@@ -573,6 +574,8 @@ QVariantMap TestScriptingInterface::windowLayout() {
     if (auto bar = window->findChild<QToolBar*>("systemToolbar")) {
         layout["bar"] = bar->isVisible() ? areaName(window->toolBarArea(bar)) : QString("hidden");
     }
+    // the width of the edges between the panels and the 3D view, which a drag resizes them by
+    layout["separator"] = window->style()->pixelMetric(QStyle::PM_DockWidgetSeparatorExtent, nullptr, window);
     return layout;
 }
 

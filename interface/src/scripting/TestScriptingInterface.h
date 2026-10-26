@@ -319,7 +319,8 @@ public slots:
     /**jsdoc
      * Where the window's dock panels are (ui/WindowLayout.h): chat's ("chat") and Build mode's ("hierarchy",
      * "inspector", "assets"), each <code>{ open, floating, area, x, y, width, height }</code> (area "left", "right",
-     * "top", "bottom" or "none"; x and y on the screen), and the side of the bar of app buttons ("bar").
+     * "top", "bottom" or "none"; x and y on the screen), the side of the bar of app buttons ("bar"), and the width of
+     * the edges between the panels and the 3D view ("separator", px).
      * @function Test.windowLayout
      * @returns {object} The panels, by name; a panel not made yet is missing.
      */
