@@ -230,6 +230,13 @@ float Display::getRenderResolutionScale() const {
 }
 
 bool Display::isThrottleRendering() const {
+    // In the background (another app in front, or minimized) the refresh rate is lowered on purpose: automatic LOD holds
+    // still rather than read the slow frames as time to spare and add detail that would make the return stutter.
+    auto regime = qApp->getRefreshRateManager().getRefreshRateRegime();
+    if (regime == RefreshRateManager::RefreshRateRegime::UNFOCUS ||
+        regime == RefreshRateManager::RefreshRateRegime::MINIMIZED) {
+        return true;
+    }
     if (_displayPlugin) {
         return getActiveDisplayPlugin()->isThrottled();
     }
