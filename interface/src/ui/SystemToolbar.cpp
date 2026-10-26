@@ -9,9 +9,12 @@
 
 #include "SystemToolbar.h"
 
+#include <algorithm>
+
 #include <QtCore/QFileInfo>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
+#include <QtGui/QFontMetricsF>
 #include <QtGui/QImage>
 #include <QtGui/QPainter>
 #include <QtGui/QPainterPath>
@@ -26,6 +29,7 @@
 #include <ui/TabletScriptingInterface.h>
 #include <ui/ToolbarScriptingInterface.h>
 
+#include "ChatButton.h"
 #include "InterfaceLogging.h"
 
 namespace {
@@ -36,6 +40,7 @@ namespace {
     const int SIDE_BUTTON = 36;
     const qreal RADIUS = 4.0;
     const qreal ACTIVE_PADDING = 8.0;
+    const qreal BADGE = 18.0;           // the unread count's red capsule, at the icon's top right (the Chat button)
     const QStringList PLACES { "floating", "top", "left", "right", "bottom" };
 
     Qt::ToolBarArea areaOf(const QString& place) {
@@ -130,6 +135,7 @@ SystemToolbar::SystemToolbar() : QToolBar("Buttons") {
         for (QToolButton* button : findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly)) {
             button->setIconSize(size);
         }
+        rebuild();   // the pictures again, a badge drawn for the new size
     });
     hide();
 }
@@ -155,6 +161,7 @@ void SystemToolbar::attach(QMainWindow* window, TabletProxy* tablet) {
     _window = window;
     _tablet = tablet;
     window->addToolBar(areaOf(getPlace()), this);
+    ChatButton::add(tablet);   // the one button made here, not by a script: it shows chat's unread count
 
     auto model = tablet->getButtons();
     connect(model, &QAbstractItemModel::rowsInserted, this, &SystemToolbar::rebuild);
@@ -186,6 +193,13 @@ void SystemToolbar::setPlace(const QString& place) {
     updateVisibility();
     qCDebug(interfaceapp) << "The bar's place:" << place << (_window ? placeOf(_window->toolBarArea(this)) : QString())
                           << (isVisible() ? "shown" : "hidden");
+}
+
+void SystemToolbar::restorePlace() {
+    if (_window && isDocked() && _window->toolBarArea(this) != areaOf(getPlace())) {
+        _window->addToolBar(areaOf(getPlace()), this);
+    }
+    updateVisibility();
 }
 
 void SystemToolbar::setAllowed(bool allowed) {
@@ -312,5 +326,28 @@ QPixmap SystemToolbar::buttonPicture(const QVariantMap& properties, bool active)
     const QString icon = active ? properties.value("activeIcon", properties.value("icon")).toString()
                                 : properties.value("icon").toString();
     drawIcon(painter, icon, square.adjusted(padding, padding, -padding, -padding));
+
+    // a count waiting (chat's unread mentions and direct messages): a red capsule over the top right corner, as the
+    // Dock's
+    const int badge = properties.value("badge").toInt();
+    if (badge > 0) {
+        painter.setClipping(false);
+        // drawn at 48 px and shown at the bar's size: the same size on screen either way
+        const qreal scale = qreal(BUTTON) / buttonSize();
+        const qreal height = BADGE * scale;
+        const QString number = badge > 99 ? "99+" : QString::number(badge);
+        QFont font = painter.font();
+        font.setPixelSize(qRound(12 * scale));
+        font.setBold(true);
+        painter.setFont(font);
+        const qreal width = std::min<qreal>(BUTTON, std::max(height, QFontMetricsF(font).horizontalAdvance(number) +
+                                                                          9.0 * scale));
+        const QRectF capsule(BUTTON - width, 0, width, height);
+        painter.setBrush(QColor(255, 59, 48));   // Apple's system red
+        painter.setPen(Qt::NoPen);
+        painter.drawRoundedRect(capsule, height / 2, height / 2);
+        painter.setPen(Qt::white);
+        painter.drawText(capsule, Qt::AlignCenter, number);
+    }
     return pixmap;
 }

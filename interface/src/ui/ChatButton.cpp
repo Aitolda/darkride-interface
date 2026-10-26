@@ -1,0 +1,78 @@
+//
+//  ChatButton.cpp
+//  interface/src/ui
+//
+//  Copyright 2026 Darkride.
+//
+//  Distributed under the MIT License.
+//
+
+#include "ChatButton.h"
+
+#include <algorithm>
+
+#include <QtWidgets/QDockWidget>
+
+#include <ChatService.h>
+#include <DependencyManager.h>
+#include <ui/TabletScriptingInterface.h>
+
+#include "WindowLayout.h"
+#include "chat/ChatWindow.h"
+
+namespace {
+    // Material's "chat", white, as people.svg beside it
+    const QString ICON = "icons/tablet-icons/chat.svg";
+    // after People (7, made later by a script: a later button with the same number goes in front) and before Explore
+    const int SORT_ORDER = 7;
+}
+
+void ChatButton::add(TabletProxy* tablet) {
+    static QPointer<ChatButton> theButton;
+    if (!theButton && tablet) {
+        theButton = new ChatButton(tablet);
+    }
+}
+
+ChatButton::ChatButton(TabletProxy* tablet) : QObject(tablet) {
+    _button = tablet->addButton(QVariantMap {
+        { "text", "Chat" },
+        { "icon", ICON },
+        { "backgroundColor", "#4caf50" },   // green 500
+        { "sortOrder", SORT_ORDER },
+        { "badge", 0 },
+    });
+    connect(_button, &TabletButtonProxy::clicked, this, [this] {
+        ChatWindow::toggle();
+        watchDock();   // opened before the layout's restore made the panel
+    });
+    // the count from sign-in on, before chat is ever opened
+    if (auto chat = DependencyManager::get<ChatService>()) {
+        connect(chat.data(), &ChatService::unreadCountChanged, this, &ChatButton::setUnread);
+        setUnread(chat->getUnreadCount());
+    }
+    // chat's panel is made by the layout's restore after sign-in (ui/WindowLayout.h), or by a first open
+    connect(WindowLayout::instance(), &WindowLayout::restored, this, &ChatButton::watchDock);
+}
+
+void ChatButton::watchDock() {
+    if (_dock) {
+        return;
+    }
+    _dock = ChatWindow::dock();
+    // open is not hidden: a panel tabbed behind another, or the window minimised, is still open
+    connect(_dock, &QDockWidget::visibilityChanged, this, [this] { setActive(_dock && !_dock->isHidden()); });
+    setActive(!_dock->isHidden());
+}
+
+void ChatButton::setActive(bool active) {
+    if (_button) {
+        _button->editProperties({ { "isActive", active } });
+    }
+}
+
+void ChatButton::setUnread(int count) {
+    if (_button) {
+        _button->editProperties({ { "badge", std::max(0, count) } });
+    }
+}

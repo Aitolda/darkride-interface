@@ -45,6 +45,10 @@ public:
     /// the sign-in gate's say: a bar may show (false on the sign-in screen)
     void setAllowed(bool allowed);
 
+    /// back on the side its setting names, after the window's saved layout (ui/WindowLayout.h) put it where it was
+    /// when the layout was saved
+    void restorePlace();
+
     /// a skin is on: the bar drops its own look for the application's style sheet (Skins)
     void setSkinned(bool skinned);
 
@@ -55,7 +59,7 @@ protected:
     bool event(QEvent* event) override;   // a drag by the handle let go: remember the side it went to
 
 public:
-    /// shown or hidden only as updateVisibility wants: Build mode's saved window layout (QMainWindow::restoreState)
+    /// shown or hidden only as updateVisibility wants: the window's saved layout (QMainWindow::restoreState)
     /// holds this toolbar too, and restoring it showed this bar beside the floating one, or hid the docked one (10-24)
     void setVisible(bool visible) override;
 

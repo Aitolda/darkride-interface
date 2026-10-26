@@ -54,6 +54,10 @@ public:
     QString syncState() const { return _syncState; }
     // [{id, name, dm, dm_user?, encrypted, invited, unread, notifications, members, avatar?, space?}]
     QJsonArray rooms() const { return _rooms; }
+    // what you have missed, as the room list's numbers count it: mentions of you in channels and unread direct
+    // messages (a channel's other new messages only make its name bright); 0 when chat isn't ready. For a badge on a
+    // closed chat (the bar's Chat button)
+    int getUnreadCount() const { return _unreadCount; }
     // the joined spaces (Darkride's): [{id, name, avatar?}]
     QJsonArray spaces() const { return _spaces; }
     // who you are in chat: the display name and the picture's mxc address, once the server has said
@@ -84,6 +88,7 @@ signals:
     void stateChanged(State state);
     void syncStateChanged(const QString& state);
     void roomsChanged(const QJsonArray& rooms);
+    void unreadCountChanged(int count);
     // the newest items of an open room: [{id, sender, name, body, kind, ts, own, encrypted, state, reactions,
     // edited, editable, ...}], growing as older ones load (the library's timeline event)
     void timelineChanged(const QString& room, const QJsonArray& items);
@@ -109,6 +114,7 @@ private:
     void freeLibrary();
     void settle();
     void setState(State state, const QString& text = QString());
+    void countUnread();
 
     DarkrideChat* _chat { nullptr };
     QString _homeserver;
@@ -131,6 +137,7 @@ private:
     QString _userId;
     QString _syncState;
     QJsonArray _rooms;
+    int _unreadCount { 0 };
     QJsonArray _spaces;
     QString _profileName;
     QString _profileAvatar;

@@ -38,6 +38,7 @@
 #include "ui/Skins.h"
 #include "editor/Editor.h"
 #include "ui/SystemToolbar.h"
+#include "ui/WindowLayout.h"
 #include "ui/DialogsManager.h"
 #include "ui/Keyboard.h"
 #include "ui/LoginDialog.h"
@@ -160,6 +161,8 @@ void SignInGate::resumeAfterLoginDialogActionTaken() {
     // either bar, floating or on a side, may show now (each still waits for the desktop: none in VR), and the skin
     SystemToolbar::instance()->setAllowed(true);
     DependencyManager::get<Skins>()->setHeld(false);
+    // the panels where they were left, chat's open again if it was (once a run: nothing moved under the sign-in screen)
+    WindowLayout::instance()->restore();
     if (qApp->isHMDMode() || !qApp->getDesktopTabletBecomesToolbarSetting()) {
         qApp->getApplicationCompositor().getReticleInterface()->setAllowMouseCapture(true);
         qApp->getApplicationCompositor().getReticleInterface()->setVisible(true);

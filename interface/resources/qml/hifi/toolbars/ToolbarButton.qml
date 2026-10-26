@@ -54,6 +54,8 @@ Item {
     property int sortOrder: 100
     property int stableOrder: 0
     property var uuid;
+    // a count waiting (the Chat button's unread mentions and direct messages): a red capsule at the top right
+    property int badge: 0
 
     signal clicked()
 
@@ -233,6 +235,26 @@ Item {
         layer.enabled: true
         layer.effect: OpacityMask {
             maskSource: roundedIconMask
+        }
+    }
+
+    // the count waiting, over the icon's top right corner, as the docked bar draws it (ui/SystemToolbar.cpp)
+    Rectangle {
+        visible: button.badge > 0
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.rightMargin: (button.width - button.size) / 2
+        height: 18 * button.scale
+        width: Math.max(height, badgeText.implicitWidth + 9 * button.scale)
+        radius: height / 2
+        color: "#ff3b30" // Apple's system red
+        Text {
+            id: badgeText
+            anchors.centerIn: parent
+            text: button.badge > 99 ? "99+" : button.badge
+            color: "#ffffff"
+            font.pixelSize: 12 * button.scale
+            font.bold: true
         }
     }
 

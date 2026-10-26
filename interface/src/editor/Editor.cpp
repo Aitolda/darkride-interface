@@ -96,6 +96,8 @@
 #include "ui/PropertyEditors.h"
 #include "ui/TerrainToolBar.h"
 #include "ui/ViewportContainer.h"
+#include "ui/WindowLayout.h"
+#include "chat/ChatWindow.h"
 #include <gl/GLHelpers.h>
 
 namespace {
@@ -356,10 +358,7 @@ void Editor::setActive(bool active) {
             _gizmo.endDrag();
             _dragKind = DragKind::None;
         }
-        if (auto window = qApp->getWindow()) {
-            _layoutSetting.set(window->saveState());
-        }
-        showPanels(false);
+        showPanels(false);   // the window's layout saves itself as they go (ui/WindowLayout.h)
         // the keyboard goes back to the world: a field that had it would keep it, hidden, and the avatar's keys
         // with it
         focusViewport();
@@ -700,24 +699,50 @@ void Editor::createPanels() {
     _statusLabel->setTextFormat(Qt::PlainText);
     _statusBar->addWidget(_statusLabel, 1);
 
-    window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
-    window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
     // the Assets panel runs under the Hierarchy and the viewport, as Unity's Project window does; the Inspector
     // keeps the right side whole
     window->setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
-    window->addDockWidget(Qt::BottomDockWidgetArea, _assets);
+    // each panel where the window's saved layout has it (ui/WindowLayout.h: one layout with chat's panel, restored
+    // after sign-in), else where it starts
+    auto layout = WindowLayout::instance();
+    QList<QDockWidget*> across;
+    QList<int> widths;
+    if (!layout->restoreDock(_hierarchy)) {
+        window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
+        placeAbove(_hierarchy, Qt::LeftDockWidgetArea);
+        across << _hierarchy;
+        widths << 260;
+    }
+    if (!layout->restoreDock(_inspector)) {
+        window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
+        placeAbove(_inspector, Qt::RightDockWidgetArea);
+        across << _inspector;
+        widths << 430;
+    }
+    const bool assetsPlaced = layout->restoreDock(_assets);
+    if (!assetsPlaced) {
+        window->addDockWidget(Qt::BottomDockWidgetArea, _assets);
+    }
+    layout->watch(_hierarchy);
+    layout->watch(_inspector);
+    layout->watch(_assets);
     placeToolBars();
     _terrainBar->setVisible(false);
     window->setStatusBar(_statusBar);
     _statusBar->setVisible(false);
-    window->resizeDocks({ _hierarchy, _inspector }, { 260, 430 }, Qt::Horizontal);
-    window->resizeDocks({ _assets }, { 240 }, Qt::Vertical);
+    if (!across.isEmpty()) {
+        window->resizeDocks(across, widths, Qt::Horizontal);
+    }
+    if (!assetsPlaced) {
+        window->resizeDocks({ _assets }, { 240 }, Qt::Vertical);
+    }
+    // hidden until showPanels: a saved layout from a quit in Build mode shows them as it places them, and showPanels
+    // tells a first showing from that
+    _hierarchy->hide();
+    _inspector->hide();
+    _assets->hide();
     qApp->installEventFilter(this);
 
-    QByteArray layout = _layoutSetting.get();
-    if (!layout.isEmpty()) {
-        window->restoreState(layout);
-    }
     // a saved layout from before the panels were fixed can still float them, and one saved with both toolbars on
     // one row would keep them there
     _hierarchy->setFloating(false);
@@ -770,13 +795,81 @@ void Editor::showPanels(bool show) {
         QApplication::activePopupWidget()->close();
     }
     gl::ViewChangeGuard guard;   // panels coming and going change the window round the GL view
+    auto window = qApp->getWindow();
+    const bool wereShown = !_inspector->isHidden();
+    if (show && !wereShown) {
+        _otherWidths.clear();
+        for (QDockWidget* other : otherDockedPanels()) {
+            _otherWidths.append({ other, other->width() });
+        }
+    } else if (!show && wereShown) {
+        _panelWidths.set({ _hierarchy->width(), _inspector->width() });
+    }
     _hierarchy->setVisible(show);
     _inspector->setVisible(show);
     _assets->setVisible(show);
     _assets->setActive(show);   // fetches the listing when shown
     _toolBar->setVisible(show);
     _statusBar->setVisible(show);
+    if (show) {
+        for (const auto& share : _sharesToSize) {
+            if (share.first && share.second && !share.second->isHidden() && !share.second->isFloating()) {
+                window->resizeDocks({ share.first, share.second }, { 3000, 2000 }, Qt::Vertical);
+            }
+        }
+        _sharesToSize.clear();
+    }
+    // Build mode's panels at their own widths, and the others back at theirs: a side has one width for all its panels,
+    // and chat's docked beside the Inspector came out of Build mode as wide as the Inspector (10-25)
+    if (show && !wereShown && !_otherWidths.isEmpty()) {
+        const QVariantList widths = _panelWidths.get();
+        if (widths.size() == 2) {
+            window->resizeDocks({ _hierarchy, _inspector }, { widths[0].toInt(), widths[1].toInt() }, Qt::Horizontal);
+        }
+    } else if (!show && wereShown) {
+        QList<QDockWidget*> others;
+        QList<int> otherWidths;
+        for (const auto& entry : _otherWidths) {
+            if (entry.first && !entry.first->isHidden() && !entry.first->isFloating()) {
+                others << entry.first;
+                otherWidths << entry.second;
+            }
+        }
+        if (!others.isEmpty()) {
+            window->resizeDocks(others, otherWidths, Qt::Horizontal);
+        }
+        _otherWidths.clear();
+    }
     updateTerrainBar();
+}
+
+QList<QDockWidget*> Editor::otherDockedPanels() const {
+    QList<QDockWidget*> found;
+    auto window = qApp->getWindow();
+    if (!window) {
+        return found;
+    }
+    for (QDockWidget* dock : window->findChildren<QDockWidget*>()) {
+        if (dock != _hierarchy && dock != _inspector && dock != _assets && !dock->isHidden() && !dock->isFloating() &&
+            window->dockWidgetArea(dock) != Qt::NoDockWidgetArea) {
+            found << dock;
+        }
+    }
+    return found;
+}
+
+void Editor::placeAbove(QDockWidget* ours, Qt::DockWidgetArea area) {
+    auto window = qApp->getWindow();
+    for (QDockWidget* other : otherDockedPanels()) {
+        if (window->dockWidgetArea(other) == area) {
+            // added after it, ours would sit under it with only what it asks for (the Inspector came out 86 px tall
+            // under chat, 10-25); the sizes given later are shares, which Qt fits to the side
+            window->splitDockWidget(ours, other, Qt::Vertical);
+            // 3 to 2, once ours shows (showPanels)
+            _sharesToSize.append(qMakePair(QPointer<QDockWidget>(ours), QPointer<QDockWidget>(other)));
+            return;
+        }
+    }
 }
 
 namespace {
@@ -850,21 +943,27 @@ void Editor::applyStyle() {
 }
 
 void Editor::resetLayout() {
+    // every panel back where it started (as Caity was told, 10-25), chat's too: floating at its first size and place,
+    // open or closed as it was
+    ChatWindow::resetDock();
+    WindowLayout::instance()->saveSoon();
     auto window = qApp->getWindow();
     if (!_panelsCreated || !window) {
         return;
     }
-    _hierarchy->setFloating(false);
-    _inspector->setFloating(false);
-    _assets->setFloating(false);
-    window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
-    window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
-    window->addDockWidget(Qt::BottomDockWidgetArea, _assets);
-    window->resizeDocks({ _hierarchy, _inspector }, { 260, 430 }, Qt::Horizontal);
-    window->resizeDocks({ _assets }, { 240 }, Qt::Vertical);
+    {
+        gl::ViewChangeGuard guard;   // the panels moving resize the GL view
+        _hierarchy->setFloating(false);
+        _inspector->setFloating(false);
+        _assets->setFloating(false);
+        window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
+        window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
+        window->addDockWidget(Qt::BottomDockWidgetArea, _assets);
+        window->resizeDocks({ _hierarchy, _inspector }, { 260, 430 }, Qt::Horizontal);
+        window->resizeDocks({ _assets }, { 240 }, Qt::Vertical);
+    }
     placeToolBars();
     showPanels(_active);
-    _layoutSetting.set(QByteArray());
 }
 
 // --- every frame --------------------------------------------------------------------------------

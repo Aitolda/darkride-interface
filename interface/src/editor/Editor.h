@@ -54,6 +54,7 @@
 
 class EditorEntityList;
 class QAction;
+class QDockWidget;
 class QDropEvent;
 class QKeyEvent;
 class QLabel;
@@ -224,6 +225,10 @@ private:
     void createPanels();
     void placeToolBars();
     void showPanels(bool show);
+    // the docked panels on the window that aren't Build mode's (chat's), shown
+    QList<QDockWidget*> otherDockedPanels() const;
+    // one of Build mode's panels, new to a side where another panel is docked, goes above it with most of the height
+    void placeAbove(QDockWidget* ours, Qt::DockWidgetArea area);
     void focusViewport();
     void takeFocusUnlessTyping();
     void setMenuActionsEnabled(bool enabled);
@@ -461,6 +466,13 @@ private:
     QVector<glm::vec3> _inspectorNatural;
 
     bool _panelsCreated { false };
+    // A side shared with another panel (chat's, docked) has one width for both: Build mode's panels take their own
+    // widths as they show, and the other panels get theirs back as they go
+    QList<QPair<QPointer<QDockWidget>, int>> _otherWidths;
+    // a panel of ours put above another (placeAbove), sized once both show: Qt doesn't size a hidden one
+    QList<QPair<QPointer<QDockWidget>, QPointer<QDockWidget>>> _sharesToSize;
+    // the Hierarchy's width, the Inspector's
+    Setting::Handle<QVariantList> _panelWidths { "editor/panelWidths", QVariantList() };
     QString _styleSource;     // styles/editor.qss as shipped (applyStyle)
     bool _syncingSelection { false };
     HierarchyPanel* _hierarchy { nullptr };
@@ -485,7 +497,6 @@ private:
     void onHierarchySelection(const QList<QUuid>& ids);
     void onEntityLoaded(const QUuid& id);
     void updateListNote();
-    Setting::Handle<QByteArray> _layoutSetting { "editor/layout3", QByteArray() };   // 2: the panels no longer float; 3: the Assets dock
     // build mode narrows the field of view; the user's own is kept here so it survives a crash
     Setting::Handle<float> _fovBeforeBuild { "editor/fovBeforeBuild", 0.0f };
     float _savedFov { 0.0f };
