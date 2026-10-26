@@ -48,6 +48,7 @@
 #include "editor/Editor.h"
 #include "ui/DockTitleBar.h"
 #include "ui/QmlDock.h"
+#include "ui/WindowLayout.h"
 #include "ui/Popup.h"
 #include "ui/Skins.h"
 #include "graphics/GraphicsEngine.h"
@@ -643,6 +644,26 @@ bool TestScriptingInterface::dockAction(const QString& objectName, const QString
         titleBar->toggleFloating();
     }
     return true;
+}
+
+QStringList TestScriptingInterface::windowLayoutAction(const QString& action, const QString& name) {
+    if (QThread::currentThread() != thread()) {
+        QStringList result;
+        BLOCKING_INVOKE_METHOD(this, "windowLayoutAction", Q_RETURN_ARG(QStringList, result), Q_ARG(QString, action),
+                               Q_ARG(QString, name));
+        return result;
+    }
+    auto layout = WindowLayout::instance();
+    if (action == "save") {
+        layout->saveAs(name);
+    } else if (action == "apply") {
+        layout->apply(name);
+    } else if (action == "forget") {
+        layout->forget(name);
+    } else if (action == "reset") {
+        layout->resetToDefault();
+    }
+    return layout->savedNames();
 }
 
 QVariantMap TestScriptingInterface::barButton(const QString& text, bool click) {

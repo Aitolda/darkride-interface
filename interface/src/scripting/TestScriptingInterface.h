@@ -337,6 +337,16 @@ public slots:
     Q_INVOKABLE bool dockAction(const QString& objectName, const QString& action);
 
     /**jsdoc
+     * Does what View > Layouts does (ui/WindowLayout.h), without its popups: "save" (under the name), "apply", "forget",
+     * "reset" (Reset to Default), or "names".
+     * @function Test.windowLayoutAction
+     * @param {string} action - "save", "apply", "forget", "reset" or "names".
+     * @param {string} [name=""] - The layout's name.
+     * @returns {string[]} The current mode's saved layouts' names, after the action.
+     */
+    Q_INVOKABLE QStringList windowLayoutAction(const QString& action, const QString& name = QString());
+
+    /**jsdoc
      * Finds a button on the docked bar (ui/SystemToolbar.h) by its text, and clicks it as the mouse would.
      * @function Test.barButton
      * @param {string} text - The button's text, such as "People".

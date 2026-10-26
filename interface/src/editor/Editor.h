@@ -179,6 +179,8 @@ public slots:
     // My Files (the Assets panel), made the first time it's asked for: Build mode's, and normal play's too
     // (ui/Panels.h). Where the window's saved layout has it, open or closed as it was
     QDockWidget* myFilesPanel();
+    // Build mode's toolbar rows, placed by the editor rather than left to a saved layout
+    void placeToolBars();
     // Build mode's own panels, once it has been on (null before)
     QDockWidget* hierarchyPanel() const;
     QDockWidget* inspectorPanel() const;
@@ -234,7 +236,6 @@ private:
 
     void createPanels();
     void loadStyle();   // styles/editor.qss, once, for My Files or Build mode's panels, whichever comes first
-    void placeToolBars();
     void showPanels(bool show);
     // the docked panels on the window that aren't Build mode's (chat's), shown
     QList<QDockWidget*> otherDockedPanels() const;

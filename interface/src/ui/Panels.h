@@ -93,6 +93,9 @@ public:
     /// at quit, before the QML engine goes (ApplicationShutdown.cpp): the QML panels' pages, made on its engine
     void releaseQml();
 
+    /// the bar's panels closed, floating at their first places (View > Layouts > Reset to Default)
+    void resetDocks();
+
 signals:
     /**jsdoc
      * Triggered when a panel opens or closes, however that happened (its close box, View > Panels, a script).

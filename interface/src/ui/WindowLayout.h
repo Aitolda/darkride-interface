@@ -50,6 +50,18 @@ public:
     bool enterBuildMode();
     /// Build mode's arrangement saved, normal play's put back
     void leaveBuildMode();
+    bool isBuildMode() const { return _buildMode; }
+
+    /// View > Layouts: the current mode's named arrangements (each mode has its own list), by name
+    QStringList savedNames() const;
+    /// the arrangement as it is now, under a name (replacing one of that name)
+    void saveAs(const QString& name);
+    /// a named arrangement put back
+    void apply(const QString& name);
+    void forget(const QString& name);
+    /// every panel back where it starts: the bar's panels closed, floating; chat as on a first start; Build mode's
+    /// docked where they start (My Files closed in normal play)
+    void resetToDefault();
 
 signals:
     void restored();   // chat's panel exists from here on
@@ -60,12 +72,20 @@ protected:
 private:
     WindowLayout();
     void save();
+    void putBack(const QByteArray& layout, const QStringList& frontTabs);   // under the guard, the bar's side after
+    QStringList frontTabs() const;              // the docked panels in front of a tab group, by object name
+    void raiseTabs(const QStringList& names);   // Qt keeps a tab group's order, not which tab was in front
 
     QTimer _saveTimer;
     bool _restored { false };   // no save before the restore: it would write the start's layout over the saved one
     bool _buildMode { false };
     Setting::Handle<QByteArray> _layoutSetting { "window/layout", QByteArray() };             // normal play's
     Setting::Handle<QByteArray> _buildLayoutSetting { "window/buildLayout", QByteArray() };   // Build mode's
+    Setting::Handle<QStringList> _frontTabsSetting { "window/frontTabs", QStringList() };
+    Setting::Handle<QStringList> _buildFrontTabsSetting { "window/buildFrontTabs", QStringList() };
+    // View > Layouts' named arrangements, per mode: name -> { "state": saveState in base64, "front": front tabs }
+    Setting::Handle<QVariantMap> _namedSetting { "window/namedLayouts", QVariantMap() };
+    Setting::Handle<QVariantMap> _buildNamedSetting { "window/namedBuildLayouts", QVariantMap() };
 };
 
 #endif // hifi_WindowLayout_h

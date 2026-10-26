@@ -60,6 +60,7 @@
 #include "ui/DialogsManager.h"
 #include "chat/ChatWindow.h"
 #include "ui/Panels.h"
+#include "ui/Popup.h"
 #include "ui/WindowLayout.h"
 #include "ui/StandAloneJSConsole.h"
 #include "InterfaceLogging.h"
@@ -325,6 +326,56 @@ Menu::Menu() {
         });
     }
 
+    // View > Layouts: named arrangements of the panels, normal play's and Build mode's apart (ui/WindowLayout.h), and
+    // Reset to Default; listed as the menu opens
+    {
+        auto layoutsMenu = new QMenu("Layouts", this);
+        connect(layoutsMenu, &QMenu::aboutToShow, layoutsMenu, [layoutsMenu] {
+            layoutsMenu->clear();
+            auto layout = WindowLayout::instance();
+            const bool build = layout->isBuildMode();
+            layoutsMenu->addAction("Save Layout…", [build] {
+                const popup::Field field { "Streaming", QString() };
+                popup::Alert alert(popup::appIcon(), "Save Layout",
+                                   build ? "A name for Build mode's panels as they are now."
+                                         : "A name for the panels as they are now.",
+                                   QString(), { { "Cancel", popup::Role::Cancel }, { "Save", popup::Role::Default } },
+                                   qApp->getWindow(), &field);
+                alert.exec();
+                if (alert.answer() == 1) {
+                    WindowLayout::instance()->saveAs(alert.fieldText());
+                }
+            });
+            const QStringList names = layout->savedNames();
+            if (!names.isEmpty()) {
+                layoutsMenu->addSeparator();
+                for (const QString& name : names) {
+                    layoutsMenu->addAction(name, [name] { WindowLayout::instance()->apply(name); });
+                }
+                QMenu* forget = layoutsMenu->addMenu("Delete Layout");
+                for (const QString& name : names) {
+                    forget->addAction(name, [name] {
+                        popup::Alert alert(popup::appIcon(), "Delete the layout \"" + name + "\"?", QString(),
+                                           QString(), { { "Cancel", popup::Role::Cancel },
+                                                        { "Delete", popup::Role::Destructive } },
+                                           qApp->getWindow());
+                        alert.exec();
+                        if (alert.answer() == 1) {
+                            WindowLayout::instance()->forget(name);
+                        }
+                    });
+                }
+            }
+            layoutsMenu->addSeparator();
+            layoutsMenu->addAction("Reset to Default", [] { WindowLayout::instance()->resetToDefault(); });
+        });
+        // nothing to arrange before sign-in, as with View > Panels
+        layoutsMenu->menuAction()->setEnabled(false);
+        connect(WindowLayout::instance(), &WindowLayout::restored, layoutsMenu,
+                [layoutsMenu] { layoutsMenu->menuAction()->setEnabled(true); });
+        viewMenu->addAction(layoutsMenu->menuAction());
+    }
+
     // Build menu ----------------------------------
     MenuWrapper* buildMenu = addMenu("Build");
 
@@ -397,8 +448,10 @@ Menu::Menu() {
         editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildBringHere, 0,
             editor.data(), SLOT(bringSelectionHere())));
         buildMenu->addSeparator();
-        editor->addMenuAction(addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildResetPanels, 0,
-            editor.data(), SLOT(resetLayout())));
+        // the same as View > Layouts > Reset to Default, in Build mode
+        QAction* resetPanels = addActionToQMenuAndActionHash(buildMenu, MenuOption::BuildResetPanels, 0);
+        connect(resetPanels, &QAction::triggered, [] { WindowLayout::instance()->resetToDefault(); });
+        editor->addMenuAction(resetPanels);
         buildMenu->addSeparator();
         // Build > Import Entities…, Import Entities from URL…, Export Selected Entities…: entities files, as the old
         // Create app's Edit menu had them

@@ -197,6 +197,21 @@ void Panels::restore() {
     });
 }
 
+void Panels::resetDocks() {
+    auto window = qApp->getWindow();
+    if (!window) {
+        return;
+    }
+    gl::ViewChangeGuard guard;
+    for (const auto& panel : QML_PANELS) {
+        if (QDockWidget* made = _docks.value(panel.name)) {
+            made->hide();
+            made->setFloating(true);
+            placeFloating(made, window, QSize(panel.width, FLOATING_HEIGHT));
+        }
+    }
+}
+
 void Panels::releaseQml() {
     for (const auto& made : _docks) {
         if (auto qmlDock = qobject_cast<QmlDock*>(made.data())) {

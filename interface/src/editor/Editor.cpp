@@ -953,26 +953,34 @@ void Editor::applyStyle() {
 
 void Editor::resetLayout() {
     // every panel back where it started (as Caity was told, 10-25), chat's too: floating at its first size and place,
-    // open or closed as it was
+    // open or closed as it was. My Files docks along the bottom, closed in normal play (ui/WindowLayout::resetToDefault
+    // closes the bar's panels)
     ChatWindow::resetDock();
     WindowLayout::instance()->saveSoon();
     auto window = qApp->getWindow();
-    if (!_panelsCreated || !window) {
+    if (!window) {
         return;
     }
     {
         gl::ViewChangeGuard guard;   // the panels moving resize the GL view
-        _hierarchy->setFloating(false);
-        _inspector->setFloating(false);
-        _assets->setFloating(false);
-        window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
-        window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
-        window->addDockWidget(Qt::BottomDockWidgetArea, _assets);
-        window->resizeDocks({ _hierarchy, _inspector }, { 260, 430 }, Qt::Horizontal);
-        window->resizeDocks({ _assets }, { 240 }, Qt::Vertical);
+        if (_assets) {
+            _assets->setFloating(false);
+            window->addDockWidget(Qt::BottomDockWidgetArea, _assets);
+            window->resizeDocks({ _assets }, { 240 }, Qt::Vertical);
+            _assets->setVisible(_active);
+        }
+        if (_panelsCreated) {
+            _hierarchy->setFloating(false);
+            _inspector->setFloating(false);
+            window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
+            window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
+            window->resizeDocks({ _hierarchy, _inspector }, { 260, 430 }, Qt::Horizontal);
+        }
     }
-    placeToolBars();
-    showPanels(_active);
+    if (_panelsCreated) {
+        placeToolBars();
+        showPanels(_active);
+    }
 }
 
 // --- every frame --------------------------------------------------------------------------------
