@@ -85,6 +85,8 @@ private:
     // camera collision for the third-person boom (View > Camera Collision): from the pivot toward where the camera
     // wants to be, the camera stops short of what would stop you; it moves in at once and eases back out
     glm::vec3 collideCameraBoom(const glm::vec3& pivot, const glm::vec3& wanted, float deltaTime);
+    // the chase camera (Camera.setChaseTarget) in independent mode, worked out this frame; false when there is none
+    bool updateChaseCamera(float deltaTime);
 
     FancyCamera _camera;   // my view onto the world
     mutable QMutex _mutex{ QMutex::Recursive };
@@ -104,6 +106,15 @@ private:
     // short of the wanted length because something held it in (it then eases back out)
     float _boomLength{ -1.0f };
     bool _boomHeldIn{ false };
+    // the chase camera: where it has settled (camera collision aside), its boom's length (-1 to start at the wanted
+    // length) and whether a wall holds it in, the heading kept for an entity that points straight up or down, the
+    // settings' version it follows and whether it ran last frame (if not, it starts where it wants to be)
+    glm::vec3 _chasePosition{ 0.0f };
+    glm::vec3 _chaseFlat{ 0.0f, 0.0f, -1.0f };
+    float _chaseBoom{ -1.0f };
+    bool _chaseHeldIn{ false };
+    uint32_t _chaseVersion{ 0 };
+    bool _chaseValid{ false };
 };
 
 #endif // hifi_ViewState_h
