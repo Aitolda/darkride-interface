@@ -558,7 +558,6 @@ function takeSnapshot(target) {
             });
             Window.takeSnapshot(false, includeAnimated, CAMERA_ASPECT_RATIO);
         }, Math.max(CAMERA_CAPTURE_DELAY, 3000 / renderRate));
-        UserActivityLogger.logAction("snaphshot_taken", { location: location.href });
         return;
     }
 
