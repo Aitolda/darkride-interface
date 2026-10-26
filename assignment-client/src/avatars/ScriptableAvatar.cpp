@@ -311,14 +311,28 @@ int ScriptableAvatar::getJointIndex(const QString& name) const {
     if (result != -1) {
         return result;
     }
-    QReadLocker readLock(&_jointDataLock);
+    QReadLocker readLock(&_fstJointLock);
     return _fstJointIndices.value(name) - 1;
 }
 
 QStringList ScriptableAvatar::getJointNames() const {
-    QReadLocker readLock(&_jointDataLock);
+    QReadLocker readLock(&_fstJointLock);
     return _fstJointNames;
-    return QStringList();
+}
+
+glm::quat ScriptableAvatar::getJointRotation(const QString& name) const {
+    int index = getJointIndex(name);
+    return index == -1 ? glm::quat() : getJointRotation(index);
+}
+
+glm::vec3 ScriptableAvatar::getJointTranslation(const QString& name) const {
+    int index = getJointIndex(name);
+    return index == -1 ? glm::vec3() : getJointTranslation(index);
+}
+
+bool ScriptableAvatar::isJointDataValid(const QString& name) const {
+    int index = getJointIndex(name);
+    return index != -1 && isJointDataValid(index);
 }
 
 void ScriptableAvatar::setSkeletonModelURL(const QUrl& skeletonModelURL) {
@@ -387,7 +401,7 @@ void ScriptableAvatar::update(float deltatime) {
             // the joints numbered as the skeleton numbers them, which is the order of _jointData and of every viewer's
             // rig: an .fst's jointIndex lines can count differently (the default avatar's are 2 off from the Neck
             // on), and Avatar.getJointIndex then named the wrong joint
-            QWriteLocker writeLock(&_jointDataLock);
+            QWriteLocker writeLock(&_fstJointLock);
             _fstJointNames.clear();
             _fstJointIndices.clear();
             for (int i = 0; i < _animSkeleton->getNumJoints(); i++) {
@@ -489,9 +503,12 @@ void ScriptableAvatar::update(float deltatime) {
 void ScriptableAvatar::updateJointMappings() {
     {
         QWriteLocker writeLock(&_jointDataLock);
+        _jointData.clear();
+    }
+    {
+        QWriteLocker writeLock(&_fstJointLock);
         _fstJointIndices.clear();
         _fstJointNames.clear();
-        _jointData.clear();
     }
 
     const QUrl fstURL = skeletonFSTURL(_skeletonModelURL);
@@ -525,7 +542,7 @@ void ScriptableAvatar::setJointMappingsFromNetworkReply() {
         return;
     }
     {
-        QWriteLocker writeLock(&_jointDataLock);
+        QWriteLocker writeLock(&_fstJointLock);
         QByteArray line;
         while (!(line = networkReply->readLine()).isEmpty()) {
             line = line.trimmed();
