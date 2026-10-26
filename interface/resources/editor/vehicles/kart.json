@@ -2,7 +2,7 @@
  "DataVersion": 0,
  "Entities": [
   {
-   "id": "{c0d1360e-6472-4eba-bbc8-d19f54cd1866}",
+   "id": "{1d20b520-ab6a-4b0b-9b4c-e38440171a1e}",
    "type": "Box",
    "shape": "Cube",
    "name": "Go-kart",
@@ -45,26 +45,26 @@
     },
     "wheels": "[{\"name\": \"FL\", \"center\": [-0.37, -0.03, -0.5], \"radius\": 0.14, \"width\": 0.12, \"mass\": 3, \"suspensionDistance\": 0.06, \"targetPosition\": 0.5, \"steer\": 1, \"brake\": 1, \"handBrake\": 0}, {\"name\": \"FR\", \"center\": [0.37, -0.03, -0.5], \"radius\": 0.14, \"width\": 0.12, \"mass\": 3, \"suspensionDistance\": 0.06, \"targetPosition\": 0.5, \"steer\": 1, \"brake\": 1, \"handBrake\": 0}, {\"name\": \"RL\", \"center\": [-0.37, -0.03, 0.5], \"radius\": 0.14, \"width\": 0.12, \"mass\": 3, \"suspensionDistance\": 0.06, \"targetPosition\": 0.5, \"steer\": 0, \"brake\": 1, \"handBrake\": 1}, {\"name\": \"RR\", \"center\": [0.37, -0.03, 0.5], \"radius\": 0.14, \"width\": 0.12, \"mass\": 3, \"suspensionDistance\": 0.06, \"targetPosition\": 0.5, \"steer\": 0, \"brake\": 1, \"handBrake\": 1}]",
     "seats": "[{\"name\": \"driver\", \"position\": [0, 0.06, 0.12], \"yaw\": 0, \"driver\": true}]",
-    "maxSteerAngle": 45,
-    "maxTorque": 60,
+    "maxSteerAngle": 50,
+    "maxTorque": 100,
     "minRPM": 1000,
-    "maxRPM": 3000,
+    "maxRPM": 3200,
     "gearRatios": "[1.0]",
-    "reverseGearRatio": 2.0,
-    "finalDriveRatio": 3.66,
-    "maxBrakeTorque": 150,
-    "maxHandBrakeTorque": 150,
-    "driveType": "rear",
-    "suspensionFrequency": 3.0,
+    "reverseGearRatio": 3.0,
+    "finalDriveRatio": 2.8,
+    "maxBrakeTorque": 250,
+    "maxHandBrakeTorque": 250,
+    "driveType": "all",
+    "suspensionFrequency": 3.5,
     "suspensionDamping": 0.7
    }
   },
   {
-   "id": "{6442cbcd-3f69-4a22-95a6-a86b1d56466a}",
+   "id": "{b0df266a-75c3-4e5b-b3b5-952aadcbf143}",
    "type": "Shape",
    "shape": "Cylinder",
    "name": "Go-kart wheel FL",
-   "parentID": "{c0d1360e-6472-4eba-bbc8-d19f54cd1866}",
+   "parentID": "{1d20b520-ab6a-4b0b-9b4c-e38440171a1e}",
    "position": {
     "x": -0.37,
     "y": -0.06,
@@ -95,11 +95,11 @@
    }
   },
   {
-   "id": "{bd0b7070-195a-47f7-a380-260aa11cbf67}",
+   "id": "{aeeb22b8-f111-4f46-a4c1-aabed4e1fbd4}",
    "type": "Shape",
    "shape": "Cylinder",
    "name": "Go-kart wheel FR",
-   "parentID": "{c0d1360e-6472-4eba-bbc8-d19f54cd1866}",
+   "parentID": "{1d20b520-ab6a-4b0b-9b4c-e38440171a1e}",
    "position": {
     "x": 0.37,
     "y": -0.06,
@@ -130,11 +130,11 @@
    }
   },
   {
-   "id": "{74504917-ca2d-49ed-8d2c-2acaf044e025}",
+   "id": "{97193118-708e-46cc-b268-dad4425f102d}",
    "type": "Shape",
    "shape": "Cylinder",
    "name": "Go-kart wheel RL",
-   "parentID": "{c0d1360e-6472-4eba-bbc8-d19f54cd1866}",
+   "parentID": "{1d20b520-ab6a-4b0b-9b4c-e38440171a1e}",
    "position": {
     "x": -0.37,
     "y": -0.06,
@@ -165,11 +165,11 @@
    }
   },
   {
-   "id": "{c664e418-5a71-4dcc-9151-b06dd93e6fb4}",
+   "id": "{331fad73-e905-4af3-8ff2-00eee13f6b77}",
    "type": "Shape",
    "shape": "Cylinder",
    "name": "Go-kart wheel RR",
-   "parentID": "{c0d1360e-6472-4eba-bbc8-d19f54cd1866}",
+   "parentID": "{1d20b520-ab6a-4b0b-9b4c-e38440171a1e}",
    "position": {
     "x": 0.37,
     "y": -0.06,
@@ -200,11 +200,11 @@
    }
   },
   {
-   "id": "{1ce68f53-4f3f-4e90-82ac-77cfa8a90fad}",
+   "id": "{78861166-c5f1-4715-b95b-de128962524f}",
    "type": "Box",
    "shape": "Cube",
    "name": "Go-kart seat back",
-   "parentID": "{c0d1360e-6472-4eba-bbc8-d19f54cd1866}",
+   "parentID": "{1d20b520-ab6a-4b0b-9b4c-e38440171a1e}",
    "position": {
     "x": 0,
     "y": 0.3,
@@ -227,11 +227,11 @@
    }
   },
   {
-   "id": "{e4655bee-f779-49b1-ae2f-8aa27d66496a}",
+   "id": "{9451fdfc-e3a4-48d9-97b7-5cdf4bd069ac}",
    "type": "Shape",
    "shape": "Cylinder",
    "name": "Go-kart steering wheel",
-   "parentID": "{c0d1360e-6472-4eba-bbc8-d19f54cd1866}",
+   "parentID": "{1d20b520-ab6a-4b0b-9b4c-e38440171a1e}",
    "position": {
     "x": 0,
     "y": 0.32,
@@ -260,11 +260,11 @@
    }
   },
   {
-   "id": "{77c12038-4647-49de-86ae-571ed5d8190c}",
+   "id": "{5323b40f-05ca-4506-a42b-bfc1cfdb8e72}",
    "type": "Box",
    "shape": "Cube",
    "name": "Go-kart bumper",
-   "parentID": "{c0d1360e-6472-4eba-bbc8-d19f54cd1866}",
+   "parentID": "{1d20b520-ab6a-4b0b-9b4c-e38440171a1e}",
    "position": {
     "x": 0,
     "y": -0.02,
@@ -287,6 +287,6 @@
    }
   }
  ],
- "Id": "{5bb2ed4e-9f3b-4055-a7ed-59d213b1bd8c}",
+ "Id": "{197f8b41-66dc-4877-b0e8-4565b5313691}",
  "Version": 141
 }

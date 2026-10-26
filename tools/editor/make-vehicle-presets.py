@@ -93,7 +93,9 @@ def car():
 
 def kart():
     # the go-kart of kart-rig.js (Caity, 10-25: "kart works great. fun too"): one seat, low, 1.45 m long, fits a 1.2 m door;
-    # the look (a seat back, a steering wheel, a bumper) is the test track pad's, collisionless, so the kart is its box
+    # the look (a seat back, a steering wheel, a bumper) is the test track pad's, collisionless, so the kart is its box.
+    # "Kart 2" (physics, kart-tune-1 d41f73a8ae, final 10-26): all four wheels driven, 100 N m through 2.8 to about
+    # 16.8 m/s, 50 degrees of lock, 250 N m brakes, a stiffer 3.5 Hz suspension
     wheel_radius, wheel_width, wheelbase, track, travel = 0.14, 0.12, 1.0, 0.74, 0.06
     chassis_above_ground = 0.2
     wheel_top = (wheel_radius + travel * 0.5) - chassis_above_ground
@@ -112,10 +114,10 @@ def kart():
             "type": "wheeled", "mass": 150, "centerOfMass": vec(0, -0.12, 0),
             "wheels": json.dumps(wheels),
             "seats": json.dumps([{"name": "driver", "position": [0, 0.06, 0.12], "yaw": 0, "driver": True}]),
-            "maxSteerAngle": 45, "maxTorque": 60, "minRPM": 1000, "maxRPM": 3000,
-            "gearRatios": json.dumps([1.0]), "reverseGearRatio": 2.0, "finalDriveRatio": 3.66,
-            "maxBrakeTorque": 150, "maxHandBrakeTorque": 150, "driveType": "rear",
-            "suspensionFrequency": 3.0, "suspensionDamping": 0.7,
+            "maxSteerAngle": 50, "maxTorque": 100, "minRPM": 1000, "maxRPM": 3200,
+            "gearRatios": json.dumps([1.0]), "reverseGearRatio": 3.0, "finalDriveRatio": 2.8,
+            "maxBrakeTorque": 250, "maxHandBrakeTorque": 250, "driveType": "all",
+            "suspensionFrequency": 3.5, "suspensionDamping": 0.7,
         },
     }
     dark = {"red": 30, "green": 30, "blue": 36}
