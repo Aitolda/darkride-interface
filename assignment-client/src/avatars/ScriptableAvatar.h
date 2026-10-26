@@ -219,6 +219,15 @@ public:
     /// Returns the index of the joint with the specified name, or -1 if not found/unknown.
     Q_INVOKABLE virtual int getJointIndex(const QString& name) const override;
 
+    // the getters by name take _jointDataLock once: AvatarData's hold it for reading while the index getter takes it
+    // again, and a read inside a read hangs when update(), on another thread, asks to write in between
+    using AvatarData::getJointRotation;
+    using AvatarData::getJointTranslation;
+    using AvatarData::isJointDataValid;
+    virtual glm::quat getJointRotation(const QString& name) const override;
+    virtual glm::vec3 getJointTranslation(const QString& name) const override;
+    virtual bool isJointDataValid(const QString& name) const override;
+
     /**jsdoc
      * @comment Uses the base class's JSDoc.
      */
@@ -279,6 +288,10 @@ private:
     QStringList _maskedJoints;
     AnimationPointer _bind; // a sleazy way to get the skeleton, given the various library/cmake dependencies
     std::shared_ptr<AnimSkeleton> _animSkeleton;
+    // the joint names have their own lock, not _jointDataLock: AvatarData's by-name joint calls hold _jointDataLock
+    // while they call getJointIndex, and taking it again there hung the script (a set by name). Taken after
+    // _jointDataLock, never before it.
+    mutable QReadWriteLock _fstJointLock;
     QHash<QString, int> _fstJointIndices; ///< 1-based, since zero is returned for missing keys
     QStringList _fstJointNames; ///< in order of depth-first traversal
     QUrl _skeletonFBXURL;
