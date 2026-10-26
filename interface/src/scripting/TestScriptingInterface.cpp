@@ -46,6 +46,7 @@
 #include "editor/Editor.h"
 #include "ui/DockTitleBar.h"
 #include "ui/Popup.h"
+#include "ui/QmlDock.h"
 #include "ui/Skins.h"
 #include "graphics/GraphicsEngine.h"
 #include "editor/ui/ScriptEditor.h"
@@ -580,7 +581,8 @@ QVariantMap TestScriptingInterface::windowLayout() {
         }
     };
     const QList<QPair<QString, QString>> PANELS { { "chat", "ChatDock" }, { "hierarchy", "EditorHierarchy" },
-                                                  { "inspector", "EditorInspector" }, { "assets", "EditorAssets" } };
+                                                  { "inspector", "EditorInspector" }, { "assets", "EditorAssets" },
+                                                  { "people", "PeopleDock" } };
     for (const auto& panel : PANELS) {
         auto dock = window->findChild<QDockWidget*>(panel.second);
         if (!dock) {
@@ -600,6 +602,19 @@ QVariantMap TestScriptingInterface::windowLayout() {
     // the width of the edges between the panels and the 3D view, which a drag resizes them by
     layout["separator"] = window->style()->pixelMetric(QStyle::PM_DockWidgetSeparatorExtent, nullptr, window);
     return layout;
+}
+
+bool TestScriptingInterface::toggleQmlDock(const QString& name) {
+    if (QThread::currentThread() != thread()) {
+        bool result = false;
+        BLOCKING_INVOKE_METHOD(this, "toggleQmlDock", Q_RETURN_ARG(bool, result), Q_ARG(QString, name));
+        return result;
+    }
+    QmlDock* dock = QmlDock::get(name);
+    if (dock) {
+        dock->toggle();
+    }
+    return dock != nullptr;
 }
 
 bool TestScriptingInterface::dockAction(const QString& objectName, const QString& action) {

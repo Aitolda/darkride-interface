@@ -336,6 +336,14 @@ public slots:
     Q_INVOKABLE bool dockAction(const QString& objectName, const QString& action);
 
     /**jsdoc
+     * Opens a QML panel in its dock panel (ui/QmlDock.h), or closes it when it's in front, as View > Panels does.
+     * @function Test.toggleQmlDock
+     * @param {string} name - The panel: "People".
+     * @returns {boolean} Whether there is such a panel.
+     */
+    Q_INVOKABLE bool toggleQmlDock(const QString& name);
+
+    /**jsdoc
      * Saves a picture of one dock panel as its widgets draw it, floating or docked, its title bar too.
      * @function Test.saveDockPicture
      * @param {string} objectName - The panel's object name, such as "ChatDock".
