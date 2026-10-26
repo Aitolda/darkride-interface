@@ -366,6 +366,14 @@ public slots:
                                      const QString& picturePath = QString());
 
     /**jsdoc
+     * Answers the next text prompt (Window.prompt's) with the given text, as its OK button would, once it is open: for
+     * a script that then asks, and waits.
+     * @function Test.answerNextPrompt
+     * @param {string} text - The answer.
+     */
+    Q_INVOKABLE void answerNextPrompt(const QString& text);
+
+    /**jsdoc
      * Shows one of Darkride's alerts (ui/Popup.h) with Darkride's logo, and waits for its answer: a look at the alert's
      * design without the action that asks it. Answer it with Test.answerNextAlert, called first.
      * @function Test.showAlert
