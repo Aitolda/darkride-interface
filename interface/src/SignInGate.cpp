@@ -16,6 +16,7 @@
 #include "SignInGate.h"
 
 #include <QtCore/QThread>
+#include <QtGui/QGuiApplication>
 #include <QtQuick/QQuickItem>
 
 #include <AccountManager.h>
@@ -231,7 +232,9 @@ void SignInGate::resumeAfterLoginDialogActionTaken() {
     qApp->getViewState().restorePreviousMode();
     _startUpFinished = true;
     StartupProfiler::instant("signed in: scripts loading, going to the starting location");
-    qApp->getRefreshRateManager().setRefreshRateRegime(RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE);
+    // the app's actual state: a player who switched to another app while this one loaded is not in front
+    qApp->getRefreshRateManager().setRefreshRateRegime(QGuiApplication::applicationState() == Qt::ApplicationActive ?
+        RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE : RefreshRateManager::RefreshRateRegime::UNFOCUS);
     _signInPending = false;
 }
 

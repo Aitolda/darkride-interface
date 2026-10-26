@@ -120,8 +120,11 @@ static const std::array<int, RefreshRateManager::RefreshRateRegime::REGIME_NUM> 
     { 60, 60, 60, 2, 30, 30}
 };
 
+// Unfocus 30: while another app is in front the frames are at most glanced at, so the display's rate (999) only burns
+// cores and battery. 30, not 15: a player often keeps the world in view beside the app in front (another screen, half
+// the screen), where 30 still moves smoothly. The game loop (physics, this avatar's data to others) has its own pace.
 static const std::array<int, RefreshRateManager::RefreshRateRegime::REGIME_NUM> DISPLAY_BASED_PROFILE = {
-    { 999, 999, 999, 2, 30, 30}
+    { 999, 999, 30, 2, 30, 30}
 };
 
 static const std::array<
