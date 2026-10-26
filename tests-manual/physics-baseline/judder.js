@@ -9,7 +9,9 @@
 //    JUDDER_CONFIG.camera "script" (the default): vehicles.js's chase camera, copied below and run as it runs, on this
 //      script's update (a client script's own thread, SCRIPT_FPS 60), Camera.mode "independent";
 //    "entity": the camera fixed behind and above the kart in its frame (Camera.mode "entity", parented to the chassis),
-//      which the engine works out every frame from the kart as drawn: the same view without the script's timing.
+//      which the engine works out every frame from the kart as drawn: the same view without the script's timing;
+//    "chase": the engine's chase camera (Camera.setChaseTarget, 1.1), set up as vehicles.js sets it up for a car: the
+//      script's chase, smoothing and all, worked out every frame.
 //  The client's own per-frame record (TIVOLI_CAMERA_TRACE, ViewState.cpp) holds the camera and the kart as each frame
 //  showed them; the render and present traces (Test.traceRenderedEntity, tracePresents) say what reached the screen.
 //  Prints JUDDER lines with the phases' times; the traces are in judder.json, read by judder-report.py.
@@ -100,6 +102,15 @@
         Entities.editEntity(kart.chassis, { vehicle: { driver: MyAvatar.sessionUUID } });
         if (CAMERA === "entity") {
             entityCamera();
+        } else if (CAMERA === "chase") {
+            var length = Kart.CHASSIS.z;
+            Camera.mode = "independent";
+            Camera.setChaseTarget(kart.chassis, {
+                back: Math.max(CAMERA_BACK_MIN, Math.min(CAMERA_BACK, 2.0 * length)),
+                up: Math.max(CAMERA_UP_MIN, Math.min(CAMERA_UP, 0.7 * length)),
+                rate: Math.max(CAMERA_RATE, Math.min(CAMERA_RATE_MAX, CAMERA_RATE * 3.6 / length)),
+                pivotHeight: 1, lookAhead: 0, lookHeight: 1, followPitch: true
+            });
         } else {
             Camera.mode = "independent";
         }
@@ -184,6 +195,9 @@
 
     function finish() {
         Entities.setVehicleControls(kart.chassis, { throttle: 0, steering: 0, brake: 1, handBrake: 1 });
+        if (CAMERA === "chase") {
+            Camera.clearChaseTarget();
+        }
         var frustum = Camera.frustum;
         Test.saveObject({ camera: CAMERA, serverless: SERVERLESS, displayRefreshRate: Test.getDisplayRefreshRate(),
                           fieldOfView: frustum.fieldOfView, aspectRatio: frustum.aspectRatio,

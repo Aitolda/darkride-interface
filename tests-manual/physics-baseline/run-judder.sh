@@ -3,7 +3,8 @@
 # (TIVOLI_CAMERA_TRACE, ViewState.cpp), serverless on world.json or on a domain whose sandbox is already up (not started
 # here). Prints the JUDDER lines and judder-report.py's summary.
 #   tests-manual/physics-baseline/run-judder.sh [path/to/Darkride.app] [udp port|serverless] [results dir]
-#   JUDDER_CAMERA=entity ...           (the camera fixed in the kart's frame; "script", vehicles.js's chase camera, by default)
+#   JUDDER_CAMERA=entity ...           (the camera fixed in the kart's frame; "chase", the engine's chase camera, 1.1;
+#                                       "script", vehicles.js's chase camera of 1.0, by default)
 #   KART_RIG=path/to/kart-rig.js ...   (another kart's numbers than this tree's kart-rig.js)
 #
 # Copyright 2026 Darkride.
