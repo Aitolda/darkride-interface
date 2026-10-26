@@ -300,6 +300,17 @@ public slots:
     Q_INVOKABLE bool reloadEditorScript(const QString& key);
 
     /**jsdoc
+     * An Inspector field of the editor's selection, as the panel shows it.
+     * @function Test.inspectorField
+     * @param {string} key - The Inspector's key for the property (e.g. "locked").
+     * @returns {object} <code>{ found, shown, enabled, inHeader, value, mixed, tip, lockNote }</code>: whether the
+     *     field is there and shown, whether it can be changed, whether it's in the header (Unity's: Visible, the name,
+     *     Locked, Ignore Picking), its value, whether the selection's values differ, its tooltip, and the note the
+     *     header shows while everything selected is locked (<code>""</code> when none).
+     */
+    Q_INVOKABLE QVariantMap inspectorField(const QString& key);
+
+    /**jsdoc
      * Saves a picture of the Inspector's whole content, whatever is scrolled into view, as the panel draws it.
      * @function Test.saveInspectorPicture
      * @param {string} path - Where to save it (PNG).

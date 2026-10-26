@@ -1061,14 +1061,16 @@ namespace {
         auto with = [](PropertySpec& s, const char* showWhen) -> PropertySpec& { s.showWhen = showWhen; return s; };
         using K = PropertyKind;
 
-        // base
-        add(spec("name", "Name", K::String, "base"));
+        // base. Its header first, as Unity's: the Visible tick before the name, then the ticks for whether it can be
+        // changed and picked (Caity, 2026-10-26: "move Locking, Ignore Picks up to the top of the inspector")
+        add(spec("visible", "Visible", K::Bool, "base")).header = true;
+        add(spec("name", "Name", K::String, "base")).header = true;
+        add(spec("locked", "Locked", K::Bool, "base")).header = true;
+        add(spec("ignorePickIntersection", "Ignore Picking", K::Bool, "base")).header = true;
         add(spec("id", "ID", K::String, "base")).readOnly = true;   // to copy: for Parent, for scripts
         add(spec("description", "Description", K::String, "base"));
         add(spec("parentID", "Parent", K::String, "base"));
         add(spec("parentJointIndex", "Parent Joint", K::Int, "base"));
-        add(spec("visible", "Visible", K::Bool, "base"));
-        add(spec("locked", "Locked", K::Bool, "base"));
         en("entityPriority", "Priority", "base", { "automatic:Automatic", "prioritized:Prioritized", "static:Static" });
         en("renderLayer", "Render Layer", "base", { "world:World", "front:Front", "hud:HUD" });
         en("primitiveMode", "Primitive Mode", "base", { "solid:Solid", "lines:Wireframe" });
@@ -1473,7 +1475,6 @@ namespace {
         // its Shadows field, and a zone or a material casts none, so on those the box would only mislead
         with(add(spec("canCastShadow", "Cast Shadows", K::Bool, "behavior")), "type not in Light,Zone,Material");
         add(spec("href", "Link", K::Url, "behavior"));
-        add(spec("ignorePickIntersection", "Ignore Picking", K::Bool, "behavior"));
         add(spec("script", "Script", K::Url, "behavior"));
         add(spec("serverScripts", "Server Script", K::Url, "behavior"));
         stepping(add(spec("lifetime", "Lifetime", K::Float, "behavior")), 1, 0, "s");

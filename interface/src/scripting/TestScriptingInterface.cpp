@@ -20,6 +20,7 @@
 #include <QtCore/QTimer>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
+#include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QStyle>
@@ -53,6 +54,7 @@
 #include "ui/Popup.h"
 #include "ui/Skins.h"
 #include "graphics/GraphicsEngine.h"
+#include "editor/ui/PropertyEditors.h"
 #include "editor/ui/ScriptEditor.h"
 #include <EntityTreeRenderer.h>
 #include <RenderableEntityItem.h>
@@ -338,6 +340,36 @@ bool TestScriptingInterface::reloadEditorScript(const QString& key) {
     }
     auto row = inspectorScriptRow(key);
     return row && row->pressReload();
+}
+
+QVariantMap TestScriptingInterface::inspectorField(const QString& key) {
+    if (QThread::currentThread() != thread()) {
+        QVariantMap result;
+        BLOCKING_INVOKE_METHOD(this, "inspectorField", Q_RETURN_ARG(QVariantMap, result), Q_ARG(QString, key));
+        return result;
+    }
+    QVariantMap result;
+    auto window = qApp->getWindow();
+    QWidget* inspector = window ? window->findChild<QWidget*>("EditorInspector") : nullptr;
+    if (!inspector) {
+        return result;
+    }
+    auto note = inspector->findChild<QLabel*>("EditorInspectorLockNote");
+    result["lockNote"] = note && note->isVisibleTo(inspector) ? note->text() : QString();
+    for (auto field : inspector->findChildren<PropertyEditor*>()) {
+        if (field->spec().key != key) {
+            continue;
+        }
+        result["found"] = true;
+        result["shown"] = field->isVisibleTo(inspector);
+        result["enabled"] = field->isEnabled();
+        result["inHeader"] = field->parentWidget() && field->parentWidget()->objectName() == "EditorInspectorHead";
+        result["value"] = field->currentValue();
+        result["mixed"] = field->isMixed();
+        result["tip"] = field->toolTip();
+        break;
+    }
+    return result;
 }
 
 bool TestScriptingInterface::saveInspectorPicture(const QString& path) {

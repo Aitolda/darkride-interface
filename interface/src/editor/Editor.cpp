@@ -270,6 +270,12 @@ void Editor::setReady() {
             updateReadOnly();
         }
     });
+    // the Lock / Unlock right: the Inspector's Locked follows it
+    connect(nodeList.data(), &NodeList::isAllowedEditorChanged, this, [this] {
+        if (_active) {
+            updateReadOnly();
+        }
+    });
     // the graphics settings can switch to forward rendering while build mode is on (the Low and Potato presets do)
     connect(RenderScriptingInterface::getInstance(), &RenderScriptingInterface::settingsChanged, this, [this] {
         if (_active) {
@@ -545,6 +551,7 @@ void Editor::updateReadOnly() {
     QString reason = readOnlyReason();
     if (_inspector) {
         _inspector->setReadOnly(_readOnly, reason);
+        _inspector->setCanLock(entities->canAdjustLocks());
     }
     if (_hierarchy) {
         _hierarchy->setReadOnly(_readOnly, reason);

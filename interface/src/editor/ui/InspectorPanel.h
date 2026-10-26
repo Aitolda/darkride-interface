@@ -13,6 +13,7 @@
 #define hifi_InspectorPanel_h
 
 #include <QtCore/QHash>
+#include <QtCore/QPointer>
 #include <QtCore/QString>
 #include <QtCore/QVariant>
 #include <QtCore/QVector>
@@ -44,6 +45,9 @@ public:
     void refreshValues(const QVector<EntityItemProperties>& snapshots);
     // the world cannot be edited: fields greyed out, with a note at the top saying why
     void setReadOnly(bool readOnly, const QString& reason);
+    // whether this player may lock and unlock here (the world's Lock / Unlock right): without it Locked greys out and
+    // says why, as the world refuses the change with nothing on the screen
+    void setCanLock(bool canLock);
     // what the selection could not load (its model, image or textures, with the reasons), in red under the title, and
     // the title red too; empty hides it (Caity, 10-24: an Image that stayed blank and said nothing)
     void setLoadProblem(const QString& problem);
@@ -80,7 +84,7 @@ protected:
 private:
     struct Row {
         const PropertySpec* spec { nullptr };
-        QWidget* label { nullptr };
+        QWidget* label { nullptr };   // none in the header: a tick's name is beside its box
         PropertyEditor* editor { nullptr };
     };
 
@@ -94,6 +98,8 @@ private:
 
     QLabel* _banner { nullptr };
     bool _readOnly { false };
+    bool _canLock { true };
+    bool _allLocked { false };   // everything selected is locked: only Locked can change
     QScrollArea* _scroll { nullptr };
     QWidget* _empty { nullptr };
     QLabel* _emptyLabel { nullptr };
@@ -101,6 +107,7 @@ private:
     QVBoxLayout* _contentLayout { nullptr };
     QLabel* _title { nullptr };
     QLabel* _loadProblem { nullptr };
+    QPointer<QLabel> _lockNote;   // in the header, made with it
     QString _layoutKey;
     QHash<QString, Row> _rows;
     QHash<QString, QWidget*> _sections;     // each section's header and body, by id
