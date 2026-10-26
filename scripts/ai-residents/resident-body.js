@@ -53,6 +53,15 @@
         acknowledge: ["emote_agree_acknowledge", 2.0],
         drop_head: ["emote_disagree_drophead", 2.5]
     };
+    // the client's frame ranges for the stock clips (interface/resources/avatar/avatar-animation.json): their frame 0
+    // is the skeleton's reference pose (a T-pose), which the client never plays. Played from 0, a loop showed it once
+    // each time round. A clip not listed (emote-peace-right, a builder's own) plays from its frame 0, as before.
+    var FRAMES = {
+        idle: [1, 300], walk_fwd: [1, 30], run_fast_fwd: [1, 19], talk: [1, 500],
+        emote_agree_headnod: [1, 55], emote_agree_headnodyes: [1, 94], emote_disagree_thoughtfulheadshake: [1, 84],
+        emote_clap01_all: [1, 160], emote_point01_all: [1, 134], emote_raisehand01_all: [1, 435],
+        emote_agree_acknowledge: [1, 64], emote_disagree_drophead: [1, 100]
+    };
 
     var socket = null;
     var linked = false;
@@ -460,7 +469,12 @@
             return;
         }
         currentClip = key;
-        Avatar.startAnimation(url || ANIM + clip + ".fbx", fps || 30, 1, loop, !loop);
+        var frames = !url && FRAMES[clip];
+        if (frames) {
+            Avatar.startAnimation(ANIM + clip + ".fbx", fps || 30, 1, loop, !loop, frames[0], frames[1]);
+        } else {
+            Avatar.startAnimation(url || ANIM + clip + ".fbx", fps || 30, 1, loop, !loop);
+        }
     }
 
     function animate(speed) {
