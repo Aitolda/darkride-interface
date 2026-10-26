@@ -890,7 +890,7 @@ static void compactSkinnedMeshes(aiScene* scene) {
                 place = count++;
             }
         }
-        if (count == mesh->mNumVertices) {
+        if (count == 0 || count == mesh->mNumVertices) {
             continue;
         }
 
@@ -947,6 +947,10 @@ static void compactSkinnedMeshes(aiScene* scene) {
             }
         }
         mesh->mNumBones = keptBones;
+        if (keptBones == 0) {
+            delete[] mesh->mBones;
+            mesh->mBones = nullptr;
+        }
         mesh->mNumVertices = count;
     }
 }
