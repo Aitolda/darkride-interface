@@ -532,7 +532,9 @@ void ChatWindow::toggle() {
     gl::ViewChangeGuard guard;
     QDockWidget* panel = dock();
     ChatWindow* chat = content();
-    if (panel->isVisible() && chat->isVisible() && chat->isActiveWindow()) {
+    // tabbed behind another panel, docked chat is still visible to Qt, only moved out of sight (QWidgetAnimator)
+    const bool inSight = panel->isVisible() && !panel->visibleRegion().isEmpty();
+    if (inSight && chat->isActiveWindow()) {
         panel->hide();
         return;
     }

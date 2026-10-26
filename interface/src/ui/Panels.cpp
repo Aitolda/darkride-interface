@@ -21,9 +21,14 @@
 #include "QmlDock.h"
 #include "WindowLayout.h"
 #include "chat/ChatWindow.h"
+#include "editor/Editor.h"
 
 namespace {
     const QString CHAT = "Chat";
+    const QString MY_FILES = "My Files";
+    // Build mode's own, there only while it's on
+    const QString HIERARCHY = "Hierarchy";
+    const QString INSPECTOR = "Inspector";
 
     struct QmlPanel {
         QString name;
@@ -98,7 +103,7 @@ void Panels::styleTabs() {
 }
 
 QStringList Panels::names() const {
-    // chat's button sits between People's and Explore's
+    // chat's button sits between People's and Explore's; then My Files, and Build mode's own
     QStringList result;
     for (const auto& panel : QML_PANELS) {
         if (panel.name == "Explore") {
@@ -106,7 +111,12 @@ QStringList Panels::names() const {
         }
         result << panel.name;
     }
+    result << MY_FILES << HIERARCHY << INSPECTOR;
     return result;
+}
+
+bool Panels::isBuildModeOnly(const QString& name) {
+    return name == HIERARCHY || name == INSPECTOR;
 }
 
 bool Panels::isOpen(const QString& name) const {
@@ -127,10 +137,13 @@ void Panels::toggle(const QString& name) {
 }
 
 QDockWidget* Panels::dock(const QString& name) {
-    if (name == CHAT) {
-        QDockWidget* chat = ChatWindow::dock();
-        watch(name, chat);
-        return chat;
+    if (name == CHAT || name == MY_FILES || isBuildModeOnly(name)) {
+        auto editor = DependencyManager::get<Editor>();
+        QDockWidget* made = name == CHAT ? ChatWindow::dock()
+            : name == MY_FILES ? editor->myFilesPanel()
+            : name == HIERARCHY ? editor->hierarchyPanel() : editor->inspectorPanel();
+        watch(name, made);
+        return made;
     }
     if (QDockWidget* made = _docks.value(name)) {
         return made;
@@ -177,6 +190,11 @@ void Panels::restore() {
     for (const QString& name : names()) {
         dock(name);
     }
+    // Build mode's own panels are made as it first comes on: watched from then
+    connect(DependencyManager::get<Editor>().data(), &Editor::activeChanged, this, [this] {
+        dock(HIERARCHY);
+        dock(INSPECTOR);
+    });
 }
 
 void Panels::releaseQml() {
@@ -193,19 +211,23 @@ void Panels::change(const QString& name, Change how) {
         qCDebug(interfaceapp) << "Panels: not yet, before sign-in:" << name;
         return;
     }
+    // Build mode's own panels, only while it's on
+    if (isBuildModeOnly(name) && !DependencyManager::get<Editor>()->isActive()) {
+        return;
+    }
     QDockWidget* panel = dock(name);
     if (!panel) {
         qCWarning(interfaceapp) << "There is no panel called" << name;
         return;
     }
-    // tabbed behind another, a docked panel is still visible to Qt, moved out of sight (QWidgetAnimator)
-    const bool inSight = panel->isVisible() && !panel->visibleRegion().isEmpty();
-    const bool inFront = inSight && (!panel->isFloating() || panel->isActiveWindow());
-    // chat's own toggle also puts the keyboard in its message box; behind another tab, it's brought in front here
-    if (name == CHAT && how == Change::Toggle && (inFront || panel->isHidden())) {
+    // chat's own toggle also puts the keyboard in its message box
+    if (name == CHAT && how == Change::Toggle) {
         ChatWindow::toggle();
         return;
     }
+    // tabbed behind another, a docked panel is still visible to Qt, moved out of sight (QWidgetAnimator)
+    const bool inSight = panel->isVisible() && !panel->visibleRegion().isEmpty();
+    const bool inFront = inSight && (!panel->isFloating() || panel->isActiveWindow());
     // a window coming or going beside the viewer's, or a panel in it, changes the GL view
     gl::ViewChangeGuard guard;
     if (how == Change::Close || (how == Change::Toggle && inFront)) {

@@ -3,8 +3,8 @@
 //  interface/src/ui
 //
 //  The window's panels by name, for the bar's buttons (tivoli-scripts' ButtonManager.addQmlButton), View > Panels and
-//  scripts ("Panels"): Darkride's QML panels in dock panels (ui/QmlDock.h: Settings, Avatar, People, Explore) and
-//  chat's. Each opens floating the first time, docks or tabs where the player drags it, and comes back where the
+//  scripts ("Panels"): Darkride's QML panels in dock panels (ui/QmlDock.h: Settings, Avatar, People, Explore), chat's,
+//  My Files, and Build mode's Hierarchy and Inspector. Each opens floating the first time, docks or tabs where the player drags it, and comes back where the
 //  window's saved layout has it (ui/WindowLayout.h). Open is "not hidden": a panel tabbed behind another is still
 //  open. Dockable panels, step 2 (Caity's "go step 2", 2026-10-26; team/editor-ui/DOCKING-STEP2-PLAN.md).
 //
@@ -45,7 +45,8 @@ public:
     /**jsdoc
      * The panels' names, in View > Panels' order.
      * @function Panels.names
-     * @returns {string[]} The names: "Settings", "Avatar", "People", "Chat", "Explore".
+     * @returns {string[]} The names: "Settings", "Avatar", "People", "Chat", "Explore", "My Files", and Build mode's
+     *     "Hierarchy" and "Inspector" (which open only while it's on).
      */
     Q_INVOKABLE QStringList names() const;
 
@@ -78,8 +79,11 @@ public:
      */
     Q_INVOKABLE void toggle(const QString& name);
 
+    /// Build mode's own panels (Hierarchy, Inspector): they open only while it's on
+    static bool isBuildModeOnly(const QString& name);
+
     /// the panel's dock, made (hidden, floating at its first size) the first time it's asked for; null for a name it
-    /// doesn't know. Main thread.
+    /// doesn't know, or for Build mode's before it has been on. Main thread.
     QDockWidget* dock(const QString& name);
 
     /// after the window's saved layout is restored (WindowLayout::restore): every panel made, so the layout puts the

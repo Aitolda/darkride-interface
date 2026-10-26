@@ -176,6 +176,12 @@ public slots:
     void redo();
     // docks the panels back where they started, for a panel that was torn off and lost
     void resetLayout();
+    // My Files (the Assets panel), made the first time it's asked for: Build mode's, and normal play's too
+    // (ui/Panels.h). Where the window's saved layout has it, open or closed as it was
+    QDockWidget* myFilesPanel();
+    // Build mode's own panels, once it has been on (null before)
+    QDockWidget* hierarchyPanel() const;
+    QDockWidget* inspectorPanel() const;
     // the panels' style sheet (styles/editor.qss) on the window, its colours the skin's while one is on
     // (PanelTheme::getSkin): called once the panels exist and again whenever the skin changes
     void applyStyle();
@@ -227,6 +233,7 @@ private:
     enum class DragKind { None, Move, Rotate, Scale, TrackPoint };   // TrackPoint: a Track's chosen control point, by the Move gizmo
 
     void createPanels();
+    void loadStyle();   // styles/editor.qss, once, for My Files or Build mode's panels, whichever comes first
     void placeToolBars();
     void showPanels(bool show);
     // the docked panels on the window that aren't Build mode's (chat's), shown
@@ -470,13 +477,8 @@ private:
     QVector<glm::vec3> _inspectorNatural;
 
     bool _panelsCreated { false };
-    // A side shared with another panel (chat's, docked) has one width for both: Build mode's panels take their own
-    // widths as they show, and the other panels get theirs back as they go
-    QList<QPair<QPointer<QDockWidget>, int>> _otherWidths;
     // a panel of ours put above another (placeAbove), sized once both show: Qt doesn't size a hidden one
     QList<QPair<QPointer<QDockWidget>, QPointer<QDockWidget>>> _sharesToSize;
-    // the Hierarchy's width, the Inspector's
-    Setting::Handle<QVariantList> _panelWidths { "editor/panelWidths", QVariantList() };
     QString _styleSource;     // styles/editor.qss as shipped (applyStyle)
     bool _syncingSelection { false };
     HierarchyPanel* _hierarchy { nullptr };

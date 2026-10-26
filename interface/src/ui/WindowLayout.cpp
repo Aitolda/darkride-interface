@@ -71,6 +71,14 @@ void WindowLayout::restore() {
     }
     // the QML panels' docks, which the layout shows where they were if they were open
     DependencyManager::get<Panels>()->restore();
+    // a layout from before normal play and Build mode had one each can show My Files, left open in Build mode
+    Setting::Handle<bool> hasModes { "window/layoutHasModes", false };
+    if (!hasModes.get()) {
+        if (auto myFiles = window->findChild<QDockWidget*>("EditorAssets")) {
+            myFiles->hide();
+        }
+        hasModes.set(true);
+    }
     // the bar's side is its own setting's, which Settings may have changed since the layout was saved
     SystemToolbar::instance()->restorePlace();
     qCDebug(interfaceapp) << "The window's layout:"
@@ -119,5 +127,46 @@ void WindowLayout::save() {
     if (!_restored || !window || qApp->isAboutToQuit()) {
         return;
     }
-    _layoutSetting.set(window->saveState());
+    (_buildMode ? _buildLayoutSetting : _layoutSetting).set(window->saveState());
+}
+
+bool WindowLayout::enterBuildMode() {
+    auto window = qApp->getWindow();
+    if (!window || _buildMode) {
+        return false;
+    }
+    _saveTimer.stop();
+    if (_restored) {
+        _layoutSetting.set(window->saveState());
+    }
+    _buildMode = true;
+    const QByteArray layout = _buildLayoutSetting.get();
+    if (layout.isEmpty()) {
+        return false;
+    }
+    gl::ViewChangeGuard guard;   // docked panels moving resize the GL view
+    const bool restored = window->restoreState(layout);
+    if (!restored) {
+        qCWarning(interfaceapp) << "Build mode's saved layout could not be read; its panels start where they start";
+    }
+    SystemToolbar::instance()->restorePlace();   // the bar's side is its own setting's
+    return restored;
+}
+
+void WindowLayout::leaveBuildMode() {
+    auto window = qApp->getWindow();
+    if (!window || !_buildMode) {
+        return;
+    }
+    _saveTimer.stop();
+    if (_restored) {
+        _buildLayoutSetting.set(window->saveState());
+    }
+    _buildMode = false;
+    const QByteArray layout = _layoutSetting.get();
+    if (!layout.isEmpty()) {
+        gl::ViewChangeGuard guard;
+        window->restoreState(layout);
+    }
+    SystemToolbar::instance()->restorePlace();
 }

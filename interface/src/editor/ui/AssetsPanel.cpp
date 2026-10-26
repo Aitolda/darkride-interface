@@ -501,7 +501,7 @@ bool AssetItemModel::dropMimeData(const QMimeData* data, Qt::DropAction action, 
 
 // --- AssetsPanel --------------------------------------------------------------------------------
 
-AssetsPanel::AssetsPanel(QWidget* parent) : QDockWidget("Assets", parent) {
+AssetsPanel::AssetsPanel(QWidget* parent) : QDockWidget("My Files", parent) {
     setObjectName("EditorAssets");
     setAllowedAreas(Qt::BottomDockWidgetArea);
     // fixed in place, as the other panels are (see HierarchyPanel): it can be closed and comes back with build mode
@@ -663,6 +663,11 @@ AssetsPanel::AssetsPanel(QWidget* parent) : QDockWidget("Assets", parent) {
     layout->addWidget(splitter, 1);
 
     // under the files, where they're dropped: the rights line, while signed in
+    _note = new QLabel(body);
+    _note->setObjectName("EditorAssetsNote");
+    _note->setTextFormat(Qt::PlainText);
+    _note->setVisible(false);
+    layout->addWidget(_note);
     _rightsLine = rights::label("EditorRightsLine", QColor("#6fa8dc"), body);
     layout->addWidget(_rightsLine);
 
@@ -842,6 +847,11 @@ void AssetsPanel::setActive(bool active) {
         // and build mode asked for one every time it came on (the panel's Refresh, and its own changes, list at once)
         _files->refreshIfStale(60 * 1000);
     }
+}
+
+void AssetsPanel::setNote(const QString& text) {
+    _note->setText(text);
+    _note->setVisible(!text.isEmpty());
 }
 
 bool AssetsPanel::searching() const {

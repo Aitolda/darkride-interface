@@ -105,6 +105,8 @@ public:
     void setSort(Column column, bool descending);
     // build mode on: the listing is fetched, and again after every change; off: nothing is fetched
     void setActive(bool active);
+    // a note at the foot, in normal play (Build mode has its status bar); empty hides it
+    void setNote(const QString& text);
     // where the editor's own keys go when pressed in the panel (true: taken)
     void setKeyFallback(std::function<bool(QKeyEvent*)> fallback) { _keyFallback = std::move(fallback); }
     UserFiles* files() const { return _files; }
@@ -164,6 +166,7 @@ private:
     QLabel* _banner { nullptr };
     QLabel* _rightsLine { nullptr };   // under the files (ui/RightsLine.h)
     QLabel* _quota { nullptr };
+    QLabel* _note { nullptr };
     QLabel* _empty { nullptr };     // a note over an empty grid
     QWidget* _crumbs { nullptr };
     QHBoxLayout* _crumbLayout { nullptr };

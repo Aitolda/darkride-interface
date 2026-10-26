@@ -279,16 +279,28 @@ Menu::Menu() {
         auto panels = DependencyManager::get<Panels>();
         MenuWrapper* panelsMenu = viewMenu->addMenu("Panels");
         QHash<QString, QAction*> panelActions;
+        QString previous;
         for (const QString& name : panels->names()) {
             auto panelAction = new QAction(name, this);
             panelAction->setCheckable(true);
             panelAction->setChecked(panels->isOpen(name));
-            // the saved layout opens the panels, after sign-in; until then there are none (as there's no bar)
+            // the saved layout opens the panels, after sign-in; until then there are none (as there's no bar). Build
+            // mode's own, only while it's on
             panelAction->setProperty(TICK_NOT_SAVED, true);
             panelAction->setEnabled(false);
-            connect(WindowLayout::instance(), &WindowLayout::restored, panelAction, [panelAction] {
-                panelAction->setEnabled(true);
-            });
+            if (Panels::isBuildModeOnly(name)) {
+                connect(DependencyManager::get<Editor>().data(), &Editor::activeChanged, panelAction,
+                        [panelAction](bool active) { panelAction->setEnabled(active); });
+            } else {
+                connect(WindowLayout::instance(), &WindowLayout::restored, panelAction, [panelAction] {
+                    panelAction->setEnabled(true);
+                });
+            }
+            // My Files after the bar's panels, then Build mode's
+            if (name == "My Files" || (Panels::isBuildModeOnly(name) && !Panels::isBuildModeOnly(previous))) {
+                panelsMenu->addSeparator();
+            }
+            previous = name;
             if (name == "Chat") {
                 panelAction->setShortcut(ChatWindow::shortcut());
             }
