@@ -31,8 +31,11 @@ public slots:
 public:
     // the keyboard is in the console (its window active), so keys don't go to the avatar
     bool getActive();
-    // the console's panel, made the first time it's asked for; none while the sign-in dialog is up
+    // the console's panel, made the first time it's asked for (cheap: the console itself is made as it first shows);
+    // none while the sign-in dialog is up
     QDockWidget* dock();
+    // the console in it, made now if it hasn't shown yet (for tests)
+    JSConsole* console();
 
 private:
     StandAloneJSConsole() {}

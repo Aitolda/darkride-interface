@@ -607,6 +607,9 @@ QVariantMap TestScriptingInterface::windowLayout() {
         if (auto qmlDock = qobject_cast<QmlDock*>(dock)) {
             entry["made"] = qmlDock->panel() != nullptr;
             entry["pageVisible"] = qmlDock->panel() && qmlDock->panel()->isVisible();
+        } else if (panel.second == "ConsoleDock") {
+            // the console itself, and with it its own script engine: made as the panel first shows
+            entry["made"] = dock->widget() != nullptr;
         }
         layout[panel.first] = entry;
     }
@@ -654,8 +657,7 @@ bool TestScriptingInterface::consoleRun(const QString& command) {
         BLOCKING_INVOKE_METHOD(this, "consoleRun", Q_RETURN_ARG(bool, result), Q_ARG(QString, command));
         return result;
     }
-    QDockWidget* dock = DependencyManager::get<StandAloneJSConsole>()->dock();
-    auto console = dock ? dock->findChild<JSConsole*>() : nullptr;
+    auto console = DependencyManager::get<StandAloneJSConsole>()->console();
     if (console) {
         console->executeCommand(command);
     }
