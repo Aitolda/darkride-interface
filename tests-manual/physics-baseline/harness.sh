@@ -25,8 +25,16 @@
 #                                    `open -g -n -W` with Qt's activation switched off: a binary run straight from a
 #                                    shell is brought to the front by macOS at launch and by Qt when it has launched,
 #                                    and takes the keyboard. open passes on only the environment it's given, so the
-#                                    TIVOLI_, HIFI_, DARKRIDE_, QT_, XDG_ and DYLD_ variables are handed over; the
-#                                    client's exit status isn't (read its log). CLIENT_FOREGROUND=1 opens it in front
+#                                    TIVOLI_, HIFI_, DARKRIDE_, QT_, XDG_, DYLD_ and CFFIXED_ variables are handed
+#                                    over; the client's exit status isn't (read its log).
+#                                    A release build (bundle id com.tivolicloud.interface: 1.0.x, PRODUCTION builds)
+#                                    shares the installed Darkride's "Tivoli Cloud VR" folders, and 1.0.x writes its
+#                                    log, QML cache and web data there whatever XDG_CONFIG_HOME and TIVOLI_APP_DATA_DIR
+#                                    say: such a client gets CFFIXED_USER_HOME=<log>.home (where Foundation, and so Qt,
+#                                    puts ~/Library; HOME doesn't move it) unless the caller set one, and once it has
+#                                    quit, "WALLED OFF" or "NOT WALLED OFF" says whether ~/Library's Tivoli Cloud VR
+#                                    folders changed while it ran. Its caches, the ktx cache too (unless KEEP_KTX=1),
+#                                    are deleted after; its log stays. CLIENT_FOREGROUND=1 opens it in front
 #                                    instead, still through open (a client someone plays, or a timing run that needs
 #                                    the window on top). Elsewhere than macOS it runs the binary straight.
 #                                    The client's pid goes in <log>.pid while it runs; CLIENT_TIMEOUT=<s> stops a
@@ -156,6 +164,14 @@ client_start() {
     fi
     case "$_log" in /*) ;; *) _log="$(pwd)/$_log" ;; esac
     _since=$(date '+%Y-%m-%d %H:%M:%S')
+    # a release build's own home, away from the user's ~/Library (see the header); the user's folders are checked after
+    _wallhome=""
+    if [ -n "$_app" ] && [ -z "${CFFIXED_USER_HOME:-}" ] &&
+       [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$_app/Contents/Info.plist" 2>/dev/null)" = com.tivolicloud.interface ]; then
+        _wallhome="$_log.home"
+        mkdir -p "$_wallhome"
+    fi
+    [ -z "$_wallhome${CFFIXED_USER_HOME:-}" ] || : > "$_log.started"
     if [ -z "$_app" ] || [ "$(uname)" != Darwin ]; then
         "$BIN" "$@" > "$_log" 2>&1 &
         _cpid=$!
@@ -173,10 +189,11 @@ client_start() {
     # the bundle claims the scheme
     [ -z "${CLIENT_OPEN_URL:-}" ] || set -- "$CLIENT_OPEN_URL" "$@"
     set -- -a "$_app" "$@"
-    for _var in $(env | grep -E '^(TIVOLI|HIFI|DARKRIDE|QT|XDG|DYLD)_[A-Za-z0-9_]*=' | cut -d= -f1); do
+    for _var in $(env | grep -E '^(TIVOLI|HIFI|DARKRIDE|QT|XDG|DYLD|CFFIXED)_[A-Za-z0-9_]*=' | cut -d= -f1); do
         eval "_value=\${$_var}"
         set -- --env "$_var=$_value" "$@"
     done
+    [ -z "$_wallhome" ] || set -- --env "CFFIXED_USER_HOME=$_wallhome" "$@"
     : > "$_log"
     if [ -n "${CLIENT_FOREGROUND:-}" ]; then
         # in front, for a client someone plays: macOS and Qt activate it as a normal launch would
@@ -211,6 +228,23 @@ client_start() {
     if [ -z "$_cpid" ]; then
         echo "client_start: no client started from $_app (open's status $_status); see above and $_log" >&2
         [ "$_status" != 0 ] || _status=1
+    fi
+    if [ -n "$_wallhome" ] || [ -n "${CFFIXED_USER_HOME:-}" ]; then
+        _touched=$(find "$HOME/Library/Application Support/Tivoli Cloud VR" "$HOME/Library/Caches/Tivoli Cloud VR" \
+                       -newer "$_log.started" -type f 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$_touched" = 0 ]; then
+            echo "client_start: WALLED OFF: nothing in ~/Library's Tivoli Cloud VR folders changed"
+        else
+            echo "client_start: NOT WALLED OFF: $_touched files in ~/Library's Tivoli Cloud VR folders changed while" \
+                 "client ${_cpid:-?} ran (or the user's own Darkride wrote them): find them with -newermt \"$_since\"" >&2
+        fi
+        rm -f "$_log.started"
+        # its caches (QML, web, and the ktx cache, 0.3 to 1.5 GB, which 1.0.x keeps beside its log in Application
+        # Support; KEEP_KTX=1 keeps it): the log stays, in $_wallhome/Library/Application Support
+        if [ -n "$_wallhome" ]; then
+            rm -rf "$_wallhome/Library/Caches"
+            [ -n "${KEEP_KTX:-}" ] || find "$_wallhome" -type d -name ktx_cache -prune -exec rm -rf {} +
+        fi
     fi
     return $_status
 }
