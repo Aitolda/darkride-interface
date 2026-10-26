@@ -192,6 +192,13 @@ public slots:
     void goToSelection();           // Shift+F: frame it and take the avatar there
     void bringSelectionHere();      // Option+Shift+F: move it to the avatar
     void create(const QString& key);
+    // the Terrain tool's Random tick set as a click on it does (Test.terrainRandomAngle): { found, angleEnabled }
+    QVariantMap setTerrainRandomAngleForTest(bool on);
+    // a stroke of the Terrain tool straight down onto the entity's middle, pressed and let go (Test.terrainStroke):
+    // the angle it turned the brush's picture by, or -1 when no terrain was there
+    float terrainStrokeForTest(const QUuid& id);
+    // the angle the next stroke will use, which the outline shows (Test.terrainNextAngle)
+    float terrainNextAngleForTest() const { return _terrain.angle(); }
     void createModel();             // asks for a URL
     void createFromMenu();          // the sender's data() is the catalogue key
     void deleteSelection();

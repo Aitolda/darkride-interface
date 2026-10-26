@@ -500,6 +500,30 @@ public slots:
     Q_INVOKABLE void editorCreate(const QString& key);
 
     /**jsdoc
+     * Sets the Terrain tool's Random tick (a new angle for each stroke) as a click on it does. Build mode must be on.
+     * @function Test.terrainRandomAngle
+     * @param {boolean} on - Ticked or not.
+     * @returns {object} <code>{ found, angleEnabled }</code>: whether the tick and the Angle field are there, and
+     *     whether the Angle field can be changed after.
+     */
+    Q_INVOKABLE QVariantMap terrainRandomAngle(bool on);
+
+    /**jsdoc
+     * A stroke of the Terrain tool straight down onto the entity's middle, pressed and let go at once.
+     * @function Test.terrainStroke
+     * @param {Uuid} id - The terrain.
+     * @returns {number} The angle (degrees) the stroke turned the brush's picture by, -1 when no terrain was there.
+     */
+    Q_INVOKABLE float terrainStroke(const QUuid& id);
+
+    /**jsdoc
+     * The angle (degrees) the Terrain tool's next stroke will turn the brush's picture by, which its outline shows.
+     * @function Test.terrainNextAngle
+     * @returns {number} The angle.
+     */
+    Q_INVOKABLE float terrainNextAngle();
+
+    /**jsdoc
      * Uploads files from this computer into the Assets panel's folder, as its Upload… button does after its file
      * dialog. Build mode must be on.
      * @function Test.editorUploadFiles
