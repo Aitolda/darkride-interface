@@ -345,6 +345,19 @@ void HostInterfaceTests::testCallErrors() {
     QVERIFY(error.contains("bad pointer"));
 }
 
+void HostInterfaceTests::testEnumResults() {
+    Fixture f;
+    QString error;
+    QVERIFY2(f.start(error), qPrintable(error));
+    const int32_t probe = f.probeHandle();
+    f.probe.setMode(Probe::Stopped);
+    QCOMPARE(f.call(probe, "currentMode", {}).toInt(), 10);
+    f.call(probe, "useMode", { 1 });
+    QCOMPARE(f.probe.mode(), Probe::Running);
+    // as QtScript, which throws for it too (QtScriptOverloadTests::testEnumResults)
+    QVERIFY(HostInterface::isErrorRecord(f.call(probe, "plainLevel", {})));
+}
+
 void HostInterfaceTests::testProperties() {
     Fixture f;
     QString error;
