@@ -230,6 +230,10 @@ EntityItemProperties EditorCreate::properties(const QString& key, const glm::vec
         p.setName("Zone");
         p.setDimensions(glm::vec3(10.0f));
         p.setShapeType(SHAPE_TYPE_BOX);
+        // its own sun, casting shadows: a zone without them looked flat (Caity, 10-25). The engine's defaults (the
+        // sun inherited, no shadows) stay, so saved worlds and scripts' zones are as they were
+        p.setKeyLightMode((uint32_t)COMPONENT_MODE_ENABLED);
+        p.getKeyLight().setCastShadows(true);
     } else if (key == "particles") {
         p.setType(EntityTypes::ParticleEffect);
         p.setName("Particles");
