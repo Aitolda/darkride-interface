@@ -157,11 +157,15 @@ QString sentence(QString text) {
     return text;
 }
 
-// One of the importer's questions. Returns the chosen button's place in the list, or -1.
+// One of the importer's questions. Returns the chosen button's place in the list, or -1. With rightsLine, the rights
+// line sits under the buttons: the default puts the avatar where everyone sees it.
 int ask(const QString& title, const QString& text, const std::vector<popup::Button>& buttons,
-        const QString& details = QString()) {
+        const QString& details = QString(), bool rightsLine = false) {
     qCDebug(interfaceapp) << "Import Avatar: asking" << title;
     popup::Alert alert(appIcon(), title, text, details, buttons, qApp->getWindow());
+    if (rightsLine) {
+        alert.addRightsLine();
+    }
     alert.exec();
     const int answer = alert.answer();
     qCDebug(interfaceapp) << "Import Avatar: answered" << (answer < 0 ? QString("nothing") : buttons[answer].label);
@@ -365,7 +369,7 @@ void offerToWear(const QString& fstPath, const QString& name, const QString& not
                            { { "Wear && Keep", popup::Role::Default },
                              { "Test Locally", popup::Role::Plain },
                              { "Not Now", popup::Role::Cancel } },
-                           notes);
+                           notes, true);
     if (answer == 0 || answer == 1) {
         wear(fstPath, name);
     }

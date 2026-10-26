@@ -30,6 +30,7 @@
 #include <PathUtils.h>
 
 #include "PanelTheme.h"
+#include "RightsLine.h"
 
 namespace popup {
 
@@ -97,6 +98,7 @@ QString styleSheetFor(const Look& look) {
 QLabel { background: transparent; }
 QLabel#title { color: %1; font-size: 13px; font-weight: bold; }
 QLabel#text { color: %2; font-size: 11px; }
+QLabel#rightsLine { color: %2; font-size: 10px; }
 QLabel#bannerTitle { color: %1; font-size: 13px; font-weight: 600; }
 QLabel#bannerText { color: %2; font-size: 12px; }
 QToolButton#details { color: %2; font-size: 11px; border: none; background: transparent; padding: 2px 4px; }
@@ -322,6 +324,17 @@ Alert::Alert(const QPixmap& picture, const QString& title, const QString& text, 
 
 QString Alert::fieldText() const {
     return _field ? _field->text().trimmed() : QString();
+}
+
+void Alert::addRightsLine() {
+    // the tint as the link, lighter on a dark panel (the default blue is too dark to read that small)
+    const QColor link = _look->panel.lightness() < 128 ? _look->tint.lighter(135) : _look->tint;
+    auto line = rights::label("rightsLine", link, this);
+    line->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+    auto column = static_cast<QVBoxLayout*>(layout());
+    column->addSpacing(10);
+    column->addWidget(line);
+    fitHeight(this);
 }
 
 void Alert::paintEvent(QPaintEvent*) {

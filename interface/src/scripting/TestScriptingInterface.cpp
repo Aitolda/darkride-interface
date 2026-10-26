@@ -42,6 +42,7 @@
 #include <display-plugins/DisplayLink.h>
 #include <display-plugins/OpenGLDisplayPlugin.h>
 
+#include "avatar/AvatarImporter.h"
 #include "editor/Editor.h"
 #include "ui/DockTitleBar.h"
 #include "ui/Popup.h"
@@ -387,6 +388,28 @@ void TestScriptingInterface::deleteTrackPoint() {
         return;
     }
     DependencyManager::get<Editor>()->deleteTrackPoint();
+}
+
+void TestScriptingInterface::editorUploadFiles(const QStringList& paths) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "editorUploadFiles", Q_ARG(const QStringList&, paths));
+        return;
+    }
+    DependencyManager::get<Editor>()->uploadFilesForTest(paths);
+}
+
+QString TestScriptingInterface::editorStatus() {
+    if (QThread::currentThread() != thread()) {
+        QString result;
+        BLOCKING_INVOKE_METHOD(this, "editorStatus", Q_RETURN_ARG(QString, result));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->statusForTest();
+}
+
+void TestScriptingInterface::importAvatar(const QString& path) {
+    // queued, not blocking: the question it asks waits for its answer
+    QMetaObject::invokeMethod(qApp, [path] { AvatarImporter::importFile(path); }, Qt::QueuedConnection);
 }
 
 void TestScriptingInterface::setBuildMode(bool on) {

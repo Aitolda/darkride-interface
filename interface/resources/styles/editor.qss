@@ -508,6 +508,11 @@ QDockWidget#EditorAssets::title {
     color: #7a7a7a;
     background: transparent;
 }
+#EditorAssets QLabel#EditorRightsLine {
+    color: #8f8f8f;
+    font-size: 11px;
+    padding: 0 4px;
+}
 #EditorAssets QLabel#EditorReadOnlyBanner {
     background: #4d3b1c;
     color: #f2dcae;

@@ -18,6 +18,7 @@
 #include <NetworkingConstants.h>
 
 #include "InterfaceLogging.h"
+#include "RightsLine.h"
 
 void MetaverseRequests::send(const QString& method, const QString& path, const QVariant& body, QJSValue callback) {
     auto answer = [callback](const QJSValue& error, int status, const QVariant& data) mutable {
@@ -69,4 +70,12 @@ void MetaverseRequests::send(const QString& method, const QString& path, const Q
 
 QString MetaverseRequests::metaverseUrl() const {
     return NetworkingConstants::METAVERSE_SERVER_URL().toString();
+}
+
+QString MetaverseRequests::rightsLine() const {
+    return rights::sentence();
+}
+
+QString MetaverseRequests::termsUrl() const {
+    return rights::termsUrl().toString();
 }

@@ -500,6 +500,29 @@ public slots:
     Q_INVOKABLE void editorCreate(const QString& key);
 
     /**jsdoc
+     * Uploads files from this computer into the Assets panel's folder, as its Upload… button does after its file
+     * dialog. Build mode must be on.
+     * @function Test.editorUploadFiles
+     * @param {string[]} paths - The files' paths on this computer.
+     */
+    Q_INVOKABLE void editorUploadFiles(const QStringList& paths);
+
+    /**jsdoc
+     * What Build mode's status bar says now ("" for nothing).
+     * @function Test.editorStatus
+     * @returns {string} The status bar's text.
+     */
+    Q_INVOKABLE QString editorStatus();
+
+    /**jsdoc
+     * Imports an avatar file as File > Import Avatar… does after its file dialog. An .fst goes straight to the question
+     * whether to wear and keep it, which waits for its answer: call Test.answerNextAlert first.
+     * @function Test.importAvatar
+     * @param {string} path - The file's path on this computer.
+     */
+    Q_INVOKABLE void importAvatar(const QString& path);
+
+    /**jsdoc
      * Turns build mode on or off, as Build > Build Mode does.
      * @function Test.setBuildMode
      * @param {boolean} on - Whether build mode is on.
