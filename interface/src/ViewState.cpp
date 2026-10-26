@@ -232,10 +232,12 @@ void ViewState::updateCamera(RenderArgs& renderArgs, float deltaTime) {
     renderArgs._renderMode = RenderArgs::DEFAULT_RENDER_MODE;
 
     // build mode drives the camera itself, on CAMERA_MODE_INDEPENDENT
+    bool editing = false;
     {
         auto editor = DependencyManager::get<Editor>();
         if (editor && editor->isActive()) {
             editor->update(deltaTime);
+            editing = true;
         }
     }
 
@@ -354,6 +356,9 @@ void ViewState::updateCamera(RenderArgs& renderArgs, float deltaTime) {
                 _camera.setPosition(worldTransform.getTranslation());
             }
         }
+    }
+    if (mode != CAMERA_MODE_INDEPENDENT || editing || !updateChaseCamera(deltaTime)) {
+        _chaseValid = false;   // the next chase starts where it wants to be, not eased from an old place
     }
     if (!boomPlaced) {
         _boomLength = -1.0f;   // the next third-person boom starts where it wants to be, not eased from an old length
@@ -481,6 +486,78 @@ glm::vec3 ViewState::collideCameraBoom(const glm::vec3& pivot, const glm::vec3& 
     const float SETTLED = 0.01f;   // m
     _boomHeldIn = _boomLength < wantedLength - SETTLED;
     return start + (boom / wantedLength) * _boomLength;
+}
+
+// The chase camera behind an entity (Camera.setChaseTarget; vehicles.js's for the vehicle you drive), worked out every
+// frame from the entity as this frame draws it. vehicles.js placed it from its own update, on the script's thread at 60
+// a second, so on a 144 Hz display the camera stood still for two frames in three and then jumped: steps of 0, 23 and
+// 34 cm against kart 2's even 12 cm at 17 m/s, the whole view lurching against the kart (physics, 2026-10-26,
+// tests-manual/physics-baseline/judder.js). The same chase: behind along the heading (level, or with the entity's pitch
+// as the car's was) and above, settling at a rate by the frame's time (the same feel at 30 frames a second as at 144),
+// kept out of walls with the entity and its children seen through (moving in at once, back out eased), looking at a
+// point on the entity from where it has settled.
+bool ViewState::updateChaseCamera(float deltaTime) {
+    FancyCamera::ChaseSettings chase = _camera.getChaseSettings();
+    if (chase.entityID.isNull()) {
+        return false;
+    }
+    EntityTreePointer tree = qApp->getEntities()->getTree();
+    EntityItemPointer entity = tree ? tree->findEntityByID(chase.entityID) : nullptr;
+    if (!entity) {
+        return false;
+    }
+    bool fresh = !_chaseValid || chase.version != _chaseVersion;
+    glm::vec3 position = entity->getWorldPosition();
+    glm::vec3 front = entity->getWorldOrientation() * IDENTITY_FORWARD;
+    glm::vec3 flat(front.x, 0.0f, front.z);
+    const float LEVEL_ENOUGH = 1.0e-4f;   // the heading's horizontal part, squared: under it the entity points up or down
+    if (glm::length2(flat) > LEVEL_ENOUGH) {
+        _chaseFlat = glm::normalize(flat);
+    } else if (fresh) {
+        _chaseFlat = IDENTITY_FORWARD;
+    }
+    glm::vec3 behind = chase.followPitch ? front : _chaseFlat;
+    glm::vec3 wanted = position - chase.back * behind + glm::vec3(0.0f, chase.up, 0.0f);
+    if (fresh) {
+        _chasePosition = wanted;
+        _chaseBoom = -1.0f;
+        _chaseHeldIn = false;
+        _chaseVersion = chase.version;
+        _chaseValid = true;
+    } else {
+        _chasePosition = glm::mix(_chasePosition, wanted, 1.0f - glm::exp(-deltaTime * chase.rate));
+    }
+
+    // camera collision, as Camera.collideBoom's callers do it: in at once, back out with the boom's time constant
+    const float EASE_OUT_TIME = 0.12f;   // s
+    glm::vec3 pivot = position + glm::vec3(0.0f, chase.pivotHeight, 0.0f);
+    glm::vec3 boom = _chasePosition - pivot;
+    float length = glm::length(boom);
+    glm::vec3 shown = _chasePosition;
+    if (length > EPSILON) {
+        float allowed = allowedBoomLength(pivot, _chasePosition, QVector<QUuid>{ chase.entityID });
+        if (_chaseBoom < 0.0f || allowed <= _chaseBoom || !_chaseHeldIn) {
+            _chaseBoom = allowed;   // in at once, and the chase's own movement followed as it is
+        } else {
+            _chaseBoom += (allowed - _chaseBoom) * (1.0f - glm::exp(-deltaTime / EASE_OUT_TIME));
+        }
+        _chaseBoom = std::min(_chaseBoom, length);
+        const float SETTLED = 0.01f;   // m
+        _chaseHeldIn = _chaseBoom < length - SETTLED;
+        shown = pivot + boom * (_chaseBoom / length);
+    }
+    _camera.setPosition(shown);
+
+    // looking at the point from where the camera has settled (Quat.lookAtSimple), so a wall that holds it in moves it
+    // along the line of sight and does not swing the view
+    glm::vec3 target = position + chase.lookAhead * _chaseFlat + glm::vec3(0.0f, chase.lookHeight, 0.0f);
+    glm::vec3 direction = target - _chasePosition;
+    if (glm::length2(direction) > EPSILON) {
+        const float MAX_ABS_Y_COMPONENT = 0.9999991f;   // straight up or down: x for up, as Quat.lookAtSimple does
+        glm::vec3 up = fabsf(glm::normalize(direction).y) > MAX_ABS_Y_COMPONENT ? Vectors::UNIT_X : Vectors::UNIT_Y;
+        _camera.setOrientation(glm::inverse(glm::quat_cast(glm::lookAt(_chasePosition, target, up))));
+    }
+    return true;
 }
 
 // the camera's mode and the View menu, kept in step
