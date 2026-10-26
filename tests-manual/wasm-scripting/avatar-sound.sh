@@ -83,4 +83,4 @@ if [ $WAS_RUNNING = 1 ]; then
 fi
 echo "== $ENGINE:"
 cat "$OUT/$ENGINE.txt"
-grep -q "RESULT .* PASS" "$OUT/$ENGINE.txt"
+grep -qE "RESULT (.* )?PASS" "$OUT/$ENGINE.txt"
