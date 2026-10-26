@@ -406,8 +406,9 @@ void ModelMeshPartPayload::updateClusterBuffer(const std::vector<glm::mat4>& clu
     }
     _clusterBufferType = ClusterBufferType::Matrices;
 
-    // Once computed the cluster matrices, update the buffer(s)
-    if (clusterMatrices.size() > 1) {
+    // Once computed the cluster matrices, update the buffer(s); a mesh skinned to one joint has one (a VRM's head
+    // pieces), and without it the shader read no buffer and drew the piece off the neck
+    if (!clusterMatrices.empty()) {
         if (!_clusterBuffer) {
             _clusterBuffer = std::make_shared<gpu::Buffer>(clusterMatrices.size() * sizeof(glm::mat4),
                                                            (const gpu::Byte*)clusterMatrices.data());
@@ -424,8 +425,8 @@ void ModelMeshPartPayload::updateClusterBuffer(const std::vector<Model::Transfor
     }
     _clusterBufferType = ClusterBufferType::DualQuaternions;
 
-    // Once computed the cluster matrices, update the buffer(s)
-    if (clusterDualQuaternions.size() > 1) {
+    // Once computed the cluster matrices, update the buffer(s), for a mesh skinned to one joint too
+    if (!clusterDualQuaternions.empty()) {
         if (!_clusterBuffer) {
             _clusterBuffer =
                 std::make_shared<gpu::Buffer>(clusterDualQuaternions.size() * sizeof(Model::TransformDualQuaternion),
@@ -438,11 +439,12 @@ void ModelMeshPartPayload::updateClusterBuffer(const std::vector<Model::Transfor
 }
 
 // The part's mesh-space bound carried by every cluster's skinning transform holds wherever the skin can put its
-// vertices, in the model's frame. With one cluster or none the part draws unskinned at the model (updateClusterBuffer
-// keeps no buffer then), so its bound is the mesh's own there.
+// vertices, in the model's frame; that includes a single cluster (a VRM head piece weighted to one joint draws at that
+// joint). With no clusters the part draws unskinned at the model (updateClusterBuffer keeps no buffer then), so its
+// bound is the mesh's own there.
 void ModelMeshPartPayload::updateSkinnedBound(const Transform& modelTransform, const std::vector<glm::mat4>& clusterMatrices) {
     graphics::Box modelBound;
-    if (clusterMatrices.size() > 1 && !_localBound.isInvalid()) {
+    if (!clusterMatrices.empty() && !_localBound.isInvalid()) {
         for (const auto& clusterMatrix : clusterMatrices) {
             graphics::Box clusterBound = _localBound;
             clusterBound.transform(clusterMatrix);
@@ -459,7 +461,7 @@ void ModelMeshPartPayload::updateSkinnedBound(const Transform& modelTransform, c
 void ModelMeshPartPayload::updateSkinnedBound(const Transform& modelTransform,
                                               const std::vector<Model::TransformDualQuaternion>& clusterDualQuaternions) {
     graphics::Box modelBound;
-    if (clusterDualQuaternions.size() > 1 && !_localBound.isInvalid()) {
+    if (!clusterDualQuaternions.empty() && !_localBound.isInvalid()) {
         for (const auto& clusterDualQuaternion : clusterDualQuaternions) {
             graphics::Box clusterBound = _localBound;
             clusterBound.transform(clusterDualQuaternion.getMatrix());
