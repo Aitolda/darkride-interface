@@ -42,9 +42,6 @@ namespace {
         { "locked", "Locked: no one can move, change or delete it until it's unlocked." },
         { "ignorePickIntersection", "Ignore Picking: everyone's clicks, lasers and teleports go through it." },
     };
-    // a lock without the right is refused by the world, with nothing on the screen: Locked greys out and says why
-    const QString NO_LOCK_RIGHT = "You can't lock or unlock things in this world. That takes the world's "
-        "Lock / Unlock right, which its owner can give.";
 
     // the value of a property as text, for the show-when rules
     QString valueText(const QVariant& value) {
@@ -113,9 +110,10 @@ void InspectorPanel::setReadOnly(bool readOnly, const QString& reason) {
     applyReadOnly();
 }
 
-void InspectorPanel::setCanLock(bool canLock) {
-    if (canLock != _canLock) {
+void InspectorPanel::setCanLock(bool canLock, const QString& why) {
+    if (canLock != _canLock || why != _noLockWhy) {
         _canLock = canLock;
+        _noLockWhy = why;
         applyReadOnly();
     }
 }
@@ -127,7 +125,7 @@ void InspectorPanel::applyReadOnly() {
         bool locked = it.key() == LOCKED_KEY;
         it->editor->setEnabled(!_readOnly && (locked ? _canLock : !_allLocked));
         if (locked) {
-            it->editor->setToolTip(_canLock ? HEADER_TIPS.value(LOCKED_KEY) : NO_LOCK_RIGHT);
+            it->editor->setToolTip(_canLock ? HEADER_TIPS.value(LOCKED_KEY) : _noLockWhy);
         }
     }
     if (_lockNote) {

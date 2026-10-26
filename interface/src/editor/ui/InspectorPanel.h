@@ -47,7 +47,7 @@ public:
     void setReadOnly(bool readOnly, const QString& reason);
     // whether this player may lock and unlock here (the world's Lock / Unlock right): without it Locked greys out and
     // says why, as the world refuses the change with nothing on the screen
-    void setCanLock(bool canLock);
+    void setCanLock(bool canLock, const QString& why);
     // what the selection could not load (its model, image or textures, with the reasons), in red under the title, and
     // the title red too; empty hides it (Caity, 10-24: an Image that stayed blank and said nothing)
     void setLoadProblem(const QString& problem);
@@ -99,6 +99,7 @@ private:
     QLabel* _banner { nullptr };
     bool _readOnly { false };
     bool _canLock { true };
+    QString _noLockWhy;
     bool _allLocked { false };   // everything selected is locked: only Locked can change
     QScrollArea* _scroll { nullptr };
     QWidget* _empty { nullptr };

@@ -466,6 +466,55 @@ QVariantMap TestScriptingInterface::getHierarchyCounts() {
     return DependencyManager::get<Editor>()->hierarchyCounts();
 }
 
+bool TestScriptingInterface::hierarchyToggle(const QUuid& id, const QString& which, bool onlyThis) {
+    if (QThread::currentThread() != thread()) {
+        bool result = false;
+        BLOCKING_INVOKE_METHOD(this, "hierarchyToggle", Q_RETURN_ARG(bool, result), Q_ARG(QUuid, id),
+                               Q_ARG(QString, which), Q_ARG(bool, onlyThis));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->clickHierarchyToggle(which, id, onlyThis);
+}
+
+QVariantMap TestScriptingInterface::hierarchyToggles(const QUuid& id) {
+    if (QThread::currentThread() != thread()) {
+        QVariantMap result;
+        BLOCKING_INVOKE_METHOD(this, "hierarchyToggles", Q_RETURN_ARG(QVariantMap, result), Q_ARG(QUuid, id));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->hierarchyToggles(id);
+}
+
+void TestScriptingInterface::hierarchyShowAll() {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "hierarchyShowAll");
+        return;
+    }
+    DependencyManager::get<Editor>()->showAllHere();
+}
+
+QUuid TestScriptingInterface::editorPickAt(const QUuid& id) {
+    if (QThread::currentThread() != thread()) {
+        QUuid result;
+        BLOCKING_INVOKE_METHOD(this, "editorPickAt", Q_RETURN_ARG(QUuid, result), Q_ARG(QUuid, id));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->pickAtEntityForTest(id);
+}
+
+QVariantList TestScriptingInterface::editorMarqueeIds() {
+    if (QThread::currentThread() != thread()) {
+        QVariantList result;
+        BLOCKING_INVOKE_METHOD(this, "editorMarqueeIds", Q_RETURN_ARG(QVariantList, result));
+        return result;
+    }
+    QVariantList result;
+    for (const auto& id : DependencyManager::get<Editor>()->marqueeAllForTest()) {
+        result << id;
+    }
+    return result;
+}
+
 void TestScriptingInterface::clickHierarchyRow(const QUuid& id) {
     if (QThread::currentThread() != thread()) {
         BLOCKING_INVOKE_METHOD(this, "clickHierarchyRow", Q_ARG(QUuid, id));

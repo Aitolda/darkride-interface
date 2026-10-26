@@ -587,6 +587,49 @@ public slots:
     Q_INVOKABLE void clickHierarchyRow(const QUuid& id);
 
     /**jsdoc
+     * Does what a click on a build-mode Hierarchy row's eye, hand or lock does: hides it in this builder's view only,
+     * makes it unpickable by their clicks in the 3D view, or locks it for everyone (or the reverse), with everything
+     * under it, or alone as an Alt-click does.
+     * @function Test.hierarchyToggle
+     * @param {Uuid} id - The row's entity.
+     * @param {string} which - <code>"hide"</code>, <code>"pick"</code> or <code>"lock"</code>.
+     * @param {boolean} [onlyThis=false] - As an Alt-click: the row alone.
+     * @returns {boolean} Whether the row was there and the toggle could change.
+     */
+    Q_INVOKABLE bool hierarchyToggle(const QUuid& id, const QString& which, bool onlyThis = false);
+
+    /**jsdoc
+     * A build-mode Hierarchy row's toggles and what they amount to.
+     * @function Test.hierarchyToggles
+     * @param {Uuid} id - The row's entity.
+     * @returns {object} <code>{ hidden, noPick, locked, drawn, hiddenCount, note }</code>: hidden in this view,
+     *     unpickable, locked, whether the entity is drawn here, how many of this world's rows are hidden here, and the
+     *     note under the Hierarchy.
+     */
+    Q_INVOKABLE QVariantMap hierarchyToggles(const QUuid& id);
+
+    /**jsdoc
+     * Does what a click on the Hierarchy note's Show All does.
+     * @function Test.hierarchyShowAll
+     */
+    Q_INVOKABLE void hierarchyShowAll();
+
+    /**jsdoc
+     * What a click in build mode's viewport at the entity's middle would select.
+     * @function Test.editorPickAt
+     * @param {Uuid} id - The entity.
+     * @returns {Uuid} The entity picked there, null for none.
+     */
+    Q_INVOKABLE QUuid editorPickAt(const QUuid& id);
+
+    /**jsdoc
+     * What a marquee over build mode's whole viewport would select.
+     * @function Test.editorMarqueeIds
+     * @returns {Uuid[]} The entities.
+     */
+    Q_INVOKABLE QVariantList editorMarqueeIds();
+
+    /**jsdoc
      * Edits a property of the editor's selection as its Inspector field does when a list's + button or a field commits:
      * the undo point taken, the value sent, one step recorded.
      * @function Test.commitInspectorEdit

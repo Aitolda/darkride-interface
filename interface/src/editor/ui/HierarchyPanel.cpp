@@ -8,19 +8,199 @@
 
 #include "HierarchyPanel.h"
 
+#include <functional>
+
 #include <QtCore/QItemSelectionModel>
 #include <QtCore/QSortFilterProxyModel>
 #include <QtGui/QGuiApplication>
+#include <QtGui/QHelpEvent>
+#include <QtGui/QMouseEvent>
+#include <QtGui/QPainter>
+#include <QtGui/QPainterPath>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QStyle>
 #include <QtWidgets/QToolButton>
+#include <QtWidgets/QToolTip>
 #include <QtWidgets/QTreeView>
 #include <QtWidgets/QVBoxLayout>
 
 #include "../EntityTreeModel.h"
 #include "../../ui/DockTitleBar.h"
+
+namespace {
+    const int CELL = 18;          // each toggle's column in the gutter
+    const int GUTTER_PAD = 2;     // before the first column and after the last
+    const QColor GUTTER_FILL("#323232");                // a shade darker than the rows, as Unity's
+    const QColor ICON_ON("#d2d2d2");                    // the rows' text colour (editor.qss)
+    const QColor ICON_HINT(210, 210, 210, 95);          // under the pointer, while off
+    const QColor ICON_UNUSABLE(210, 210, 210, 45);      // a lock that can't be changed here
+    const qreal ICON_PEN = 1.2;
+
+    const QString CLICK_HOW = "\nClick: with everything under it. Alt-click: this one alone.";
+
+    // the icons, drawn as Apple's symbols are, in lines of one weight: an eye (struck through: hidden here), the
+    // pointer's arrow (struck through: clicks pass it by) and a padlock (shut and filled: locked)
+    void strike(QPainter& painter, const QPointF& c) {
+        painter.drawLine(QPointF(c.x() - 5.5, c.y() + 5.5), QPointF(c.x() + 5.5, c.y() - 5.5));
+    }
+    void drawEye(QPainter& painter, const QRectF& cell, bool hidden) {
+        QPointF c = cell.center();
+        QPainterPath almond;
+        almond.moveTo(c.x() - 6.0, c.y());
+        almond.quadTo(c.x(), c.y() - 6.5, c.x() + 6.0, c.y());
+        almond.quadTo(c.x(), c.y() + 6.5, c.x() - 6.0, c.y());
+        painter.drawPath(almond);
+        painter.drawEllipse(c, 1.8, 1.8);
+        if (hidden) {
+            strike(painter, c);
+        }
+    }
+    void drawPointer(QPainter& painter, const QRectF& cell, bool passedBy) {
+        QPointF c = cell.center();
+        QPointF o = c + QPointF(-3.0, -6.0);
+        QPolygonF arrow({ o, o + QPointF(0.0, 10.5), o + QPointF(2.6, 8.0), o + QPointF(4.4, 11.8),
+                          o + QPointF(6.0, 11.0), o + QPointF(4.2, 7.3), o + QPointF(7.5, 7.3) });
+        painter.drawPolygon(arrow);
+        if (passedBy) {
+            strike(painter, c);
+        }
+    }
+    void drawLock(QPainter& painter, const QRectF& cell, bool locked) {
+        QPointF c = cell.center();
+        QRectF body(c.x() - 4.5, c.y() - 0.5, 9.0, 6.5);
+        qreal left = c.x() - 2.8;
+        qreal top = c.y() - 6.5;
+        QPainterPath shackle;
+        shackle.moveTo(left, body.top());
+        shackle.lineTo(left, top + 2.8);
+        shackle.arcTo(QRectF(left, top, 5.6, 5.6), 180.0, -180.0);
+        // open: its right leg stands clear of the body
+        shackle.lineTo(left + 5.6, locked ? body.top() : top + 4.0);
+        painter.drawPath(shackle);
+        if (locked) {
+            painter.setBrush(painter.pen().color());
+        }
+        painter.drawRoundedRect(body, 1.2, 1.2);
+        painter.setBrush(Qt::NoBrush);
+    }
+}
+
+// the strip at the tree's left edge with each row's eye, hand and lock, lined up with the rows
+class HierarchyGutter : public QWidget {
+public:
+    HierarchyGutter(HierarchyPanel* panel, QWidget* parent) : QWidget(parent), _panel(panel) {
+        setObjectName("EditorHierarchyGutter");
+        setFixedWidth(3 * CELL + 2 * GUTTER_PAD);
+        setMouseTracking(true);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.fillRect(rect(), GUTTER_FILL);
+        painter.setRenderHint(QPainter::Antialiasing);
+        QTreeView* tree = _panel->_tree;
+        int viewportHeight = tree->viewport()->height();
+        int dy = offset();
+        for (QModelIndex index = tree->indexAt(QPoint(0, 0)); index.isValid(); index = tree->indexBelow(index)) {
+            QRect row = tree->visualRect(index);
+            if (row.top() > viewportHeight) {
+                break;
+            }
+            QUuid id = index.data(EntityTreeModel::IdRole).toUuid();
+            bool hovered = _panel->_hovered.isValid() && QModelIndex(_panel->_hovered) == index;
+            for (int t = HierarchyPanel::Hide; t <= HierarchyPanel::Lock; ++t) {
+                auto toggle = (HierarchyPanel::Toggle)t;
+                bool on = _panel->isOn(toggle, id);
+                if (!on && !hovered) {
+                    continue;   // only what's on shows, and all three on the row under the pointer, as in Unity
+                }
+                bool usable = toggle != HierarchyPanel::Lock || _panel->_canLock;
+                painter.setPen(QPen(!usable ? ICON_UNUSABLE : on ? ICON_ON : ICON_HINT, ICON_PEN));
+                QRectF cell(GUTTER_PAD + t * CELL, row.top() + dy, CELL, row.height());
+                if (toggle == HierarchyPanel::Hide) {
+                    drawEye(painter, cell, on);
+                } else if (toggle == HierarchyPanel::NoPick) {
+                    drawPointer(painter, cell, on);
+                } else {
+                    drawLock(painter, cell, on);
+                }
+            }
+        }
+    }
+
+    void mousePressEvent(QMouseEvent* event) override {
+        int toggle = toggleAt(event->pos().x());
+        QModelIndex index = rowAt(event->pos().y());
+        if (event->button() == Qt::LeftButton && toggle >= 0 && index.isValid()) {
+            _panel->clickToggle((HierarchyPanel::Toggle)toggle, index.data(EntityTreeModel::IdRole).toUuid(),
+                                event->modifiers().testFlag(Qt::AltModifier));
+        }
+        event->accept();
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        hover(rowAt(event->pos().y()));
+    }
+
+    void leaveEvent(QEvent*) override {
+        hover(QModelIndex());
+    }
+
+    bool event(QEvent* event) override {
+        if (event->type() == QEvent::ToolTip) {
+            auto help = static_cast<QHelpEvent*>(event);
+            int toggle = toggleAt(help->pos().x());
+            if (toggle < 0 || !rowAt(help->pos().y()).isValid()) {
+                QToolTip::hideText();
+                event->ignore();
+                return true;
+            }
+            QToolTip::showText(help->globalPos(), tip((HierarchyPanel::Toggle)toggle), this);
+            return true;
+        }
+        return QWidget::event(event);
+    }
+
+private:
+    // the tree's viewport top in the gutter's coordinates: the rows' heights there are the gutter's
+    int offset() const {
+        return _panel->_tree->viewport()->mapTo(window(), QPoint()).y() - mapTo(window(), QPoint()).y();
+    }
+    QModelIndex rowAt(int y) const {
+        QTreeView* tree = _panel->_tree;
+        int viewportY = y - offset();
+        if (viewportY < 0 || viewportY >= tree->viewport()->height()) {
+            return QModelIndex();
+        }
+        return tree->indexAt(QPoint(0, viewportY));
+    }
+    int toggleAt(int x) const {
+        int t = (x - GUTTER_PAD) / CELL;
+        return x >= GUTTER_PAD && t <= HierarchyPanel::Lock ? t : -1;
+    }
+    void hover(const QModelIndex& index) {
+        if (QModelIndex(_panel->_hovered) != index) {
+            _panel->_hovered = index;
+            update();
+        }
+    }
+    QString tip(HierarchyPanel::Toggle toggle) const {
+        if (toggle == HierarchyPanel::Hide) {
+            return "Hide in your view only, while you build. Everyone else still sees it." + CLICK_HOW;
+        }
+        if (toggle == HierarchyPanel::NoPick) {
+            return "Can't be selected by your clicks in the 3D view, while you build (the Hierarchy still selects "
+                "it). Only for you." + CLICK_HOW;
+        }
+        return _panel->_canLock ? "Locked for everyone: no one can move, change or delete it." + CLICK_HOW
+                                : _panel->_noLockWhy;
+    }
+
+    HierarchyPanel* _panel;
+};
 
 HierarchyPanel::HierarchyPanel(QWidget* parent) : QDockWidget("Hierarchy", parent) {
     setObjectName("EditorHierarchy");
@@ -99,6 +279,8 @@ HierarchyPanel::HierarchyPanel(QWidget* parent) : QDockWidget("Hierarchy", paren
     _counts = new QLabel(body);
     _counts->setObjectName("EditorHierarchyCounts");
     _counts->setWordWrap(true);
+    _counts->setTextFormat(Qt::RichText);
+    connect(_counts, &QLabel::linkActivated, this, &HierarchyPanel::showAllRequested);
     _refresh = new QToolButton(body);
     _refresh->setObjectName("EditorHierarchyRefresh");
     _refresh->setText("Refresh");
@@ -113,9 +295,19 @@ HierarchyPanel::HierarchyPanel(QWidget* parent) : QDockWidget("Hierarchy", paren
     _countsTimer.setInterval(150);
     connect(&_countsTimer, &QTimer::timeout, this, &HierarchyPanel::updateCounts);
 
+    // the toggles' strip, then the tree
+    _gutter = new HierarchyGutter(this, body);
+    _tree->viewport()->setMouseTracking(true);
+    _tree->viewport()->installEventFilter(this);
+    auto treeRow = new QHBoxLayout();
+    treeRow->setContentsMargins(0, 0, 0, 0);
+    treeRow->setSpacing(0);
+    treeRow->addWidget(_gutter);
+    treeRow->addWidget(_tree, 1);
+
     layout->addWidget(_banner);
     layout->addWidget(_search);
-    layout->addWidget(_tree, 1);
+    layout->addLayout(treeRow, 1);
     layout->addLayout(countsRow);
     setWidget(body);
 }
@@ -130,12 +322,108 @@ void HierarchyPanel::updateCounts() {
         return;
     }
     int loaded = _model->loadedCount();
-    QString text = _model->hasList() ? QString("%1 entities, %2 loaded").arg(_model->count()).arg(loaded)
-                                     : QString("%1 loaded").arg(loaded);
+    QStringList lines;
+    lines << (_model->hasList() ? QString("%1 entities, %2 loaded").arg(_model->count()).arg(loaded)
+                                : QString("%1 loaded").arg(loaded));
     if (!_listNote.isEmpty()) {
-        text += "\n" + _listNote;
+        lines << _listNote.toHtmlEscaped();
     }
-    _counts->setText(text);
+    // what this builder has hidden stays hidden here until shown again, so it can't be lost: how many, and a way back
+    int hidden = hiddenCount();
+    if (hidden > 0) {
+        lines << QString("%1 hidden in your view · <a href=\"show\" style=\"color: #6fa8dc; text-decoration: none;\">"
+                         "Show&nbsp;All</a>").arg(hidden);
+    }
+    _counts->setText(lines.join("<br>"));
+}
+
+void HierarchyPanel::setLocalStates(const QSet<QUuid>& hidden, const QSet<QUuid>& noPick) {
+    _hidden = hidden;
+    _noPick = noPick;
+    _gutter->update();
+    updateCounts();
+}
+
+void HierarchyPanel::setCanLock(bool canLock, const QString& why) {
+    _canLock = canLock;
+    _noLockWhy = why;
+    _gutter->update();
+}
+
+bool HierarchyPanel::isOn(Toggle toggle, const QUuid& id) const {
+    switch (toggle) {
+        case Hide:
+            return _hidden.contains(id);
+        case NoPick:
+            return _noPick.contains(id);
+        case Lock:
+            return _model && _model->indexForId(id).data(EntityTreeModel::LockedRole).toBool();
+    }
+    return false;
+}
+
+bool HierarchyPanel::clickToggle(Toggle toggle, const QUuid& id, bool onlyThis) {
+    if (!_model || id.isNull() || !_model->indexForId(id).isValid()) {
+        return false;
+    }
+    // a lock is the entity's own: it needs the right, and the entity here to change
+    if (toggle == Lock && (!_canLock || !_model->isLoaded(id))) {
+        return false;
+    }
+    emit toggleRequested(toggle, onlyThis ? QList<QUuid> { id } : withDescendants(id), !isOn(toggle, id));
+    return true;
+}
+
+int HierarchyPanel::hiddenCount() const {
+    int count = 0;
+    if (_model) {
+        for (const auto& id : _hidden) {
+            count += _model->indexForId(id).isValid() ? 1 : 0;
+        }
+    }
+    return count;
+}
+
+QList<QUuid> HierarchyPanel::withDescendants(const QUuid& id) const {
+    QList<QUuid> ids { id };
+    std::function<void(const QModelIndex&)> walk = [&](const QModelIndex& parent) {
+        for (int row = 0; row < _model->rowCount(parent); ++row) {
+            QModelIndex child = _model->index(row, 0, parent);
+            ids << child.data(EntityTreeModel::IdRole).toUuid();
+            walk(child);
+        }
+    };
+    QModelIndex start = _model->indexForId(id);
+    if (start.isValid()) {
+        walk(start);
+    }
+    return ids;
+}
+
+bool HierarchyPanel::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == _tree->viewport()) {
+        switch (event->type()) {
+            case QEvent::MouseMove: {
+                QModelIndex index = _tree->indexAt(static_cast<QMouseEvent*>(event)->pos());
+                if (QModelIndex(_hovered) != index) {
+                    _hovered = index;
+                    _gutter->update();
+                }
+                break;
+            }
+            case QEvent::Leave:
+                _hovered = QModelIndex();
+                _gutter->update();
+                break;
+            case QEvent::Paint:
+                // scrolled, opened, closed, a row's lock changed: the gutter follows the rows
+                _gutter->update();
+                break;
+            default:
+                break;
+        }
+    }
+    return QDockWidget::eventFilter(watched, event);
 }
 
 void HierarchyPanel::setReadOnly(bool readOnly, const QString& reason) {

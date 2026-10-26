@@ -127,6 +127,11 @@ namespace {
     const int STATUS_CLEAR_MS = 6000;             // how long a note on the status bar stays
     const QString SCALE_KEY = QStringLiteral("scale");
     const QString LOCKED_KEY = QStringLiteral("locked");
+    // a lock without the right is refused by the world with nothing on the screen: Locked (the Inspector's and the
+    // Hierarchy's) greys out and says why
+    const QString NO_LOCK_RIGHT = "You can't lock or unlock things in this world. That takes the world's "
+        "Lock / Unlock right, which its owner can give.";
+    const int HIDDEN_HERE_PASS_MS = 150;   // entities that arrived are hidden again this long after the last
     const QString RANGE_KEY = QStringLiteral("range");
     const QString VOXEL_SIZE_KEY = QStringLiteral("voxelSize");
     const QString CUTOFF_KEY = QStringLiteral("cutoff");
@@ -331,6 +336,8 @@ void Editor::setActive(bool active) {
             _treeModel->attach();
         }
         refreshEntityList();
+        // what this builder hid is hidden in their view again
+        applyHiddenHere(true);
         _axesValid = false;
         updateAxes();
         refreshInspector(true);
@@ -339,6 +346,9 @@ void Editor::setActive(bool active) {
         setStatus(QString());
         _world->refresh();
     } else {
+        // everything shows again as everyone sees it
+        _hiddenHereTimer.stop();
+        applyHiddenHere(false);
         _boundsShapes.clear();
         _bounds.setShapes(_boundsShapes);
         endLightHandleDrag(false);
@@ -551,10 +561,11 @@ void Editor::updateReadOnly() {
     QString reason = readOnlyReason();
     if (_inspector) {
         _inspector->setReadOnly(_readOnly, reason);
-        _inspector->setCanLock(entities->canAdjustLocks());
+        _inspector->setCanLock(entities->canAdjustLocks(), NO_LOCK_RIGHT);
     }
     if (_hierarchy) {
         _hierarchy->setReadOnly(_readOnly, reason);
+        _hierarchy->setCanLock(!_readOnly && entities->canAdjustLocks(), _readOnly ? reason : NO_LOCK_RIGHT);
     }
     if (_toolBar) {
         _toolBar->setCreateEnabled(!_readOnly);
@@ -626,6 +637,27 @@ void Editor::createPanels() {
     connect(_hierarchy, &HierarchyPanel::goToRequested, this, &Editor::goToListed);
     connect(_hierarchy, &HierarchyPanel::refreshRequested, this, &Editor::refreshEntityList);
     connect(_hierarchy, &HierarchyPanel::contextMenuRequested, this, &Editor::showHierarchyMenu);
+    // the rows' eye, hand and lock
+    loadLocalStates();
+    _hierarchy->setLocalStates(_hiddenHere, _noPick);
+    connect(_hierarchy, &HierarchyPanel::toggleRequested, this,
+            [this](HierarchyPanel::Toggle toggle, const QList<QUuid>& ids, bool on) { onHierarchyToggle(toggle, ids, on); });
+    connect(_hierarchy, &HierarchyPanel::showAllRequested, this, &Editor::showAllHere);
+    _hiddenHereTimer.setSingleShot(true);
+    _hiddenHereTimer.setInterval(HIDDEN_HERE_PASS_MS);
+    connect(&_hiddenHereTimer, &QTimer::timeout, this, [this] {
+        if (_active) {
+            applyHiddenHere(true);
+        }
+    });
+    // an entity this builder hid comes back from the server as a new item, shown: hidden again as it arrives
+    auto hideArrivals = [this] {
+        if (_active && !_hiddenHere.isEmpty() && !_hiddenHereTimer.isActive()) {
+            _hiddenHereTimer.start();
+        }
+    };
+    connect(_treeModel, &QAbstractItemModel::rowsInserted, this, hideArrivals);
+    connect(_treeModel, &EntityTreeModel::entityLoaded, this, hideArrivals);
 
     _inspector = new InspectorPanel(window);
     connect(_inspector, &InspectorPanel::editBegan, this, &Editor::onInspectorEditBegan);
@@ -1520,9 +1552,13 @@ bool Editor::pointerOverHierarchy() const {
 }
 
 QUuid Editor::pickAt(const QPoint& viewportPos) const {
+    return pickOnRay(pickRay(viewportPos));
+}
+
+QUuid Editor::pickOnRay(const PickRay& ray) const {
     // icons are drawn over everything, so they are picked first, as in Unity
-    QUuid icon = _lightGizmos.iconAt(pickRay(viewportPos));
-    return icon.isNull() ? pickEntity(viewportPos) : icon;
+    QUuid icon = _lightGizmos.iconAt(ray);
+    return icon.isNull() || excludedFromPicks(icon) ? pickEntityOnRay(ray) : icon;
 }
 
 float Editor::lightHandleValue(const PickRay& ray) const {
@@ -2055,9 +2091,20 @@ PickRay Editor::pickRay(const QPoint& viewportPos) const {
 }
 
 QUuid Editor::pickEntity(const QPoint& viewportPos) const {
+    return pickEntityOnRay(pickRay(viewportPos));
+}
+
+QUuid Editor::pickEntityOnRay(const PickRay& ray) const {
+    // what this builder hid or made unpickable (the Hierarchy's eye and hand) lets the click through, to what's behind
+    QVector<EntityItemID> passedBy;
+    for (const auto& id : _hiddenHere) {
+        passedBy << id;
+    }
+    for (const auto& id : _noPick) {
+        passedBy << id;
+    }
     auto entities = DependencyManager::get<EntityScriptingInterface>();
-    auto result = entities->evalRayIntersectionVector(pickRay(viewportPos), worldPickFilter(),
-        QVector<EntityItemID>(), QVector<EntityItemID>());
+    auto result = entities->evalRayIntersectionVector(ray, worldPickFilter(), QVector<EntityItemID>(), passedBy);
     return result.intersects ? result.entityID : QUuid();
 }
 
@@ -2138,7 +2185,7 @@ QList<QUuid> Editor::entitiesInRect(const QRectF& rect) const {
     tree->withReadLock([&] {
         for (const auto& id : all) {
             auto entity = tree->findEntityByEntityItemID(id);
-            if (!entity || !entity->getVisible()) {
+            if (!entity || !entity->getVisible() || excludedFromPicks(id)) {
                 continue;
             }
             glm::vec4 clip = viewProjection * glm::vec4(entity->getWorldPosition(), 1.0f);
@@ -2549,6 +2596,151 @@ void Editor::updateListNote() {
             break;
     }
     _hierarchy->setListNote(note);
+}
+
+void Editor::loadLocalStates() {
+    if (_localStatesLoaded) {
+        return;
+    }
+    _localStatesLoaded = true;
+    for (const auto& text : _hiddenHereSetting.get()) {
+        _hiddenHere.insert(QUuid(text));
+    }
+    for (const auto& text : _noPickSetting.get()) {
+        _noPick.insert(QUuid(text));
+    }
+    _hiddenHere.remove(QUuid());
+    _noPick.remove(QUuid());
+}
+
+void Editor::saveLocalStates() {
+    auto texts = [](const QSet<QUuid>& ids) {
+        QStringList list;
+        for (const auto& id : ids) {
+            list << id.toString(QUuid::WithoutBraces);
+        }
+        list.sort();
+        return list;
+    };
+    _hiddenHereSetting.set(texts(_hiddenHere));
+    _noPickSetting.set(texts(_noPick));
+}
+
+void Editor::onHierarchyToggle(int toggle, const QList<QUuid>& ids, bool on) {
+    if (toggle == HierarchyPanel::Lock) {
+        // the entity's own Locked, for everyone: one undo step for the row and what's under it
+        commitInspectorEdit(LOCKED_KEY, on, ids);
+        refreshInspector(false);
+        return;
+    }
+    QSet<QUuid>& states = toggle == HierarchyPanel::Hide ? _hiddenHere : _noPick;
+    for (const auto& id : ids) {
+        if (on) {
+            states.insert(id);
+        } else {
+            states.remove(id);
+        }
+    }
+    if (toggle == HierarchyPanel::Hide && _active) {
+        setLocallyHidden(ids, on);
+    }
+    saveLocalStates();
+    if (_hierarchy) {
+        _hierarchy->setLocalStates(_hiddenHere, _noPick);
+    }
+}
+
+void Editor::showAllHere() {
+    // this world's: what's hidden in other worlds stays as it was left there
+    QList<QUuid> here;
+    for (const auto& id : _hiddenHere) {
+        if (_treeModel && _treeModel->indexForId(id).isValid()) {
+            here << id;
+        }
+    }
+    onHierarchyToggle(HierarchyPanel::Hide, here, false);
+}
+
+void Editor::applyHiddenHere(bool hide) {
+    setLocallyHidden(_hiddenHere.values(), hide);
+}
+
+void Editor::setLocallyHidden(const QList<QUuid>& ids, bool hidden) {
+    auto tree = entityTree();
+    if (!tree) {
+        return;
+    }
+    QList<QUuid> changed;
+    tree->withReadLock([&] {
+        for (const auto& id : ids) {
+            auto entity = tree->findEntityByEntityItemID(id);
+            if (entity && entity->getLocallyVisible() == hidden) {
+                entity->setLocallyVisible(!hidden);
+                changed << id;
+            }
+        }
+    });
+    // the renderer takes the change on its next update, as it does an edit's
+    if (auto renderer = qApp->getEntities()) {
+        for (const auto& id : changed) {
+            renderer->onEntityChanged(id);
+        }
+    }
+}
+
+bool Editor::clickHierarchyToggle(const QString& which, const QUuid& id, bool onlyThis) {
+    if (!_hierarchy) {
+        return false;
+    }
+    auto toggle = which == "hide" ? HierarchyPanel::Hide : which == "pick" ? HierarchyPanel::NoPick : HierarchyPanel::Lock;
+    return _hierarchy->clickToggle(toggle, id, onlyThis);
+}
+
+QVariantMap Editor::hierarchyToggles(const QUuid& id) const {
+    QVariantMap result;
+    if (!_hierarchy) {
+        return result;
+    }
+    result["hidden"] = _hierarchy->isOn(HierarchyPanel::Hide, id);
+    result["noPick"] = _hierarchy->isOn(HierarchyPanel::NoPick, id);
+    result["locked"] = _hierarchy->isOn(HierarchyPanel::Lock, id);
+    result["hiddenCount"] = _hierarchy->hiddenCount();
+    if (auto counts = _hierarchy->findChild<QLabel*>("EditorHierarchyCounts")) {
+        result["note"] = counts->text();
+    }
+    if (auto tree = qApp->getEntities() ? qApp->getEntities()->getTree() : nullptr) {
+        tree->withReadLock([&] {
+            if (auto entity = tree->findEntityByEntityItemID(id)) {
+                result["drawn"] = entity->getVisible() && entity->getLocallyVisible();
+            }
+        });
+    }
+    return result;
+}
+
+QUuid Editor::pickAtEntityForTest(const QUuid& id) const {
+    auto tree = qApp->getEntities() ? qApp->getEntities()->getTree() : nullptr;
+    glm::vec3 position;
+    bool found = false;
+    if (tree) {
+        tree->withReadLock([&] {
+            if (auto entity = tree->findEntityByEntityItemID(id)) {
+                position = entity->getWorldPosition();
+                found = true;
+            }
+        });
+    }
+    if (!found) {
+        return QUuid();
+    }
+    // the click's ray, from the camera through the entity's middle
+    glm::vec3 eye = _camera.position();
+    return pickOnRay(PickRay(eye, glm::normalize(position - eye)));
+}
+
+QList<QUuid> Editor::marqueeAllForTest() const {
+    auto viewport = qApp->getPrimaryWidget();
+    return viewport ? entitiesInRect(QRectF(viewport->rect())) : QList<QUuid>();
 }
 
 QVariantMap Editor::hierarchyCounts() const {
