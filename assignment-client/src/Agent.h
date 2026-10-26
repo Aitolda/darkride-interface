@@ -108,6 +108,9 @@ private slots:
     // an AI resident signed in with its account tells the metaverse where it is, like Interface does
     void sendPresence();
 
+    // the entities parented to this agent's avatar follow it: their bounds go to the entity server, as MyAvatar's do
+    void updateAvatarChildren();
+
 private:
     void negotiateAudioFormat();
     void selectAudioFormat(const QString& selectedCodecName);
@@ -127,6 +130,9 @@ private:
     void finishAvatarSound(bool completed);
 
     void queryAvatars();
+    // the avatar as a parent, or not: the parent finder finds it, and the entity tree can take shared_from_this()
+    void setAvatarAsParent(bool isParent);
+    std::shared_ptr<SpatiallyNestable> _avatarAsParent;    // deletes nothing: the DependencyManager owns the avatar
 
     QString _scriptContents;
     QTimer* _scriptRequestTimeout { nullptr };
