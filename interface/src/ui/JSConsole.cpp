@@ -429,18 +429,15 @@ void JSConsole::showEvent(QShowEvent* event) {
     _ui->promptTextEdit->setFocus();
 }
 
-void JSConsole::hideEvent(QHideEvent* event) {
-    QWidget::hideEvent(event);
-    // Closing the console stops what was typed into it, as closing a terminal window ends what runs there: its timers
-    // and connections. Scripts it started with Script.load run on in their own engines. Minimizing the window (a
-    // spontaneous hide) stops nothing.
-    if (!event->spontaneous() && _ownsScriptEngine && _typedSinceStop && _scriptEngine) {
-        disconnect(_scriptEngine.data(), nullptr, this, nullptr);
-        _scriptEngine->stop();
-        _scriptEngine.reset();
-        _typedSinceStop = false;
-        _stoppedOnClose = true;
+void JSConsole::stopTyped() {
+    if (!_ownsScriptEngine || !_typedSinceStop || !_scriptEngine) {
+        return;
     }
+    disconnect(_scriptEngine.data(), nullptr, this, nullptr);
+    _scriptEngine->stop();
+    _scriptEngine.reset();
+    _typedSinceStop = false;
+    _stoppedOnClose = true;
 }
 
 bool JSConsole::eventFilter(QObject* sender, QEvent* event) {

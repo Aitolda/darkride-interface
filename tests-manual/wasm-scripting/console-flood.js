@@ -14,6 +14,8 @@
 //  4. Paste it again and, while it runs, close the console (its close button), then open it again from the menu: it
 //     opens at once, a blue line says "Closing the console stopped everything typed above...", and no count or
 //     numbered line moves after it.
+//  5. While it runs, drag the console out, dock it, then tab it behind another panel: the count keeps going up
+//     throughout.
 //
 //  Copyright 2026 Darkride.
 //

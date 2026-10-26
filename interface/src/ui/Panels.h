@@ -4,7 +4,7 @@
 //
 //  The window's panels by name, for the bar's buttons (tivoli-scripts' ButtonManager.addQmlButton), View > Panels and
 //  scripts ("Panels"): Darkride's QML panels in dock panels (ui/QmlDock.h: Settings, Avatar, People, Explore), chat's,
-//  My Files, and Build mode's Hierarchy and Inspector. Each opens floating the first time, docks or tabs where the player drags it, and comes back where the
+//  My Files, the scripting console, and Build mode's Hierarchy and Inspector. Each opens floating the first time, docks or tabs where the player drags it, and comes back where the
 //  window's saved layout has it (ui/WindowLayout.h). Open is "not hidden": a panel tabbed behind another is still
 //  open. Dockable panels, step 2 (Caity's "go step 2", 2026-10-26; team/editor-ui/DOCKING-STEP2-PLAN.md).
 //
@@ -21,10 +21,12 @@
 #include <QtCore/QObject>
 #include <QtCore/QPointer>
 #include <QtCore/QSet>
+#include <QtCore/QSize>
 
 #include <DependencyManager.h>
 
 class QDockWidget;
+class QWidget;
 
 /**jsdoc
  * The window's panels, by name: Darkride's QML panels and chat. On the desktop each can float, dock beside the 3D view
@@ -45,8 +47,8 @@ public:
     /**jsdoc
      * The panels' names, in View > Panels' order.
      * @function Panels.names
-     * @returns {string[]} The names: "Settings", "Avatar", "People", "Chat", "Explore", "My Files", and Build mode's
-     *     "Hierarchy" and "Inspector" (which open only while it's on).
+     * @returns {string[]} The names: "Settings", "Avatar", "People", "Chat", "Explore", "My Files", "Console", and Build
+     *     mode's "Hierarchy" and "Inspector" (which open only while it's on).
      */
     Q_INVOKABLE QStringList names() const;
 
@@ -81,6 +83,10 @@ public:
 
     /// Build mode's own panels (Hierarchy, Inspector): they open only while it's on
     static bool isBuildModeOnly(const QString& name);
+
+    /// a panel floating at its first size in the middle of the main window, no bigger than the window less the bar's
+    /// room, kept on the window's screen
+    static void placeFloating(QDockWidget* panel, QWidget* window, QSize size);
 
     /// the panel's dock, made (hidden, floating at its first size) the first time it's asked for; null for a name it
     /// doesn't know, or for Build mode's before it has been on. Main thread.

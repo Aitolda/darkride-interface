@@ -337,6 +337,14 @@ public slots:
     Q_INVOKABLE bool dockAction(const QString& objectName, const QString& action);
 
     /**jsdoc
+     * Runs a line in the scripting console's panel as if it were typed there (ui/StandAloneJSConsole.h).
+     * @function Test.consoleRun
+     * @param {string} command - The line.
+     * @returns {boolean} Whether the console's panel exists.
+     */
+    Q_INVOKABLE bool consoleRun(const QString& command);
+
+    /**jsdoc
      * Does what View > Layouts does (ui/WindowLayout.h), without its popups: "save" (under the name), "apply", "forget",
      * "reset" (Reset to Default), or "names".
      * @function Test.windowLayoutAction

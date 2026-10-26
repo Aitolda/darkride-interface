@@ -48,6 +48,7 @@
 #include "editor/Editor.h"
 #include "ui/DockTitleBar.h"
 #include "ui/QmlDock.h"
+#include "ui/StandAloneJSConsole.h"
 #include "ui/WindowLayout.h"
 #include "ui/Popup.h"
 #include "ui/Skins.h"
@@ -586,7 +587,8 @@ QVariantMap TestScriptingInterface::windowLayout() {
     const QList<QPair<QString, QString>> PANELS { { "chat", "ChatDock" }, { "hierarchy", "EditorHierarchy" },
                                                   { "inspector", "EditorInspector" }, { "assets", "EditorAssets" },
                                                   { "settings", "SettingsDock" }, { "avatar", "AvatarDock" },
-                                                  { "people", "PeopleDock" }, { "explore", "ExploreDock" } };
+                                                  { "people", "PeopleDock" }, { "explore", "ExploreDock" },
+                                                  { "console", "ConsoleDock" } };
     for (const auto& panel : PANELS) {
         auto dock = window->findChild<QDockWidget*>(panel.second);
         if (!dock) {
@@ -644,6 +646,20 @@ bool TestScriptingInterface::dockAction(const QString& objectName, const QString
         titleBar->toggleFloating();
     }
     return true;
+}
+
+bool TestScriptingInterface::consoleRun(const QString& command) {
+    if (QThread::currentThread() != thread()) {
+        bool result = false;
+        BLOCKING_INVOKE_METHOD(this, "consoleRun", Q_RETURN_ARG(bool, result), Q_ARG(QString, command));
+        return result;
+    }
+    QDockWidget* dock = DependencyManager::get<StandAloneJSConsole>()->dock();
+    auto console = dock ? dock->findChild<JSConsole*>() : nullptr;
+    if (console) {
+        console->executeCommand(command);
+    }
+    return console != nullptr;
 }
 
 QStringList TestScriptingInterface::windowLayoutAction(const QString& action, const QString& name) {

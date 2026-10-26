@@ -19,6 +19,7 @@
 #include "InterfaceLogging.h"
 #include "PanelTheme.h"
 #include "QmlDock.h"
+#include "StandAloneJSConsole.h"
 #include "WindowLayout.h"
 #include "chat/ChatWindow.h"
 #include "editor/Editor.h"
@@ -26,6 +27,7 @@
 namespace {
     const QString CHAT = "Chat";
     const QString MY_FILES = "My Files";
+    const QString CONSOLE = "Console";
     // Build mode's own, there only while it's on
     const QString HIERARCHY = "Hierarchy";
     const QString INSPECTOR = "Inspector";
@@ -47,8 +49,8 @@ namespace {
 
     const QString TABS_BEGIN = "/* dock tabs: begin */";
     const QString TABS_END = "/* dock tabs: end */";
-    // the tabs of panels docked together (the main window's own tab bars): flat, in the panels' colours (the title bars'
-    // roles, ui/DockTitleBar.cpp), the skin's where it gives them
+    // the tabs of panels docked together (the main window's own tab bars) and the edges between the panels: flat, in
+    // the panels' colours (the title bars' roles, ui/DockTitleBar.cpp), the skin's where it gives them
     QString tabsSheet(const QVariantMap& skin) {
         const QVariantMap colors = skin.value("colors").toMap();
         auto role = [&colors](const QString& key, const QString& otherwise) {
@@ -60,25 +62,29 @@ namespace {
             "QMainWindow > QTabBar::tab { background: transparent; color: %2; border: none; border-right: 1px solid %3;"
             " padding: 4px 12px; font-size: 12px; min-width: 48px; }\n"
             "QMainWindow > QTabBar::tab:selected { background: %4; color: %5; }\n"
-            "QMainWindow > QTabBar::tab:hover:!selected { background: %6; }\n")
+            "QMainWindow > QTabBar::tab:hover:!selected { background: %6; }\n"
+            // the edges between the panels and the 3D view (libraries/ui MainWindow.cpp gives their width)
+            "QMainWindow::separator { background: %3; }\n"
+            "QMainWindow::separator:hover { background: %7; }\n")
             .arg(role("fill", "#2a2a2a"), role("secondaryText", "#9a9a9a"), role("separator", "#232323"),
-                 role("card", "#3c3c3c"), role("text", "#d2d2d2"), role("cardPressed", "#323232"));
+                 role("card", "#3c3c3c"), role("text", "#d2d2d2"), role("cardPressed", "#323232"),
+                 role("tint", "#2c5d87"));
     }
+}
 
-    // floating at its first size in the middle of the main window, no bigger than the overlay window was in it (the
-    // window less the bar's room), kept on the main window's screen (as chat's)
-    void placeFloating(QDockWidget* panel, QWidget* window, QSize size) {
-        size = size.boundedTo(QSize(window->width() - 16, window->height() - 96)).expandedTo(QSize(320, 240));
-        QRect screen = window->screen() ? window->screen()->availableGeometry() : QRect();
-        QRect rect(QPoint(), screen.isValid() ? size.boundedTo(screen.size()) : size);
-        rect.moveCenter(window->geometry().center());
-        if (screen.isValid()) {
-            rect.moveLeft(std::max(screen.left(), std::min(rect.left(), screen.right() + 1 - rect.width())));
-            rect.moveTop(std::max(screen.top(), std::min(rect.top(), screen.bottom() + 1 - rect.height())));
-        }
-        panel->resize(rect.size());
-        panel->move(rect.topLeft());
+// floating at its first size in the middle of the main window, no bigger than the overlay window was in it (the
+// window less the bar's room), kept on the main window's screen (as chat's)
+void Panels::placeFloating(QDockWidget* panel, QWidget* window, QSize size) {
+    size = size.boundedTo(QSize(window->width() - 16, window->height() - 96)).expandedTo(QSize(320, 240));
+    QRect screen = window->screen() ? window->screen()->availableGeometry() : QRect();
+    QRect rect(QPoint(), screen.isValid() ? size.boundedTo(screen.size()) : size);
+    rect.moveCenter(window->geometry().center());
+    if (screen.isValid()) {
+        rect.moveLeft(std::max(screen.left(), std::min(rect.left(), screen.right() + 1 - rect.width())));
+        rect.moveTop(std::max(screen.top(), std::min(rect.top(), screen.bottom() + 1 - rect.height())));
     }
+    panel->resize(rect.size());
+    panel->move(rect.topLeft());
 }
 
 Panels::Panels() {
@@ -111,7 +117,7 @@ QStringList Panels::names() const {
         }
         result << panel.name;
     }
-    result << MY_FILES << HIERARCHY << INSPECTOR;
+    result << MY_FILES << CONSOLE << HIERARCHY << INSPECTOR;
     return result;
 }
 
@@ -137,10 +143,11 @@ void Panels::toggle(const QString& name) {
 }
 
 QDockWidget* Panels::dock(const QString& name) {
-    if (name == CHAT || name == MY_FILES || isBuildModeOnly(name)) {
+    if (name == CHAT || name == MY_FILES || name == CONSOLE || isBuildModeOnly(name)) {
         auto editor = DependencyManager::get<Editor>();
         QDockWidget* made = name == CHAT ? ChatWindow::dock()
             : name == MY_FILES ? editor->myFilesPanel()
+            : name == CONSOLE ? DependencyManager::get<StandAloneJSConsole>()->dock()
             : name == HIERARCHY ? editor->hierarchyPanel() : editor->inspectorPanel();
         watch(name, made);
         return made;
@@ -210,6 +217,12 @@ void Panels::resetDocks() {
             placeFloating(made, window, QSize(panel.width, FLOATING_HEIGHT));
         }
     }
+    // the console back in its first place but left as it is: closing it would stop what was typed into it, and hiding
+    // it would leave that running where no one sees it
+    if (QDockWidget* console = DependencyManager::get<StandAloneJSConsole>()->dock()) {
+        console->setFloating(true);
+        placeFloating(console, window, QSize(CONSOLE_WIDTH, CONSOLE_HEIGHT));
+    }
 }
 
 void Panels::releaseQml() {
@@ -246,7 +259,9 @@ void Panels::change(const QString& name, Change how) {
     // a window coming or going beside the viewer's, or a panel in it, changes the GL view
     gl::ViewChangeGuard guard;
     if (how == Change::Close || (how == Change::Toggle && inFront)) {
-        panel->hide();
+        // closed, not only hidden: a panel tells the two apart (floating and docking hide it for a moment; the
+        // console stops what was typed into it only on a close)
+        panel->close();
         return;
     }
     panel->show();
