@@ -210,14 +210,19 @@ client_start() {
         _i=$((_i + 1)); sleep 0.5
     done
     # the client's pid beside its log, and CLIENT_TIMEOUT=<s>: SIGTERM after that long, SIGKILL 5 s later (the client
-    # has been seen to ignore SIGTERM); open -W alone would wait for ever (scripting's run-client.sh does the same)
+    # has been seen to ignore SIGTERM); open -W alone would wait for ever (scripting's run-client.sh does the same).
+    # The watcher's sleeps write nowhere and are stopped with it: a sleep left behind holding the runner's stdout
+    # made a runner piped into tail wait up to CLIENT_TIMEOUT after the client quit
     _watch=""
     if [ -n "$_cpid" ]; then
         echo "$_cpid" > "$_log.pid"
         if [ -n "${CLIENT_TIMEOUT:-}" ]; then
-            ( sleep "$CLIENT_TIMEOUT"; kill -0 "$_cpid" 2>/dev/null || exit 0
+            ( _nap=""; trap '[ -z "$_nap" ] || kill "$_nap" 2>/dev/null; exit 0' TERM
+              sleep "$CLIENT_TIMEOUT" >/dev/null 2>&1 & _nap=$!; wait "$_nap"; _nap=""
+              kill -0 "$_cpid" 2>/dev/null || exit 0
               echo "client_start: client $_cpid still running after ${CLIENT_TIMEOUT}s: stopping it" >&2
-              kill -TERM "$_cpid"; sleep 5; kill -0 "$_cpid" 2>/dev/null && kill -KILL "$_cpid" ) &
+              kill -TERM "$_cpid"; sleep 5 >/dev/null 2>&1 & _nap=$!; wait "$_nap"; _nap=""
+              kill -0 "$_cpid" 2>/dev/null && kill -KILL "$_cpid" ) &
             _watch=$!
         fi
     fi
