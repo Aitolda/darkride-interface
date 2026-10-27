@@ -90,16 +90,16 @@ namespace {
     void drawScript(QPainter& painter, const QRectF& cell, bool off) {
         QPointF c = cell.center();
         for (qreal side : { -1.0, 1.0 }) {
-            // a brace: from its top, in to its point at the middle, and back out to its bottom
+            // a brace, { on the left and } on the right: its ends curl in toward the middle, its point sticks out
             qreal x = c.x() + side * 3.0;
             QPainterPath brace;
-            brace.moveTo(x + side * 1.5, c.y() - 6.0);
+            brace.moveTo(x - side * 1.5, c.y() - 6.0);
             brace.quadTo(x, c.y() - 6.0, x, c.y() - 3.5);
             brace.lineTo(x, c.y() - 1.5);
-            brace.quadTo(x, c.y(), x - side * 1.8, c.y());
+            brace.quadTo(x, c.y(), x + side * 1.8, c.y());
             brace.quadTo(x, c.y(), x, c.y() + 1.5);
             brace.lineTo(x, c.y() + 3.5);
-            brace.quadTo(x, c.y() + 6.0, x + side * 1.5, c.y() + 6.0);
+            brace.quadTo(x, c.y() + 6.0, x - side * 1.5, c.y() + 6.0);
             painter.drawPath(brace);
         }
         if (off) {
