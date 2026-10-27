@@ -157,6 +157,9 @@ public:
 
     void setIsPlayingBackRecording(bool isPlayingBackRecording) { _isPlayingBackRecording = isPlayingBackRecording; }
 
+    // before startThread(): no input device is ever opened, the dummy input stands in (test clients: no permission prompt)
+    void setNoAudioInput(bool noAudioInput) { _noAudioInput = noAudioInput; }
+
     Q_INVOKABLE void setAvatarBoundingBoxParameters(glm::vec3 corner, glm::vec3 scale);
 
     bool outputLocalInjector(const AudioInjectorPointer& injector) override;
@@ -395,6 +398,7 @@ private:
     int _totalInputAudioSamples;
 
     bool _muted{ false };
+    bool _noAudioInput { false };
     bool _shouldEchoLocally{ false };
     bool _shouldEchoToServer{ false };
     bool _isNoiseGateEnabled{ true };

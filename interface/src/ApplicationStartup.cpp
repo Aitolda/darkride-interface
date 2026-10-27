@@ -599,6 +599,7 @@ void Application::startServices() {
                 recorder->recordFrame(AUDIO_FRAME_TYPE, audio);
             }
         });
+        audioIO->setNoAudioInput(ClientOptions::get().noAudioInput);
         audioIO->startThread();
     }
 

@@ -1802,7 +1802,7 @@ void AudioClient::setMuted(bool muted, bool emitSignal) {
         // a Bluetooth microphone is open only while unmuted (switchInputToAudioDevice): open or release it, on the audio
         // thread
         QMetaObject::invokeMethod(this, [this] {
-            if (releaseInputWhileMuted(_inputDeviceInfo) && (_audioInput == nullptr) != _muted) {
+            if (!_noAudioInput && releaseInputWhileMuted(_inputDeviceInfo) && (_audioInput == nullptr) != _muted) {
                 switchInputToAudioDevice(_inputDeviceInfo);
             }
         }, Qt::QueuedConnection);
@@ -1961,8 +1961,10 @@ bool AudioClient::switchInputToAudioDevice(const HifiAudioDeviceInfo inputDevice
     }
 
     // Muted, a chosen Bluetooth microphone isn't opened (the dummy input stands in), so nothing holds it: the headset
-    // keeps its stereo music mode, and macOS shows no microphone in use. setMuted opens it.
-    const bool releaseMicrophone = _muted && releaseInputWhileMuted(inputDeviceInfo);
+    // keeps its stereo music mode, and macOS shows no microphone in use. setMuted opens it. With --noAudioInput, no
+    // microphone is ever opened.
+    const bool releaseMicrophone = !inputDeviceInfo.getDevice().isNull() &&
+        (_noAudioInput || (_muted && releaseInputWhileMuted(inputDeviceInfo)));
 
     if (!inputDeviceInfo.getDevice().isNull() && !releaseMicrophone) {
         qCDebug(audioclient) << "The audio input device" << inputDeviceInfo.deviceName() << ":" << inputDeviceInfo.getDevice().deviceName() << "is available.";
@@ -2032,7 +2034,8 @@ bool AudioClient::switchInputToAudioDevice(const HifiAudioDeviceInfo inputDevice
     if (!_audioInput) {
         if (releaseMicrophone) {
             // still the chosen device, for the audio settings and for unmuting
-            qCDebug(audioclient) << "Muted: the audio input device" << inputDeviceInfo.deviceName() << "is not opened, using dummy input.";
+            qCDebug(audioclient) << (_noAudioInput ? "--noAudioInput:" : "Muted:") << "the audio input device"
+                << inputDeviceInfo.deviceName() << "is not opened, using dummy input.";
             _inputDeviceInfo = inputDeviceInfo;
             supportedFormat = true;
         } else {
