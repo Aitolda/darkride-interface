@@ -315,6 +315,8 @@ void EntityScriptServer::run() {
     auto tree = treePtr.get();
     connect(tree, &EntityTree::deletingEntity, this, &EntityScriptServer::deletingEntity, Qt::QueuedConnection);
     connect(tree, &EntityTree::addingEntity, this, &EntityScriptServer::addingEntity, Qt::QueuedConnection);
+    // queued, never direct: a server script's own edit (turning its entity's scripts off, a new serverScripts URL)
+    // signals this under the tree's write lock, from inside the script's call; the unload must come after both
     connect(tree, &EntityTree::entityServerScriptChanging, this, &EntityScriptServer::entityServerScriptChanging, Qt::QueuedConnection);
 }
 
