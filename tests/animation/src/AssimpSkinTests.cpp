@@ -34,7 +34,8 @@ namespace {
 // - the glove's vertices come first (0 to 4): all weighted Hand 1, vertex 4 a copy of vertex 2, to be joined
 // - the body's follow (5 to 7): vertex 5 weighted Hips 1 and Spine 1, summing to 2; 6 Hips 1; 7 Spine 1
 // So in the body's mesh the Hand bone weights only vertices the body's faces don't use.
-QByteArray makeSharedBufferGlb() {
+// padJson false leaves the JSON chunk short of a multiple of 4, as some exporters do (16 of 45 VRMs in one collection)
+QByteArray makeSharedBufferGlb(bool padJson = true) {
     struct Vertex {
         float position[3];
         uint8_t joints[4];
@@ -121,7 +122,7 @@ QByteArray makeSharedBufferGlb() {
         { "accessors", accessors },
     };
     QByteArray json = QJsonDocument(gltf).toJson(QJsonDocument::Compact);
-    while (json.size() % 4 != 0) {
+    while ((json.size() % 4 != 0) == padJson) {
         json.append(' ');
     }
 
@@ -142,9 +143,9 @@ QByteArray makeSharedBufferGlb() {
     return glb;
 }
 
-HFMModel::Pointer readSharedBufferGlb() {
+HFMModel::Pointer readSharedBufferGlb(bool padJson = true) {
     AssimpSerializer serializer;
-    return serializer.read(makeSharedBufferGlb(), hifi::VariantHash(), hifi::URL("file:///skin-test.glb"));
+    return serializer.read(makeSharedBufferGlb(padJson), hifi::VariantHash(), hifi::URL("file:///skin-test.glb"));
 }
 
 const hfm::SkinDeformer* skinOf(const HFMModel& model, uint32_t meshIndex) {
@@ -266,4 +267,19 @@ void AssimpSkinTests::testSkinPerMesh() {
         }
     }
     QCOMPARE(skins.size(), model->meshes.size());
+}
+
+// A JSON chunk left unpadded is read all the same (before, Assimp missed the BIN chunk and the model didn't load), and
+// as the padded file is
+void AssimpSkinTests::testUnpaddedJsonChunk() {
+    QVERIFY(makeSharedBufferGlb(false).size() % 4 != 0);
+    HFMModel::Pointer padded = readSharedBufferGlb();
+    HFMModel::Pointer unpadded = readSharedBufferGlb(false);
+    QVERIFY(padded);
+    QVERIFY(unpadded);
+    QCOMPARE(unpadded->meshes.size(), padded->meshes.size());
+    QCOMPARE(unpadded->joints.size(), padded->joints.size());
+    for (size_t i = 0; i < padded->meshes.size(); i++) {
+        QCOMPARE(unpadded->meshes[i].vertices.size(), padded->meshes[i].vertices.size());
+    }
 }

@@ -19,6 +19,7 @@ private slots:
     void testSharedVertexBuffer();
     void testWeightsSumToOne();
     void testSkinPerMesh();
+    void testUnpaddedJsonChunk();
 };
 
 #endif // hifi_AssimpSkinTests_h
