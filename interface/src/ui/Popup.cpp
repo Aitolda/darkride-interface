@@ -426,6 +426,39 @@ void Banner::fade(qreal to, int milliseconds, bool thenClose) {
     animation->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
+Notice::Notice(const QPixmap& picture, const QString& title, const QString& text, QWidget* anchor) :
+    QWidget(nullptr, Qt::SplashScreen | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint) {
+    setAttribute(Qt::WA_TranslucentBackground);
+    setAttribute(Qt::WA_ShowWithoutActivating);
+    _look = currentLook();
+    setStyleSheet(styleSheetFor(*_look));
+    const QMargins margins = inside(*_look, 16, 20, 16, 20);
+    setFixedWidth(ALERT_WIDTH + margins.left() + margins.right() - 32);
+    auto layout = new QVBoxLayout(this);
+    layout->setContentsMargins(margins);
+    layout->setSpacing(0);
+    auto pictureLabel = new QLabel();
+    pictureLabel->setPixmap(sized(picture, 64, anchor ? anchor->devicePixelRatioF() : devicePixelRatioF()));
+    pictureLabel->setAlignment(Qt::AlignCenter);
+    layout->addWidget(pictureLabel);
+    layout->addSpacing(12);
+    layout->addWidget(label("title", title));
+    if (!text.isEmpty()) {
+        layout->addSpacing(6);
+        layout->addWidget(label("text", text));
+    }
+    fitHeight(this);
+    // where an alert would be
+    if (anchor) {
+        const QRect area = anchor->window()->geometry();
+        move(area.center().x() - width() / 2, area.top() + (area.height() - height()) / 3);
+    }
+}
+
+void Notice::paintEvent(QPaintEvent*) {
+    paintPanel(this, 12.0, *_look);
+}
+
 QPixmap appIcon() {
     return QPixmap(PathUtils::resourcesPath() + "images/darkride-logo.png");
 }
