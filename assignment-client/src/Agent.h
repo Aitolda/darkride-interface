@@ -67,7 +67,8 @@ public:
 public slots:
     void run() override;
 
-    void playAvatarSound(SharedSoundPointer avatarSound);
+    // volume 0 to 1, the sound's samples scaled by it
+    void playAvatarSound(SharedSoundPointer avatarSound, float volume = 1.0f);
     // the sound playAvatarSound plays is cut short (avatarSoundFinished(false))
     void stopAvatarSound();
 
@@ -143,6 +144,7 @@ private:
     SharedSoundPointer _avatarSound;
     bool _shouldMuteRecordingAudio { false };
     int _numAvatarSoundSentBytes = 0;
+    float _avatarSoundVolume { 1.0f };
     bool _isAvatar = false;
     QTimer* _avatarQueryTimer = nullptr;
     QTimer* _presenceTimer { nullptr };

@@ -141,10 +141,10 @@ Agent::Agent(ReceivedMessage& message) :
     _avatarAudioTimer.setTimerType(Qt::PreciseTimer);
 }
 
-void Agent::playAvatarSound(SharedSoundPointer sound) {
+void Agent::playAvatarSound(SharedSoundPointer sound, float volume) {
     // this must happen on Agent's main thread
     if (QThread::currentThread() != thread()) {
-        QMetaObject::invokeMethod(this, "playAvatarSound", Q_ARG(SharedSoundPointer, sound));
+        QMetaObject::invokeMethod(this, "playAvatarSound", Q_ARG(SharedSoundPointer, sound), Q_ARG(float, volume));
         return;
     } else {
         // a sound still playing is cut short, and the new one starts at its beginning: kept at the old one's offset, a
@@ -152,6 +152,7 @@ void Agent::playAvatarSound(SharedSoundPointer sound) {
         if (_avatarSound) {
             finishAvatarSound(false);
         }
+        _avatarSoundVolume = glm::clamp(volume, 0.0f, 1.0f);
         setAvatarSound(sound);
     }
 }
@@ -906,6 +907,8 @@ void Agent::processAgentAvatarAudio() {
         // held until the packet is written: nextSoundOutput points into it, and a line that ends this frame lets its
         // sound go
         AudioDataPointer audioData;
+        // this frame of the sound at its volume, when that's below full: nextSoundOutput points here instead
+        int16_t scaledSamples[AudioConstants::NETWORK_FRAME_SAMPLES_PER_CHANNEL];
 
         if (_avatarSound && _avatarSound->isFailed()) {
             // a sound that could not be loaded never plays: it is over, not completed
@@ -924,6 +927,12 @@ void Agent::processAgentAvatarAudio() {
                 ? AudioConstants::NETWORK_FRAME_BYTES_PER_CHANNEL
                 : audioData->getNumBytes() - _numAvatarSoundSentBytes;
             numAvailableSamples = (int16_t)numAvailableBytes / sizeof(int16_t);
+            if (_avatarSoundVolume < 1.0f) {
+                for (int i = 0; i < numAvailableSamples; ++i) {
+                    scaledSamples[i] = int16_t(float(nextSoundOutput[i]) * _avatarSoundVolume);
+                }
+                nextSoundOutput = scaledSamples;
+            }
 
 
             // check if the all of the _numAvatarAudioBufferSamples to be sent are silence
