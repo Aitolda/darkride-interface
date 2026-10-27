@@ -14,6 +14,8 @@
 
 #include "InterfaceLogging.h"
 
+#include <SharedUtil.h>
+
 #include <QtGui/QScreen>
 #include <QtGui/QWindow>
 
@@ -220,6 +222,9 @@ void RefreshRateManager::setRefreshRateRegime(RefreshRateManager::RefreshRateReg
             _inactiveTimer->start();
         }
         updateRefreshRateController();
+        // one line a change (a wake or a rest every few seconds at most), with the time, to line up with an input's
+        qCDebug(interfaceapp).noquote() << "Refresh regime" << QString::fromStdString(refreshRateRegimeToString(refreshRateRegime))
+            << "target" << _activeRefreshRate << "Hz at usec" << usecTimestampNow();
     }
 }
 
