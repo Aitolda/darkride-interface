@@ -46,6 +46,8 @@
 #                                    SafariPlatformSupport.Helper when the app becomes active, and the helper outlives
 #                                    the client; 422 of them used up launchservicesd and brought a Mac down
 #                                    (2026-10-25). The background launch never activates it; this covers a click.
+#                                    It passes --noAudioInput too (no microphone, so no macOS permission prompt over
+#                                    the test); CLIENT_MIC=1 keeps the microphone for a test that needs it.
 #                                    When the client has quit, the macOS helper services it left running are stopped
 #                                    (stop_client_helpers), whichever way it was launched.
 #   stop_client_helpers <pid> <since>
@@ -163,6 +165,10 @@ client_start() {
         _app=$(cd "$_app" 2>/dev/null && pwd) || { echo "client_start: no app at $BIN" >&2; return 1; }
     fi
     case "$_log" in /*) ;; *) _log="$(pwd)/$_log" ;; esac
+    # --noAudioInput: the client opens no microphone, so a rebuilt (ad-hoc signed) build raises no macOS microphone
+    # prompt in front of the test; CLIENT_MIC=1 for a test that needs the microphone. Older builds list the option as
+    # unknown and go on
+    [ -n "${CLIENT_MIC:-}" ] || set -- --noAudioInput "$@"
     _since=$(date '+%Y-%m-%d %H:%M:%S')
     # a release build's own home, away from the user's ~/Library (see the header); the user's folders are checked after
     _wallhome=""
