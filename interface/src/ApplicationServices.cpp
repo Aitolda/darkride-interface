@@ -91,6 +91,7 @@
 #include "ui/Skins.h"
 #include "ui/MetaverseRequests.h"
 #include "ui/PanelTheme.h"
+#include "ui/Panels.h"
 #include "scripting/HMDScriptingInterface.h"
 #include "scripting/KeyboardScriptingInterface.h"
 #include "scripting/SelectionScriptingInterface.h"
@@ -272,6 +273,7 @@ void registerApplicationServices(int listenPort, const QString& defaultScriptsOv
     DependencyManager::set<AvatarThumbnails>();    // the QML panels' avatar pictures
     DependencyManager::set<PanelTheme>();          // the QML panels' colour scheme
     DependencyManager::set<Skins>();               // skins (ui/Skins.h), put on once the main window exists
+    DependencyManager::set<Panels>();              // the window's panels by name (ui/Panels.h)
     PanelTheme::registerWithQml();
 
 

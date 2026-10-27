@@ -23,7 +23,6 @@
 #include "ScriptEngine.h"
 
 const QString CONSOLE_TITLE = "Scripting Console";
-const float CONSOLE_WINDOW_OPACITY = 0.95f;
 const int CONSOLE_WIDTH = 800;
 const int CONSOLE_HEIGHT = 200;
 
@@ -35,6 +34,12 @@ public:
 
     void setScriptEngine(const ScriptEnginePointer& scriptEngine = ScriptEnginePointer());
     void clear();
+    // Closing the console panel stops what was typed into it, as closing a terminal window ends what runs there: its
+    // timers and connections. Scripts it started with Script.load run on in their own engines. Called by the panel on
+    // a close that went through (StandAloneJSConsole's dock), not on a hide: floating or docking the panel hides it
+    // for a moment, and tabbed behind another panel it's only moved out of sight. A console with an engine of its own
+    // (TestingDialog's) is never stopped.
+    void stopTyped();
 
 public slots:
     void executeCommand(const QString& command);
@@ -44,7 +49,6 @@ protected:
     virtual bool eventFilter(QObject* sender, QEvent* event) override;
     virtual void mouseReleaseEvent(QMouseEvent* event) override;
     virtual void showEvent(QShowEvent* event) override;
-    virtual void hideEvent(QHideEvent* event) override;
 
 protected slots:
     void scrollToBottom();

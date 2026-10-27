@@ -588,17 +588,10 @@ void Editor::createPanels() {
     }
     _panelsCreated = true;
 
-    // one dark stylesheet for the panels; scoped by object name so the rest of the window is untouched. Under a skin
-    // (ui/Skins.h) its colours become the skin's, and they follow the skin as it changes
-    QFile styleSheet(PathUtils::resourcesPath() + "styles/editor.qss");
-    if (styleSheet.open(QIODevice::ReadOnly)) {
-        _styleSource = QString::fromUtf8(styleSheet.readAll());
-    }
-
     _treeModel = new EntityTreeModel(this);
     // the style (and the Hierarchy's red and grey rows) from the skin, now and whenever it changes
+    loadStyle();
     applyStyle();
-    connect(DependencyManager::get<PanelTheme>().data(), &PanelTheme::changed, this, &Editor::applyStyle);
     connect(_treeModel, &EntityTreeModel::renameRequested, this, &Editor::rename);
     connect(_treeModel, &EntityTreeModel::reparentRequested, this, &Editor::reparent);
 
@@ -634,15 +627,8 @@ void Editor::createPanels() {
     connect(_inspector, &InspectorPanel::editCancelled, this, &Editor::onInspectorEditCancelled);
     connect(_inspector, &InspectorPanel::uploadRequested, this, &Editor::onInspectorUpload);
 
-    // My Files along the bottom: its notes (a link copied, an upload's progress) go to the status bar
-    _assets = new AssetsPanel(window);
-    connect(_assets, &AssetsPanel::status, this, [this](const QString& text, int clearAfterMs) {
-        setStatus(text, clearAfterMs);
-    });
-    // the tools, the handle space, Frame and V work from the panel too
-    _assets->setKeyFallback([this](QKeyEvent* event) {
-        return event->type() == QEvent::KeyPress ? handleKeyPress(event) : handleKeyRelease(event);
-    });
+    // My Files along the bottom, made already if normal play opened it
+    myFilesPanel();
 
     _toolBar = new EditorToolBar(window);
     _toolBar->setGridChecked(_gridVisible);
@@ -699,11 +685,8 @@ void Editor::createPanels() {
     _statusLabel->setTextFormat(Qt::PlainText);
     _statusBar->addWidget(_statusLabel, 1);
 
-    // the Assets panel runs under the Hierarchy and the viewport, as Unity's Project window does; the Inspector
-    // keeps the right side whole
-    window->setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
-    // each panel where the window's saved layout has it (ui/WindowLayout.h: one layout with chat's panel, restored
-    // after sign-in), else where it starts
+    // each panel where the window's saved layout has it (ui/WindowLayout.h, restored after sign-in), else where it
+    // starts
     auto layout = WindowLayout::instance();
     QList<QDockWidget*> across;
     QList<int> widths;
@@ -719,13 +702,8 @@ void Editor::createPanels() {
         across << _inspector;
         widths << 430;
     }
-    const bool assetsPlaced = layout->restoreDock(_assets);
-    if (!assetsPlaced) {
-        window->addDockWidget(Qt::BottomDockWidgetArea, _assets);
-    }
     layout->watch(_hierarchy);
     layout->watch(_inspector);
-    layout->watch(_assets);
     placeToolBars();
     _terrainBar->setVisible(false);
     window->setStatusBar(_statusBar);
@@ -733,23 +711,74 @@ void Editor::createPanels() {
     if (!across.isEmpty()) {
         window->resizeDocks(across, widths, Qt::Horizontal);
     }
-    if (!assetsPlaced) {
-        window->resizeDocks({ _assets }, { 240 }, Qt::Vertical);
-    }
-    // hidden until showPanels: a saved layout from a quit in Build mode shows them as it places them, and showPanels
-    // tells a first showing from that
+    // hidden until showPanels: normal play's layout from before Build mode had its own could show them (My Files is
+    // normal play's too, as that layout has it)
     _hierarchy->hide();
     _inspector->hide();
-    _assets->hide();
     qApp->installEventFilter(this);
 
-    // a saved layout from before the panels were fixed can still float them, and one saved with both toolbars on
-    // one row would keep them there
-    _hierarchy->setFloating(false);
-    _inspector->setFloating(false);
-    _assets->setFloating(false);
+    // a layout saved with both toolbars on one row would keep them there
     placeToolBars();
     updateTerrainBar();   // the saved layout knows nothing of the tool
+}
+
+void Editor::loadStyle() {
+    if (!_styleSource.isEmpty()) {
+        return;
+    }
+    // one dark stylesheet for the panels; scoped by object name so the rest of the window is untouched. Under a skin
+    // (ui/Skins.h) its colours become the skin's, and they follow the skin as it changes
+    QFile styleSheet(PathUtils::resourcesPath() + "styles/editor.qss");
+    if (styleSheet.open(QIODevice::ReadOnly)) {
+        _styleSource = QString::fromUtf8(styleSheet.readAll());
+    }
+    applyStyle();
+    connect(DependencyManager::get<PanelTheme>().data(), &PanelTheme::changed, this, &Editor::applyStyle,
+            Qt::UniqueConnection);
+}
+
+QDockWidget* Editor::myFilesPanel() {
+    if (_assets) {
+        return _assets;
+    }
+    auto window = qApp->getWindow();
+    if (!window) {
+        return nullptr;
+    }
+    loadStyle();
+    gl::ViewChangeGuard guard;   // a panel coming back docked changes the GL view
+    _assets = new AssetsPanel(window);
+    // its notes (a link copied, an upload's progress) go to Build mode's status bar, or to its own foot in normal play
+    connect(_assets, &AssetsPanel::status, this, [this](const QString& text, int clearAfterMs) {
+        setStatus(text, clearAfterMs);
+    });
+    // the tools, the handle space, Frame and V work from the panel too, in Build mode
+    _assets->setKeyFallback([this](QKeyEvent* event) {
+        return event->type() == QEvent::KeyPress ? handleKeyPress(event) : handleKeyRelease(event);
+    });
+    // its listing is fetched as it shows (not tabbed behind another panel)
+    connect(_assets, &QDockWidget::visibilityChanged, _assets, &AssetsPanel::setActive);
+    // it runs under the Hierarchy and the viewport, as Unity's Project window does; the Inspector keeps the right side
+    // whole
+    window->setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
+    // where the window's saved layout has it, open or closed as it was; asked before it's added anywhere, as adding it
+    // drops the layout's place for it
+    _assets->hide();
+    if (!WindowLayout::instance()->restoreDock(_assets)) {
+        window->addDockWidget(Qt::BottomDockWidgetArea, _assets);
+        window->resizeDocks({ _assets }, { 240 }, Qt::Vertical);
+        _assets->hide();
+    }
+    WindowLayout::instance()->watch(_assets);
+    return _assets;
+}
+
+QDockWidget* Editor::hierarchyPanel() const {
+    return _hierarchy;
+}
+
+QDockWidget* Editor::inspectorPanel() const {
+    return _inspector;
 }
 
 void Editor::placeToolBars() {
@@ -796,50 +825,30 @@ void Editor::showPanels(bool show) {
     }
     gl::ViewChangeGuard guard;   // panels coming and going change the window round the GL view
     auto window = qApp->getWindow();
-    const bool wereShown = !_inspector->isHidden();
-    if (show && !wereShown) {
-        _otherWidths.clear();
-        for (QDockWidget* other : otherDockedPanels()) {
-            _otherWidths.append({ other, other->width() });
-        }
-    } else if (!show && wereShown) {
-        _panelWidths.set({ _hierarchy->width(), _inspector->width() });
-    }
-    _hierarchy->setVisible(show);
-    _inspector->setVisible(show);
-    _assets->setVisible(show);
-    _assets->setActive(show);   // fetches the listing when shown
-    _toolBar->setVisible(show);
-    _statusBar->setVisible(show);
+    auto layout = WindowLayout::instance();
     if (show) {
-        for (const auto& share : _sharesToSize) {
-            if (share.first && share.second && !share.second->isHidden() && !share.second->isFloating()) {
-                window->resizeDocks({ share.first, share.second }, { 3000, 2000 }, Qt::Vertical);
+        // Build mode's own arrangement, as it was left (normal play keeps its own: ui/WindowLayout.h); the first
+        // time, its panels where they start and the others as they are
+        if (!layout->enterBuildMode()) {
+            _hierarchy->show();
+            _inspector->show();
+            _assets->show();
+            for (const auto& share : _sharesToSize) {
+                if (share.first && share.second && !share.second->isHidden() && !share.second->isFloating()) {
+                    window->resizeDocks({ share.first, share.second }, { 3000, 2000 }, Qt::Vertical);
+                }
             }
         }
         _sharesToSize.clear();
+        placeToolBars();   // the rows are placed here rather than left to a saved layout
+    } else {
+        layout->leaveBuildMode();
+        // the Hierarchy and the Inspector are Build mode's only, whatever normal play's arrangement says
+        _hierarchy->hide();
+        _inspector->hide();
     }
-    // Build mode's panels at their own widths, and the others back at theirs: a side has one width for all its panels,
-    // and chat's docked beside the Inspector came out of Build mode as wide as the Inspector (10-25)
-    if (show && !wereShown && !_otherWidths.isEmpty()) {
-        const QVariantList widths = _panelWidths.get();
-        if (widths.size() == 2) {
-            window->resizeDocks({ _hierarchy, _inspector }, { widths[0].toInt(), widths[1].toInt() }, Qt::Horizontal);
-        }
-    } else if (!show && wereShown) {
-        QList<QDockWidget*> others;
-        QList<int> otherWidths;
-        for (const auto& entry : _otherWidths) {
-            if (entry.first && !entry.first->isHidden() && !entry.first->isFloating()) {
-                others << entry.first;
-                otherWidths << entry.second;
-            }
-        }
-        if (!others.isEmpty()) {
-            window->resizeDocks(others, otherWidths, Qt::Horizontal);
-        }
-        _otherWidths.clear();
-    }
+    _toolBar->setVisible(show);
+    _statusBar->setVisible(show);
     updateTerrainBar();
 }
 
@@ -944,26 +953,34 @@ void Editor::applyStyle() {
 
 void Editor::resetLayout() {
     // every panel back where it started (as Caity was told, 10-25), chat's too: floating at its first size and place,
-    // open or closed as it was
+    // open or closed as it was. My Files docks along the bottom, closed in normal play (ui/WindowLayout::resetToDefault
+    // closes the bar's panels)
     ChatWindow::resetDock();
     WindowLayout::instance()->saveSoon();
     auto window = qApp->getWindow();
-    if (!_panelsCreated || !window) {
+    if (!window) {
         return;
     }
     {
         gl::ViewChangeGuard guard;   // the panels moving resize the GL view
-        _hierarchy->setFloating(false);
-        _inspector->setFloating(false);
-        _assets->setFloating(false);
-        window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
-        window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
-        window->addDockWidget(Qt::BottomDockWidgetArea, _assets);
-        window->resizeDocks({ _hierarchy, _inspector }, { 260, 430 }, Qt::Horizontal);
-        window->resizeDocks({ _assets }, { 240 }, Qt::Vertical);
+        if (_assets) {
+            _assets->setFloating(false);
+            window->addDockWidget(Qt::BottomDockWidgetArea, _assets);
+            window->resizeDocks({ _assets }, { 240 }, Qt::Vertical);
+            _assets->setVisible(_active);
+        }
+        if (_panelsCreated) {
+            _hierarchy->setFloating(false);
+            _inspector->setFloating(false);
+            window->addDockWidget(Qt::LeftDockWidgetArea, _hierarchy);
+            window->addDockWidget(Qt::RightDockWidgetArea, _inspector);
+            window->resizeDocks({ _hierarchy, _inspector }, { 260, 430 }, Qt::Horizontal);
+        }
     }
-    placeToolBars();
-    showPanels(_active);
+    if (_panelsCreated) {
+        placeToolBars();
+        showPanels(_active);
+    }
 }
 
 // --- every frame --------------------------------------------------------------------------------
@@ -3889,6 +3906,10 @@ void Editor::setStatus(const QString& text, int clearAfterMs) {
     if (_statusLabel) {
         _statusLabel->setText(text);
         _statusLabel->setToolTip(text);   // the whole message, should the bar have had to cut it
+    }
+    // in normal play there's no status bar: My Files shows the note at its foot (an upload's progress, a link copied)
+    if (_assets) {
+        _assets->setNote(_active ? QString() : text);
     }
     if (clearAfterMs > 0 && !text.isEmpty()) {
         _statusTimer.start(clearAfterMs);

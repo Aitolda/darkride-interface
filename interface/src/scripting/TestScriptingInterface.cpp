@@ -24,6 +24,7 @@
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QStyle>
 #include <QtWidgets/QToolBar>
+#include <QtWidgets/QToolButton>
 
 #include <shared/FileUtils.h>
 #include <shared/QtHelpers.h>
@@ -41,10 +42,14 @@
 #include <plugins/DisplayPlugin.h>
 #include <display-plugins/DisplayLink.h>
 #include <display-plugins/OpenGLDisplayPlugin.h>
+#include <gl/GLHelpers.h>
 
 #include "avatar/AvatarImporter.h"
 #include "editor/Editor.h"
 #include "ui/DockTitleBar.h"
+#include "ui/QmlDock.h"
+#include "ui/StandAloneJSConsole.h"
+#include "ui/WindowLayout.h"
 #include "ui/Popup.h"
 #include "ui/Skins.h"
 #include "graphics/GraphicsEngine.h"
@@ -580,19 +585,33 @@ QVariantMap TestScriptingInterface::windowLayout() {
         }
     };
     const QList<QPair<QString, QString>> PANELS { { "chat", "ChatDock" }, { "hierarchy", "EditorHierarchy" },
-                                                  { "inspector", "EditorInspector" }, { "assets", "EditorAssets" } };
+                                                  { "inspector", "EditorInspector" }, { "assets", "EditorAssets" },
+                                                  { "settings", "SettingsDock" }, { "avatar", "AvatarDock" },
+                                                  { "people", "PeopleDock" }, { "explore", "ExploreDock" },
+                                                  { "console", "ConsoleDock" } };
     for (const auto& panel : PANELS) {
         auto dock = window->findChild<QDockWidget*>(panel.second);
         if (!dock) {
             continue;
         }
         const QRect place(dock->mapToGlobal(QPoint(0, 0)), dock->size());
-        layout[panel.first] = QVariantMap {
+        QVariantMap entry {
             { "open", !dock->isHidden() },
+            // in sight: tabbed behind another, a docked panel is visible to Qt but moved out of sight
+            { "visible", dock->isVisible() && !dock->visibleRegion().isEmpty() },
             { "floating", dock->isFloating() },
             { "area", dock->isFloating() ? QString("none") : areaName(window->dockWidgetArea(dock)) },
             { "x", place.x() }, { "y", place.y() }, { "width", place.width() }, { "height", place.height() },
         };
+        // a QML panel's page: made the first time it shows, hidden with its panel (ui/QmlDock.h)
+        if (auto qmlDock = qobject_cast<QmlDock*>(dock)) {
+            entry["made"] = qmlDock->panel() != nullptr;
+            entry["pageVisible"] = qmlDock->panel() && qmlDock->panel()->isVisible();
+        } else if (panel.second == "ConsoleDock") {
+            // the console itself, and with it its own script engine: made as the panel first shows
+            entry["made"] = dock->widget() != nullptr;
+        }
+        layout[panel.first] = entry;
     }
     if (auto bar = window->findChild<QToolBar*>("systemToolbar")) {
         layout["bar"] = bar->isVisible() ? areaName(window->toolBarArea(bar)) : QString("hidden");
@@ -617,10 +636,75 @@ bool TestScriptingInterface::dockAction(const QString& objectName, const QString
     }
     if (action == "close") {
         titleBar->closePanel();
+    } else if (action.startsWith("tab:")) {
+        // docked as a tab behind another docked panel, as a drag onto its title does
+        auto other = window->findChild<QDockWidget*>(action.mid(4));
+        if (!other || other->isFloating()) {
+            return false;
+        }
+        gl::ViewChangeGuard guard;
+        window->tabifyDockWidget(other, dock);
+        other->raise();
     } else if ((action == "dock" && dock->isFloating()) || (action == "float" && !dock->isFloating())) {
         titleBar->toggleFloating();
     }
     return true;
+}
+
+bool TestScriptingInterface::consoleRun(const QString& command) {
+    if (QThread::currentThread() != thread()) {
+        bool result = false;
+        BLOCKING_INVOKE_METHOD(this, "consoleRun", Q_RETURN_ARG(bool, result), Q_ARG(QString, command));
+        return result;
+    }
+    auto console = DependencyManager::get<StandAloneJSConsole>()->console();
+    if (console) {
+        console->executeCommand(command);
+    }
+    return console != nullptr;
+}
+
+QStringList TestScriptingInterface::windowLayoutAction(const QString& action, const QString& name) {
+    if (QThread::currentThread() != thread()) {
+        QStringList result;
+        BLOCKING_INVOKE_METHOD(this, "windowLayoutAction", Q_RETURN_ARG(QStringList, result), Q_ARG(QString, action),
+                               Q_ARG(QString, name));
+        return result;
+    }
+    auto layout = WindowLayout::instance();
+    if (action == "save") {
+        layout->saveAs(name);
+    } else if (action == "apply") {
+        layout->apply(name);
+    } else if (action == "forget") {
+        layout->forget(name);
+    } else if (action == "reset") {
+        layout->resetToDefault();
+    }
+    return layout->savedNames();
+}
+
+QVariantMap TestScriptingInterface::barButton(const QString& text, bool click) {
+    if (QThread::currentThread() != thread()) {
+        QVariantMap result;
+        BLOCKING_INVOKE_METHOD(this, "barButton", Q_RETURN_ARG(QVariantMap, result), Q_ARG(QString, text),
+                               Q_ARG(bool, click));
+        return result;
+    }
+    auto window = qApp->getWindow();
+    auto bar = window ? window->findChild<QToolBar*>("systemToolbar") : nullptr;
+    if (!bar) {
+        return QVariantMap();
+    }
+    for (auto button : bar->findChildren<QToolButton*>()) {
+        if (button->text() == text) {
+            if (click) {
+                button->click();
+            }
+            return QVariantMap { { "active", button->property("active").toBool() } };
+        }
+    }
+    return QVariantMap();
 }
 
 bool TestScriptingInterface::saveDockPicture(const QString& objectName, const QString& path) {

@@ -19,8 +19,10 @@
 #include "Application.h"
 #include "DockTitleBar.h"
 #include "InterfaceLogging.h"
+#include "Panels.h"
 #include "SystemToolbar.h"
 #include "chat/ChatWindow.h"
+#include "editor/Editor.h"
 
 namespace {
     // long enough that a separator's drag or a window's resize makes one save, short enough that a quit right after a
@@ -67,6 +69,17 @@ void WindowLayout::restore() {
         if (!window->restoreState(layout)) {
             qCWarning(interfaceapp) << "The window's saved layout could not be read; the panels start where they start";
         }
+    }
+    // the QML panels' docks, which the layout shows where they were if they were open
+    DependencyManager::get<Panels>()->restore();
+    raiseTabs(_frontTabsSetting.get());
+    // a layout from before normal play and Build mode had one each can show My Files, left open in Build mode
+    Setting::Handle<bool> hasModes { "window/layoutHasModes", false };
+    if (!hasModes.get()) {
+        if (auto myFiles = window->findChild<QDockWidget*>("EditorAssets")) {
+            myFiles->hide();
+        }
+        hasModes.set(true);
     }
     // the bar's side is its own setting's, which Settings may have changed since the layout was saved
     SystemToolbar::instance()->restorePlace();
@@ -116,5 +129,131 @@ void WindowLayout::save() {
     if (!_restored || !window || qApp->isAboutToQuit()) {
         return;
     }
-    _layoutSetting.set(window->saveState());
+    (_buildMode ? _buildLayoutSetting : _layoutSetting).set(window->saveState());
+    (_buildMode ? _buildFrontTabsSetting : _frontTabsSetting).set(frontTabs());
+}
+
+QStringList WindowLayout::frontTabs() const {
+    QStringList names;
+    auto window = qApp->getWindow();
+    if (!window) {
+        return names;
+    }
+    for (QDockWidget* dock : window->findChildren<QDockWidget*>()) {
+        // in a tab group and in sight: Qt keeps the others visible too, moved out of sight
+        if (!dock->isHidden() && !dock->isFloating() && !window->tabifiedDockWidgets(dock).isEmpty() &&
+            !dock->visibleRegion().isEmpty()) {
+            names << dock->objectName();
+        }
+    }
+    return names;
+}
+
+void WindowLayout::raiseTabs(const QStringList& names) {
+    auto window = qApp->getWindow();
+    if (!window) {
+        return;
+    }
+    for (const QString& name : names) {
+        if (auto dock = window->findChild<QDockWidget*>(name)) {
+            if (!dock->isHidden()) {
+                dock->raise();   // a tabbed dock's raise puts its tab in front
+            }
+        }
+    }
+}
+
+void WindowLayout::putBack(const QByteArray& layout, const QStringList& tabs) {
+    auto window = qApp->getWindow();
+    if (!window || layout.isEmpty()) {
+        return;
+    }
+    {
+        gl::ViewChangeGuard guard;   // docked panels moving resize the GL view
+        if (!window->restoreState(layout)) {
+            qCWarning(interfaceapp) << "A saved layout could not be read; the panels stay where they are";
+        }
+        raiseTabs(tabs);
+    }
+    SystemToolbar::instance()->restorePlace();   // the bar's side is its own setting's
+}
+
+QStringList WindowLayout::savedNames() const {
+    return (_buildMode ? _buildNamedSetting : _namedSetting).get().keys();
+}
+
+void WindowLayout::saveAs(const QString& name) {
+    auto window = qApp->getWindow();
+    if (!window || name.trimmed().isEmpty()) {
+        return;
+    }
+    auto& setting = _buildMode ? _buildNamedSetting : _namedSetting;
+    QVariantMap named = setting.get();
+    named[name.trimmed()] = QVariantMap {
+        { "state", QString::fromLatin1(window->saveState().toBase64()) },
+        { "front", frontTabs() },
+    };
+    setting.set(named);
+}
+
+void WindowLayout::apply(const QString& name) {
+    const QVariantMap entry = (_buildMode ? _buildNamedSetting : _namedSetting).get().value(name).toMap();
+    if (entry.isEmpty()) {
+        return;
+    }
+    putBack(QByteArray::fromBase64(entry.value("state").toString().toLatin1()), entry.value("front").toStringList());
+    if (_buildMode) {
+        DependencyManager::get<Editor>()->placeToolBars();   // the rows are Build mode's own, not a saved layout's
+    }
+    saveSoon();
+}
+
+void WindowLayout::forget(const QString& name) {
+    auto& setting = _buildMode ? _buildNamedSetting : _namedSetting;
+    QVariantMap named = setting.get();
+    named.remove(name);
+    setting.set(named);
+}
+
+void WindowLayout::resetToDefault() {
+    {
+        gl::ViewChangeGuard guard;
+        DependencyManager::get<Panels>()->resetDocks();
+        // chat's as on a first start, and Build mode's panels (My Files with them) docked where they start
+        DependencyManager::get<Editor>()->resetLayout();
+    }
+    saveSoon();
+}
+
+bool WindowLayout::enterBuildMode() {
+    auto window = qApp->getWindow();
+    if (!window || _buildMode) {
+        return false;
+    }
+    _saveTimer.stop();
+    if (_restored) {
+        _layoutSetting.set(window->saveState());
+        _frontTabsSetting.set(frontTabs());
+    }
+    _buildMode = true;
+    const QByteArray layout = _buildLayoutSetting.get();
+    if (layout.isEmpty()) {
+        return false;
+    }
+    putBack(layout, _buildFrontTabsSetting.get());
+    return true;
+}
+
+void WindowLayout::leaveBuildMode() {
+    auto window = qApp->getWindow();
+    if (!window || !_buildMode) {
+        return;
+    }
+    _saveTimer.stop();
+    if (_restored) {
+        _buildLayoutSetting.set(window->saveState());
+        _buildFrontTabsSetting.set(frontTabs());
+    }
+    _buildMode = false;
+    putBack(_layoutSetting.get(), _frontTabsSetting.get());
 }

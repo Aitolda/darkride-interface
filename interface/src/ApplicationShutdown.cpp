@@ -58,6 +58,7 @@
 #include "ui/StandAloneJSConsole.h"
 #include "ui/Keyboard.h"
 #include "ui/OctreeStatsProvider.h"
+#include "ui/Panels.h"
 #include <PickManager.h>
 #include <PointerManager.h>
 #if defined(Q_OS_ANDROID)
@@ -214,7 +215,8 @@ void Application::cleanupBeforeQuit() {
 
     _window->saveGeometry();
 
-    // stop QML
+    // stop QML: the panels' pages made on its engine (ui/Panels.h) go first
+    DependencyManager::get<Panels>()->releaseQml();
     DependencyManager::destroy<TabletScriptingInterface>();
     DependencyManager::destroy<ToolbarScriptingInterface>();
     DependencyManager::destroy<OffscreenUi>();
