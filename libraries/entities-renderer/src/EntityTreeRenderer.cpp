@@ -349,8 +349,9 @@ void EntityTreeRenderer::reloadEntityScripts() {
     for (const auto& entry : _entitiesInScene) {
         const auto& renderer = entry.second;
         const auto& entity = renderer->getEntity();
-        if (!entity->getScript().isEmpty()) {
-            _entitiesScriptEngine->loadEntityScript(entity->getEntityItemID(), resolveScriptURL(entity->getScript()), true);
+        QString scriptUrl = entity->getScriptToRun();
+        if (!scriptUrl.isEmpty()) {
+            _entitiesScriptEngine->loadEntityScript(entity->getEntityItemID(), resolveScriptURL(scriptUrl), true);
         }
     }
 }
@@ -802,7 +803,7 @@ void EntityTreeRenderer::findBestZoneAndMaybeContainingEntities(QSet<EntityItemI
             }
 
             auto isZone = entity->getType() == EntityTypes::Zone;
-            auto hasScript = !entity->getScript().isEmpty();
+            auto hasScript = !entity->getScriptToRun().isEmpty();
 
             // only consider entities that are zones or have scripts, all other entities can
             // be ignored because they can't have events fired on them.
@@ -1360,7 +1361,8 @@ void EntityTreeRenderer::checkAndCallPreload(const EntityItemID& entityID, bool 
             return;
         }
         bool shouldLoad = entity->shouldPreloadScript() && _entitiesScriptEngine;
-        QString scriptUrl = entity->getScript();
+        // "" while the entity's scripts are off: unloaded, as when its script is cleared
+        QString scriptUrl = entity->getScriptToRun();
         if ((shouldLoad && unloadFirst) || scriptUrl.isEmpty()) {
             if (_entitiesScriptEngine) {
                 if (_currentEntitiesInside.contains(entityID)) {

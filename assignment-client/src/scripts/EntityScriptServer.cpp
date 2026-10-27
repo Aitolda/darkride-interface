@@ -557,12 +557,13 @@ void EntityScriptServer::checkAndCallPreload(const EntityItemID& entityID, bool 
         EntityItemPointer entity = _entityViewer.getTree()->findEntityByEntityItemID(entityID);
         EntityScriptDetails details;
         bool isRunning = _entitiesScriptEngine->getEntityScriptDetails(entityID, details);
-        if (entity && (forceRedownload || !isRunning || details.scriptText != entity->getServerScripts())) {
+        // the server scripts to run: "" while the entity's scripts are off, so turning them off unloads them
+        if (entity && (forceRedownload || !isRunning || details.scriptText != entity->getServerScriptsToRun())) {
             if (isRunning) {
                 _entitiesScriptEngine->unloadEntityScript(entityID, true);
             }
 
-            QString scriptUrl = entity->getServerScripts();
+            QString scriptUrl = entity->getServerScriptsToRun();
             if (!scriptUrl.isEmpty()) {
                 scriptUrl = DependencyManager::get<ResourceManager>()->normalizeURL(scriptUrl);
                 if (QUrl(scriptUrl).scheme() == URL_SCHEME_ATP) {
