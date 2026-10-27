@@ -127,7 +127,14 @@ Page {
         }
 
         function wear(address, modelName) {
+            var before = String(MyAvatar.getFullAvatarURLFromPreferences());
             MyAvatar.useFullAvatarURL(address, modelName);
+            var after = String(MyAvatar.getFullAvatarURLFromPreferences());
+            if (after === before && after !== String(address)) {
+                // refused (someone else's private avatar, Caity 10-27): the look you have stays, its scale and name too
+                refresh();
+                return;
+            }
             MyAvatar.scale = 1;
             Settings.setValue(favoriteNameSetting, "");
             refresh();
@@ -140,7 +147,15 @@ Page {
             refresh();
         }
         function wearFavorite(favorite) {
+            var bookmark = (AvatarBookmarks.getBookmarks() || {})[favorite] || {};
+            var before = String(MyAvatar.getFullAvatarURLFromPreferences());
             AvatarBookmarks.loadBookmark(favorite);
+            var after = String(MyAvatar.getFullAvatarURLFromPreferences());
+            if (after === before && after !== String(bookmark.avatarUrl)) {
+                // refused, as wear() can be: it isn't the favorite worn
+                refresh();
+                return;
+            }
             Settings.setValue(favoriteNameSetting, favorite);
             refresh();
         }
