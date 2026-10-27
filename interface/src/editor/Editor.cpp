@@ -34,6 +34,7 @@
 #include <QtGui/QMouseEvent>
 #include <QtGui/QWheelEvent>
 #include <QtCore/QEvent>
+#include <QtWidgets/QCheckBox>
 #include <QtWidgets/QAbstractItemView>
 #include <QtWidgets/QAbstractSpinBox>
 #include <QtWidgets/QAction>
@@ -2599,6 +2600,42 @@ void Editor::updateListNote() {
             break;
     }
     _hierarchy->setListNote(note);
+}
+
+QVariantMap Editor::setTerrainRandomAngleForTest(bool on) {
+    QVariantMap result;
+    auto random = _terrainBar ? _terrainBar->findChild<QCheckBox*>("EditorTerrainRandomAngle") : nullptr;
+    auto angle = _terrainBar ? _terrainBar->findChild<QWidget*>("EditorTerrainAngle") : nullptr;
+    result["found"] = random && angle;
+    if (random && angle) {
+        random->setChecked(on);
+        result["angleEnabled"] = angle->isEnabled();
+    }
+    return result;
+}
+
+float Editor::terrainStrokeForTest(const QUuid& id) {
+    auto tree = entityTree();
+    glm::vec3 position;
+    bool found = false;
+    if (tree) {
+        tree->withReadLock([&] {
+            if (auto entity = tree->findEntityByEntityItemID(id)) {
+                position = entity->getWorldPosition();
+                found = true;
+            }
+        });
+    }
+    if (!found) {
+        return -1.0f;
+    }
+    const float used = _terrain.angle();
+    QString refusal;
+    if (!_terrain.beginStroke(PickRay(position + glm::vec3(0.0f, 30.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)), false, refusal)) {
+        return -1.0f;
+    }
+    _terrain.endStroke(false);
+    return used;
 }
 
 void Editor::loadLocalStates() {

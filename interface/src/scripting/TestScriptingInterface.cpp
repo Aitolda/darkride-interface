@@ -466,6 +466,33 @@ QVariantMap TestScriptingInterface::getHierarchyCounts() {
     return DependencyManager::get<Editor>()->hierarchyCounts();
 }
 
+QVariantMap TestScriptingInterface::terrainRandomAngle(bool on) {
+    if (QThread::currentThread() != thread()) {
+        QVariantMap result;
+        BLOCKING_INVOKE_METHOD(this, "terrainRandomAngle", Q_RETURN_ARG(QVariantMap, result), Q_ARG(bool, on));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->setTerrainRandomAngleForTest(on);
+}
+
+float TestScriptingInterface::terrainStroke(const QUuid& id) {
+    if (QThread::currentThread() != thread()) {
+        float result = -1.0f;
+        BLOCKING_INVOKE_METHOD(this, "terrainStroke", Q_RETURN_ARG(float, result), Q_ARG(QUuid, id));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->terrainStrokeForTest(id);
+}
+
+float TestScriptingInterface::terrainNextAngle() {
+    if (QThread::currentThread() != thread()) {
+        float result = 0.0f;
+        BLOCKING_INVOKE_METHOD(this, "terrainNextAngle", Q_RETURN_ARG(float, result));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->terrainNextAngleForTest();
+}
+
 bool TestScriptingInterface::hierarchyToggle(const QUuid& id, const QString& which, bool onlyThis) {
     if (QThread::currentThread() != thread()) {
         bool result = false;
