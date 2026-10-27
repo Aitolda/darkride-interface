@@ -198,11 +198,11 @@ public slots:
     QVariantMap hierarchyCounts() const;
     // what a click on the entity's row in the Hierarchy does (Test.clickHierarchyRow)
     void clickHierarchyRow(const QUuid& id);
-    // what a click on a Hierarchy row's eye ("hide"), hand ("pick") or lock ("lock") does, Alt held for onlyThis
-    // (Test.hierarchyToggle); false when the row isn't there or the lock can't be changed
+    // what a click on a Hierarchy row's eye ("hide"), hand ("pick"), lock ("lock") or script mark ("scripts") does,
+    // Alt held for onlyThis (Test.hierarchyToggle); false when the row isn't there or nothing could change
     bool clickHierarchyToggle(const QString& which, const QUuid& id, bool onlyThis);
     // the row's toggles and what they amount to (Test.hierarchyToggles): hidden here (and whether the entity is
-    // drawn), unpickable, locked, whether the lock can be changed, and the Hierarchy's note
+    // drawn), unpickable, locked, scripts off, the Hierarchy's note and the last scripts-off reminder
     QVariantMap hierarchyToggles(const QUuid& id) const;
     // what a click in the viewport at the entity's middle selects, and what a marquee over the whole viewport would
     // (Test.editorPickAt, Test.editorMarqueeIds)
@@ -536,6 +536,10 @@ private:
     void applyHiddenHere(bool hide);
     void setLocallyHidden(const QList<QUuid>& ids, bool hidden);
     bool excludedFromPicks(const QUuid& id) const { return _hiddenHere.contains(id) || _noPick.contains(id); }
+    // as build mode closes: a banner when entities here have their scripts off (shared, unlike the eye and hand);
+    // its text kept for Test.hierarchyToggles
+    void remindOfScriptsOff();
+    QString _scriptsOffReminder;
     void updateListNote();
     // build mode narrows the field of view; the user's own is kept here so it survives a crash
     Setting::Handle<float> _fovBeforeBuild { "editor/fovBeforeBuild", 0.0f };

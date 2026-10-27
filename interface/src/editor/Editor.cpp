@@ -131,6 +131,8 @@ namespace {
     // Hierarchy's) greys out and says why
     const QString NO_LOCK_RIGHT = "You can't lock or unlock things in this world. That takes the world's "
         "Lock / Unlock right, which its owner can give.";
+    const QString SCRIPTS_ENABLED_KEY = QStringLiteral("scriptsEnabled");
+    const int SCRIPTS_OFF_REMINDER_MS = 7000;   // the reminder, as build mode closes, that scripts are still off
     const int HIDDEN_HERE_PASS_MS = 150;   // entities that arrived are hidden again this long after the last
     const QString RANGE_KEY = QStringLiteral("range");
     const QString VOXEL_SIZE_KEY = QStringLiteral("voxelSize");
@@ -349,6 +351,7 @@ void Editor::setActive(bool active) {
         // everything shows again as everyone sees it
         _hiddenHereTimer.stop();
         applyHiddenHere(false);
+        remindOfScriptsOff();
         _boundsShapes.clear();
         _bounds.setShapes(_boundsShapes);
         endLightHandleDrag(false);
@@ -2627,9 +2630,14 @@ void Editor::saveLocalStates() {
 }
 
 void Editor::onHierarchyToggle(int toggle, const QList<QUuid>& ids, bool on) {
-    if (toggle == HierarchyPanel::Lock) {
-        // the entity's own Locked, for everyone: one undo step for the row and what's under it
-        commitInspectorEdit(LOCKED_KEY, on, ids);
+    if (toggle == HierarchyPanel::Lock || toggle == HierarchyPanel::Scripts) {
+        // the entity's own Locked, or whether its scripts run, for everyone: one undo step for the row and what's
+        // under it (on is locked, or scripts off)
+        if (toggle == HierarchyPanel::Lock) {
+            commitInspectorEdit(LOCKED_KEY, on, ids);
+        } else {
+            commitInspectorEdit(SCRIPTS_ENABLED_KEY, !on, ids);
+        }
         refreshInspector(false);
         return;
     }
@@ -2648,6 +2656,22 @@ void Editor::onHierarchyToggle(int toggle, const QList<QUuid>& ids, bool on) {
     if (_hierarchy) {
         _hierarchy->setLocalStates(_hiddenHere, _noPick);
     }
+}
+
+void Editor::remindOfScriptsOff() {
+    // scripts turned off here stay off for everyone after build mode: said once as it closes, so a door left not
+    // opening isn't a surprise later (only to someone who can turn them on again)
+    int off = (_treeModel && !_readOnly) ? _treeModel->scriptsOffCount() : 0;
+    if (off == 0) {
+        _scriptsOffReminder.clear();
+        return;
+    }
+    QString title = off == 1 ? QString("1 entity has its scripts off")
+                             : QString("%1 entities have their scripts off").arg(off);
+    QString text = "They stay off for everyone until they're turned on again in Build mode, in the Hierarchy or the "
+                   "Inspector.";
+    _scriptsOffReminder = title + "\n" + text;
+    new popup::Banner(popup::appIcon(), title, text, qApp->getWindow(), SCRIPTS_OFF_REMINDER_MS);
 }
 
 void Editor::showAllHere() {
@@ -2692,7 +2716,8 @@ bool Editor::clickHierarchyToggle(const QString& which, const QUuid& id, bool on
     if (!_hierarchy) {
         return false;
     }
-    auto toggle = which == "hide" ? HierarchyPanel::Hide : which == "pick" ? HierarchyPanel::NoPick : HierarchyPanel::Lock;
+    auto toggle = which == "hide" ? HierarchyPanel::Hide : which == "pick" ? HierarchyPanel::NoPick
+                : which == "scripts" ? HierarchyPanel::Scripts : HierarchyPanel::Lock;
     return _hierarchy->clickToggle(toggle, id, onlyThis);
 }
 
@@ -2704,6 +2729,8 @@ QVariantMap Editor::hierarchyToggles(const QUuid& id) const {
     result["hidden"] = _hierarchy->isOn(HierarchyPanel::Hide, id);
     result["noPick"] = _hierarchy->isOn(HierarchyPanel::NoPick, id);
     result["locked"] = _hierarchy->isOn(HierarchyPanel::Lock, id);
+    result["scriptsOff"] = _hierarchy->isOn(HierarchyPanel::Scripts, id);
+    result["scriptsOffReminder"] = _scriptsOffReminder;
     result["hiddenCount"] = _hierarchy->hiddenCount();
     if (auto counts = _hierarchy->findChild<QLabel*>("EditorHierarchyCounts")) {
         result["note"] = counts->text();
