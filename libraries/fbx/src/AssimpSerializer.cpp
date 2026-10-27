@@ -11,6 +11,8 @@
 
 #include "AssimpSerializer.h"
 
+#include <algorithm>
+
 #include <BlendshapeConstants.h>
 #include <ResourceManager.h>
 #include <PathUtils.h>
@@ -501,11 +503,6 @@ void AssimpSerializer::processBones() {
     };
     if (!hasBones) return;
 
-    // multiple skin deformers will affect other models unfortunately
-    uint32_t skinDeformerIndex = hfmModel->skinDeformers.size();
-    hfmModel->skinDeformers.emplace_back();
-    hfm::SkinDeformer* skinDeformer = &hfmModel->skinDeformers.back();
-
     QHash<size_t, Extents> skinnedMeshExtents; // by mesh index, at the bind pose
 
     for (size_t meshIndex = 0; meshIndex < scene->mNumMeshes; meshIndex++) {
@@ -516,7 +513,16 @@ void AssimpSerializer::processBones() {
         meshPtr->clusterWeightsPerVertex = 4;
         hfmModel->hasSkeletonJoints = true;
 
-        // should put skin deformer here
+        // A skin for each mesh, its clusters numbered from 0: the skinning shader takes 128 clusters a mesh
+        // (Skinning.slh), and one skin for the whole model gave the later meshes of a VRM numbers past that, which drew
+        // its hair and skirt as spikes
+        uint32_t skinDeformerIndex = hfmModel->skinDeformers.size();
+        hfmModel->skinDeformers.emplace_back();
+        hfm::SkinDeformer* skinDeformer = &hfmModel->skinDeformers.back();
+        if (mMesh->mNumBones > 128) {
+            qCWarning(modelformat) << "AssimpSerializer: mesh" << mMesh->mName.C_Str() << "has" << mMesh->mNumBones
+                                   << "bones; the skinning shader takes 128";
+        }
 
         QList<hfm::Shape*> shapes = getHfmShapesByMeshIndex(meshIndex);
         for (auto shape : shapes) {
@@ -568,13 +574,23 @@ void AssimpSerializer::processBones() {
 
         for (size_t vertexIndex = 0; vertexIndex < mMesh->mNumVertices; vertexIndex++) {
             auto cluster = clusterMap[vertexIndex];
+            // the four strongest, summing to one: some exporters' weights don't (older VRoid's give an eye highlight
+            // Head 1 and LeftEye 1, which drew it at twice its height)
+            std::sort(cluster.begin(), cluster.end(), [](const std::pair<size_t, float>& a, const std::pair<size_t, float>& b) {
+                return a.second > b.second;
+            });
             int clusterSize = cluster.size() > 4 ? 4 : cluster.size();
             int clusterEmptySize = 4 - clusterSize;
-            
+            float weightSum = 0.0f;
+            for (int i = 0; i < clusterSize; i++) {
+                weightSum += cluster[i].second;
+            }
+            const float weightScale = weightSum > 0.0f ? 1.0f / weightSum : 1.0f;
+
             for (int i = 0; i < clusterSize; i++) {
                 meshPtr->clusterIndices.push_back(cluster[i].first);
                 meshPtr->clusterWeights.push_back(
-                    std::round(cluster[i].second * 65535.0f)
+                    std::round(cluster[i].second * weightScale * 65535.0f)
                 );
             }
             for (int i = 0; i < clusterEmptySize; i++) {
@@ -828,6 +844,117 @@ public:
 };
 #endif
 
+static const unsigned int UNUSED_VERTEX = 0xffffffff;
+
+// Keeps of a mesh's per-vertex `array` the vertices `remap` gives a place to, at that place
+template <typename T>
+static void keepVertices(T*& array, const std::vector<unsigned int>& remap, unsigned int count) {
+    if (!array) {
+        return;
+    }
+    T* kept = new T[count];
+    for (size_t vertexIndex = 0; vertexIndex < remap.size(); vertexIndex++) {
+        if (remap[vertexIndex] != UNUSED_VERTEX) {
+            kept[remap[vertexIndex]] = array[vertexIndex];
+        }
+    }
+    delete[] array;
+    array = kept;
+}
+
+// Drops the vertices no face uses from each skinned mesh, with their morph targets and bone weights, and the bones then
+// left weighting nothing. Where a glTF's primitives share one vertex buffer (VRoid's do), Assimp gives each primitive's
+// mesh the whole buffer, and every bone that weights any of it. Joining identical vertices then left a bone whose weights
+// were all on the other primitives' vertices with its old vertex numbers (JoinVerticesProcess keeps a bone's weights when
+// none of them carries over), and those numbers now pointed at this mesh's own vertices: three-vrm-girl's hair came out
+// weighted to her hand. The vertices keep their order, so the join that follows gives what it gave before for the rest.
+static void compactSkinnedMeshes(aiScene* scene) {
+    for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; meshIndex++) {
+        aiMesh* mesh = scene->mMeshes[meshIndex];
+        if (mesh->mNumBones == 0) {
+            continue;
+        }
+
+        std::vector<unsigned int> remap(mesh->mNumVertices, UNUSED_VERTEX);
+        for (unsigned int faceIndex = 0; faceIndex < mesh->mNumFaces; faceIndex++) {
+            const aiFace& face = mesh->mFaces[faceIndex];
+            for (unsigned int i = 0; i < face.mNumIndices; i++) {
+                if (face.mIndices[i] < mesh->mNumVertices) {
+                    remap[face.mIndices[i]] = 0;
+                }
+            }
+        }
+        unsigned int count = 0;
+        for (auto& place : remap) {
+            if (place != UNUSED_VERTEX) {
+                place = count++;
+            }
+        }
+        if (count == 0 || count == mesh->mNumVertices) {
+            continue;
+        }
+
+        keepVertices(mesh->mVertices, remap, count);
+        keepVertices(mesh->mNormals, remap, count);
+        keepVertices(mesh->mTangents, remap, count);
+        keepVertices(mesh->mBitangents, remap, count);
+        for (auto& colors : mesh->mColors) {
+            keepVertices(colors, remap, count);
+        }
+        for (auto& textureCoords : mesh->mTextureCoords) {
+            keepVertices(textureCoords, remap, count);
+        }
+        for (unsigned int animMeshIndex = 0; animMeshIndex < mesh->mNumAnimMeshes; animMeshIndex++) {
+            aiAnimMesh* animMesh = mesh->mAnimMeshes[animMeshIndex];
+            if (animMesh->mNumVertices != mesh->mNumVertices) {
+                continue;
+            }
+            keepVertices(animMesh->mVertices, remap, count);
+            keepVertices(animMesh->mNormals, remap, count);
+            keepVertices(animMesh->mTangents, remap, count);
+            keepVertices(animMesh->mBitangents, remap, count);
+            for (auto& colors : animMesh->mColors) {
+                keepVertices(colors, remap, count);
+            }
+            for (auto& textureCoords : animMesh->mTextureCoords) {
+                keepVertices(textureCoords, remap, count);
+            }
+            animMesh->mNumVertices = count;
+        }
+        for (unsigned int faceIndex = 0; faceIndex < mesh->mNumFaces; faceIndex++) {
+            aiFace& face = mesh->mFaces[faceIndex];
+            for (unsigned int i = 0; i < face.mNumIndices; i++) {
+                face.mIndices[i] = face.mIndices[i] < mesh->mNumVertices ? remap[face.mIndices[i]] : 0;
+            }
+        }
+
+        unsigned int keptBones = 0;
+        for (unsigned int boneIndex = 0; boneIndex < mesh->mNumBones; boneIndex++) {
+            aiBone* bone = mesh->mBones[boneIndex];
+            const bool hadWeights = bone->mNumWeights > 0;
+            unsigned int keptWeights = 0;
+            for (unsigned int weightIndex = 0; weightIndex < bone->mNumWeights; weightIndex++) {
+                const aiVertexWeight& weight = bone->mWeights[weightIndex];
+                if (weight.mVertexId < mesh->mNumVertices && remap[weight.mVertexId] != UNUSED_VERTEX) {
+                    bone->mWeights[keptWeights++] = aiVertexWeight(remap[weight.mVertexId], weight.mWeight);
+                }
+            }
+            bone->mNumWeights = keptWeights;
+            if (hadWeights && keptWeights == 0) {
+                delete bone;
+            } else {
+                mesh->mBones[keptBones++] = bone;
+            }
+        }
+        mesh->mNumBones = keptBones;
+        if (keptBones == 0) {
+            delete[] mesh->mBones;
+            mesh->mBones = nullptr;
+        }
+        mesh->mNumVertices = count;
+    }
+}
+
 HFMModel::Pointer AssimpSerializer::read(const hifi::ByteArray& data, const hifi::VariantHash& mapping, const hifi::URL& inputUrl) {
 	url = inputUrl;
 
@@ -868,16 +995,17 @@ HFMModel::Pointer AssimpSerializer::read(const hifi::ByteArray& data, const hifi
     // https://arbook.icg.tugraz.at/schmalstieg/Schmalstieg_351.pdf
     importer.SetPropertyInteger(AI_CONFIG_PP_ICL_PTCACHE_SIZE, 64);
 
+    // Joining identical vertices, and the steps Assimp runs after it, wait until each skinned mesh holds only the
+    // vertices its faces use (compactSkinnedMeshes)
+    const unsigned int AFTER_COMPACTING = aiProcess_JoinIdenticalVertices | aiProcess_LimitBoneWeights | aiProcess_ImproveCacheLocality;
+
     scene = importer.ReadFileFromMemory(
         data.constData(), data.size(),
         // aiProcess_CalcTangentSpace |
-        aiProcess_JoinIdenticalVertices | 
         aiProcess_Triangulate |
         aiProcess_RemoveComponent |
         aiProcess_GenNormals | 
-        aiProcess_SplitLargeMeshes | // split large meshes every 1 million verticies and triangles
-        aiProcess_LimitBoneWeights |
-        aiProcess_ImproveCacheLocality |
+        aiProcess_SplitLargeMeshes | // split large meshes every 1 million verticies and triangles (now before joining)
         // aiProcess_RemoveRedundantMaterials | // ends up removing necessary materials...
         aiProcess_PopulateArmatureData | 
         aiProcess_FindInstances | // can be slow but instances duplicate meshes
@@ -886,7 +1014,11 @@ HFMModel::Pointer AssimpSerializer::read(const hifi::ByteArray& data, const hifi
         aiProcess_FlipUVs,
         ext.toLocal8Bit()
     );
-    
+    if (scene) {
+        compactSkinnedMeshes(const_cast<aiScene*>(scene));
+        scene = importer.ApplyPostProcessing(AFTER_COMPACTING);
+    }
+
     if (!scene) {
         qCDebug(modelformat) << "AssimpSerializer::read Error parsing model file"<<importer.GetErrorString();
         return nullptr;
