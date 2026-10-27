@@ -62,6 +62,8 @@ done
 if [ $SCRIPTED = 1 ]; then
     set -- "$@" --tokens "{}"
 fi
+# the label on the command line as well as in DARKRIDE_CLIENT_LABEL, so a look at the process list finds it
+set -- "$@" --clientLabel "$DARKRIDE_CLIENT_LABEL"
 if [ -n "$CLIENT_RESULTS" ]; then
     R=$CLIENT_RESULTS
 else
