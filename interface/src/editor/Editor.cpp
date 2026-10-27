@@ -249,7 +249,7 @@ Editor::Editor() : _selection(this), _undo(this), _terrain(&_undo, this) {
     connect(&_arrivalTimer, &QTimer::timeout, this, [this] {
         if (!_goingTo.isNull() && _treeModel && !_treeModel->isLoaded(_goingTo)) {
             setStatus(QString("%1 hasn't arrived. It may have been deleted since the list was made: "
-                              "Refresh the Hierarchy.").arg(_goingToName), STATUS_CLEAR_MS);
+                              "Refresh the Entities list.").arg(_goingToName), STATUS_CLEAR_MS);
         }
         _goingTo = QUuid();
     });
@@ -2726,7 +2726,7 @@ void Editor::remindOfScriptsOff() {
     }
     QString title = off == 1 ? QString("1 entity has its scripts off")
                              : QString("%1 entities have their scripts off").arg(off);
-    QString text = "They stay off for everyone until they're turned on again in Build mode, in the Hierarchy or the "
+    QString text = "They stay off for everyone until they're turned on again in Build mode, in the Entities list or the "
                    "Inspector.";
     _scriptsOffReminder = title + "\n" + text;
     new popup::Banner(popup::appIcon(), title, text, qApp->getWindow(), SCRIPTS_OFF_REMINDER_MS);

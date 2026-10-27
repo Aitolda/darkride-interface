@@ -35,8 +35,9 @@ namespace {
     const int GUTTER_PAD = 2;     // before the first column and after the last
     const QColor GUTTER_FILL("#323232");                // a shade darker than the rows, as Unity's
     const QColor ICON_ON("#d2d2d2");                    // the rows' text colour (editor.qss)
-    const QColor ICON_HINT(210, 210, 210, 95);          // under the pointer, while off
-    const QColor ICON_UNUSABLE(210, 210, 210, 45);      // a lock or scripts that can't be changed here
+    const QColor ICON_HINT(210, 210, 210, 120);         // under the pointer, while off
+    const QColor ICON_OFF(210, 210, 210, 60);           // off: always there, dim, as Photoshop's eyes (Caity, 10-27)
+    const QColor ICON_UNUSABLE(210, 210, 210, 35);      // a lock or scripts that can't be changed here
     const qreal ICON_PEN = 1.2;
 
     const QString CLICK_HOW = "\nClick: with everything under it. Alt-click: this one alone.";
@@ -132,14 +133,18 @@ protected:
             }
             QUuid id = index.data(EntityTreeModel::IdRole).toUuid();
             bool hovered = _panel->_hovered.isValid() && QModelIndex(_panel->_hovered) == index;
+            bool scripted = index.data(EntityTreeModel::ScriptsRole).toInt() != EntityTreeModel::NoScripts;
             for (int t = HierarchyPanel::Hide; t <= HierarchyPanel::Scripts; ++t) {
                 auto toggle = (HierarchyPanel::Toggle)t;
                 bool on = _panel->isOn(toggle, id);
-                if (!on && !hovered) {
-                    continue;   // only what's on shows, and all of them on the row under the pointer, as in Unity
+                if (toggle == HierarchyPanel::Scripts && !on && !hovered && !scripted) {
+                    continue;   // braces only where there's a script to switch, or under the pointer
                 }
-                bool usable = usableHere(toggle, id);
-                painter.setPen(QPen(!usable ? ICON_UNUSABLE : on ? ICON_ON : ICON_HINT, ICON_PEN));
+                // every row shows its toggles, off ones dim; what can't be changed here is worked out for the row
+                // under the pointer and what's on (scripts under a row cost a walk of its descendants)
+                bool usable = on || hovered ? usableHere(toggle, id)
+                                            : toggle != HierarchyPanel::Lock || _panel->_canLock;
+                painter.setPen(QPen(!usable ? ICON_UNUSABLE : on ? ICON_ON : hovered ? ICON_HINT : ICON_OFF, ICON_PEN));
                 QRectF cell(GUTTER_PAD + t * CELL, row.top() + dy, CELL, row.height());
                 if (toggle == HierarchyPanel::Hide) {
                     drawEye(painter, cell, on);
@@ -242,7 +247,7 @@ private:
             return "Hide in your view only, while you build. Everyone else still sees it." + CLICK_HOW;
         }
         if (toggle == HierarchyPanel::NoPick) {
-            return "Can't be selected by your clicks in the 3D view, while you build (the Hierarchy still selects "
+            return "Can't be selected by your clicks in the 3D view, while you build (the Entities list still selects "
                 "it). Only for you." + CLICK_HOW;
         }
         return _panel->_canLock ? "Locked for everyone: no one can move, change or delete it." + CLICK_HOW
@@ -252,7 +257,7 @@ private:
     HierarchyPanel* _panel;
 };
 
-HierarchyPanel::HierarchyPanel(QWidget* parent) : QDockWidget("Hierarchy", parent) {
+HierarchyPanel::HierarchyPanel(QWidget* parent) : QDockWidget("Entities", parent) {
     setObjectName("EditorHierarchy");
     // anywhere, floating or docked, tabbed with another panel (dockable panels, step 2): every change of its window
     // under the GL view's guard (ui/DockTitleBar.h), which once was why it was fixed in place
