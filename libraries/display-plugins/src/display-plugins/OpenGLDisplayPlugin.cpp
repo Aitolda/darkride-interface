@@ -636,8 +636,9 @@ ktx::StoragePointer textureToKtx(const gpu::Texture& texture) {
             auto& faceBytes = const_cast<gpu::Byte*&>(image._faceBytes[face]);
             if (texture.isStoredMipFaceAvailable(mip, face)) {
                 auto storedImage = texture.accessStoredMipFace(mip, face);
-                auto storedSize = storedImage->size();
-                memcpy(faceBytes, storedImage->data(), storedSize);
+                if (storedImage) {
+                    memcpy(faceBytes, storedImage->data(), storedImage->size());
+                }
             }
         }
     }
