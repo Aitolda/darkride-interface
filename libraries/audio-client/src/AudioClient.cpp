@@ -1748,12 +1748,61 @@ void AudioClient::sendMuteEnvironmentPacket() {
     }
 }
 
+#ifdef __APPLE__
+// whether the audio device of this name is a Bluetooth one (by name, as Qt names devices)
+static bool isBluetoothDevice(const QString& name) {
+    AudioObjectPropertyAddress address = { kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal,
+                                           kAudioObjectPropertyElementMaster };
+    UInt32 size = 0;
+    if (AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &address, 0, nullptr, &size) != noErr) {
+        return false;
+    }
+    std::vector<AudioDeviceID> devices(size / sizeof(AudioDeviceID));
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, nullptr, &size, devices.data()) != noErr) {
+        return false;
+    }
+    for (AudioDeviceID device : devices) {
+        CFStringRef deviceName = nullptr;
+        UInt32 nameSize = sizeof(deviceName);
+        address.mSelector = kAudioObjectPropertyName;
+        if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &nameSize, &deviceName) != noErr || !deviceName) {
+            continue;
+        }
+        bool sameName = QString::fromCFString(deviceName).trimmed() == name.trimmed();
+        CFRelease(deviceName);
+        if (!sameName) {
+            continue;
+        }
+        UInt32 transport = 0;
+        UInt32 transportSize = sizeof(transport);
+        address.mSelector = kAudioDevicePropertyTransportType;
+        if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &transportSize, &transport) == noErr &&
+            (transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE)) {
+            return true;
+        }
+    }
+    return false;
+}
+#endif
+
+// Muted, a Bluetooth microphone isn't kept open: an open one holds the headset in its call mode (mono, narrow band), so
+// other apps' music goes thin. A built-in, USB or wired one stays open, for the "you're muted" warning and the level
+// meter. Only on macOS for now; elsewhere every microphone stays open, as before.
+static bool releaseInputWhileMuted(const HifiAudioDeviceInfo& inputDeviceInfo) {
+#ifdef __APPLE__
+    return !inputDeviceInfo.getDevice().isNull() && isBluetoothDevice(inputDeviceInfo.getDevice().deviceName());
+#else
+    return false;
+#endif
+}
+
 void AudioClient::setMuted(bool muted, bool emitSignal) {
     if (_muted != muted) {
         _muted = muted;
-        // the microphone is open only while unmuted (switchInputToAudioDevice): open or release it, on the audio thread
+        // a Bluetooth microphone is open only while unmuted (switchInputToAudioDevice): open or release it, on the audio
+        // thread
         QMetaObject::invokeMethod(this, [this] {
-            if (!_inputDeviceInfo.getDevice().isNull() && (_audioInput == nullptr) != _muted) {
+            if (releaseInputWhileMuted(_inputDeviceInfo) && (_audioInput == nullptr) != _muted) {
                 switchInputToAudioDevice(_inputDeviceInfo);
             }
         }, Qt::QueuedConnection);
@@ -1911,9 +1960,9 @@ bool AudioClient::switchInputToAudioDevice(const HifiAudioDeviceInfo inputDevice
         return true;
     }
 
-    // Muted, the chosen microphone isn't opened (the dummy input stands in), so nothing holds it: a Bluetooth headset
-    // keeps its stereo music mode instead of the call mode, and macOS shows no microphone in use. setMuted opens it.
-    const bool releaseMicrophone = _muted && !inputDeviceInfo.getDevice().isNull();
+    // Muted, a chosen Bluetooth microphone isn't opened (the dummy input stands in), so nothing holds it: the headset
+    // keeps its stereo music mode, and macOS shows no microphone in use. setMuted opens it.
+    const bool releaseMicrophone = _muted && releaseInputWhileMuted(inputDeviceInfo);
 
     if (!inputDeviceInfo.getDevice().isNull() && !releaseMicrophone) {
         qCDebug(audioclient) << "The audio input device" << inputDeviceInfo.deviceName() << ":" << inputDeviceInfo.getDevice().deviceName() << "is available.";
