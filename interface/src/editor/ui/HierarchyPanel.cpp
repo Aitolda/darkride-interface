@@ -8,6 +8,7 @@
 
 #include "HierarchyPanel.h"
 
+#include <algorithm>
 #include <functional>
 
 #include <QtCore/QItemSelectionModel>
@@ -35,13 +36,14 @@ namespace {
     const QColor GUTTER_FILL("#323232");                // a shade darker than the rows, as Unity's
     const QColor ICON_ON("#d2d2d2");                    // the rows' text colour (editor.qss)
     const QColor ICON_HINT(210, 210, 210, 95);          // under the pointer, while off
-    const QColor ICON_UNUSABLE(210, 210, 210, 45);      // a lock that can't be changed here
+    const QColor ICON_UNUSABLE(210, 210, 210, 45);      // a lock or scripts that can't be changed here
     const qreal ICON_PEN = 1.2;
 
     const QString CLICK_HOW = "\nClick: with everything under it. Alt-click: this one alone.";
 
     // the icons, drawn as Apple's symbols are, in lines of one weight: an eye (struck through: hidden here), the
-    // pointer's arrow (struck through: clicks pass it by) and a padlock (shut and filled: locked)
+    // pointer's arrow (struck through: clicks pass it by), a padlock (shut and filled: locked) and curly braces for
+    // scripts (struck through: off)
     void strike(QPainter& painter, const QPointF& c) {
         painter.drawLine(QPointF(c.x() - 5.5, c.y() + 5.5), QPointF(c.x() + 5.5, c.y() - 5.5));
     }
@@ -85,14 +87,33 @@ namespace {
         painter.drawRoundedRect(body, 1.2, 1.2);
         painter.setBrush(Qt::NoBrush);
     }
+    void drawScript(QPainter& painter, const QRectF& cell, bool off) {
+        QPointF c = cell.center();
+        for (qreal side : { -1.0, 1.0 }) {
+            // a brace, { on the left and } on the right: its ends curl in toward the middle, its point sticks out
+            qreal x = c.x() + side * 3.0;
+            QPainterPath brace;
+            brace.moveTo(x - side * 1.5, c.y() - 6.0);
+            brace.quadTo(x, c.y() - 6.0, x, c.y() - 3.5);
+            brace.lineTo(x, c.y() - 1.5);
+            brace.quadTo(x, c.y(), x + side * 1.8, c.y());
+            brace.quadTo(x, c.y(), x, c.y() + 1.5);
+            brace.lineTo(x, c.y() + 3.5);
+            brace.quadTo(x, c.y() + 6.0, x - side * 1.5, c.y() + 6.0);
+            painter.drawPath(brace);
+        }
+        if (off) {
+            strike(painter, c);
+        }
+    }
 }
 
-// the strip at the tree's left edge with each row's eye, hand and lock, lined up with the rows
+// the strip at the tree's left edge with each row's eye, hand, lock and scripts, lined up with the rows
 class HierarchyGutter : public QWidget {
 public:
     HierarchyGutter(HierarchyPanel* panel, QWidget* parent) : QWidget(parent), _panel(panel) {
         setObjectName("EditorHierarchyGutter");
-        setFixedWidth(3 * CELL + 2 * GUTTER_PAD);
+        setFixedWidth((HierarchyPanel::Scripts + 1) * CELL + 2 * GUTTER_PAD);
         setMouseTracking(true);
     }
 
@@ -111,21 +132,23 @@ protected:
             }
             QUuid id = index.data(EntityTreeModel::IdRole).toUuid();
             bool hovered = _panel->_hovered.isValid() && QModelIndex(_panel->_hovered) == index;
-            for (int t = HierarchyPanel::Hide; t <= HierarchyPanel::Lock; ++t) {
+            for (int t = HierarchyPanel::Hide; t <= HierarchyPanel::Scripts; ++t) {
                 auto toggle = (HierarchyPanel::Toggle)t;
                 bool on = _panel->isOn(toggle, id);
                 if (!on && !hovered) {
-                    continue;   // only what's on shows, and all three on the row under the pointer, as in Unity
+                    continue;   // only what's on shows, and all of them on the row under the pointer, as in Unity
                 }
-                bool usable = toggle != HierarchyPanel::Lock || _panel->_canLock;
+                bool usable = usableHere(toggle, id);
                 painter.setPen(QPen(!usable ? ICON_UNUSABLE : on ? ICON_ON : ICON_HINT, ICON_PEN));
                 QRectF cell(GUTTER_PAD + t * CELL, row.top() + dy, CELL, row.height());
                 if (toggle == HierarchyPanel::Hide) {
                     drawEye(painter, cell, on);
                 } else if (toggle == HierarchyPanel::NoPick) {
                     drawPointer(painter, cell, on);
-                } else {
+                } else if (toggle == HierarchyPanel::Lock) {
                     drawLock(painter, cell, on);
+                } else {
+                    drawScript(painter, cell, on);
                 }
             }
         }
@@ -158,7 +181,9 @@ protected:
                 event->ignore();
                 return true;
             }
-            QToolTip::showText(help->globalPos(), tip((HierarchyPanel::Toggle)toggle), this);
+            QModelIndex index = rowAt(help->pos().y());
+            QToolTip::showText(help->globalPos(),
+                               tip((HierarchyPanel::Toggle)toggle, index.data(EntityTreeModel::IdRole).toUuid()), this);
             return true;
         }
         return QWidget::event(event);
@@ -179,7 +204,20 @@ private:
     }
     int toggleAt(int x) const {
         int t = (x - GUTTER_PAD) / CELL;
-        return x >= GUTTER_PAD && t <= HierarchyPanel::Lock ? t : -1;
+        return x >= GUTTER_PAD && t <= HierarchyPanel::Scripts ? t : -1;
+    }
+    // whether a click on the toggle would change something on that row
+    bool usableHere(HierarchyPanel::Toggle toggle, const QUuid& id) const {
+        if (toggle == HierarchyPanel::Lock) {
+            return _panel->_canLock;
+        }
+        if (toggle == HierarchyPanel::Scripts) {
+            // the row itself, or else what's under it (worked out only for the row under the pointer, and those
+            // whose own scripts are off)
+            return !_panel->_readOnly && (!_panel->scriptsToSwitch({ id }).isEmpty()
+                                          || !_panel->scriptsToSwitch(_panel->withDescendants(id)).isEmpty());
+        }
+        return true;
     }
     void hover(const QModelIndex& index) {
         if (QModelIndex(_panel->_hovered) != index) {
@@ -187,7 +225,19 @@ private:
             update();
         }
     }
-    QString tip(HierarchyPanel::Toggle toggle) const {
+    QString tip(HierarchyPanel::Toggle toggle, const QUuid& id) const {
+        if (toggle == HierarchyPanel::Scripts) {
+            if (_panel->_readOnly) {
+                return "You can't change things in this world.";
+            }
+            if (!usableHere(toggle, id)) {
+                bool locked = _panel->isOn(HierarchyPanel::Lock, id);
+                return locked ? "Locked: unlock it to turn its scripts on or off."
+                              : "No scripts here: nothing on this row or under it has a script.";
+            }
+            return "Scripts off, for everyone: they stop running (a door stops opening) and keep their links, until "
+                "they're turned on again." + CLICK_HOW;
+        }
         if (toggle == HierarchyPanel::Hide) {
             return "Hide in your view only, while you build. Everyone else still sees it." + CLICK_HOW;
         }
@@ -334,6 +384,11 @@ void HierarchyPanel::updateCounts() {
         lines << QString("%1 hidden in your view · <a href=\"show\" style=\"color: #6fa8dc; text-decoration: none;\">"
                          "Show&nbsp;All</a>").arg(hidden);
     }
+    // scripts turned off stay off for everyone: how many, so they aren't forgotten
+    int scriptsOff = _model->scriptsOffCount();
+    if (scriptsOff > 0) {
+        lines << QString("%1 with scripts off, for everyone").arg(scriptsOff);
+    }
     _counts->setText(lines.join("<br>"));
 }
 
@@ -358,6 +413,9 @@ bool HierarchyPanel::isOn(Toggle toggle, const QUuid& id) const {
             return _noPick.contains(id);
         case Lock:
             return _model && _model->indexForId(id).data(EntityTreeModel::LockedRole).toBool();
+        case Scripts:
+            return _model && _model->indexForId(id).data(EntityTreeModel::ScriptsRole).toInt()
+                == EntityTreeModel::ScriptsOff;
     }
     return false;
 }
@@ -370,8 +428,34 @@ bool HierarchyPanel::clickToggle(Toggle toggle, const QUuid& id, bool onlyThis) 
     if (toggle == Lock && (!_canLock || !_model->isLoaded(id))) {
         return false;
     }
-    emit toggleRequested(toggle, onlyThis ? QList<QUuid> { id } : withDescendants(id), !isOn(toggle, id));
+    QList<QUuid> ids = onlyThis ? QList<QUuid> { id } : withDescendants(id);
+    bool on = !isOn(toggle, id);
+    if (toggle == Scripts) {
+        // only what has scripts to switch; a row without scripts of its own turns off what runs under it, or, when
+        // nothing there runs, turns it all on again
+        ids = _readOnly ? QList<QUuid>() : scriptsToSwitch(ids);
+        if (ids.isEmpty()) {
+            return false;
+        }
+        if (_model->indexForId(id).data(EntityTreeModel::ScriptsRole).toInt() == EntityTreeModel::NoScripts) {
+            on = std::any_of(ids.begin(), ids.end(), [this](const QUuid& each) { return !isOn(Scripts, each); });
+        }
+    }
+    emit toggleRequested(toggle, ids, on);
     return true;
+}
+
+QList<QUuid> HierarchyPanel::scriptsToSwitch(const QList<QUuid>& ids) const {
+    QList<QUuid> switchable;
+    for (const auto& id : ids) {
+        QModelIndex index = _model ? _model->indexForId(id) : QModelIndex();
+        if (index.isValid() && index.data(EntityTreeModel::LoadedRole).toBool()
+            && index.data(EntityTreeModel::ScriptsRole).toInt() != EntityTreeModel::NoScripts
+            && !index.data(EntityTreeModel::LockedRole).toBool()) {
+            switchable << id;
+        }
+    }
+    return switchable;
 }
 
 int HierarchyPanel::hiddenCount() const {
@@ -427,6 +511,10 @@ bool HierarchyPanel::eventFilter(QObject* watched, QEvent* event) {
 }
 
 void HierarchyPanel::setReadOnly(bool readOnly, const QString& reason) {
+    _readOnly = readOnly;
+    if (_gutter) {
+        _gutter->update();
+    }
     _banner->setText(reason);
     _banner->setVisible(readOnly);
     _tree->setEditTriggers(readOnly ? QAbstractItemView::NoEditTriggers

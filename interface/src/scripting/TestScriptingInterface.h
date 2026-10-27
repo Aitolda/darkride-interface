@@ -587,12 +587,13 @@ public slots:
     Q_INVOKABLE void clickHierarchyRow(const QUuid& id);
 
     /**jsdoc
-     * Does what a click on a build-mode Hierarchy row's eye, hand or lock does: hides it in this builder's view only,
-     * makes it unpickable by their clicks in the 3D view, or locks it for everyone (or the reverse), with everything
-     * under it, or alone as an Alt-click does.
+     * Does what a click on a build-mode Hierarchy row's eye, hand, lock or script mark does: hides it in this
+     * builder's view only, makes it unpickable by their clicks in the 3D view, locks it for everyone, or turns its
+     * scripts off for everyone (or the reverse), with everything under it, or alone as an Alt-click does.
      * @function Test.hierarchyToggle
      * @param {Uuid} id - The row's entity.
-     * @param {string} which - <code>"hide"</code>, <code>"pick"</code> or <code>"lock"</code>.
+     * @param {string} which - <code>"hide"</code>, <code>"pick"</code>, <code>"lock"</code> or
+     *     <code>"scripts"</code>.
      * @param {boolean} [onlyThis=false] - As an Alt-click: the row alone.
      * @returns {boolean} Whether the row was there and the toggle could change.
      */
@@ -602,9 +603,10 @@ public slots:
      * A build-mode Hierarchy row's toggles and what they amount to.
      * @function Test.hierarchyToggles
      * @param {Uuid} id - The row's entity.
-     * @returns {object} <code>{ hidden, noPick, locked, drawn, hiddenCount, note }</code>: hidden in this view,
-     *     unpickable, locked, whether the entity is drawn here, how many of this world's rows are hidden here, and the
-     *     note under the Hierarchy.
+     * @returns {object} <code>{ hidden, noPick, locked, scriptsOff, drawn, hiddenCount, note, scriptsOffReminder
+     *     }</code>: hidden in this view, unpickable, locked, its scripts off, whether the entity is drawn here, how
+     *     many of this world's rows are hidden here, the note under the Hierarchy, and the reminder shown when build
+     *     mode last closed with scripts off ("" for none).
      */
     Q_INVOKABLE QVariantMap hierarchyToggles(const QUuid& id);
 

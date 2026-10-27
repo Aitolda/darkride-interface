@@ -54,17 +54,17 @@ public:
     // a line under the counts: the list is being asked for, or the server did not send it
     void setListNote(const QString& note);
 
-    // the row's toggles, in the order the gutter shows them
-    enum Toggle { Hide, NoPick, Lock };
+    // the row's toggles, in the order the gutter shows them; on is hidden, unpickable, locked, scripts off
+    enum Toggle { Hide, NoPick, Lock, Scripts };
     // what this builder has hidden in their view and made unpickable by their clicks (the Editor keeps them)
     void setLocalStates(const QSet<QUuid>& hidden, const QSet<QUuid>& noPick);
     // whether the lock can be changed here (the world's Lock / Unlock right, and the right to edit at all), and why
     // not
     void setCanLock(bool canLock, const QString& why);
-    // whether the toggle is on for that row: hidden, unpickable, locked
+    // whether the toggle is on for that row: hidden, unpickable, locked, its scripts off
     bool isOn(Toggle toggle, const QUuid& id) const;
-    // what a click on the row's toggle does (onlyThis: an Alt-click's, the row alone); false when the row isn't there
-    // or the lock can't be changed
+    // what a click on the row's toggle does (onlyThis: an Alt-click's, the row alone); false when the row isn't there,
+    // the lock can't be changed, or there are no scripts to turn on or off
     bool clickToggle(Toggle toggle, const QUuid& id, bool onlyThis);
     // how many of this world's rows are hidden in this builder's view
     int hiddenCount() const;
@@ -77,8 +77,8 @@ signals:
     void refreshRequested();
     // a right click in the tree, after the row under it joined the selection
     void contextMenuRequested(const QPoint& globalPos);
-    // a row's eye, hand or lock clicked: to turn on or off for these (the row, and everything under it unless
-    // Alt-clicked)
+    // a row's eye, hand, lock or script mark clicked: to turn on or off for these (the row, and everything under it
+    // unless Alt-clicked; for scripts, only those with scripts that aren't locked)
     void toggleRequested(Toggle toggle, const QList<QUuid>& ids, bool on);
     // the note's Show All: everything hidden in this builder's view shown again
     void showAllRequested();
@@ -91,6 +91,8 @@ private:
     friend class HierarchyGutter;
     QList<QUuid> selectedIds() const;
     QList<QUuid> withDescendants(const QUuid& id) const;
+    // of these, the ones whose scripts can be turned on or off here: loaded, with a script, not locked
+    QList<QUuid> scriptsToSwitch(const QList<QUuid>& ids) const;
     QUuid idAt(const QModelIndex& proxyIndex) const;
     void updateCounts();
 
@@ -108,6 +110,7 @@ private:
     QSet<QUuid> _noPick;
     bool _canLock { true };
     QString _noLockWhy;
+    bool _readOnly { false };
     EntityTreeModel* _model { nullptr };
     bool _settingSelection { false };
     QList<QUuid> _wantedIds;   // the last selection asked for; rows that arrive later are selected on arrival

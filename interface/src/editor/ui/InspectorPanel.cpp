@@ -41,6 +41,8 @@ namespace {
         { "visible", "Visible to everyone. Untick it to hide this for everyone." },
         { "locked", "Locked: no one can move, change or delete it until it's unlocked." },
         { "ignorePickIntersection", "Ignore Picking: everyone's clicks, lasers and teleports go through it." },
+        { "scriptsEnabled", "Its scripts run, for everyone. Untick to stop them (a door stops opening): its script "
+                            "links are kept, and ticking it runs them again." },
     };
 
     // the value of a property as text, for the show-when rules

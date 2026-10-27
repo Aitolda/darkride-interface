@@ -485,6 +485,7 @@ namespace {
         P_BOOL("ignorePickIntersection", IgnorePickIntersection);
         P_STR("script", Script);
         P_STR("serverScripts", ServerScripts);
+        P_BOOL("scriptsEnabled", ScriptsEnabled);
         P_FLOAT("lifetime", Lifetime);
         P_STR("userData", UserData);
 
@@ -1067,6 +1068,9 @@ namespace {
         add(spec("name", "Name", K::String, "base")).header = true;
         add(spec("locked", "Locked", K::Bool, "base")).header = true;
         add(spec("ignorePickIntersection", "Ignore Picking", K::Bool, "base")).header = true;
+        // whether its scripts run, for everyone (Caity, 10-26: "disable attached scripts", so a door stops opening);
+        // only on what has a script
+        with(add(spec("scriptsEnabled", "Scripts", K::Bool, "base")), "script!= or serverScripts!=").header = true;
         add(spec("id", "ID", K::String, "base")).readOnly = true;   // to copy: for Parent, for scripts
         add(spec("description", "Description", K::String, "base"));
         add(spec("parentID", "Parent", K::String, "base"));
