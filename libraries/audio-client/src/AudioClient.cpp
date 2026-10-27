@@ -2064,7 +2064,8 @@ void AudioClient::outputNotify() {
                 _outputStarveDetectionCount += recentUnfulfilled;
                 if (_outputStarveDetectionCount > STARVE_DETECTION_THRESHOLD) {
                     int oldOutputBufferSizeFrames = _sessionOutputBufferSizeFrames;
-                    int newOutputBufferSizeFrames = setOutputBufferSize(oldOutputBufferSizeFrames + 1, false);
+                    // doubled, as each new size restarts the output: from 4 frames, 3 restarts at most
+                    int newOutputBufferSizeFrames = setOutputBufferSize(oldOutputBufferSizeFrames * 2, false);
 
                     if (newOutputBufferSizeFrames > oldOutputBufferSizeFrames) {
                         qCDebug(audioclient,
@@ -2256,6 +2257,14 @@ int AudioClient::setOutputBufferSize(int numFrames, bool persist) {
         if (persist) {
             _outputBufferSizeFrames.set(numFrames);
         }
+
+        // Qt takes a buffer size only when the output starts, so restart it on the device it's on then; queued, as
+        // this can be called from the output's own notify() or from the main thread
+        QMetaObject::invokeMethod(this, [this] {
+            if (_audioOutput) {
+                switchOutputToAudioDevice(_outputDeviceInfo);
+            }
+        }, Qt::QueuedConnection);
     }
     return numFrames;
 }

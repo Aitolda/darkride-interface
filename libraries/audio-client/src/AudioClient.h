@@ -82,7 +82,8 @@ class Transform;
 class NLPacket;
 
 #define DEFAULT_STARVE_DETECTION_ENABLED true
-#define DEFAULT_BUFFER_FRAMES 1
+// 40 ms: at 1 frame (10 ms) a Mac with no microphone ran dry ~40 times a minute (crackling); at 4, never
+#define DEFAULT_BUFFER_FRAMES 4
 
 class AudioClient : public AbstractAudioInterface, public Dependency {
     Q_OBJECT
