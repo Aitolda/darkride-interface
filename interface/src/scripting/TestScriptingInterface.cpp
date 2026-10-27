@@ -15,9 +15,11 @@
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDateTime>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
+#include <QtGui/QMouseEvent>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QLabel>
@@ -710,6 +712,8 @@ QVariantMap TestScriptingInterface::windowLayout() {
             { "floating", dock->isFloating() },
             { "area", dock->isFloating() ? QString("none") : areaName(window->dockWidgetArea(dock)) },
             { "x", place.x() }, { "y", place.y() }, { "width", place.width() }, { "height", place.height() },
+            // a native window of its own: Qt won't drag a docked panel that has one on macOS
+            { "native", dock->internalWinId() != 0 },
         };
         // a QML panel's page: made the first time it shows, hidden with its panel (ui/QmlDock.h)
         if (auto qmlDock = qobject_cast<QmlDock*>(dock)) {
@@ -753,6 +757,36 @@ bool TestScriptingInterface::dockAction(const QString& objectName, const QString
         gl::ViewChangeGuard guard;
         window->tabifyDockWidget(other, dock);
         other->raise();
+    } else if (action.startsWith("drag:")) {
+        // pressed on its title, moved in steps and let go, as the mouse does but in Qt's events only: Qt's own drag,
+        // undocking, hovering and docking as a real one does, the real mouse untouched
+        const QStringList by = action.mid(5).split(',');
+        if (by.size() != 2) {
+            return false;
+        }
+        const QPoint start = titleBar->mapToGlobal(QPoint(titleBar->width() / 2, titleBar->height() / 2));
+        const QPoint end = start + QPoint(by[0].toInt(), by[1].toInt());
+        auto send = [](QEvent::Type type, QWidget* target, const QPoint& at, Qt::MouseButtons buttons) {
+            QMouseEvent event(type, target->mapFromGlobal(at), at, Qt::LeftButton, buttons, Qt::NoModifier);
+            QCoreApplication::sendEvent(target, &event);
+        };
+        auto wait = [](int milliseconds) {
+            QElapsedTimer timer;
+            timer.start();
+            while (timer.elapsed() < milliseconds) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            }
+        };
+        send(QEvent::MouseButtonPress, titleBar, start, Qt::LeftButton);
+        const int STEPS = 12;
+        for (int step = 1; step <= STEPS; step++) {
+            QWidget* target = QWidget::mouseGrabber() ? QWidget::mouseGrabber() : dock;
+            send(QEvent::MouseMove, target, start + (end - start) * step / STEPS, Qt::LeftButton);
+            wait(30);
+        }
+        wait(400);   // the place it would dock opens up (QMainWindow's animated docks)
+        send(QEvent::MouseButtonRelease, QWidget::mouseGrabber() ? QWidget::mouseGrabber() : dock, end, Qt::NoButton);
+        wait(300);
     } else if ((action == "dock" && dock->isFloating()) || (action == "float" && !dock->isFloating())) {
         titleBar->toggleFloating();
     }

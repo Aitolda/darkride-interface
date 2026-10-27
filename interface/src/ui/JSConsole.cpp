@@ -25,6 +25,7 @@
 
 #include "Application.h"
 #include "ScriptHighlighting.h"
+#include "PanelTheme.h"
 
 const int NO_CURRENT_HISTORY_COMMAND = -1;
 const int MAX_HISTORY_SIZE = 1024;
@@ -33,15 +34,18 @@ const int MAX_HISTORY_SIZE = 1024;
 const int MAX_LOG_LINES = 500;
 const QString HISTORY_FILENAME = "JSConsole.history.json";
 
-const QString COMMAND_STYLE = "color: #266a9b;";
+namespace {
+    // the lines' colours, set by JSConsole::applyLook for the skin or Darkride's own dark panels
+    QString COMMAND_STYLE;
 
-const QString RESULT_SUCCESS_STYLE = "color: #677373;";
-const QString RESULT_INFO_STYLE = "color: #223bd1;";
-const QString RESULT_WARNING_STYLE = "color: #999922;";
-const QString RESULT_ERROR_STYLE = "color: #d13b22;";
+    QString RESULT_SUCCESS_STYLE;
+    QString RESULT_INFO_STYLE;
+    QString RESULT_WARNING_STYLE;
+    QString RESULT_ERROR_STYLE;
 
-const QString GUTTER_PREVIOUS_COMMAND = "<span style=\"color: #57b8bb;\">&lt;</span>";
-const QString GUTTER_ERROR = "<span style=\"color: #d13b22;\">X</span>";
+    QString GUTTER_PREVIOUS_COMMAND;
+    QString GUTTER_ERROR;
+}
 
 const QString JSDOC_LINE_SEPARATOR = "\r";
 
@@ -154,11 +158,11 @@ JSConsole::JSConsole(QWidget* parent, const ScriptEnginePointer& scriptEngine) :
     _ui->promptTextEdit->setWordWrapMode(QTextOption::NoWrap);
     _ui->promptTextEdit->installEventFilter(this);
 
-    QFile styleSheet(PathUtils::resourcesPath() + "styles/console.qss");
-    if (styleSheet.open(QIODevice::ReadOnly)) {
-        QDir::setCurrent(PathUtils::resourcesPath());
-        setStyleSheet(styleSheet.readAll());
-    }
+    // the form's white backgrounds give way to the look's, which follows the skin
+    _ui->scrollAreaWidgetContents->setStyleSheet(QString());
+    _ui->logArea->setStyleSheet(QString());
+    applyLook();
+    connect(DependencyManager::get<PanelTheme>().data(), &PanelTheme::changed, this, &JSConsole::applyLook);
 
     connect(_ui->scrollArea->verticalScrollBar(), &QScrollBar::rangeChanged, this, &JSConsole::scrollToBottom);
     connect(_ui->promptTextEdit, &QTextEdit::textChanged, this, &JSConsole::resizeTextInput);
@@ -192,6 +196,45 @@ JSConsole::JSConsole(QWidget* parent, const ScriptEnginePointer& scriptEngine) :
     resizeTextInput();
 
     connect(&_executeWatcher, &QFutureWatcher<QScriptValue>::finished, this, &JSConsole::commandFinished);
+}
+
+// Darkride's own look, the dark of Build mode's panels (styles/editor.qss), or the skin's colours where it gives them
+// (Caity, 10-27: the console stayed white under every skin). Lines already written keep the colours they had.
+void JSConsole::applyLook() {
+    const QVariantMap colors = DependencyManager::get<PanelTheme>()->getSkin().value("colors").toMap();
+    auto role = [&colors](const char* key, const char* otherwise) {
+        const QColor color(colors.value(key).toString());
+        return color.isValid() ? color : QColor(otherwise);
+    };
+    const QColor background = role("background", "#383838");
+    const QColor text = role("text", "#d2d2d2");
+    const QColor secondary = role("secondaryText", "#9a9a9a");
+    const QColor tertiary = role("tertiaryText", "#7a7a7a");
+    const QColor selection = role("tint", "#2c5d87");
+    const bool dark = background.lightness() < 128;
+    // the tint as words: lighter on a dark background, where the selection blue is too dark to read
+    const QColor tint = dark && selection.lightness() < 150 ? selection.lighter(170) : selection;
+    const QColor error = role("destructive", dark ? "#ff6b6b" : "#d13b22");
+    const QColor warning(dark ? "#e0c060" : "#8a6d00");   // no skin colour for a warning
+    auto style = [](const QColor& color) { return "color: " + color.name() + ";"; };
+    COMMAND_STYLE = style(tint);
+    RESULT_SUCCESS_STYLE = style(secondary);
+    RESULT_INFO_STYLE = style(tint);
+    RESULT_WARNING_STYLE = style(warning);
+    RESULT_ERROR_STYLE = style(error);
+    GUTTER_PREVIOUS_COMMAND = "<span style=\"" + style(secondary) + "\">&lt;</span>";
+    GUTTER_ERROR = "<span style=\"" + style(error) + "\">X</span>";
+
+    setStyleSheet(QString("* { font-family: Inconsolata, Lucida Console, Andale Mono, Monaco; font-size: 14px; }\n"
+                          "#Console, #widget, #scrollArea, #scrollAreaWidgetContents, #widget_2, #logArea "
+                          "{ background: %1; }\n"
+                          "QLabel { color: %2; background: transparent; }\n"
+                          "#promptTextEdit { color: %2; background: %1; selection-background-color: %3; }\n"
+                          "#promptTextEdit:!enabled { color: %4; }\n"
+                          "#promptGutterLabel { color: %5; }\n"
+                          "#promptGutterLabel:!enabled { color: %4; }\n")
+                      .arg(background.name(), text.name(), selection.name(), tertiary.name(), secondary.name()));
+    _ui->promptTextEdit->setTextColor(text);   // the form sets black for what's typed
 }
 
 void JSConsole::insertCompletion(const QModelIndex& completion) {

@@ -182,6 +182,9 @@ public slots:
     QDockWidget* myFilesPanel();
     // Build mode's toolbar rows, placed by the editor rather than left to a saved layout
     void placeToolBars();
+    // after a named layout is put back (View > Layouts, one list for both modes): the Hierarchy, the Inspector and
+    // the rows follow the mode, not the layout, which may have been saved in the other one
+    void layoutApplied(bool savedInBuildMode);
     // Build mode's own panels, once it has been on (null before)
     QDockWidget* hierarchyPanel() const;
     QDockWidget* inspectorPanel() const;

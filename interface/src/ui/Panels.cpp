@@ -217,9 +217,12 @@ void Panels::resetDocks() {
             placeFloating(made, window, QSize(panel.width, FLOATING_HEIGHT));
         }
     }
-    // the console back in its first place but left as it is: closing it would stop what was typed into it, and hiding
-    // it would leave that running where no one sees it
+    // the console closed, as on a first start (Caity, 10-27), which stops what was typed into it, and back in its
+    // first place
     if (QDockWidget* console = DependencyManager::get<StandAloneJSConsole>()->dock()) {
+        if (!console->isHidden()) {
+            console->close();
+        }
         console->setFloating(true);
         placeFloating(console, window, QSize(CONSOLE_WIDTH, CONSOLE_HEIGHT));
     }

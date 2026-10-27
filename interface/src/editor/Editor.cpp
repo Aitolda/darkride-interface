@@ -1026,6 +1026,27 @@ void Editor::resetLayout() {
     }
 }
 
+void Editor::layoutApplied(bool savedInBuildMode) {
+    if (!_panelsCreated) {
+        return;   // Build mode's panels take their places from the layout when they're made
+    }
+    gl::ViewChangeGuard guard;   // panels coming and going change the window round the GL view
+    if (_active) {
+        // a layout from normal play has Build mode's panels closed
+        if (!savedInBuildMode) {
+            _hierarchy->show();
+            _inspector->show();
+        }
+        placeToolBars();
+    } else {
+        _hierarchy->hide();
+        _inspector->hide();
+    }
+    _toolBar->setVisible(_active);
+    _statusBar->setVisible(_active);
+    updateTerrainBar();
+}
+
 // --- every frame --------------------------------------------------------------------------------
 
 void Editor::update(float deltaTime) {

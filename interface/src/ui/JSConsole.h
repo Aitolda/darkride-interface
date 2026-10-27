@@ -64,6 +64,7 @@ private slots:
     void highlightedCompletion(const QModelIndex& completion);
 
 private:
+    void applyLook();   // the skin's colours, or Darkride's own
     void appendMessage(const QString& gutter, const QString& message);
     void setToNextCommandInHistory();
     void setToPreviousCommandInHistory();
