@@ -207,9 +207,10 @@ int EntityTree::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
                 EntityItemPointer entity = findEntityByEntityItemID(entityItemID);
 
                 if (entity) {
-                    QString entityScriptBefore = entity->getScript();
+                    // the scripts to run, "" while they're off: turning them off or on is a change of script
+                    QString entityScriptBefore = entity->getScriptToRun();
                     QUuid parentIDBefore = entity->getParentID();
-                    QString entityServerScriptsBefore = entity->getServerScripts();
+                    QString entityServerScriptsBefore = entity->getServerScriptsToRun();
                     quint64 entityScriptTimestampBefore = entity->getScriptTimestamp();
 
                     bytesForThisEntity = entity->readEntityDataFromBuffer(dataAt, bytesLeftToRead, args);
@@ -218,8 +219,8 @@ int EntityTree::readEntityDataFromBuffer(const unsigned char* data, int bytesLef
                     }
                     _entityMover.addEntityToMoveList(entity, entity->getQueryAACube());
 
-                    QString entityScriptAfter = entity->getScript();
-                    QString entityServerScriptsAfter = entity->getServerScripts();
+                    QString entityScriptAfter = entity->getScriptToRun();
+                    QString entityServerScriptsAfter = entity->getServerScriptsToRun();
                     quint64 entityScriptTimestampAfter = entity->getScriptTimestamp();
                     bool reload = entityScriptTimestampBefore != entityScriptTimestampAfter;
 
@@ -513,7 +514,8 @@ bool EntityTree::updateEntity(EntityItemPointer entity, const EntityItemProperti
         }
         // else client accepts what the server says
 
-        QString entityScriptBefore = entity->getScript();
+        QString entityScriptBefore = entity->getScriptToRun();
+        QString entityServerScriptsBefore = entity->getServerScriptsToRun();
         quint64 entityScriptTimestampBefore = entity->getScriptTimestamp();
         uint32_t preFlags = entity->getDirtyFlags();
 
@@ -610,11 +612,16 @@ bool EntityTree::updateEntity(EntityItemPointer entity, const EntityItemProperti
             }
         }
 
-        QString entityScriptAfter = entity->getScript();
+        QString entityScriptAfter = entity->getScriptToRun();
         quint64 entityScriptTimestampAfter = entity->getScriptTimestamp();
         bool reload = entityScriptTimestampBefore != entityScriptTimestampAfter;
         if (entityScriptBefore != entityScriptAfter || reload) {
             emitEntityScriptChanging(entity->getEntityItemID(), reload); // the entity script has changed
+        }
+        // an entity script server's own edit, such as a server script turning its entity's scripts off: the entity
+        // server's echo of it changes nothing there any more
+        if (entityServerScriptsBefore != entity->getServerScriptsToRun() || reload) {
+            emitEntityServerScriptChanging(entity->getEntityItemID(), reload);
         }
     }
 
