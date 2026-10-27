@@ -619,9 +619,10 @@ bool EntityTree::updateEntity(EntityItemPointer entity, const EntityItemProperti
             emitEntityScriptChanging(entity->getEntityItemID(), reload); // the entity script has changed
         }
         // an entity script server's own edit, such as a server script turning its entity's scripts off: the entity
-        // server's echo of it changes nothing there any more
-        if (entityServerScriptsBefore != entity->getServerScriptsToRun() || reload) {
-            emitEntityServerScriptChanging(entity->getEntityItemID(), reload);
+        // server's echo of it changes nothing there any more. Not on a new scriptTimestamp: a server script bumping it
+        // (to have clients reload) would reload itself, every time over if it does so in its preload
+        if (entityServerScriptsBefore != entity->getServerScriptsToRun()) {
+            emitEntityServerScriptChanging(entity->getEntityItemID(), false);
         }
     }
 

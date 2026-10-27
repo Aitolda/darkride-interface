@@ -7,7 +7,8 @@
 //  edit the box on every tick (a script that keeps editing its entity, whose own edits are newer than the switch) and
 //  report on the "scripts-off" channel. Then it turns the box's scripts off (scriptsEnabled), swaps both scripts for
 //  version B while they're off, turns them on again, tries to turn them off while the box is locked, and last has the
-//  server script turn them off itself. Prints SCRIPTS-OFF lines and a RESULT.
+//  server script turn them off itself. Beside it, a second box's server script bumps its own scriptTimestamp as it
+//  loads (to have clients reload), which must not reload itself. Prints SCRIPTS-OFF lines and a RESULT.
 //
 //  Copyright 2026 Darkride.
 //
@@ -129,6 +130,15 @@
             script: entityScript("client", "A"), serverScripts: entityScript("server", "A")
         });
         log("added " + box + " round the client at " + JSON.stringify(here));
+        var stamp = Entities.addEntity({
+            type: "Box", name: NAME, position: Vec3.sum(here, { x: 0, y: 5, z: 0 }), dimensions: { x: 0.5, y: 0.5, z: 0.5 },
+            lifetime: 300, serverScripts: "(function () {" +
+                "  this.preload = function (id) {" +
+                "    Messages.sendMessage('" + CHANNEL + "', JSON.stringify({ who: 'stamp', version: 'S', event: 'preload', n: 0 }));" +
+                "    Entities.editEntity(id, { scriptTimestamp: Date.now() });" +
+                "  };" +
+                "})"
+        });
 
         var offAt, onAt, lockAt, selfAt;
         Script.setTimeout(function () {
@@ -137,6 +147,7 @@
                 check(who + " A ticks", seen(who, "A", "tick", t0).length > 10, seen(who, "A", "tick", t0).length);
             });
             check("client A entered", seen("client", "A", "enter", t0).length >= 1);
+            checkLoadedOnce("stamp", "S", t0);
             check("scriptsEnabled reads true", scriptsEnabled() === true, scriptsEnabled());
             offAt = Date.now();
             Entities.editEntity(box, { scriptsEnabled: false });
@@ -218,6 +229,7 @@
 
         Script.setTimeout(function () {
             Entities.deleteEntity(box);
+            Entities.deleteEntity(stamp);
             Messages.sendMessage(CONTROL, JSON.stringify({ done: true }));
             log("RESULT " + (failures.length ? "FAIL " + failures.join("; ") : "PASS") + " (" + events.length +
                 " messages)");
