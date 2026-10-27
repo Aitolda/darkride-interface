@@ -2678,11 +2678,9 @@ QUrl MyAvatar::getDefaultFullAvatarURL() {
 }
 
 bool MyAvatar::isSkeletonModelLoaded() const {
-    if (!_skeletonModel || !_skeletonModel->isLoaded()) {
-        return false;
-    }
-    auto networkModel = _skeletonModel->getNetworkModel();
-    return networkModel && networkModel->areTexturesLoaded();
+    // Scripts call this on their own thread (worldLoading.js through every world load), so it reads the flag the main
+    // thread keeps, never the model's geometry or materials, which the main thread changes as they arrive.
+    return _skeletonModel && _skeletonModel->isLoadedWithTextures();
 }
 
 void MyAvatar::useFullAvatarURL(const QUrl& fullAvatarURL, const QString& modelName) {
