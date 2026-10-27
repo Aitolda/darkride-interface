@@ -127,7 +127,14 @@ Page {
         }
 
         function wear(address, modelName) {
+            var before = String(MyAvatar.getFullAvatarURLFromPreferences());
             MyAvatar.useFullAvatarURL(address, modelName);
+            var after = String(MyAvatar.getFullAvatarURLFromPreferences());
+            if (after === before && after !== String(address)) {
+                // refused (someone else's private avatar, Caity 10-27): the look you have stays, its scale and name too
+                refresh();
+                return;
+            }
             MyAvatar.scale = 1;
             Settings.setValue(favoriteNameSetting, "");
             refresh();
