@@ -955,6 +955,40 @@ static void compactSkinnedMeshes(aiScene* scene) {
     }
 }
 
+// A glTF binary's chunks start on 4-byte boundaries: the JSON chunk is padded with spaces to a multiple of 4 (glTF 2.0,
+// "Binary glTF Layout"). Some exporters leave the padding out (16 of 45 VRMs in one collection, 10-27), and Assimp then
+// looks for the BIN chunk 1-3 bytes too far on and gives up ("GLTF: BIN chunk missing"). With the BIN chunk straight
+// after the unpadded JSON, this puts the padding in, in a copy; anything else (a padded file, one whose padding is there
+// but not counted, which Assimp reads, or not a glTF binary) comes back as it is.
+static hifi::ByteArray padGlbJsonChunk(const hifi::ByteArray& data) {
+    const int HEADER = 12;
+    const int CHUNK_HEADER = 8;
+    const quint32 MAGIC_GLTF = 0x46546C67;
+    const quint32 CHUNK_JSON = 0x4E4F534A;
+    const quint32 CHUNK_BIN = 0x004E4942;
+    if (data.size() < HEADER + 2 * CHUNK_HEADER || qFromLittleEndian<quint32>(data.constData()) != MAGIC_GLTF ||
+        qFromLittleEndian<quint32>(data.constData() + HEADER + 4) != CHUNK_JSON) {
+        return data;
+    }
+    const quint32 jsonLength = qFromLittleEndian<quint32>(data.constData() + HEADER);
+    const int padding = (4 - jsonLength % 4) % 4;
+    if (padding == 0 || jsonLength > (quint32)(data.size() - HEADER - 2 * CHUNK_HEADER)) {
+        return data;
+    }
+    const int jsonEnd = HEADER + CHUNK_HEADER + (int)jsonLength;
+    if (qFromLittleEndian<quint32>(data.constData() + jsonEnd + 4) != CHUNK_BIN) {
+        return data;
+    }
+    hifi::ByteArray padded;
+    padded.reserve(data.size() + padding);
+    padded.append(data.constData(), jsonEnd);
+    padded.append(padding, ' ');
+    padded.append(data.constData() + jsonEnd, data.size() - jsonEnd);
+    qToLittleEndian<quint32>(qFromLittleEndian<quint32>(data.constData() + 8) + padding, padded.data() + 8);
+    qToLittleEndian<quint32>(jsonLength + padding, padded.data() + HEADER);
+    return padded;
+}
+
 HFMModel::Pointer AssimpSerializer::read(const hifi::ByteArray& data, const hifi::VariantHash& mapping, const hifi::URL& inputUrl) {
 	url = inputUrl;
 
@@ -999,8 +1033,12 @@ HFMModel::Pointer AssimpSerializer::read(const hifi::ByteArray& data, const hifi
     // vertices its faces use (compactSkinnedMeshes)
     const unsigned int AFTER_COMPACTING = aiProcess_JoinIdenticalVertices | aiProcess_LimitBoneWeights | aiProcess_ImproveCacheLocality;
 
+    const hifi::ByteArray glb = padGlbJsonChunk(data);
+    if (glb.size() != data.size()) {
+        qCDebug(modelformat) << "AssimpSerializer::read" << url.fileName() << "has its JSON chunk unpadded: padded it";
+    }
     scene = importer.ReadFileFromMemory(
-        data.constData(), data.size(),
+        glb.constData(), glb.size(),
         // aiProcess_CalcTangentSpace |
         aiProcess_Triangulate |
         aiProcess_RemoveComponent |
