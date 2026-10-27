@@ -400,7 +400,8 @@ Page {
         Section {
             title: "View"
             footer: "Drag a label sideways to change its number: Shift for big steps, Alt for small ones. A resolution "
-                + "scale above 1× draws more pixels than the window has: sharper, and slower in proportion."
+                + "scale above 1× draws more pixels than the window has: sharper, and slower in proportion. Below 1× "
+                + "it draws fewer and scales them up, sharpened: faster, and a little softer."
 
             ListRow {
                 label: "Resolution scale"
