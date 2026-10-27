@@ -12,6 +12,7 @@
 #include <QUrl>
 #include <QMutex>
 
+#include <atomic>
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
@@ -259,6 +260,10 @@ public:
     /// Returns the unscaled extents of the model's mesh
     Extents getUnscaledMeshExtents() const;
 
+    /// Any thread: the loaded model's HFMModel::getUnscaledMeshExtents, cached on the main thread as its geometry arrives
+    /// and goes; false while there is none
+    bool getCachedUnscaledMeshExtents(Extents& extents) const;
+
     void setTranslation(const glm::vec3& translation);
     void setRotation(const glm::quat& rotation);
     void overrideModelTransformAndOffset(const Transform& transform, const glm::vec3& offset);
@@ -297,6 +302,7 @@ public:
 
     void setLoadingPriority(float priority) { _loadingPriority = priority; }
 
+    // any thread may read these (scripts do, through Entities.getEntityProperties); they are worked out on the main thread
     size_t getRenderInfoVertexCount() const { return _renderInfoVertexCount; }
     size_t getRenderInfoTextureSize();
     int getRenderInfoTextureCount();
@@ -505,12 +511,17 @@ protected:
 
     bool _renderItemsNeedUpdate { false };
 
-    size_t _renderInfoVertexCount { 0 };
-    int _renderInfoTextureCount { 0 };
-    size_t _renderInfoTextureSize { 0 };
-    bool _hasCalculatedTextureInfo { false };
-    int _renderInfoDrawCalls { 0 };
-    int _renderInfoHasTransparent { false };
+    std::atomic<size_t> _renderInfoVertexCount { 0 };
+    std::atomic<int> _renderInfoTextureCount { 0 };
+    std::atomic<size_t> _renderInfoTextureSize { 0 };
+    std::atomic<bool> _hasCalculatedTextureInfo { false };
+    std::atomic<bool> _textureInfoRequested { false };
+    std::atomic<int> _renderInfoDrawCalls { 0 };
+    std::atomic<bool> _renderInfoHasTransparent { false };
+
+    mutable std::mutex _cachedMeshExtentsMutex;
+    Extents _cachedUnscaledMeshExtents;
+    bool _hasCachedUnscaledMeshExtents { false };
 
     // This Render ItemKey Global Flags capture the Model wide global set of flags that should be communicated to all the render items representing the Model.
     // The flags concerned are:
@@ -534,6 +545,7 @@ private:
     float _loadingPriority { 0.0f };
 
     void calculateTextureInfo();
+    void requestTextureInfo();
 
     std::set<unsigned int> getMeshIDsFromMaterialID(QString parentMaterialName);
 };

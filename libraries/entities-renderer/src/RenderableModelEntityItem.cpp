@@ -261,6 +261,8 @@ EntityItemProperties RenderableModelEntityItem::getProperties(const EntityProper
         properties.setTextureNames(_originalTextures);
     }
 
+    // scripts call this on their own threads while the main thread changes the model: read only what the model keeps for
+    // any thread (its materials and geometry are the main thread's)
     ModelPointer model = getModel();
     if (model) {
         properties.setRenderInfoVertexCount(model->getRenderInfoVertexCount());
@@ -269,10 +271,10 @@ EntityItemProperties RenderableModelEntityItem::getProperties(const EntityProper
         properties.setRenderInfoDrawCalls(model->getRenderInfoDrawCalls());
         properties.setRenderInfoHasTransparent(model->getRenderInfoHasTransparent());
 
-        if (model->isLoaded()) {
+        Extents meshExtents;
+        if (model->getCachedUnscaledMeshExtents(meshExtents)) {
             // TODO: improve naturalDimensions in the future,
             //       for now we've added this hack for setting natural dimensions of models
-            Extents meshExtents = model->getHFMModel().getUnscaledMeshExtents();
             properties.setNaturalDimensions(meshExtents.maximum - meshExtents.minimum);
             properties.calculateNaturalPosition(meshExtents.minimum, meshExtents.maximum);
         }
