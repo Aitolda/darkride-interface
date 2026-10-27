@@ -144,17 +144,9 @@ protected:
                 // under the pointer and what's on (scripts under a row cost a walk of its descendants)
                 bool usable = on || hovered ? usableHere(toggle, id)
                                             : toggle != HierarchyPanel::Lock || _panel->_canLock;
-                painter.setPen(QPen(!usable ? ICON_UNUSABLE : on ? ICON_ON : hovered ? ICON_HINT : ICON_OFF, ICON_PEN));
-                QRectF cell(GUTTER_PAD + t * CELL, row.top() + dy, CELL, row.height());
-                if (toggle == HierarchyPanel::Hide) {
-                    drawEye(painter, cell, on);
-                } else if (toggle == HierarchyPanel::NoPick) {
-                    drawPointer(painter, cell, on);
-                } else if (toggle == HierarchyPanel::Lock) {
-                    drawLock(painter, cell, on);
-                } else {
-                    drawScript(painter, cell, on);
-                }
+                painter.setPen(QPen(HierarchyPanel::toggleColor(on, hovered, usable), ICON_PEN));
+                HierarchyPanel::paintToggle(painter, toggle, QRectF(GUTTER_PAD + t * CELL, row.top() + dy, CELL,
+                                                                    row.height()), on);
             }
         }
     }
@@ -461,6 +453,74 @@ QList<QUuid> HierarchyPanel::scriptsToSwitch(const QList<QUuid>& ids) const {
         }
     }
     return switchable;
+}
+
+QVector<HierarchyPanel::ToggleState> HierarchyPanel::statesFor(const QList<QUuid>& ids) const {
+    QVector<ToggleState> states(Scripts + 1);
+    if (!_model || ids.isEmpty()) {
+        return states;
+    }
+    // scripts: only what has a script counts, on or off
+    QList<QUuid> scripted;
+    for (const auto& id : ids) {
+        if (_model->indexForId(id).data(EntityTreeModel::ScriptsRole).toInt() != EntityTreeModel::NoScripts) {
+            scripted << id;
+        }
+    }
+    for (int t = Hide; t <= Scripts; ++t) {
+        auto toggle = (Toggle)t;
+        const QList<QUuid>& counted = toggle == Scripts ? scripted : ids;
+        int on = (int)std::count_if(counted.begin(), counted.end(), [this, toggle](const QUuid& id) {
+            return isOn(toggle, id);
+        });
+        states[t].look = on == 0 ? Off : on == counted.size() ? On : Mixed;
+    }
+    bool anyLoaded = std::any_of(ids.begin(), ids.end(), [this](const QUuid& id) { return _model->isLoaded(id); });
+    states[Lock].usable = _canLock && anyLoaded;
+    states[Lock].why = !_canLock ? _noLockWhy : "Not here yet: it hasn't loaded.";
+    states[Scripts].usable = !_readOnly && !scriptsToSwitch(ids).isEmpty();
+    states[Scripts].why = _readOnly ? QString("You can't change things in this world.")
+                          : scripted.isEmpty() ? QString("No scripts here.")
+                                               : QString("Locked: unlock it to turn its scripts on or off.");
+    return states;
+}
+
+bool HierarchyPanel::toggleIds(Toggle toggle, const QList<QUuid>& ids) {
+    if (!_model) {
+        return false;
+    }
+    QList<QUuid> targets;
+    for (const auto& id : ids) {
+        // a lock is the entity's own: it needs the right, and the entity here to change
+        if (_model->indexForId(id).isValid() && (toggle != Lock || (_canLock && _model->isLoaded(id)))) {
+            targets << id;
+        }
+    }
+    if (toggle == Scripts) {
+        targets = _readOnly ? QList<QUuid>() : scriptsToSwitch(targets);
+    }
+    if (targets.isEmpty()) {
+        return false;
+    }
+    bool on = !std::all_of(targets.begin(), targets.end(), [this, toggle](const QUuid& id) { return isOn(toggle, id); });
+    emit toggleRequested(toggle, targets, on);
+    return true;
+}
+
+void HierarchyPanel::paintToggle(QPainter& painter, Toggle toggle, const QRectF& cell, bool on) {
+    if (toggle == Hide) {
+        drawEye(painter, cell, on);
+    } else if (toggle == NoPick) {
+        drawPointer(painter, cell, on);
+    } else if (toggle == Lock) {
+        drawLock(painter, cell, on);
+    } else {
+        drawScript(painter, cell, on);
+    }
+}
+
+QColor HierarchyPanel::toggleColor(bool on, bool hovered, bool usable) {
+    return !usable ? ICON_UNUSABLE : on ? ICON_ON : hovered ? ICON_HINT : ICON_OFF;
 }
 
 int HierarchyPanel::hiddenCount() const {

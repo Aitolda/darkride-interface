@@ -571,6 +571,7 @@ void Editor::updateReadOnly() {
         _hierarchy->setReadOnly(_readOnly, reason);
         _hierarchy->setCanLock(!_readOnly && entities->canAdjustLocks(), _readOnly ? reason : NO_LOCK_RIGHT);
     }
+    updateInspectorToggles();
     if (_toolBar) {
         _toolBar->setCreateEnabled(!_readOnly);
     }
@@ -667,6 +668,12 @@ void Editor::createPanels() {
     connect(_inspector, &InspectorPanel::editBegan, this, &Editor::onInspectorEditBegan);
     connect(_inspector, &InspectorPanel::liveEdit, this, &Editor::onInspectorLiveEdit);
     connect(_inspector, &InspectorPanel::committed, this, &Editor::onInspectorCommitted);
+    // the header's toggle icons: the Hierarchy rows' rules, for the selection alone
+    connect(_inspector, &InspectorPanel::toggleClicked, this, [this](int toggle) {
+        if (_hierarchy) {
+            _hierarchy->toggleIds((HierarchyPanel::Toggle)toggle, _selection.ids());
+        }
+    });
     connect(_inspector, &InspectorPanel::editCancelled, this, &Editor::onInspectorEditCancelled);
     connect(_inspector, &InspectorPanel::uploadRequested, this, &Editor::onInspectorUpload);
 
@@ -1895,6 +1902,13 @@ void Editor::refreshInspector(bool selectionChanged) {
         // a light handle's drag is an edit no field is making: the fields follow it
         _inspector->refreshValues(snapshots);
     }
+    updateInspectorToggles();
+}
+
+void Editor::updateInspectorToggles() {
+    if (_inspector && _hierarchy) {
+        _inspector->setToggleStates(_hierarchy->statesFor(_selection.ids()));
+    }
 }
 
 EntityItemProperties Editor::inspectorEdit(const QString& key, const QVariant& value, const glm::vec3& naturalSize,
@@ -2714,6 +2728,7 @@ void Editor::onHierarchyToggle(int toggle, const QList<QUuid>& ids, bool on) {
     if (_hierarchy) {
         _hierarchy->setLocalStates(_hiddenHere, _noPick);
     }
+    updateInspectorToggles();   // the header's eye and pointer: no property changed to refresh it
 }
 
 void Editor::remindOfScriptsOff() {

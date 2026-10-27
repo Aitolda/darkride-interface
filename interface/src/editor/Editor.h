@@ -282,6 +282,8 @@ private:
 
     // the Inspector: snapshots of the selection, and edits coming back from its fields
     void refreshInspector(bool selectionChanged);
+    // the Inspector header's toggle icons, for the selection (the Hierarchy rows' states)
+    void updateInspectorToggles();
     // the Hierarchy's rows and the Inspector say what failed to load (EntityRenderer::loadFailures), once a second
     void refreshLoadProblems();
     // the selected entities' load failures, one line each (named when several are selected)
