@@ -2918,6 +2918,10 @@ private:
     const float MAX_LOOK_AT_TIME_SCRIPT_CONTROL = 2.0f;
     glm::quat _lookAtPitch;
     glm::quat _lookAtYaw;
+    glm::quat _previousMotorRotation;           // the action motor's rotation in its frame last frame (updateMotors)
+    QUuid _previousMotorFrameID;
+    uint64_t _lastPhysicsStepCount { 0 };       // the physics' step the avatar last turned by (simulate)
+    bool _previousMotorRotationValid { false };
     // the frame the look-at yaw was last turned with, and that frame's orientation then (PHYSICS.md 4.4: the camera is
     // a member of the avatar's frame, so the look-at yaw turns with the frame's heading)
     QUuid _lookAtFrameID;

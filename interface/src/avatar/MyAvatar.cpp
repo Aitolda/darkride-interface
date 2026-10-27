@@ -898,7 +898,21 @@ void MyAvatar::simulate(float deltaTime, bool inView) {
             }
         }
 
-        updateOrientation(deltaTime);
+        // The avatar turns by the time the physics moved the world on this frame (its paced clock: whole refreshes,
+        // eased to the wall clock), not by the wall clock: the walk is stepped on the physics' clock, and a turn on the
+        // other comes out ahead of it or behind whenever a frame is early or late. When the frame time changes with
+        // heading that happens at the same headings every lap, and a run in circles drifts (GitHub #15). The wall clock
+        // in a frame the physics doesn't step (it is off: loading, no world) or holds (a clock too far ahead): the turn
+        // never gets 0, which updateOrientation divides by (the mouse's smoothed turn, the look-at yaw speed).
+        float turnTime = deltaTime;
+        const PhysicsEnginePointer& engine = _characterController.getPhysicsEngine();
+        if (engine && engine->getStepCount() != _lastPhysicsStepCount) {
+            _lastPhysicsStepCount = engine->getStepCount();
+            if (engine->getLastSteppedTime() > FLT_EPSILON) {
+                turnTime = engine->getLastSteppedTime();
+            }
+        }
+        updateOrientation(turnTime);
         updatePosition(deltaTime);
         updateViewBoom();
     }
@@ -2820,13 +2834,37 @@ void MyAvatar::updateMotors() {
             motorRotation = orientation * motorRotation;
         }
 
+        // The motors are set before the physics step and the avatar turns after it (updateOrientation, in update()),
+        // so each step goes straight along the heading it starts at and lands a little to one side. Even frames cancel
+        // that round a circle, but frames that are longer facing one way (more to draw there) don't, and the circle
+        // creeps (GitHub #15). The motor leads by half of last frame's turn: the step's middle heading. Taken in the
+        // frame's coordinates, so a turning frame's own turn isn't led; a change no steady turn makes in a frame (a
+        // snap turn, a teleport, a new frame) isn't led at all.
+        const float MOTOR_TURN_LEAD = 0.5f;
+        const float MAX_LED_TURN = glm::radians(10.0f);
+        glm::quat frameMotorRotation = toFrame * motorRotation;
+        glm::quat lead = Quaternions::IDENTITY;
+        QUuid frameID = getFrameID();
+        if (_previousMotorRotationValid && frameID == _previousMotorFrameID) {
+            glm::quat lastTurn = frameMotorRotation * glm::inverse(_previousMotorRotation);
+            if (fabsf(lastTurn.w) > cosf(0.5f * MAX_LED_TURN)) {
+                lead = glm::slerp(Quaternions::IDENTITY, lastTurn, MOTOR_TURN_LEAD);
+            }
+        }
+        _previousMotorRotation = frameMotorRotation;
+        _previousMotorFrameID = frameID;
+        _previousMotorRotationValid = true;
+        frameMotorRotation = lead * frameMotorRotation;
+
         if (_isPushing || _isBraking || !_isBeingPushed) {
-            _characterController.addMotor(_actionMotorVelocity, toFrame * motorRotation, horizontalMotorTimescale, verticalMotorTimescale);
+            _characterController.addMotor(_actionMotorVelocity, frameMotorRotation, horizontalMotorTimescale, verticalMotorTimescale);
         } else {
             // _isBeingPushed must be true --> disable action motor by giving it a long timescale,
             // otherwise it's attempt to "stand in in place" could defeat scripted motor/thrusts
-            _characterController.addMotor(_actionMotorVelocity, toFrame * motorRotation, INVALID_MOTOR_TIMESCALE);
+            _characterController.addMotor(_actionMotorVelocity, frameMotorRotation, INVALID_MOTOR_TIMESCALE);
         }
+    } else {
+        _previousMotorRotationValid = false;
     }
     if (_motionBehaviors & AVATAR_MOTION_SCRIPTED_MOTOR_ENABLED) {
         if (_scriptedMotorFrame == SCRIPTED_MOTOR_CAMERA_FRAME) {
@@ -3884,20 +3922,31 @@ void MyAvatar::updateOrientation(float deltaTime) {
             const float AVATAR_TURNS_TO_CAM_IN_SPEED = 130.0f; // Degrees per second
             const float AVATAR_TURNS_TO_CAM_OUT_SPEED = 720.0f; // Degrees per second
 
-            float blend = (_shouldTurnToFaceCamera ? REORIENT_TURN_BLEND : REORIENT_FORWARD_BLEND) * timeScale;
+            float blendAt60 = _shouldTurnToFaceCamera ? REORIENT_TURN_BLEND : REORIENT_FORWARD_BLEND;
             if (mode == CAMERA_MODE_FIRST_PERSON_LOOK_AT && _lookAtYawSpeed > AVATAR_TURNS_TO_CAM_IN_SPEED) {
                 // When the camera is rotating fast we should accelerate the avatar's face forward speed
                 // to avoid showing the cauterized head;
                 float cameraYawSpeed = glm::min(_lookAtYawSpeed, AVATAR_TURNS_TO_CAM_OUT_SPEED);
-                float blendFactor = REORIENT_TURN_BLEND + REORIENT_FORWARD_BLEND * ((cameraYawSpeed - AVATAR_TURNS_TO_CAM_IN_SPEED) /
+                blendAt60 = REORIENT_TURN_BLEND + REORIENT_FORWARD_BLEND * ((cameraYawSpeed - AVATAR_TURNS_TO_CAM_IN_SPEED) /
                     (AVATAR_TURNS_TO_CAM_OUT_SPEED - AVATAR_TURNS_TO_CAM_IN_SPEED));
-                blend = glm::min(1.0f, blendFactor * timeScale);
             }
 
-            if (blend > 1.0f) {
-                blend = 1.0f;
+            // The body chases the camera's yaw as a continuous filter would, at the rate the blend has at 60 fps,
+            // whatever the frame rate (blend = 1 - e^-x), and aims a share of the way through this frame's turn of the
+            // camera (half of it at high frame rates, all of it when the blend is 1): the exact chase of a camera
+            // turning steadily through the frame. The body's heading at the frame's start is then its true one, which
+            // the walk steps from (updateMotors), so a run in circles doesn't drift where the frame time changes with
+            // heading (GitHub #15). A blend of x per frame instead lagged a whole frame's turn less than the chase.
+            float blend = 1.0f;
+            float turnShare = 1.0f;
+            if (blendAt60 < 1.0f) {
+                float x = -logf(1.0f - blendAt60) * timeScale;
+                blend = 1.0f - expf(-x);
+                if (x > FLT_EPSILON && blend > FLT_EPSILON) {
+                    turnShare = (1.0f - blend / x) / blend;
+                }
             }
-            glm::quat faceRotation = _lookAtYaw;
+            glm::quat faceRotation = glm::slerp(previousYaw, _lookAtYaw, turnShare);
             if (isMovingFwdBwd) {
                 if (isMovingSideways) {
                     // Reorient avatar to face camera diagonal
@@ -3907,6 +3956,7 @@ void MyAvatar::updateOrientation(float deltaTime) {
                     faceRotation = _lookAtYaw * glm::angleAxis(turnSign * 0.25f * PI, Vectors::UP);
                 } else if (mode == CAMERA_MODE_FIRST_PERSON_LOOK_AT) {
                     blend = 1.0f;
+                    faceRotation = _lookAtYaw;
                 }
             }
             if (!_characterController.getSeated()) {
