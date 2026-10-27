@@ -99,6 +99,7 @@ public slots:
      * <code>isAvatar == true</code>.
      * @function Agent.playAvatarSound
      * @param {SoundObject} avatarSound - The sound played.
+     * @param {number} [volume=1] - The volume it plays at, <code>0</code> to <code>1</code>.
      * @example <caption>Play a sound from an emulated avatar.</caption>
      * (function () {
      *     Agent.isAvatar = true;
@@ -108,7 +109,7 @@ public slots:
      *     }, 1000);
      * }());
      */
-    void playAvatarSound(SharedSoundPointer avatarSound) const { _agent->playAvatarSound(avatarSound); }
+    void playAvatarSound(SharedSoundPointer avatarSound, float volume = 1.0f) const { _agent->playAvatarSound(avatarSound, volume); }
 
     /*@jsdoc
      * Stops the sound <code>playAvatarSound</code> is playing, if any. <code>avatarSoundFinished</code> is

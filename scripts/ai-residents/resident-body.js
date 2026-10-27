@@ -265,7 +265,7 @@
             reply(id);
         } else if (method === "play_line") {
             lines.push(id);
-            Agent.playAvatarSound(SoundCache.getSound(params.url));
+            Agent.playAvatarSound(SoundCache.getSound(params.url), params.volume === undefined ? 1 : Number(params.volume));
             reply(id);
         } else if (method === "stop_line") {
             Agent.stopAvatarSound();
