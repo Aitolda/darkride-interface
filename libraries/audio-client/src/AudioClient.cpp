@@ -1751,6 +1751,12 @@ void AudioClient::sendMuteEnvironmentPacket() {
 void AudioClient::setMuted(bool muted, bool emitSignal) {
     if (_muted != muted) {
         _muted = muted;
+        // the microphone is open only while unmuted (switchInputToAudioDevice): open or release it, on the audio thread
+        QMetaObject::invokeMethod(this, [this] {
+            if (!_inputDeviceInfo.getDevice().isNull() && (_audioInput == nullptr) != _muted) {
+                switchInputToAudioDevice(_inputDeviceInfo);
+            }
+        }, Qt::QueuedConnection);
         if (emitSignal) {
             emit muteToggled(_muted);
         }
@@ -1905,7 +1911,11 @@ bool AudioClient::switchInputToAudioDevice(const HifiAudioDeviceInfo inputDevice
         return true;
     }
 
-    if (!inputDeviceInfo.getDevice().isNull()) {
+    // Muted, the chosen microphone isn't opened (the dummy input stands in), so nothing holds it: a Bluetooth headset
+    // keeps its stereo music mode instead of the call mode, and macOS shows no microphone in use. setMuted opens it.
+    const bool releaseMicrophone = _muted && !inputDeviceInfo.getDevice().isNull();
+
+    if (!inputDeviceInfo.getDevice().isNull() && !releaseMicrophone) {
         qCDebug(audioclient) << "The audio input device" << inputDeviceInfo.deviceName() << ":" << inputDeviceInfo.getDevice().deviceName() << "is available.";
       
         //do not update UI that we're changing devices if default or same device
@@ -1971,8 +1981,15 @@ bool AudioClient::switchInputToAudioDevice(const HifiAudioDeviceInfo inputDevice
     // It generates audio callbacks on a timer to simulate a mic stream of silent packets.
     // This enables clients without a mic to still receive an audio stream from the mixer.
     if (!_audioInput) {
-        qCDebug(audioclient) << "Audio input device is not available, using dummy input.";
-        _inputDeviceInfo.setDevice(QAudioDeviceInfo());
+        if (releaseMicrophone) {
+            // still the chosen device, for the audio settings and for unmuting
+            qCDebug(audioclient) << "Muted: the audio input device" << inputDeviceInfo.deviceName() << "is not opened, using dummy input.";
+            _inputDeviceInfo = inputDeviceInfo;
+            supportedFormat = true;
+        } else {
+            qCDebug(audioclient) << "Audio input device is not available, using dummy input.";
+            _inputDeviceInfo.setDevice(QAudioDeviceInfo());
+        }
         emit deviceChanged(QAudio::AudioInput, _inputDeviceInfo);
 
         _inputFormat = _desiredInputFormat;
