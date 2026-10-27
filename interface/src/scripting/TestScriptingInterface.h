@@ -339,10 +339,11 @@ public slots:
 
     /**jsdoc
      * Does what a dock panel's title bar button does (ui/DockTitleBar.h): "dock", "float" or "close"; or
-     * "tab:<object name>", tabbed behind that docked panel, as a drag onto its title does.
+     * "tab:<object name>", tabbed behind that docked panel, as a drag onto its title does; or "drag:<x>,<y>", a drag
+     * by its title that many points, in Qt's events only (the real mouse untouched).
      * @function Test.dockAction
      * @param {string} objectName - The panel's object name, such as "ChatDock".
-     * @param {string} action - "dock", "float", "close" or "tab:<object name>".
+     * @param {string} action - "dock", "float", "close", "tab:<object name>" or "drag:<x>,<y>".
      * @returns {boolean} Whether the panel has such a title bar.
      */
     Q_INVOKABLE bool dockAction(const QString& objectName, const QString& action);

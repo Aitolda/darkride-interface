@@ -417,7 +417,8 @@ class ChatDock : public QDockWidget {
 public:
     explicit ChatDock(QWidget* parent) : QDockWidget("Chat", parent) {
         setObjectName("ChatDock");
-        setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+        // the bottom too, where My Files docks, so they tab with it (Caity, 10-27)
+        setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea | Qt::BottomDockWidgetArea);
         setFeatures(DockWidgetClosable | DockWidgetMovable | DockWidgetFloatable);
         for (auto button : findChildren<QAbstractButton*>()) {
             button->installEventFilter(this);

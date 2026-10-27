@@ -45,6 +45,10 @@ int main(int argc, const char* argv[]) {
 #ifdef Q_OS_MACOS
     // before anything of AppKit's runs: AutoFill is set up when the app first becomes active
     disableMacAutoFill();
+    // the panels stay ordinary widgets beside the native 3D view: by default Qt makes a native widget's neighbours
+    // native too, and Qt won't drag a docked panel that has a native window of its own on macOS (it pops it out where
+    // it was docked and ends the drag with a made-up mouse release: the drag Caity lost, 10-27); before any widget
+    QCoreApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
 
     auto format = getDefaultOpenGLSurfaceFormat();
     // Deal with some weirdness in the chromium context sharing on Mac.

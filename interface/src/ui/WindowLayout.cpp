@@ -178,8 +178,23 @@ void WindowLayout::putBack(const QByteArray& layout, const QStringList& tabs) {
     SystemToolbar::instance()->restorePlace();   // the bar's side is its own setting's
 }
 
-QStringList WindowLayout::savedNames() const {
-    return (_buildMode ? _buildNamedSetting : _namedSetting).get().keys();
+QVariantMap WindowLayout::named() {
+    QVariantMap named = _namedSetting.get();
+    const QVariantMap build = _buildNamedSetting.get();
+    if (!build.isEmpty()) {
+        for (auto i = build.begin(); i != build.end(); ++i) {
+            QVariantMap entry = i.value().toMap();
+            entry["build"] = true;
+            named[named.contains(i.key()) ? i.key() + " (Build mode)" : i.key()] = entry;
+        }
+        _namedSetting.set(named);
+        _buildNamedSetting.set(QVariantMap());
+    }
+    return named;
+}
+
+QStringList WindowLayout::savedNames() {
+    return named().keys();
 }
 
 void WindowLayout::saveAs(const QString& name) {
@@ -187,32 +202,29 @@ void WindowLayout::saveAs(const QString& name) {
     if (!window || name.trimmed().isEmpty()) {
         return;
     }
-    auto& setting = _buildMode ? _buildNamedSetting : _namedSetting;
-    QVariantMap named = setting.get();
-    named[name.trimmed()] = QVariantMap {
+    QVariantMap list = named();
+    list[name.trimmed()] = QVariantMap {
         { "state", QString::fromLatin1(window->saveState().toBase64()) },
         { "front", frontTabs() },
+        { "build", _buildMode },
     };
-    setting.set(named);
+    _namedSetting.set(list);
 }
 
 void WindowLayout::apply(const QString& name) {
-    const QVariantMap entry = (_buildMode ? _buildNamedSetting : _namedSetting).get().value(name).toMap();
+    const QVariantMap entry = named().value(name).toMap();
     if (entry.isEmpty()) {
         return;
     }
     putBack(QByteArray::fromBase64(entry.value("state").toString().toLatin1()), entry.value("front").toStringList());
-    if (_buildMode) {
-        DependencyManager::get<Editor>()->placeToolBars();   // the rows are Build mode's own, not a saved layout's
-    }
+    DependencyManager::get<Editor>()->layoutApplied(entry.value("build").toBool());
     saveSoon();
 }
 
 void WindowLayout::forget(const QString& name) {
-    auto& setting = _buildMode ? _buildNamedSetting : _namedSetting;
-    QVariantMap named = setting.get();
-    named.remove(name);
-    setting.set(named);
+    QVariantMap list = named();
+    list.remove(name);
+    _namedSetting.set(list);
 }
 
 void WindowLayout::resetToDefault() {

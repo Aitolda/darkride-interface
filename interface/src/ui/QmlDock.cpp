@@ -25,7 +25,8 @@
 
 QmlDock::QmlDock(const QString& name, const QUrl& source, QWidget* parent) : QDockWidget(name, parent), _source(source) {
     setObjectName(name + "Dock");
-    setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    // the bottom too, where My Files docks, so they tab with it (Caity, 10-27)
+    setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea | Qt::BottomDockWidgetArea);
     setFeatures(DockWidgetClosable | DockWidgetMovable | DockWidgetFloatable);
     setTitleBarWidget(new DockTitleBar(this));
     for (auto button : findChildren<QAbstractButton*>()) {

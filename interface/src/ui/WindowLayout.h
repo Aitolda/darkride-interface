@@ -52,15 +52,16 @@ public:
     void leaveBuildMode();
     bool isBuildMode() const { return _buildMode; }
 
-    /// View > Layouts: the current mode's named arrangements (each mode has its own list), by name
-    QStringList savedNames() const;
+    /// View > Layouts: the named arrangements, by name, one list for both modes (Caity, 10-27: one saved in Build
+    /// mode seemed lost in normal play's list)
+    QStringList savedNames();
     /// the arrangement as it is now, under a name (replacing one of that name)
     void saveAs(const QString& name);
-    /// a named arrangement put back
+    /// a named arrangement put back; in either mode, Build mode's own panels and rows following the mode
     void apply(const QString& name);
     void forget(const QString& name);
-    /// every panel back where it starts: the bar's panels closed, floating; chat as on a first start; Build mode's
-    /// docked where they start (My Files closed in normal play)
+    /// every panel back where it starts: the bar's panels closed, floating; the console closed; chat as on a first
+    /// start; Build mode's docked where they start (My Files closed in normal play)
     void resetToDefault();
 
 signals:
@@ -73,6 +74,7 @@ private:
     WindowLayout();
     void save();
     void putBack(const QByteArray& layout, const QStringList& frontTabs);   // under the guard, the bar's side after
+    QVariantMap named();                        // the named arrangements, Build mode's old list joined in
     QStringList frontTabs() const;              // the docked panels in front of a tab group, by object name
     void raiseTabs(const QStringList& names);   // Qt keeps a tab group's order, not which tab was in front
 
@@ -83,7 +85,8 @@ private:
     Setting::Handle<QByteArray> _buildLayoutSetting { "window/buildLayout", QByteArray() };   // Build mode's
     Setting::Handle<QStringList> _frontTabsSetting { "window/frontTabs", QStringList() };
     Setting::Handle<QStringList> _buildFrontTabsSetting { "window/buildFrontTabs", QStringList() };
-    // View > Layouts' named arrangements, per mode: name -> { "state": saveState in base64, "front": front tabs }
+    // View > Layouts' named arrangements: name -> { "state": saveState in base64, "front": front tabs, "build": saved
+    // in Build mode }; Build mode kept its own list until 10-27, which the first look joins to this one
     Setting::Handle<QVariantMap> _namedSetting { "window/namedLayouts", QVariantMap() };
     Setting::Handle<QVariantMap> _buildNamedSetting { "window/namedBuildLayouts", QVariantMap() };
 };
