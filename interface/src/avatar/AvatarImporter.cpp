@@ -30,7 +30,6 @@
 #include <AvatarWriter.h>
 #include <FBXSerializer.h>
 #include <GLMHelpers.h>
-#include <GLTFSerializer.h>
 #include <MainWindow.h>
 #include <NetworkAccessManager.h>
 #include <OBJSerializer.h>
@@ -81,12 +80,10 @@ HFMModel::Pointer readModel(const QString& path) {
     if (suffix == "fbx") {
         return FBXSerializer().read(data, mapping, url);
     }
-    if (suffix == "gltf" || suffix == "glb") {
-        return GLTFSerializer().read(data, mapping, url);
-    }
     if (suffix == "obj") {
         return OBJSerializer().read(data, mapping, url);
     }
+    // glTF too, as the model cache reads it (GLTFSerializer ignores interleaved vertex buffers, as Meshy's are)
     return AssimpSerializer().read(data, mapping, url);
 }
 
