@@ -13,6 +13,7 @@
 
 #include <QMetaType>
 #include <QRunnable>
+#include <QCoreApplication>
 #include <QThread>
 #include <QThreadPool>
 
@@ -198,7 +199,13 @@ void Model::requestTextureInfo() {
     if (QThread::currentThread() == thread()) {
         calculateTextureInfo();
     } else if (!_textureInfoRequested.exchange(true)) {
-        QMetaObject::invokeMethod(this, [this] { calculateTextureInfo(); }, Qt::QueuedConnection);
+        // a weak pointer, not this: the caller's ModelPointer may be the last one, so the Model can go on the caller's
+        // thread while the main thread runs the request; locked there, the main thread holds it while it works
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [weakModel = weak_from_this()] {
+            if (auto model = weakModel.lock()) {
+                model->calculateTextureInfo();
+            }
+        }, Qt::QueuedConnection);
     }
 }
 
