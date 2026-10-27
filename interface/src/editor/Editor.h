@@ -22,6 +22,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QPoint>
 #include <QtCore/QRectF>
+#include <QtCore/QSet>
 #include <QtCore/QString>
 #include <QtCore/QTimer>
 #include <QtCore/QUuid>
@@ -197,6 +198,18 @@ public slots:
     QVariantMap hierarchyCounts() const;
     // what a click on the entity's row in the Hierarchy does (Test.clickHierarchyRow)
     void clickHierarchyRow(const QUuid& id);
+    // what a click on a Hierarchy row's eye ("hide"), hand ("pick") or lock ("lock") does, Alt held for onlyThis
+    // (Test.hierarchyToggle); false when the row isn't there or the lock can't be changed
+    bool clickHierarchyToggle(const QString& which, const QUuid& id, bool onlyThis);
+    // the row's toggles and what they amount to (Test.hierarchyToggles): hidden here (and whether the entity is
+    // drawn), unpickable, locked, whether the lock can be changed, and the Hierarchy's note
+    QVariantMap hierarchyToggles(const QUuid& id) const;
+    // what a click in the viewport at the entity's middle selects, and what a marquee over the whole viewport would
+    // (Test.editorPickAt, Test.editorMarqueeIds)
+    QUuid pickAtEntityForTest(const QUuid& id) const;
+    QList<QUuid> marqueeAllForTest() const;
+    // the Hierarchy note's Show All, as a click on it
+    void showAllHere();
     void goToSelection();           // Shift+F: frame it and take the avatar there
     void bringSelectionHere();      // Option+Shift+F: move it to the avatar
     void create(const QString& key);
@@ -280,6 +293,7 @@ private:
 
     PickRay pickRay(const QPoint& viewportPos) const;
     QUuid pickEntity(const QPoint& viewportPos) const;
+    QUuid pickEntityOnRay(const PickRay& ray) const;
     // where the cursor points in the world: a surface, or the grid plane; false when off the viewport
     bool cursorWorldPoint(glm::vec3& point) const;
     glm::vec3 selectionAnchor() const;
@@ -355,6 +369,7 @@ private:
     void setGizmosVisible(bool visible);
     // what a click there selects: a light's icon, or else the surface under it
     QUuid pickAt(const QPoint& viewportPos) const;
+    QUuid pickOnRay(const PickRay& ray) const;
     bool pointerOverHierarchy() const;
     void beginLightHandleDrag(const EditorLightHandle& handle, const PickRay& ray);
     void moveLightHandleDrag(const QPoint& viewportPos);
@@ -503,6 +518,24 @@ private:
     QTimer _arrivalTimer;
     void onHierarchySelection(const QList<QUuid>& ids);
     void onEntityLoaded(const QUuid& id);
+    // The Hierarchy's eye and hand (Caity, 2026-10-26: "do it like unity"): what this builder has hidden in their own
+    // view and made unpickable by their own clicks, as Unity's scene visibility and pickability are. Kept on this
+    // computer only, by entity id (unique across worlds), never sent to the world; the shared Visible and Ignore
+    // Picking are the Inspector's
+    QSet<QUuid> _hiddenHere;
+    QSet<QUuid> _noPick;
+    bool _localStatesLoaded { false };
+    Setting::Handle<QStringList> _hiddenHereSetting { "editor/hiddenHere", QStringList() };
+    Setting::Handle<QStringList> _noPickSetting { "editor/noPick", QStringList() };
+    QTimer _hiddenHereTimer;   // entities that arrive while build mode is on are hidden again in one pass
+    void loadLocalStates();
+    void saveLocalStates();
+    void onHierarchyToggle(int toggle, const QList<QUuid>& ids, bool on);
+    // what this builder hid, hidden in this view (EntityItem::setLocallyVisible) while build mode is on, and shown
+    // again as it goes off
+    void applyHiddenHere(bool hide);
+    void setLocallyHidden(const QList<QUuid>& ids, bool hidden);
+    bool excludedFromPicks(const QUuid& id) const { return _hiddenHere.contains(id) || _noPick.contains(id); }
     void updateListNote();
     // build mode narrows the field of view; the user's own is kept here so it survives a crash
     Setting::Handle<float> _fovBeforeBuild { "editor/fovBeforeBuild", 0.0f };

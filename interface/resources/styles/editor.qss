@@ -185,6 +185,12 @@ QDockWidget#EditorHierarchy::title, QDockWidget#EditorInspector::title {
 #EditorInspector QLabel#EditorInspectorNote {
     color: #8f8f8f;
 }
+/* the header (Unity's): Visible and the name, the ticks under them, and why everything is greyed when it's locked */
+#EditorInspector QLabel#EditorInspectorLockNote {
+    color: #8f8f8f;
+    font-size: 11px;
+    padding: 0 2px 2px 2px;
+}
 #EditorInspector QLabel#EditorImageThumbnail {
     background: #2a2a2a;
     border: 1px solid #1f1f1f;

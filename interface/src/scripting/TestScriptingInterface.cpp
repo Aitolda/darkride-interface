@@ -20,6 +20,7 @@
 #include <QtCore/QTimer>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
+#include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QStyle>
@@ -53,6 +54,7 @@
 #include "ui/Popup.h"
 #include "ui/Skins.h"
 #include "graphics/GraphicsEngine.h"
+#include "editor/ui/PropertyEditors.h"
 #include "editor/ui/ScriptEditor.h"
 #include <EntityTreeRenderer.h>
 #include <RenderableEntityItem.h>
@@ -340,6 +342,36 @@ bool TestScriptingInterface::reloadEditorScript(const QString& key) {
     return row && row->pressReload();
 }
 
+QVariantMap TestScriptingInterface::inspectorField(const QString& key) {
+    if (QThread::currentThread() != thread()) {
+        QVariantMap result;
+        BLOCKING_INVOKE_METHOD(this, "inspectorField", Q_RETURN_ARG(QVariantMap, result), Q_ARG(QString, key));
+        return result;
+    }
+    QVariantMap result;
+    auto window = qApp->getWindow();
+    QWidget* inspector = window ? window->findChild<QWidget*>("EditorInspector") : nullptr;
+    if (!inspector) {
+        return result;
+    }
+    auto note = inspector->findChild<QLabel*>("EditorInspectorLockNote");
+    result["lockNote"] = note && note->isVisibleTo(inspector) ? note->text() : QString();
+    for (auto field : inspector->findChildren<PropertyEditor*>()) {
+        if (field->spec().key != key) {
+            continue;
+        }
+        result["found"] = true;
+        result["shown"] = field->isVisibleTo(inspector);
+        result["enabled"] = field->isEnabled();
+        result["inHeader"] = field->parentWidget() && field->parentWidget()->objectName() == "EditorInspectorHead";
+        result["value"] = field->currentValue();
+        result["mixed"] = field->isMixed();
+        result["tip"] = field->toolTip();
+        break;
+    }
+    return result;
+}
+
 bool TestScriptingInterface::saveInspectorPicture(const QString& path) {
     if (QThread::currentThread() != thread()) {
         bool result = false;
@@ -432,6 +464,55 @@ QVariantMap TestScriptingInterface::getHierarchyCounts() {
         return result;
     }
     return DependencyManager::get<Editor>()->hierarchyCounts();
+}
+
+bool TestScriptingInterface::hierarchyToggle(const QUuid& id, const QString& which, bool onlyThis) {
+    if (QThread::currentThread() != thread()) {
+        bool result = false;
+        BLOCKING_INVOKE_METHOD(this, "hierarchyToggle", Q_RETURN_ARG(bool, result), Q_ARG(QUuid, id),
+                               Q_ARG(QString, which), Q_ARG(bool, onlyThis));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->clickHierarchyToggle(which, id, onlyThis);
+}
+
+QVariantMap TestScriptingInterface::hierarchyToggles(const QUuid& id) {
+    if (QThread::currentThread() != thread()) {
+        QVariantMap result;
+        BLOCKING_INVOKE_METHOD(this, "hierarchyToggles", Q_RETURN_ARG(QVariantMap, result), Q_ARG(QUuid, id));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->hierarchyToggles(id);
+}
+
+void TestScriptingInterface::hierarchyShowAll() {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "hierarchyShowAll");
+        return;
+    }
+    DependencyManager::get<Editor>()->showAllHere();
+}
+
+QUuid TestScriptingInterface::editorPickAt(const QUuid& id) {
+    if (QThread::currentThread() != thread()) {
+        QUuid result;
+        BLOCKING_INVOKE_METHOD(this, "editorPickAt", Q_RETURN_ARG(QUuid, result), Q_ARG(QUuid, id));
+        return result;
+    }
+    return DependencyManager::get<Editor>()->pickAtEntityForTest(id);
+}
+
+QVariantList TestScriptingInterface::editorMarqueeIds() {
+    if (QThread::currentThread() != thread()) {
+        QVariantList result;
+        BLOCKING_INVOKE_METHOD(this, "editorMarqueeIds", Q_RETURN_ARG(QVariantList, result));
+        return result;
+    }
+    QVariantList result;
+    for (const auto& id : DependencyManager::get<Editor>()->marqueeAllForTest()) {
+        result << id;
+    }
+    return result;
 }
 
 void TestScriptingInterface::clickHierarchyRow(const QUuid& id) {
