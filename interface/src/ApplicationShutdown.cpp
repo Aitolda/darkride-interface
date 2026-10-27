@@ -18,7 +18,6 @@
 #include <thread>
 #include <QtCore/QThreadPool>
 #include <QProcessEnvironment>
-#include <QtWidgets/QLabel>
 #include <shared/QtHelpers.h>
 #include <shared/PlatformHelper.h>
 #include <shared/GlobalAppProperties.h>
@@ -59,6 +58,7 @@
 #include "ui/Keyboard.h"
 #include "ui/OctreeStatsProvider.h"
 #include "ui/Panels.h"
+#include "ui/Popup.h"
 #include <PickManager.h>
 #include <PointerManager.h>
 #if defined(Q_OS_ANDROID)
@@ -81,13 +81,9 @@ static void showClosingNotice(QWidget* window) {
     if (!window || !window->isVisible() || window->isMinimized()) {
         return;
     }
-    auto notice = new QLabel(nullptr, Qt::SplashScreen | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
-    notice->setText("<div style='font-size: 17px;'>Closing Darkride&hellip;</div>"
-                    "<div style='font-size: 12px; color: #a0a4ab; margin-top: 6px;'>Saving your settings and disconnecting</div>");
-    notice->setAlignment(Qt::AlignCenter);
-    notice->setStyleSheet("QLabel { background-color: #14161a; color: #e8e8ea; border: 1px solid #3a3d44; padding: 22px 44px; }");
-    notice->adjustSize();
-    notice->move(window->frameGeometry().center() - notice->rect().center());
+    // drawn as Darkride's other popups, the logo on top (Caity, 10-27)
+    auto notice = new popup::Notice(popup::appIcon(), QString("Closing Darkride") + QChar(0x2026),
+                                    "Saving your settings and disconnecting", window);
     notice->show();
     notice->repaint();
     QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);

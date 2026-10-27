@@ -8,6 +8,7 @@
 //  top), the default in blue; a button that deletes something for good is red and never the default (Cancel is);
 //  further detail sits behind a small Details fold-out, in a scrolling field; a question that needs a word or a link
 //  has one field under the line. A success gets no alert but a banner in the window's corner that fades by itself.
+//  A wait that takes no answer (Darkride closing) gets a notice: the alert without buttons, taken down by the app.
 //  The viewer's other popups share this design in QML (interface/resources/qml/dialogs/alert/AlertPanel.qml).
 //  While a skin is on, a popup takes the skin's colours, font and "popup" frame (SKINS.md, stage 2).
 //  Moved out of the avatar importer (10-25) so build mode's questions use it too.
@@ -104,6 +105,21 @@ protected:
 private:
     void fade(qreal to, int milliseconds, bool thenClose = false);
 
+    std::shared_ptr<const Look> _look;
+};
+
+// An alert with no buttons, over the window a third of the way down, that never takes the focus or raises the app:
+// for a wait that takes no answer, such as Darkride closing. Whoever shows it takes it down (or the app's end does).
+// On macOS it shows only while Darkride is the active app (a splash screen is a tool panel there, and those hide in
+// the background), so a quit chosen from the Dock while another app is in front passes without it.
+class Notice : public QWidget {
+public:
+    Notice(const QPixmap& picture, const QString& title, const QString& text, QWidget* anchor);
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+
+private:
     std::shared_ptr<const Look> _look;
 };
 
