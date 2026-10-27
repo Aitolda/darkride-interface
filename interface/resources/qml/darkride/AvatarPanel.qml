@@ -147,7 +147,15 @@ Page {
             refresh();
         }
         function wearFavorite(favorite) {
+            var bookmark = (AvatarBookmarks.getBookmarks() || {})[favorite] || {};
+            var before = String(MyAvatar.getFullAvatarURLFromPreferences());
             AvatarBookmarks.loadBookmark(favorite);
+            var after = String(MyAvatar.getFullAvatarURLFromPreferences());
+            if (after === before && after !== String(bookmark.avatarUrl)) {
+                // refused, as wear() can be: it isn't the favorite worn
+                refresh();
+                return;
+            }
             Settings.setValue(favoriteNameSetting, favorite);
             refresh();
         }
