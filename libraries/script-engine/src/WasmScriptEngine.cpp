@@ -961,6 +961,12 @@ void WasmScriptEngine::postCallback(const ModuleInstancePointer& instance, int32
 
 // --- entity scripts -------------------------------------------------------------------------------------------------
 
+// Whether .wasm entity scripts (client and server) run: off unless DARKRIDE_WASM_ENTITY_SCRIPTS=1, for development.
+static bool wasmEntityScriptsEnabled() {
+    static const bool enabled = qEnvironmentVariable("DARKRIDE_WASM_ENTITY_SCRIPTS") == "1";
+    return enabled;
+}
+
 void WasmScriptEngine::loadEntityScript(const EntityItemID& entityID, const QString& entityScript, bool forceRedownload) {
     if (QThread::currentThread() != thread()) {
         QMetaObject::invokeMethod(this, "loadEntityScript", Q_ARG(const EntityItemID&, entityID),
@@ -996,6 +1002,16 @@ void WasmScriptEngine::loadEntityScript(const EntityItemID& entityID, const QStr
     newDetails.scriptText = entityScript;
     newDetails.status = EntityScriptStatus::LOADING;
     newDetails.definingSandboxURL = currentSandboxURL;
+    if (isWasmScript(entityScript) && !wasmEntityScriptsEnabled()) {
+        // a module comes from wherever the entity's owner put it and speaks to the host directly, not through the
+        // shim; until a module has an object table of its own, only JavaScript entity scripts run
+        newDetails.status = EntityScriptStatus::ERROR_LOADING_SCRIPT;
+        newDetails.errorInfo = "WebAssembly entity scripts are not enabled";
+        setEntityScriptDetails(entityID, newDetails);
+        scriptWarningMessage("A WebAssembly entity script is not run: " + entityScript +
+                             " (DARKRIDE_WASM_ENTITY_SCRIPTS=1 enables them, for development)");
+        return;
+    }
     setEntityScriptDetails(entityID, newDetails);
 
     auto scriptCache = DependencyManager::get<ScriptCache>();

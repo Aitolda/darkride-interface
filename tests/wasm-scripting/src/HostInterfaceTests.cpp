@@ -322,6 +322,28 @@ void HostInterfaceTests::testCallErrors() {
     QVERIFY(errorMessage(f.call(12345, "add", { 1, 2 })).contains("unknown object"));
     QVERIFY(HostInterface::isErrorRecord(f.call(probe, "countChanged", { 1 })));
     QVERIFY(HostInterface::isErrorRecord(f.call(probe, "hidden", {})));
+    // the rules describe() gives the guest hold for every form of a call, as a module that bypasses the shim uses
+    // them: deleteLater (a public slot of QObject) by name, by index and by signature; a private invokable and a
+    // signal by index or signature; a protected invokable stays callable
+    const int deleteLaterIndex = f.probe.metaObject()->indexOfMethod("deleteLater()");
+    QVERIFY(deleteLaterIndex >= 0);
+    QVERIFY(HostInterface::isErrorRecord(f.call(probe, "deleteLater", {})));
+    QVERIFY(HostInterface::isErrorRecord(f.call(probe, QString("#%1").arg(deleteLaterIndex), {})));
+    QVERIFY(HostInterface::isErrorRecord(f.call(probe, "deleteLater()", {})));
+    const int hiddenIndex = f.probe.metaObject()->indexOfMethod("hidden()");
+    QVERIFY(hiddenIndex >= 0);
+    QVERIFY(HostInterface::isErrorRecord(f.call(probe, QString("#%1").arg(hiddenIndex), {})));
+    QVERIFY(HostInterface::isErrorRecord(f.call(probe, "hidden()", {})));
+    const int bareIndex = f.probe.metaObject()->indexOfMethod("bare()");
+    QVERIFY(bareIndex >= 0);
+    QVERIFY(HostInterface::isErrorRecord(f.call(probe, QString("#%1").arg(bareIndex), {})));
+    QVERIFY(HostInterface::isErrorRecord(f.call(probe, "bare()", {})));
+    QCOMPARE(f.call(probe, "guarded", {}), QVariant(9));
+    QCOMPARE(f.call(probe, "guarded()", {}), QVariant(9));
+    // a registered global is not released by a module: the handle stays and keeps working
+    f.host->release(probe);
+    QVERIFY(f.objects.contains(probe));
+    QCOMPARE(f.call(probe, "add", { 1, 2 }), QVariant(3));
     QCOMPARE(f.call(probe, "guarded", {}).toInt(), 9);
     // a QScriptValue parameter: only the QtScript engine has such values (a QtScript engine registers the type, as
     // the client's do)
