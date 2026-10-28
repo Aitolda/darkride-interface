@@ -72,7 +72,8 @@ static std::shared_ptr<MyAvatar> getMyAvatar() {
 // Windows sends every top-level window WM_ACTIVATEAPP when the front app changes. Qt's application state misses some of
 // those changes: a window activated while another app is in front (a start-up activateWindow, Window.setFocus) only
 // flashes the taskbar button, yet Qt calls the app active, and when the player later clicks it, Qt has no change to
-// report. So the refresh-rate regime takes Windows' word.
+// report. So the refresh-rate regime takes Windows' word, checked against the foreground window (foregroundChanged):
+// that same background activation sends a WM_ACTIVATEAPP too (laptop, test-1028-win-11, 10-28).
 class ForegroundFilter : public QAbstractNativeEventFilter {
 public:
     explicit ForegroundFilter(Display* display) : _display(display) {}
@@ -96,6 +97,11 @@ Display::Display() {
 #if defined(Q_OS_WIN)
     _foregroundFilter = std::make_unique<ForegroundFilter>(this);
     QCoreApplication::instance()->installNativeEventFilter(_foregroundFilter.get());
+    // the safety net under the messages: whatever Windows sent or didn't, the regime catches up within half a second
+    static const int FOREGROUND_CHECK_INTERVAL_MS = 500;
+    _foregroundCheck.setInterval(FOREGROUND_CHECK_INTERVAL_MS);
+    connect(&_foregroundCheck, &QTimer::timeout, this, &Display::checkForeground);
+    _foregroundCheck.start();
 #endif
 }
 
@@ -708,12 +714,36 @@ void Display::activeChanged(Qt::ApplicationState state) {
 }
 
 void Display::foregroundChanged(bool inFront) {
+    // a window of ours activated behind another app's gets "came to the front" too: only our own foreground window counts
+    if (inFront && !isAppInFront()) {
+        qCDebug(interfaceapp) << "Activated behind another app's window: the refresh regime stays";
+        return;
+    }
     _isForeground = inFront;
     // a minimized window keeps the minimized regime; restoring it sets the full rate (Application's WindowStateChange)
     if (!qApp->isAboutToQuit() && qApp->getSignInGate().startUpFinished() && !qApp->getWindow()->isMinimized()) {
         qApp->getRefreshRateManager().setRefreshRateRegime(inFront ? RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE :
             RefreshRateManager::RefreshRateRegime::UNFOCUS);
     }
+}
+
+void Display::checkForeground() {
+#if defined(Q_OS_WIN)
+    // one call to Windows; no decision while no window is in front (between two windows) or in a headset, whose rate
+    // doesn't follow the regime
+    if (!GetForegroundWindow() || isHMDMode() || qApp->isAboutToQuit() || !qApp->getSignInGate().startUpFinished()) {
+        return;
+    }
+    auto regime = qApp->getRefreshRateManager().getRefreshRateRegime();
+    bool regimeInFront = regime == RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE ||
+                         regime == RefreshRateManager::RefreshRateRegime::FOCUS_INACTIVE;
+    bool regimeBehind = regime == RefreshRateManager::RefreshRateRegime::UNFOCUS;
+    bool inFront = isAppInFront();
+    if ((inFront && regimeBehind) || (!inFront && regimeInFront)) {
+        qCDebug(interfaceapp) << "The app is" << (inFront ? "in front" : "behind") << "(the foreground window's process); the refresh regime follows";
+        foregroundChanged(inFront);
+    }
+#endif
 }
 
 void Display::windowMinimizedChanged(bool minimized) {
