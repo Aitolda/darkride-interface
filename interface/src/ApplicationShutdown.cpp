@@ -58,6 +58,7 @@
 #include "ui/Keyboard.h"
 #include "ui/OctreeStatsProvider.h"
 #include "ui/Panels.h"
+#include "chat/FriendsScriptingInterface.h"
 #include "ui/Popup.h"
 #include <PickManager.h>
 #include <PointerManager.h>
@@ -190,6 +191,7 @@ void Application::cleanupBeforeQuit() {
     }
     // an account not kept on this computer leaves no chat session on it either
     DependencyManager::get<ChatService>()->stop(!keepMeLoggedIn);
+    DependencyManager::destroy<FriendsScriptingInterface>();
     DependencyManager::destroy<ChatService>();
     DependencyManager::destroy<FriendsService>();
 

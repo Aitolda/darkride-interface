@@ -19,6 +19,9 @@
 
 #include "ChatLogging.h"
 
+// the requests waiting for you, asked again (a badge's worth: one small answer a minute while signed in)
+static const int REQUESTS_REFRESH_MS = 60 * 1000;
+
 static QString named(const QString& username) {
     return QString::fromUtf8(QUrl::toPercentEncoding(username));
 }
@@ -42,8 +45,23 @@ static QString reasonOf(QNetworkReply* reply) {
 }
 
 FriendsService::FriendsService() {
-    connect(DependencyManager::get<AccountManager>().data(), &AccountManager::logoutComplete, this,
-            &FriendsService::onLoggedOut);
+    _requestsTimer.setInterval(REQUESTS_REFRESH_MS);
+    connect(&_requestsTimer, &QTimer::timeout, this, [this] {
+        if (DependencyManager::get<AccountManager>()->isLoggedIn()) {
+            request("requests", "/api/v1/friends/requests", QNetworkAccessManager::GetOperation);
+        }
+    });
+}
+
+void FriendsService::start() {
+    auto accountManager = DependencyManager::get<AccountManager>();
+    connect(accountManager.data(), &AccountManager::loginComplete, this, &FriendsService::onLoggedIn,
+            Qt::UniqueConnection);
+    connect(accountManager.data(), &AccountManager::logoutComplete, this, &FriendsService::onLoggedOut,
+            Qt::UniqueConnection);
+    if (accountManager->isLoggedIn()) {
+        onLoggedIn();
+    }
 }
 
 bool FriendsService::isFriend(const QString& username) const {
@@ -171,9 +189,18 @@ void FriendsService::failed(QNetworkReply* reply, const QJsonObject& request) {
         return;
     }
     emit actionDone(action, request.value("username").toString(), false, reason);
+    if (action == "setAvailability") {
+        emit availabilityChanged();
+    }
+}
+
+void FriendsService::onLoggedIn() {
+    refresh();
+    _requestsTimer.start();
 }
 
 void FriendsService::onLoggedOut() {
+    _requestsTimer.stop();
     _friends = QJsonArray();
     _incoming = QJsonArray();
     _outgoing = QJsonArray();

@@ -62,6 +62,7 @@
 #include "InterfaceLogging.h"
 #include "MainWindow.h"
 #include "ui/PanelTheme.h"
+#include "ui/Panels.h"
 
 // the web chat's colours (darkride_chat client/src/style.css), from the Darkride website's; under a skin, the skin's
 // own colours take their places (ChatWindow::applyColours, from COLOURS below)
@@ -278,9 +279,10 @@ static QString compactJson(const QJsonValue& value) {
     return value.toString();
 }
 
-// plain text as rich text: escaped, web addresses made links, line breaks kept
+// plain text as rich text: escaped, web addresses and Darkride's place links (hifi://, as Explore's Copy Link gives)
+// made links, line breaks kept
 static QString richBody(const QString& body) {
-    static const QRegularExpression url(R"((https?://[^\s<]*[^\s<.,;:!?)\]'"]))");
+    static const QRegularExpression url(R"(((?:https?|hifi)://[^\s<]*[^\s<.,;:!?)\]'"]))");
     QString html = body.toHtmlEscaped();
     html.replace(url, "<a href=\"\\1\">\\1</a>");
     return html;
@@ -635,6 +637,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     _roomTitle = new QLabel(roomHead);
     _roomTitle->setObjectName("ChatRoomTitle");
     _roomTitle->setTextFormat(Qt::PlainText);
+    _roomTitle->installEventFilter(this);   // a direct message's title shows the person's card
     roomHeadLayout->addWidget(_roomTitle, 1);
     mainLayout->addWidget(roomHead);
     connect(_roomsButton, &QToolButton::clicked, this, [this] { showRooms(true); });
@@ -796,6 +799,9 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     connect(_timeline, &QTextBrowser::anchorClicked, this, [this](const QUrl& url) {
         if (url.scheme() == "https" || url.scheme() == "http") {
             QDesktopServices::openUrl(url);
+        } else if (url.scheme() == URL_SCHEME_HIFI) {
+            // a place: gone to as one typed in Explore's address bar
+            DependencyManager::get<AddressManager>()->handleLookupString(url.toString());
         } else if (url.scheme() == "chatopen") {
             int index = url.path().toInt();
             if (index >= 0 && index < _links.size()) {
@@ -864,6 +870,15 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
             if (op == "send" || op == "join" || op == "leave" || op == "open" || op == "edit" || op == "delete" ||
                 op == "react") {
                 _composerNote->setText("Couldn't " + op + ": " + message);
+            } else if (op == "create_dm" && !_dmWanted.isEmpty()) {
+                // most often someone who has never used chat, so has no chat account to invite yet
+                qCDebug(interfaceapp) << "chat: no direct message with" << _dmWanted << ":" << message;
+                QString username = _dmWanted.mid(1, _dmWanted.indexOf(':') - 1);
+                _dmWanted.clear();
+                showFriendsPage();
+                _addFriendNote->setText("Couldn't start a conversation with " + username +
+                                        ". They may not have used chat yet.");
+                _addFriendNote->show();
             }
         });
     }
@@ -925,6 +940,7 @@ void ChatWindow::updateState() {
     }
     updateRooms(service->rooms());
     askFriends();
+    openWantedDm();
 }
 
 void ChatWindow::updateSync(const QString& state) {
@@ -934,7 +950,7 @@ void ChatWindow::updateSync(const QString& state) {
     } else if (state == "running" || state == "idle") {
         auto friends = DependencyManager::get<FriendsService>();
         QString availability = friends ? friends->availability() : QString();
-        _userStatus->setText(availability == "none"      ? "Invisible"
+        _userStatus->setText(availability == "none"      ? "Online · seen by no one"
                              : availability == "all"     ? "Online · seen by everyone"
                              : availability == "friends" ? "Online · seen by friends"
                                                          : "Online");
@@ -1128,6 +1144,9 @@ void ChatWindow::showRoomPage() {
     QString name = room.value("name").toString();
     QString mark = dm ? "@" : room.value("space").toString().isEmpty() ? "" : "#";
     _roomTitle->setText(mark.isEmpty() ? name : mark + " " + name);
+    // a direct message's title is the person: a click shows their card
+    _roomTitle->setCursor(dm ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    _roomTitle->setToolTip(dm ? "Show " + name + "'s profile" : QString());
     if (room.value("invited").toBool()) {
         _inviteText->setText(dm ? name + " wants to talk with you." : "You're invited to " + name + ".");
         _pages->setCurrentIndex(1);
@@ -1751,6 +1770,19 @@ bool ChatWindow::eventFilter(QObject* watched, QEvent* event) {
         showAvailabilityMenu();
         return true;
     }
+    if (event->type() == QEvent::MouseButtonRelease) {
+        // a friend's name or picture on the Friends page; a direct message's title
+        QString username = watched->property("profileUser").toString();
+        if (watched == _roomTitle && !_friendsShown) {
+            QJsonObject room = roomById(_room);
+            QString userId = room.value("dm").toBool() ? room.value("dm_user").toString() : QString();
+            username = userId.mid(1, userId.indexOf(':') - 1);
+        }
+        if (!username.isEmpty()) {
+            showProfile(username);
+            return true;
+        }
+    }
     if (watched == _composer && event->type() == QEvent::KeyPress) {
         auto key = static_cast<QKeyEvent*>(event);
         if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) && !(key->modifiers() & Qt::ShiftModifier)) {
@@ -1860,6 +1892,8 @@ void ChatWindow::showFriendsPage() {
         }
     }
     _roomTitle->setText("Friends");
+    _roomTitle->setCursor(Qt::ArrowCursor);
+    _roomTitle->setToolTip(QString());
     _pages->setCurrentIndex(3);
     updateFriends();
     askFriends(true);
@@ -1929,7 +1963,8 @@ void ChatWindow::updateFriends() {
             bool online = person.value("online").toBool();
             QJsonObject location = person.value("location").toObject();
             QString world = location.value("name").toString();
-            QString status = !online ? "Offline" : world.isEmpty() ? "Online" : "In " + world;
+            // the metaverse gives where they are only when you could join them there (F4), as People says it
+            QString status = !online ? "Offline" : location.isEmpty() ? "In a private world" : "In " + world;
             QList<QPushButton*> buttons;
             auto message = button("Message");
             connect(message, &QPushButton::clicked, this, [this, username] { messageFriend(username); });
@@ -2034,6 +2069,13 @@ void ChatWindow::addFriendRow(const QString& username, const QString& status, co
     auto name = new QLabel(username, row);
     name->setObjectName("ChatFriendName");
     name->setTextFormat(Qt::PlainText);
+    // the name and the picture show their card
+    for (QLabel* label : { picture, name }) {
+        label->setProperty("profileUser", username);
+        label->setCursor(Qt::PointingHandCursor);
+        label->setToolTip("Show " + username + "'s profile");
+        label->installEventFilter(this);
+    }
     auto line = new QLabel(status, row);
     line->setObjectName("ChatFriendStatus");
     line->setTextFormat(Qt::PlainText);
@@ -2069,6 +2111,34 @@ void ChatWindow::messageFriend(const QString& username) {
     service->createDm(userId);
 }
 
+void ChatWindow::openDirectMessage(const QString& username) {
+    DependencyManager::get<Panels>()->open("Chat");
+    ChatWindow* chat = content();
+    auto service = DependencyManager::get<ChatService>();
+    auto state = service ? service->state() : ChatService::State::SignedOut;
+    // signed out, or turned away: chat says why, and nothing waits to open later
+    chat->_dmWantedUser = state == ChatService::State::Ready || state == ChatService::State::SigningIn ? username
+                                                                                                       : QString();
+    chat->openWantedDm();
+}
+
+void ChatWindow::openWantedDm() {
+    auto service = DependencyManager::get<ChatService>();
+    if (_dmWantedUser.isEmpty() || !service || service->state() != ChatService::State::Ready) {
+        return;
+    }
+    QString username = _dmWantedUser;
+    _dmWantedUser.clear();
+    messageFriend(username);
+}
+
+void ChatWindow::showProfile(const QString& username) {
+    // by name, as scripts call it, so chat builds with or without the People side (editor-ui's friends-ui)
+    if (!QMetaObject::invokeMethod(DependencyManager::get<Panels>().data(), "showProfile", Q_ARG(QString, username))) {
+        qCWarning(interfaceapp) << "chat: People can't show profiles in this build";
+    }
+}
+
 void ChatWindow::sendFriendRequest() {
     QString username = _addFriendName->text().trimmed();
     if (username.startsWith('@')) {
@@ -2090,9 +2160,10 @@ void ChatWindow::showAvailabilityMenu() {
     }
     QMenu* menu = new QMenu(this);
     menu->setAttribute(Qt::WA_DeleteOnClose);
-    menu->addAction("Who sees where I am")->setEnabled(false);
+    // the same words as Settings' (Friends.availability, F3)
+    menu->addAction("Who sees you're online, and where")->setEnabled(false);
     static const QList<QPair<QString, QString>> CHOICES { { "all", "Everyone" }, { "friends", "Friends" },
-                                                          { "none", "Nobody" } };
+                                                          { "none", "No one" } };
     for (const auto& choice : CHOICES) {
         QAction* action = menu->addAction(choice.second);
         action->setCheckable(true);

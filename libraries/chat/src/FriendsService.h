@@ -4,8 +4,10 @@
 //
 //  Darkride friends and the privacy setting (CHAT.md 4.6), from the metaverse with the account's token: your friends
 //  (online, and the world they're in when they let you see it), friend requests both ways, and "who sees where I am"
-//  (the metaverse's availability: all, friends, none). The chat window's Friends page shows them; the routes are the
-//  metaverse's /api/v1/friends and /api/v1/user/availability, the same the web chat uses.
+//  (the metaverse's availability: all, friends, none). The chat window's Friends page shows them, and scripts and the
+//  panels have them as Friends (interface's chat/FriendsScriptingInterface.h); the routes are the metaverse's
+//  /api/v1/friends and /api/v1/user/availability, the same the web chat uses. From sign-in it asks for the requests
+//  waiting for you once a minute, so the bar's People button can show them before chat or People is opened.
 //
 //  Distributed under the Apache License, Version 2.0.
 //  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
@@ -17,6 +19,7 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
 #include <QtCore/QObject>
+#include <QtCore/QTimer>
 
 #include <DependencyManager.h>
 
@@ -29,8 +32,11 @@ class FriendsService : public QObject, public Dependency {
 public:
     FriendsService();
 
+    // follows the Darkride account from now on: everything asked at sign-in, then the requests once a minute
+    void start();
+
     // [{username, ai, image, online, location: {domainId, worldId, name, path} | null}], online first, then by name;
-    // location is null unless the friend lets you see it
+    // location is null unless the friend lets you see it and you could join them there (the metaverse's rule, 10-28)
     QJsonArray friends() const { return _friends; }
     // [{username, image, createdAt}]: asked of you, and asked by you
     QJsonArray incoming() const { return _incoming; }
@@ -55,6 +61,7 @@ public:
 
 signals:
     void changed();
+    // the server's value came, or a change of it was refused (the same value again, for whatever showed the change)
     void availabilityChanged();
     // an ask, accept, decline, withdraw, remove or setAvailability finished: ok, or the metaverse's reason why not
     void actionDone(const QString& action, const QString& username, bool ok, const QString& message);
@@ -62,6 +69,7 @@ signals:
 private slots:
     void replied(QNetworkReply* reply, const QJsonObject& request);
     void failed(QNetworkReply* reply, const QJsonObject& request);
+    void onLoggedIn();
     void onLoggedOut();
 
 private:
@@ -73,6 +81,7 @@ private:
     QJsonArray _outgoing;
     QString _availability;
     QString _error;
+    QTimer _requestsTimer;
 };
 
 #endif // hifi_FriendsService_h
