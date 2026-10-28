@@ -68,6 +68,7 @@ Rectangle {
         Text {
             visible: page.title !== ""
             text: page.title
+            textFormat: Text.PlainText
             color: Theme.text
             font.pixelSize: Theme.largeTitleSize
             font.bold: true

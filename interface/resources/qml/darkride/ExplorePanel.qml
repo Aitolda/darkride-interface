@@ -471,6 +471,7 @@ Page {
                 : ""
             Text {
                 text: here.current && here.current.instance ? here.current.instance.address : ""
+                textFormat: Text.PlainText
                 color: Theme.tertiaryText
                 font.pixelSize: Theme.detailSize
                 elide: Text.ElideMiddle

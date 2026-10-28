@@ -510,6 +510,7 @@ Page {
             onClicked: devicePicker.open = !devicePicker.open
             Text {
                 text: devicePicker.currentName
+                textFormat: Text.PlainText
                 color: Theme.secondaryText
                 font.pixelSize: Theme.bodySize
                 elide: Text.ElideMiddle
