@@ -106,7 +106,7 @@ RowLayout {
         }
     }
 
-    // the value; click it to type another (Return or clicking away sets it, Escape keeps the old one)
+    // the value; click it to type another (Return, or going on to another field, sets it; Escape keeps the old one)
     Item {
         Layout.preferredWidth: 46 * Theme.unit
         implicitHeight: Theme.controlHeight
@@ -142,24 +142,33 @@ RowLayout {
             selectByMouse: true
             clip: true
 
-            onActiveFocusChanged: {
-                if (activeFocus) {
-                    cancelled = false;
-                    text = valueSlider.value.toFixed(valueSlider.decimals);
-                    startText = text;
-                    selectAll();
-                    return;
-                }
-                // a decimal comma too (a Spanish keyboard's), held to the range and the decimals shown; a click in
-                // and out changes nothing
+            // what was typed, set: a decimal comma too (a Spanish keyboard's), held to the range and the decimals
+            // shown; a click in and out changes nothing, nor does Escape
+            function commit() {
                 var typed = parseFloat(text.replace(",", "."));
                 if (!cancelled && text !== startText && !isNaN(typed)) {
                     var scale = Math.pow(10, valueSlider.decimals);
                     valueSlider.moved(Math.min(valueSlider.to, Math.max(valueSlider.from, Math.round(typed * scale) / scale)));
                 }
+                cancelled = false;
                 text = Qt.binding(function () { return number.shown; });
+                startText = text;
             }
-            onAccepted: focus = false
+
+            onActiveFocusChanged: {
+                if (activeFocus) {
+                    text = valueSlider.value.toFixed(valueSlider.decimals);
+                    startText = text;
+                    selectAll();
+                } else {
+                    commit();
+                }
+            }
+            // Return sets it at once (also for a field given its text without the keyboard's focus, as a test does)
+            onAccepted: {
+                commit();
+                focus = false;
+            }
             Keys.onEscapePressed: {
                 cancelled = true;
                 focus = false;
