@@ -25,7 +25,6 @@ using namespace shader::gpu::program;
 using namespace shader::render_utils::program;
 
 gpu::PipelinePointer ToneMapAndResample::_pipeline;
-gpu::PipelinePointer ToneMapAndResample::_mirrorPipeline;
 gpu::PipelinePointer ToneMapAndResample::_fsrToneMapPipeline;
 gpu::PipelinePointer ToneMapAndResample::_fsrEasuPipeline;
 gpu::PipelinePointer ToneMapAndResample::_fsrRcasPipeline;
@@ -47,7 +46,6 @@ void ToneMapAndResample::init() {
     blitState->setColorWriteMask(true, true, true, true);
 
     _pipeline = gpu::PipelinePointer(gpu::Pipeline::create(gpu::Shader::createProgram(toneMapping), blitState));
-    _mirrorPipeline = gpu::PipelinePointer(gpu::Pipeline::create(gpu::Shader::createProgram(toneMapping_mirrored), blitState));
     _fsrToneMapPipeline = gpu::PipelinePointer(gpu::Pipeline::create(gpu::Shader::createProgram(toneMapping_fsr), blitState));
     _fsrEasuPipeline = gpu::PipelinePointer(gpu::Pipeline::create(gpu::Shader::createProgram(fsrEasu), blitState));
     _fsrRcasPipeline = gpu::PipelinePointer(gpu::Pipeline::create(gpu::Shader::createProgram(fsrRcas), blitState));
@@ -88,6 +86,19 @@ void ToneMapAndResample::configure(const Config& config) {
     } else {
         setToneCurve((ToneCurve)config.curve);
     }
+}
+
+// the quad's texture coordinates: the region of the lighting buffer the view was drawn in, flipped left to right while
+// the picture is shown mirrored (RenderArgs::_mirrored: the selfie view, the mirror camera). The flip is in the
+// coordinates, so the same shaders serve both, upscaled or not
+static Transform sourceTexcoordTransform(const RenderArgs* args, const glm::ivec2& srcBufferSize) {
+    Transform transform = gpu::Framebuffer::evalSubregionTexcoordTransform(srcBufferSize, args->_viewport);
+    if (args->_mirrored) {
+        // x -> 1 - x within the region: the quad's x scaled by -1, moved by 1, then the region's own scale and offset
+        transform.postTranslate(glm::vec3(1.0f, 0.0f, 0.0f));
+        transform.postScale(glm::vec3(-1.0f, 1.0f, 1.0f));
+    }
+    return transform;
 }
 
 void ToneMapAndResample::run(const RenderContextPointer& renderContext, const Input& input, Output& output) {
@@ -143,9 +154,9 @@ void ToneMapAndResample::run(const RenderContextPointer& renderContext, const In
         batch.setViewportTransform(destViewport);
         batch.setProjectionTransform(glm::mat4());
         batch.resetViewTransform();
-        batch.setPipeline(args->_renderMode == RenderArgs::MIRROR_RENDER_MODE ? _mirrorPipeline : _pipeline);
+        batch.setPipeline(_pipeline);
 
-        batch.setModelTransform(gpu::Framebuffer::evalSubregionTexcoordTransform(srcBufferSize, args->_viewport));
+        batch.setModelTransform(sourceTexcoordTransform(args, srcBufferSize));
         batch.setUniformBuffer(render_utils::slot::buffer::ToneMappingParams, _parametersBuffer);
         batch.setResourceTexture(render_utils::slot::texture::ToneMappingColor, lightingBuffer);
         batch.draw(gpu::TRIANGLE_STRIP, 4);
@@ -198,7 +209,7 @@ void ToneMapAndResample::upscaleFSR(RenderArgs* args, const gpu::TexturePointer&
         batch.setFramebuffer(_fsrSourceFramebuffer);
         batch.setViewportTransform(glm::ivec4(0, 0, srcSize.x, srcSize.y));
         batch.setPipeline(_fsrToneMapPipeline);
-        batch.setModelTransform(gpu::Framebuffer::evalSubregionTexcoordTransform(srcBufferSize, args->_viewport));
+        batch.setModelTransform(sourceTexcoordTransform(args, srcBufferSize));
         batch.setUniformBuffer(render_utils::slot::buffer::ToneMappingParams, _parametersBuffer);
         batch.setResourceTexture(render_utils::slot::texture::ToneMappingColor, lightingBuffer);
         batch.draw(gpu::TRIANGLE_STRIP, 4);

@@ -107,7 +107,7 @@ PickRay ViewState::computePickRay(float x, float y) const {
         qApp->getApplicationCompositor().computeHmdPickRay(pickPoint, result.origin, result.direction);
     } else {
         pickPoint /= qApp->getCanvasSize();
-        if (_camera.getMode() == CameraMode::CAMERA_MODE_MIRROR) {
+        if (_mirrored) {   // the picture is flipped left to right (the selfie view, the mirror camera): so is the point
             pickPoint.x = 1.0f - pickPoint.x;
         }
         QMutexLocker viewLocker(&_mutex);
@@ -332,6 +332,10 @@ void ViewState::updateCamera(RenderArgs& renderArgs, float deltaTime) {
                 glm::quat lookAtRotation = myAvatar->getLookAtRotation();
                 if (mode == CAMERA_MODE_SELFIE) {
                     lookAtRotation = lookAtRotation * glm::angleAxis(PI, myAvatar->getWorldOrientation() * Vectors::UP);
+                    // the picture as a mirror shows you (Caity, 2026-10-28: like FaceTime's own picture): your left on
+                    // the picture's left, writing backwards. On a flat screen only: a stereo picture (two eyes side by
+                    // side) is never flipped
+                    renderArgs._mirrored = !qApp->getActiveDisplayPlugin()->isStereo();
                 }
                 glm::vec3 pivot = myAvatar->getLookAtPivotPoint();
                 glm::vec3 wanted = pivot + lookAtRotation * boomOffset;
@@ -379,6 +383,7 @@ void ViewState::updateCamera(RenderArgs& renderArgs, float deltaTime) {
                 glm::vec3(0.0f, 0.0f, -1.0f) * myAvatar->getBoomLength() * _scaleMirror);
         }
         renderArgs._renderMode = RenderArgs::MIRROR_RENDER_MODE;
+        renderArgs._mirrored = true;
     } else if (mode == CAMERA_MODE_ENTITY) {
         _thirdPersonHMDCameraBoomValid= false;
         if (auto cameraEntity = _camera.getParentPointer()) {
@@ -413,6 +418,7 @@ void ViewState::updateCamera(RenderArgs& renderArgs, float deltaTime) {
     traceVehicleCamera(_camera, deltaTime);
 
     renderArgs._cameraMode = (int8_t)_camera.getMode();
+    _mirrored = renderArgs._mirrored;
 }
 
 // What stops the camera: what would stop you (the casts are made as your avatar's body: other avatars, collisionless

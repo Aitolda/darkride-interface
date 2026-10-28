@@ -28,6 +28,8 @@
 #ifndef hifi_ViewState_h
 #define hifi_ViewState_h
 
+#include <atomic>
+
 #include <QtCore/QMutex>
 #include <QtCore/QUuid>
 #include <QtCore/QVector>
@@ -54,7 +56,7 @@ public:
     const ConicalViewFrustums& conicalViews() const { return _conicalViews; }       // the views the servers are asked for
     void copyViewFrustum(ViewFrustum& viewOut) const;
     void copyDisplayViewFrustum(ViewFrustum& viewOut) const;
-    PickRay computePickRay(float x, float y) const;   // from a screen point: the headset's through the compositor, the mirror's x flipped
+    PickRay computePickRay(float x, float y) const;   // from a screen point: the headset's through the compositor; x flipped while mirrored()
 
     void loadViewFrustum();                            // the view frustum from the camera, after the camera's projection changed
     void setProjection(const glm::mat4& projection);   // the view frustum's projection for this frame, its planes recalculated
@@ -62,6 +64,9 @@ public:
 
     void update();   // once a frame, before the queries: the view frustum from the camera, the impostor load view, the conical views rebuilt
     void updateCamera(RenderArgs& renderArgs, float deltaTime);   // the camera placed for its mode; the render mode is the mirror's when the camera is
+    // the picture is shown flipped left to right (RenderArgs::_mirrored): the selfie view on a flat screen, and the
+    // full-screen mirror camera; set by updateCamera each frame, read by computePickRay from any thread
+    bool mirrored() const { return _mirrored; }
 
     // the camera's mode and the View menu, kept in step
     void cycleCamera();                             // First Person, Look At, Selfie (when shown), First Person again
@@ -94,6 +99,7 @@ private:
     ViewFrustum _displayViewFrustum;
     ConicalViewFrustums _conicalViews;
     CameraMode _previousMode{ CAMERA_MODE_LOOK_AT };   // the mode before setModeKeepingPrevious()
+    std::atomic<bool> _mirrored{ false };               // the picture flipped left to right this frame (mirrored())
 
     // the mirror's camera
     float _scaleMirror{ 1.0f };
