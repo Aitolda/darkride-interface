@@ -1286,10 +1286,11 @@ void Application::setupSettings() {
 
 
     Menu::getInstance()->setIsOptionChecked(MenuOption::ActionMotorControl, true);
-    Menu::getInstance()->setIsOptionChecked(
-        MenuOption::MaterialProceduralShaders,
-        MeshPartPayload::DEFAULT_ENABLE_MATERIAL_PROCEDURAL_SHADERS
-    );
+    // Settings > Custom Shaders on Models as the player saved it (loadSettings, above) reaches the renderer. Until 10-28
+    // it was ticked back on here at every start (without telling the renderer), so a player who turned it off found it
+    // on again (qa, windowz's run)
+    MeshPartPayload::enableMaterialProceduralShaders =
+        Menu::getInstance()->isOptionChecked(MenuOption::MaterialProceduralShaders);
 }
 
 // The callbacks the entity, render and pick libraries make into the application.
