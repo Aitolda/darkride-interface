@@ -1031,6 +1031,26 @@ bool Model::isVisible() const {
     return _renderItemKeyGlobalFlags.isVisible();
 }
 
+void Model::setShapesHidden(const std::set<unsigned int>& shapeIDs, const render::ScenePointer& scene) {
+    if (shapeIDs == _hiddenShapes) {
+        return;
+    }
+    _hiddenShapes = shapeIDs;
+    if (!scene) {
+        return;   // the render items take it when they're made (createRenderItemSet)
+    }
+    auto renderItemsKey = _renderItemKeyGlobalFlags;
+    render::Transaction transaction;
+    for (unsigned int shapeID = 0; shapeID < _modelMeshRenderItemIDs.size(); shapeID++) {
+        const bool hidden = isShapeHidden(shapeID);
+        transaction.updateItem<ModelMeshPartPayload>(_modelMeshRenderItemIDs[shapeID], [hidden, renderItemsKey](ModelMeshPartPayload& data) {
+            data.setHidden(hidden);
+            data.updateKey(renderItemsKey);
+        });
+    }
+    scene->enqueueTransaction(transaction);
+}
+
 void Model::setCanCastShadow(bool castShadow, const render::ScenePointer& scene) {
     if (Model::canCastShadow() != castShadow) {
         auto keyBuilder = render::ItemKey::Builder(_renderItemKeyGlobalFlags);
@@ -1666,6 +1686,7 @@ void Model::updateBlendshapes() {
 
 void Model::deleteGeometry() {
     _deleteGeometryCounter++;
+    _hiddenShapes.clear();   // its shapes' numbers belong to the geometry
     _shapeStates.clear();
     _meshStates.clear();
     _rig.destroyAnimGraph();
@@ -1726,6 +1747,7 @@ void Model::createRenderItemSet() {
         const auto& shape = shapes[shapeID];
 
         _modelMeshRenderItems << std::make_shared<ModelMeshPartPayload>(shared_from_this(), shape.mesh, shape.meshPart, shapeID, transform, offset, _created);
+        _modelMeshRenderItems.back()->setHidden(isShapeHidden(shapeID));
 
         auto material = getNetworkModel()->getShapeMaterial(shapeID);
         _modelMeshMaterialNames.push_back(material ? material->getName() : "");

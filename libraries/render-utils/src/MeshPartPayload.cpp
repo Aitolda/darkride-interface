@@ -522,6 +522,10 @@ void ModelMeshPartPayload::updateKey(const render::ItemKey& key) {
         builder.withSubMetaCulled();
     }
 
+    if (_hidden) {
+        builder.withInvisible();
+    }
+
     _itemKey = builder.build();
 }
 
