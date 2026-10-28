@@ -252,9 +252,16 @@ Page {
                 return "Offline";
             }
             if (!friend.location) {
-                return "In a private world";
+                return elsewhere(friend);
             }
             return friend.location.name ? "In " + friend.location.name : "Online";
+        }
+        // online with no place: in the other version's copy of the worlds (the metaverse's otherVersion, relative to
+        // this app, with its wording: version-twins, the 1.1 beta), or somewhere you can't get in. No Join either way
+        function elsewhere(person) {
+            return person.otherVersion === "older" ? "On an older version of Darkride"
+                : person.otherVersion === "newer" ? "On the Darkride beta"
+                : "In a private world";
         }
         function canJoin(friend) {
             return !!friend.online && !!friend.location;
@@ -620,7 +627,7 @@ Page {
                 // online with no place given: somewhere you can't get in (the metaverse gives one only where Join works)
                 readonly property bool closed: !!profile.data && !profile.mine && profile.data.online === true
                                                && !profile.data.location
-                label: closed ? "In a private world"
+                label: closed ? friends.elsewhere(profile.data)
                     : profile.data && profile.data.location ? "In " + profile.data.location.name : ""
                 RowButton {
                     visible: !profile.mine && !whereRow.closed
