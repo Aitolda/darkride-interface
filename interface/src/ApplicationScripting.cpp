@@ -296,6 +296,7 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
 
     if (property(hifi::properties::TEST).isValid()) {
         scriptEngine->registerGlobalObject("Test", TestScriptingInterface::getInstance());
+        scriptEngine->setTestApiRegistered();
     }
 
     scriptEngine->registerGlobalObject("PlatformInfo", PlatformInfoScriptingInterface::getInstance());
@@ -396,7 +397,10 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
     qScriptRegisterMetaType(scriptEngine.data(), worldDetailQualityToScriptValue, worldDetailQualityFromScriptValue);
 
     scriptEngine->registerGlobalObject("Keyboard", DependencyManager::get<KeyboardScriptingInterface>().data());
-    scriptEngine->registerGlobalObject("Performance", new PerformanceScriptingInterface());
+    // one per engine (its signals are emitted on the engine's thread); gone with the engine
+    auto performance = new PerformanceScriptingInterface();
+    connect(scriptEngine.data(), &QObject::destroyed, performance, &QObject::deleteLater);
+    scriptEngine->registerGlobalObject("Performance", performance);
 
     scriptEngine->registerGlobalObject("Paths", DependencyManager::get<PathUtils>().data());
 

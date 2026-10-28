@@ -197,14 +197,12 @@ public:
     // NOTE - these are NOT intended to be public interfaces available to scripts, the are only Q_INVOKABLE so we can
     //        properly ensure they are only called on the correct thread
 
-    /**jsdoc
-     * @function Script.registerGlobalObject
-     * @param {string} name - Name.
-     * @param {object} object - Object.
-     * @deprecated This function is deprecated and will be removed.
-     */
-    /// registers a global object by name
-    Q_INVOKABLE virtual void registerGlobalObject(const QString& name, QObject* object);
+    /// registers a global object by name (the host's, not a script's: a script could replace a global every script
+    /// of a shared engine relies on; the thread hop inside needs no meta-method)
+    virtual void registerGlobalObject(const QString& name, QObject* object);
+    /// The application says so where it registers the Test API (a --testScript run): Script.dumpApi may then write
+    /// to any path. Not a script's to call.
+    void setTestApiRegistered() { _testApiOn = true; }
 
     /// A plain value (numbers by name, as DriveKeys and PickType are; a number; text) under a global name, unless
     /// the name is taken: for a host that would otherwise put one on the QtScript global object itself, so that
@@ -655,7 +653,8 @@ public:
      * Writes a description of every global object this script sees to a JSON file: for an object from the engine, its
      * class and the methods, properties, signals and enums of its meta-object, with parameter and return types; for
      * anything else, its kind and members. A developer tool: the file is the machine-readable form of the API in this
-     * script's context.
+     * script's context. The file goes under the application's own data folder (<code>api-dumps/</code>, the path's
+     * file name only); a test run with the Test API on may name any path.
      * @function Script.dumpApi
      * @param {string} path - The file to write.
      * @returns {boolean} <code>true</code> if the file was written.
@@ -903,6 +902,12 @@ signals:
 
 protected:
     void init();
+    /// Script.dumpApi's file: under the application's data folder (api-dumps/<the path's file name>), or the path
+    /// as given when anyPath (a test run with the Test API on). Every script sees Script, a world's entity scripts
+    /// among them, so a script does not choose where the file goes.
+    QString dumpApiFile(const QString& requested, bool anyPath) const;
+    /// Set where the Test API is registered (a --testScript run), by the host, never from a global a script can assign.
+    bool _testApiOn { false };
     /// The QtScript conversions of the engine's types, on this QScriptEngine.
     void registerConversions();
     /// The globals every engine gives a script, through the register calls.
