@@ -6,8 +6,9 @@
 //  signed in with the viewer's Darkride account. The library takes commands as JSON and answers with events as JSON
 //  on its own threads; this posts them to the main thread and keeps the latest room list for the panels.
 //
-//  Distributed under the Apache License, Version 2.0.
-//  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
+//  Copyright 2026 Darkride.
+//
+//  Distributed under the MIT License.
 //
 
 #ifndef hifi_ChatService_h

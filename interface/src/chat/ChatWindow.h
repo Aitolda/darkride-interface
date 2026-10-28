@@ -8,8 +8,9 @@
 //  player drags it into the main window beside Build mode's panels. Narrower than the two columns need, it shows one
 //  at a time. Under a skin it takes the skin's colours. ChatService (libraries/chat) does the talking.
 //
-//  Distributed under the Apache License, Version 2.0.
-//  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
+//  Copyright 2026 Darkride.
+//
+//  Distributed under the MIT License.
 //
 
 #ifndef hifi_ChatWindow_h
