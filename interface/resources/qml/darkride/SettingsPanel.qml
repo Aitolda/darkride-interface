@@ -236,7 +236,7 @@ Page {
             }
             ListRow {
                 label: "Animated length"
-                detail: "seconds"
+                detail: "Seconds"
                 fill: true
                 labelWidth: 130 * Theme.unit
                 ValueSlider {
