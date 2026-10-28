@@ -35,9 +35,9 @@
 
 namespace {
     const QString QML_TOOLBAR = "com.highfidelity.interface.toolbar.system";   // the floating bar (hifi/Desktop.qml)
-    // look A, "plain icons" (Caity 10-28, team/editor-ui/mockups/toolbar-1028.png): one line icon per button on the
-    // dark bar, its label under it, every button in the same cell; an open panel lights its button Darkride cyan, the
-    // pointer greys it, a muted microphone is red. The floating bar draws the same (hifi/toolbars/BarButton.qml).
+    // look A, "plain icons" (Caity 10-28): one line icon per button on the dark bar, its label under it, every button
+    // in the same cell; an open panel lights its button Darkride cyan, the pointer greys it, a muted microphone is red.
+    // The floating bar draws the same (hifi/toolbars/BarButton.qml).
     const QSize ICON_AREA(44, 28);      // the icon with room at its top right for the badge
     const QRectF ICON(10, 4, 24, 24);
     const QSize SIDE_CELL(68, 58);      // in a column, on the left or the right

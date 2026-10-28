@@ -2,12 +2,12 @@
 //  BarButton.qml
 //  qml/hifi/toolbars
 //
-//  A button of the floating bar (Toolbar.qml) in look A, "plain icons" (Caity 10-28,
-//  team/editor-ui/mockups/toolbar-1028.png), as the docked bar draws its own (ui/SystemToolbar.cpp): the bar's line
-//  icon for the button (SystemToolbar.iconFor), else the script's own icon in the same colours, its label under it, in
-//  the cell the bar gives every button. White; Darkride cyan on a cyan plate while its panel is open; a grey plate under
-//  the pointer; red for a muted microphone; the count waiting in a red capsule. A skin's bar button frame (SKINS.md
-//  "barButton") and text colour take the plates' and the label's place. The VR tablet's buttons stay ToolbarButton.qml.
+//  A button of the floating bar (Toolbar.qml) in look A, "plain icons" (Caity 10-28), as the docked bar draws its own
+//  (ui/SystemToolbar.cpp): the bar's line icon for the button (SystemToolbar.iconFor), else the script's own icon in
+//  the same colours, its label under it, in the cell the bar gives every button. White; Darkride cyan on a cyan plate
+//  while its panel is open; a grey plate under the pointer; red for a muted microphone; the count waiting in a red
+//  capsule. A skin's bar button frame (SKINS.md "barButton") and text colour take the plates' and the label's place.
+//  The VR tablet's buttons stay ToolbarButton.qml.
 //
 //  Copyright 2026 Darkride.
 //
