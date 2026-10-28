@@ -19,12 +19,15 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegExp>
 #include <QUrl>
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <AccountManager.h>
 #include <AssimpSerializer.h>
 #include <AutoRig.h>
 #include <AvatarWriter.h>
@@ -155,7 +158,7 @@ QString sentence(QString text) {
 }
 
 // One of the importer's questions. Returns the chosen button's place in the list, or -1. With rightsLine, the rights
-// line sits under the buttons: the default puts the avatar where everyone sees it.
+// line sits under the buttons: one of them puts the avatar where others see it.
 int ask(const QString& title, const QString& text, const std::vector<popup::Button>& buttons,
         const QString& details = QString(), bool rightsLine = false) {
     qCDebug(interfaceapp) << "Import Avatar: asking" << title;
@@ -196,10 +199,11 @@ void wear(const QString& fstPath, const QString& name) {
 }
 
 // An avatar on this computer goes out to others as a blank address (AvatarData::getWireSafeSkeletonModelURL), so they
-// see the default. In My Files it has a web address everyone loads: the model goes up with the files it names beside
-// it (game rips name their textures; anything else in the folder stays here), then the .fst with its filename line
-// pointing beside it, and the client wears that copy. One file at a time, through the editor's upload. Its picture
-// (AvatarThumbnails: a snap of it, worn, from the front) goes up before the .fst, which names it on a `preview` line.
+// see the default. In My Files it has a web address others' apps load: the model goes up with the files it names
+// beside it (game rips name their textures; anything else in the folder stays here), then the .fst with its filename
+// line pointing beside it; the folder is made private, and the client wears that copy. One file at a time, through
+// the editor's upload. Its picture (AvatarThumbnails: a snap of it, worn, from the front) goes up before the .fst,
+// which names it on a `preview` line.
 struct Share {
     QString name;
     QString fstName;
@@ -217,9 +221,16 @@ using SharePointer = std::shared_ptr<Share>;
 
 // The web copy is worn only once its .fst reads back from the web: a failed avatar load falls back to the default
 // without a word, and the files host sent every .fst labelled gzip over plain text until metaverse 19f3c7d (10-13).
+// The folder is private by now, so the check carries the player's login, as the avatar's own load does
+// (HTTPResourceRequest); the files host passes a private file through itself, never redirecting it to the CDN, so the
+// check follows no redirect and the login goes nowhere else.
 void wearOnceItReadsBack(const SharePointer& share, const QString& url) {
     QNetworkRequest request { QUrl(url) };
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    const auto& token = DependencyManager::get<AccountManager>()->getAccountInfo().getAccessToken();
+    if (!token.token.isEmpty() && !token.isExpired()) {
+        request.setRawHeader(ACCESS_TOKEN_AUTHORIZATION_HEADER, token.authorizationHeaderValue());
+    }
     // A check, so it neither reads nor writes the disk cache: Qt unpacks the gzip itself here and would cache the
     // unpacked body under the gzip label, which the avatar's own load (HTTPResourceRequest) then fails to unpack.
     request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
@@ -237,7 +248,43 @@ void wearOnceItReadsBack(const SharePointer& share, const QString& url) {
         }
         qCDebug(interfaceapp) << "Import Avatar:" << share->name << "reads back from" << url;
         wearUrl(url, share->name);
-        announce(share->name + " is in My Files", "You're wearing it, and everyone can see it.");
+        announce(share->name + " is in My Files",
+                 "You're wearing it. It's private: people see it on you in Darkride, but it has no public link.");
+    });
+}
+
+// Wear & Keep's folder is private (the server's tea-only flag): its files go only to signed-in Darkride apps, so
+// people in a world see the avatar on its owner, but it has no public link (Caity 10-28, "safe wear"). The server
+// sets a whole folder at once, and its call is a switch: a new folder's files are all public, so one call makes them
+// private, and a second goes only if the answer says the folder went the other way.
+void makePrivateThenWear(const SharePointer& share, const QString& url, bool again = false) {
+    QNetworkRequest request = DependencyManager::get<AccountManager>()->createRequest("/api/user/files/folder/tea-only",
+                                                                                      AccountManagerAuth::Required);
+    const QString leftPublic = "It's in My Files, but anyone with its link could download it: make it private there, "
+                               "or delete it. You're still wearing the copy on this computer.";
+    if (request.url().isEmpty()) {
+        warn("Couldn't make " + share->name + " private", "You're signed out. " + leftPublic);
+        return;
+    }
+    QUrl requestUrl = request.url();
+    requestUrl.setQuery("path=" + QString::fromLatin1(QUrl::toPercentEncoding(share->remoteFolder)), QUrl::StrictMode);
+    request.setUrl(requestUrl);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    QNetworkReply* reply = NetworkAccessManager::getInstance().post(request, QByteArray());
+    QObject::connect(reply, &QNetworkReply::finished, reply, [reply, share, url, again, leftPublic]() {
+        reply->deleteLater();
+        const bool answered = reply->error() == QNetworkReply::NoError;
+        const bool isPrivate = answered && QJsonDocument::fromJson(reply->readAll()).object().value("tea").toBool();
+        qCDebug(interfaceapp) << "Import Avatar:" << share->name << "folder" << share->remoteFolder
+                              << (!answered ? "not made private: " + reply->errorString()
+                                            : isPrivate ? QString("is private") : QString("came back public"));
+        if (isPrivate) {
+            wearOnceItReadsBack(share, url);
+        } else if (answered && !again) {
+            makePrivateThenWear(share, url, true);
+        } else {
+            warn("Couldn't make " + share->name + " private", leftPublic);
+        }
     });
 }
 
@@ -288,7 +335,7 @@ void shareNext(const SharePointer& share) {
             return;
         }
         qCDebug(interfaceapp) << "Import Avatar:" << share->name << "is in My Files at" << url;
-        wearOnceItReadsBack(share, url);
+        makePrivateThenWear(share, url);
     });
 }
 
@@ -358,19 +405,21 @@ void shareAvatar(const QString& fstPath, const QString& name) {
     });
 }
 
-// Asked once an avatar is ready. Wear & Keep (wear it and put it in My Files) is the default; the importer's notes
-// go in the details.
+// Asked once an avatar is ready. Test Locally (wear it from this computer; nothing leaves it) is the default, so a
+// press of Return never uploads a bought avatar (Caity 10-28, "safe wear"); Wear & Keep also puts it in My Files,
+// private. The importer's notes go in the details.
 void offerToWear(const QString& fstPath, const QString& name, const QString& notes) {
     const int answer = ask(name + " is ready",
-                           "Keep it in My Files so everyone can see it, or try it on this computer first.",
-                           { { "Wear && Keep", popup::Role::Default },
-                             { "Test Locally", popup::Role::Plain },
+                           "Try it on this computer, or wear it and keep it in My Files. A kept avatar is private: "
+                           "people see it on you in Darkride, but it has no public link.",
+                           { { "Test Locally", popup::Role::Default },
+                             { "Wear && Keep", popup::Role::Plain },
                              { "Not Now", popup::Role::Cancel } },
                            notes, true);
     if (answer == 0 || answer == 1) {
         wear(fstPath, name);
     }
-    if (answer == 0) {
+    if (answer == 1) {
         shareAvatar(fstPath, name);
     }
 }
