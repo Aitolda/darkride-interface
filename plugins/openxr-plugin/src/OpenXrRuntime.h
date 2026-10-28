@@ -12,6 +12,7 @@
 #define hifi_OpenXrRuntime_h
 
 #include <array>
+#include <mutex>
 #include <atomic>
 #include <mutex>
 
@@ -58,6 +59,10 @@ public:
     void destroySession();   // a running session is ended first (endRunningSession)
     // Present thread. Handles session state changes; returns false when the runtime wants the app to quit.
     bool pollEvents();
+    // Quit: ends a running session (quickly, with no frame loop: the GL context may be gone by then), destroys the
+    // session and the instance, so nothing of the runtime's is torn down under it when this library unloads after Qt
+    // and GL. Idempotent; the destructor calls it too.
+    void shutdown();
 
     XrSession getSession() const { return _session; }
     XrSpace getReferenceSpace() const { return _referenceSpace; }
@@ -66,7 +71,8 @@ public:
     // The OpenXR display is the active one. Leaving VR keeps the session (Meta's runtime refuses a second one in the same
     // run), so the input side stops reading the headset and controllers while this is false.
     bool isDisplayActive() const { return _displayActive; }
-    void setDisplayActive(bool active) { _displayActive = active; }
+    // A session that went READY while the display was off (the headset put on at the desk) begins when VR is entered.
+    void setDisplayActive(bool active);
     bool isSessionFocused() const { return _sessionState == XR_SESSION_STATE_FOCUSED; }
     bool shouldRender() const;
     bool isUserPresent() const { return _userPresent; }
@@ -97,7 +103,8 @@ public:
     uint32_t getSessionGeneration() const { return _sessionGeneration; }
 
 private:
-    void endRunningSession();
+    void endRunningSession(bool withFrames);   // withFrames: the frame loop keeps going until STOPPING (present thread)
+    void beginSession();
     bool createInstance();
     bool findSystem();
     void updateSessionState(XrSessionState state);
@@ -119,6 +126,8 @@ private:
     std::atomic<XrSessionState> _sessionState { XR_SESSION_STATE_UNKNOWN };
     std::atomic<bool> _sessionRunning { false };
     std::atomic<bool> _displayActive { false };
+    std::atomic<bool> _sessionReadyPending { false };   // READY seen while the display was off
+    std::mutex _eventMutex;   // pollEvents and the session's begin and end, from whichever thread polls
     std::atomic<bool> _userPresent { true };
     std::atomic<uint32_t> _sessionGeneration { 0 };
 
