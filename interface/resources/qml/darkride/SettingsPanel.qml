@@ -527,8 +527,8 @@ Page {
             }
         }
 
-        // the VR movement settings are still the old Controls page's until Settings has a VR section (after the beta,
-        // OLD-SETTINGS.md); the menu's Controls... opens this tab, so this row is the way to them
+        // the VR movement settings are still the old Controls page's until Settings has a VR section (after the
+        // beta); the menu's Controls... opens this tab, so this row is the way to them
         Section {
             visible: controls.headsetAvailable || root.inHeadset
             title: "VR"
