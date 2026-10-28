@@ -11,7 +11,7 @@
 //  See the accompanying file LICENSE-MIT or https://opensource.org/licenses/MIT
 //
 
-const bool OUTLINES = false;
+const bool OUTLINES = true;
 const vec3 CYAN = vec3(0.0, 0.62, 1.0);
 const vec3 VIOLET = vec3(0.55, 0.2, 1.0);
 const vec3 DEEP = vec3(0.022, 0.016, 0.06);
