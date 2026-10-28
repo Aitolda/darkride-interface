@@ -2,10 +2,11 @@
 //  SettingsPanel.qml
 //  qml/darkride
 //
-//  Darkride's Settings panel, in the panels' iOS look (darkride/panel), with four tabs named as Apple's System Settings
-//  names them (Caity, 10-23): General (start-up, privacy, controls, statistics, the cache),
-//  Displays (quality, rendering with Forward+ and MSAA, the view, nametags), Sound (devices, the microphone, volumes)
-//  and Appearance (the panels' theme, built in or loaded from a file). The bar's Settings button opens it in a window
+//  Darkride's Settings panel, in the panels' iOS look (darkride/panel), with five tabs named as Apple's System Settings
+//  names them (Caity, 10-23): General (start-up, privacy, face tracking, snapshots, the cache), Controls (looking
+//  around, VR movement, the input devices and their set-up; Caity, 10-28), Displays (quality, rendering with Forward+
+//  and MSAA, the view, statistics, nametags), Sound (devices, the microphone, volumes) and Appearance (the panels'
+//  theme, built in or loaded from a file). The bar's Settings button opens it in a window
 //  on the desktop and on the tablet in a headset (tivoli-scripts' ButtonManager.addQmlButton). It reads and sets the
 //  engine's own values through its context properties (Render, Performance, LODManager, AudioScriptingInterface,
 //  MyAvatar, Users, AccountServices, MenuInterface, DiskCache) and the theme through PanelTheme; the nametag is the
@@ -31,18 +32,19 @@ Page {
     // the tablet's loader sizes the page; a desktop window parents it to its content area
     anchors.fill: parent
     title: "Settings"
-    tabs: ["General", "Displays", "Sound", "Appearance"]
+    tabs: ["General", "Controls", "Displays", "Sound", "Appearance"]
 
     // (the file is SettingsPanel.qml, not Settings.qml: in a file of that name, "Settings" would be the file's own
     // type rather than the settings object)
     readonly property string tabSetting: "io.darkride.settings.tab"
-    Component.onCompleted: currentTab = Math.max(0, Math.min(3, Settings.getValue(tabSetting, 0)))
+    Component.onCompleted: currentTab = Math.max(0, Math.min(tabs.length - 1, Settings.getValue(tabSetting, 0)))
     onCurrentTabChanged: Settings.setValue(tabSetting, currentTab)
 
     // a desktop window keeps the page between openings: read the values without a change signal again on each
     onVisibleChanged: {
         if (visible) {
             general.refresh();
+            controls.refresh();
             cache.refresh();
         }
     }
@@ -129,82 +131,6 @@ Page {
                         }
                         general.refresh();
                     }
-                }
-            }
-        }
-
-        Section {
-            title: "Controls"
-
-            ListRow {
-                label: "Look sideways"
-                detail: "Degrees a second"
-                fill: true
-                labelWidth: 130 * Theme.unit
-                scrubbable: true
-                scrubValue: general.yawSpeed
-                scrubFrom: 5
-                scrubTo: 300
-                scrubStep: 1
-                onScrubbed: { MyAvatar.yawSpeed = Math.round(value); general.refresh(); }
-
-                ValueSlider {
-                    from: 5; to: 300; stepSize: 1; decimals: 0
-                    value: general.yawSpeed
-                    onMoved: { MyAvatar.yawSpeed = value; general.refresh(); }
-                }
-                ResetButton {
-                    needed: Math.round(general.yawSpeed) !== 100
-                    onClicked: { MyAvatar.yawSpeed = 100; general.refresh(); }
-                }
-            }
-            ListRow {
-                label: "Look up and down"
-                detail: "Degrees a second"
-                fill: true
-                labelWidth: 130 * Theme.unit
-                scrubbable: true
-                scrubValue: general.pitchSpeed
-                scrubFrom: 5
-                scrubTo: 300
-                scrubStep: 1
-                onScrubbed: { MyAvatar.pitchSpeed = Math.round(value); general.refresh(); }
-
-                ValueSlider {
-                    from: 5; to: 300; stepSize: 1; decimals: 0
-                    value: general.pitchSpeed
-                    onMoved: { MyAvatar.pitchSpeed = value; general.refresh(); }
-                }
-                ResetButton {
-                    needed: Math.round(general.pitchSpeed) !== 75
-                    onClicked: { MyAvatar.pitchSpeed = 75; general.refresh(); }
-                }
-            }
-            ListRow {
-                // noclip (Caity, 10-25: "should be" in Settings); also the Avatar panel's, and Navigate > Walk Through
-                // Walls with its key
-                label: "Collide with the world"
-                // the menu's Ctrl is the Command key on a Mac
-                detail: "Off: walk through walls (noclip). Key: " + (Qt.platform.os === "osx" ? "⌘ Shift N" : "Ctrl+Shift+N")
-                Toggle {
-                    checked: general.collisions
-                    onToggled: { MyAvatar.collisionsEnabled = checked; general.refresh(); }
-                }
-            }
-            ListRow {
-                label: "Snap turning in VR"
-                detail: "Turn in steps rather than smoothly"
-                Toggle {
-                    checked: general.snapTurn
-                    onToggled: { MyAvatar.setSnapTurn(checked); general.refresh(); }
-                }
-            }
-            ListRow {
-                label: "Statistics"
-                detail: "Frame rate, ping and loading over the world"
-                Toggle {
-                    checked: general.statistics
-                    onToggled: { MenuInterface.setIsOptionChecked("Show Statistics", checked); general.refresh(); }
                 }
             }
         }
@@ -437,10 +363,234 @@ Page {
         }
     }
 
-    // ==== Displays ===================================================================================================
+    // ==== Controls ===================================================================================================
+
+    // the input devices as the engine knows them (InputConfiguration's input plugins; none has a change signal) and the
+    // game controller's switch (the SDL2 plugin's preference, there only where the plugin runs): read when the page shows
+    QtObject {
+        id: controls
+
+        property var devices: []                // [{ name, label, detail, setUp }]
+        property var gameController: null       // the SDL2 plugin's "Enabled" preference, or null
+        property bool gameControllerOn: false
+        property bool headsetAvailable: false
+
+        // the devices people know by another name; any other with a set-up page is SteamVR's (OpenVR names itself by
+        // its headset: "HTC Vive", "Valve Index" ...)
+        readonly property var known: ({
+            "Keyboard/Mouse": { label: "Keyboard and mouse", detail: "" },
+            "Touchscreen": { label: "Touchscreen", detail: "" },
+            "OpenXR": { label: "VR headset", detail: "OpenXR: a Quest over Link, and other headsets" },
+            "Oculus": { label: "Oculus Rift", detail: "Its Touch controllers" }
+        })
+        // not shown as a device: the game controller has its own row and face tracking is General's
+        readonly property var notShown: ["SDL2", "Face Tracking", "TouchscreenVirtualPad", "MIDI"]
+
+        // the old Controls page (hifi/tablet/ControllerSettings.qml) reads this as it opens: a device's name opens its
+        // set-up, "" the VR movement settings
+        readonly property string setUpSetting: "io.darkride.controls.setUp"
+
+        function refresh() {
+            var found = [];
+            var plugins = InputConfiguration.inputPlugins();
+            for (var i = 0; i < plugins.length; i++) {
+                var name = plugins[i];
+                if (notShown.indexOf(name) !== -1) {
+                    continue;
+                }
+                var setUp = InputConfiguration.configurationLayout(name) !== "";
+                var knownAs = known[name];
+                if (knownAs) {
+                    found.push({ name: name, label: knownAs.label, detail: knownAs.detail, setUp: setUp });
+                } else if (setUp) {
+                    found.push({ name: name, label: name || "SteamVR headset",
+                                 detail: "SteamVR: its controllers, trackers and calibration", setUp: true });
+                }
+            }
+            devices = found;
+
+            gameController = null;
+            var gamepad = Preferences.preferencesByCategory["Game Controller"] || [];
+            for (var j = 0; j < gamepad.length; j++) {
+                if (gamepad[j].name === "Enabled") {
+                    gameController = gamepad[j];
+                    gameController.load();
+                    gameControllerOn = gameController.value;
+                }
+            }
+            headsetAvailable = HMD.isHMDAvailable();
+        }
+
+        function setGameController(on) {
+            if (gameController) {
+                gameController.value = on;
+                gameController.save();
+            }
+            refresh();
+        }
+
+        // the old Controls page on the tablet (in a headset, in place of this page; on the desktop, the tablet's window)
+        function openOldPage(device) {
+            Settings.setValue(setUpSetting, device);
+            Tablet.getTablet("com.highfidelity.interface.tablet.system").pushOntoStack("hifi/tablet/ControllerSettings.qml");
+            if (!HMD.showTablet) {
+                HMD.openTablet();
+            }
+        }
+
+        Component.onCompleted: refresh()
+    }
+
+    // a small button at a row's end
+    component RowButton: Rectangle {
+        id: rowButton
+        property string text: ""
+        signal pressed()
+        implicitWidth: rowButtonLabel.implicitWidth + 18 * Theme.unit
+        implicitHeight: 26 * Theme.unit
+        radius: 7 * Theme.unit
+        color: Theme.fill
+        Text {
+            id: rowButtonLabel
+            anchors.centerIn: parent
+            text: rowButton.text
+            textFormat: Text.PlainText
+            color: Theme.tint
+            font.pixelSize: Theme.controlTextSize
+        }
+        MouseArea {
+            anchors.fill: parent
+            onClicked: rowButton.pressed()
+        }
+    }
 
     Tab {
         visible: root.currentTab === 1
+
+        Section {
+            title: "Looking and moving"
+
+            ListRow {
+                label: "Look sideways"
+                detail: "Degrees a second"
+                fill: true
+                labelWidth: 130 * Theme.unit
+                scrubbable: true
+                scrubValue: general.yawSpeed
+                scrubFrom: 5
+                scrubTo: 300
+                scrubStep: 1
+                onScrubbed: { MyAvatar.yawSpeed = Math.round(value); general.refresh(); }
+
+                ValueSlider {
+                    from: 5; to: 300; stepSize: 1; decimals: 0
+                    value: general.yawSpeed
+                    onMoved: { MyAvatar.yawSpeed = value; general.refresh(); }
+                }
+                ResetButton {
+                    needed: Math.round(general.yawSpeed) !== 100
+                    onClicked: { MyAvatar.yawSpeed = 100; general.refresh(); }
+                }
+            }
+            ListRow {
+                label: "Look up and down"
+                detail: "Degrees a second"
+                fill: true
+                labelWidth: 130 * Theme.unit
+                scrubbable: true
+                scrubValue: general.pitchSpeed
+                scrubFrom: 5
+                scrubTo: 300
+                scrubStep: 1
+                onScrubbed: { MyAvatar.pitchSpeed = Math.round(value); general.refresh(); }
+
+                ValueSlider {
+                    from: 5; to: 300; stepSize: 1; decimals: 0
+                    value: general.pitchSpeed
+                    onMoved: { MyAvatar.pitchSpeed = value; general.refresh(); }
+                }
+                ResetButton {
+                    needed: Math.round(general.pitchSpeed) !== 75
+                    onClicked: { MyAvatar.pitchSpeed = 75; general.refresh(); }
+                }
+            }
+            ListRow {
+                // noclip (Caity, 10-25: "should be" in Settings); also the Avatar panel's, and Navigate > Walk Through
+                // Walls with its key
+                label: "Collide with the world"
+                // the menu's Ctrl is the Command key on a Mac
+                detail: "Off: walk through walls (noclip). Key: " + (Qt.platform.os === "osx" ? "⌘ Shift N" : "Ctrl+Shift+N")
+                Toggle {
+                    checked: general.collisions
+                    onToggled: { MyAvatar.collisionsEnabled = checked; general.refresh(); }
+                }
+            }
+        }
+
+        // the VR movement settings are still the old Controls page's until Settings has a VR section (after the beta,
+        // OLD-SETTINGS.md); the menu's Controls... opens this tab, so this row is the way to them
+        Section {
+            visible: controls.headsetAvailable || root.inHeadset
+            title: "VR"
+
+            ListRow {
+                label: "Snap turning"
+                detail: "Turn in steps rather than smoothly"
+                Toggle {
+                    checked: general.snapTurn
+                    onToggled: { MyAvatar.setSnapTurn(checked); general.refresh(); }
+                }
+            }
+            ListRow {
+                label: "VR movement"
+                detail: "Teleporting, walking, comfort mode and your height"
+                RowButton {
+                    text: "Options…"
+                    onPressed: controls.openOldPage("")
+                }
+            }
+        }
+
+        Section {
+            title: "Devices"
+            footer: controls.devices.some(function (device) { return device.setUp; })
+                ? "Set Up… opens the headset's own page: its controllers, trackers and calibration."
+                : ""
+
+            Repeater {
+                model: controls.devices
+                delegate: ListRow {
+                    label: modelData.label
+                    detail: modelData.detail
+                    RowButton {
+                        visible: modelData.setUp
+                        text: "Set Up…"
+                        onPressed: controls.openOldPage(modelData.name)
+                    }
+                    Text {
+                        visible: !modelData.setUp
+                        text: "Nothing to set up"
+                        color: Theme.secondaryText
+                        font.pixelSize: Theme.bodySize
+                    }
+                }
+            }
+            ListRow {
+                visible: controls.gameController !== null
+                label: "Game controller"
+                detail: "Xbox, PlayStation and other gamepads"
+                Toggle {
+                    checked: controls.gameControllerOn
+                    onToggled: controls.setGameController(checked)
+                }
+            }
+        }
+    }
+
+    // ==== Displays ===================================================================================================
+
+    Tab {
+        visible: root.currentTab === 2
 
         Section {
             title: "Quality"
@@ -619,6 +769,18 @@ Page {
         }
 
         Section {
+            title: "Statistics"
+            ListRow {
+                label: "Show statistics"
+                detail: "Frame rate, ping and loading over the world"
+                Toggle {
+                    checked: general.statistics
+                    onToggled: { MenuInterface.setIsOptionChecked("Show Statistics", checked); general.refresh(); }
+                }
+            }
+        }
+
+        Section {
             title: "Nametags"
             ListRow {
                 label: "Show nametags"
@@ -736,11 +898,11 @@ Page {
 
     NearbyPeople {
         id: people
-        active: root.visible && root.currentTab === 2
+        active: root.visible && root.currentTab === 3
     }
 
     Tab {
-        visible: root.currentTab === 2
+        visible: root.currentTab === 3
 
         Section {
             title: "Devices"
@@ -934,7 +1096,7 @@ Page {
     }
 
     Tab {
-        visible: root.currentTab === 3
+        visible: root.currentTab === 4
 
         // where the bar of app buttons sits (ui/SystemToolbar.h): over the bottom of the view, or on a side of the
         // window with the view beside it (a player's ask, 10-24)
