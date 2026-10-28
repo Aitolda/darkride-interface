@@ -293,6 +293,16 @@ Page {
         running: root.visible && root.currentTab === 1 && friends.signedIn
         onTriggered: friends.load()
     }
+    // a request come or gone, as the bar's badge hears it (social's Friends: every 10 s in front, at once on coming to
+    // the front): the list follows at once, not at its own next 30 s (Caity 10-28: "took the same old 25s")
+    Connections {
+        target: Friends
+        function onRequestCountChanged() {
+            if (root.visible && root.currentTab === 1 && friends.signedIn) {
+                friends.load();
+            }
+        }
+    }
 
     // a small button inside a row
     component RowButton: Rectangle {
@@ -566,10 +576,12 @@ Page {
                         }
                         Text {
                             visible: !!profile.data && !!profile.data.displayName && profile.data.displayName !== profile.data.username
+                            width: parent.width
                             text: profile.data ? profile.data.username : ""
                             textFormat: Text.PlainText
                             color: Theme.secondaryText
                             font.pixelSize: Theme.bodySize
+                            elide: Text.ElideRight
                         }
                         // what kind of account: an AI resident, or a bot (scripted logic, not AI; Caity, 10-25: metaverse sends
                         // kind "bot", and ai true for older clients, so kind comes first); a person gets no line
@@ -593,6 +605,9 @@ Page {
                                 if (since !== "") bits.push("Here since " + since);
                                 return bits.join(" · ");
                             }
+                            // inside the card at any width: on a narrow panel it wraps, the card's margin kept (Caity 10-28)
+                            width: parent.width
+                            wrapMode: Text.WordWrap
                             color: Theme.secondaryText
                             font.pixelSize: Theme.detailSize
                         }
