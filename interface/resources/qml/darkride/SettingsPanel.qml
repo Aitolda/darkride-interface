@@ -217,7 +217,7 @@ Page {
             }
         }
 
-        // from High Fidelity's General Settings window, which Settings > General... opened until 10-28 (OLD-SETTINGS.md)
+        // from High Fidelity's General Settings window, which Settings > General... opened until 10-28 (Caity 10-28)
         Section {
             title: "Snapshots"
             footer: "Snap saves the snapshots you keep on this computer in this folder; with none chosen, it asks the "

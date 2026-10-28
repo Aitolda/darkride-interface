@@ -548,7 +548,7 @@ Menu::Menu() {
     MenuWrapper* settingsMenu = addMenu("Settings");
 
     // Settings > General...: Darkride's Settings, the bar's gear's panel (High Fidelity's General Settings window had
-    // little left that worked: its snapshot settings moved into it; Caity 10-28, OLD-SETTINGS.md)
+    // little left that worked: its snapshot settings moved into it; Caity 10-28)
     action = addActionToQMenuAndActionHash(settingsMenu, MenuOption::Preferences, Qt::CTRL | Qt::Key_G, nullptr, nullptr);
     connect(action, &QAction::triggered, [] {
         if (!qApp->getLoginDialogPoppedUp()) {
