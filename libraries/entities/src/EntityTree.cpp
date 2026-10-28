@@ -329,6 +329,16 @@ bool EntityTree::senderMayDelete(const SharedNodePointer& senderNode, const Enti
     return true;
 }
 
+// A refused edit is taken back on its sender's screen too: the client shows its own edit at once, and takes the server's
+// copy only if it was edited later. So the entity goes out again (all of it, as ever), last edited after the refused
+// edit. Physics updates aren't sent back: they come many times a second, and are refused as before.
+void EntityTree::sendBackRefusedEdit(const EntityItemPointer& entity, const EntityItemProperties& refused) {
+    if (getIsServer()) {
+        entity->setLastEdited(std::max(usecTimestampNow(), refused.getLastEdited() + 1));
+        entity->markAsChangedOnServer();
+    }
+}
+
 bool EntityTree::updateEntity(const EntityItemID& entityID, const EntityItemProperties& properties, const SharedNodePointer& senderNode, bool isPhysics) {
     EntityItemPointer entity;
     {
@@ -381,6 +391,9 @@ bool EntityTree::updateEntity(EntityItemPointer entity, const EntityItemProperti
 
     if (!allowLockChange && (entity->getLocked() != properties.getLocked())) {
         qCDebug(entities) << "Refusing disallowed lock adjustment.";
+        if (!isPhysics) {
+            sendBackRefusedEdit(entity, properties);
+        }
         return false;
     }
 
@@ -586,6 +599,9 @@ bool EntityTree::updateEntity(EntityItemPointer entity, const EntityItemProperti
                     emit editingEntityPointer(entity);
                 }
             } else {
+                if (!isPhysics) {
+                    sendBackRefusedEdit(entity, properties);
+                }
                 return false;
             }
         }

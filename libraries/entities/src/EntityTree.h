@@ -302,6 +302,7 @@ signals:
 protected:
 
     void recursivelyFilterAndCollectForDelete(const EntityItemPointer& entity, std::vector<EntityItemPointer>& entitiesToDelete, bool force) const;
+    void sendBackRefusedEdit(const EntityItemPointer& entity, const EntityItemProperties& refused);
     void processRemovedEntities(const DeleteEntityOperator& theOperator);
     bool updateEntity(EntityItemPointer entity, const EntityItemProperties& properties,
             const SharedNodePointer& senderNode = SharedNodePointer(nullptr), bool isPhysics = false);
