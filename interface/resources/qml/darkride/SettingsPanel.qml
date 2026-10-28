@@ -64,6 +64,9 @@ Page {
         property real yawSpeed: 100   // MyAvatar.cpp YAW_SPEED_DEFAULT
         property real pitchSpeed: 75   // PITCH_SPEED_DEFAULT
         property bool collisions: true
+        property string snapshotsFolder: ""
+        property real gifSeconds: 3   // SnapshotAnimated.h SNAPSNOT_ANIMATED_DURATION_SECS
+        property bool choosingFolder: false
 
         function refresh() {
             startAtLastPlace = MenuInterface.isOptionChecked("Last Location");
@@ -73,6 +76,8 @@ Page {
             yawSpeed = MyAvatar.yawSpeed;
             pitchSpeed = MyAvatar.pitchSpeed;
             collisions = MyAvatar.collisionsEnabled;
+            snapshotsFolder = Snapshot.getSnapshotsLocation();
+            gifSeconds = Snapshot.getAnimatedSnapshotDuration();
         }
 
         Component.onCompleted: refresh()
@@ -282,6 +287,64 @@ Page {
                 ResetButton {
                     needed: Math.abs((face.settings.mouthStrength || 1) - 1) > 0.01
                     onClicked: face.change({ mouthStrength: 1 })
+                }
+            }
+        }
+
+        // from High Fidelity's General Settings window, which Settings > General... opened until 10-28 (OLD-SETTINGS.md)
+        Section {
+            title: "Snapshots"
+            footer: "Snap saves the snapshots you keep on this computer in this folder; with none chosen, it asks the "
+                + "first time. An animated snapshot records for the length set here."
+
+            ListRow {
+                label: "Folder"
+                fill: true
+                Field {
+                    Layout.fillWidth: true
+                    text: general.snapshotsFolder
+                    placeholderText: "None chosen"
+                    horizontalAlignment: TextInput.AlignLeft
+                    onEditingFinished: {
+                        Snapshot.setSnapshotsLocation(text);
+                        general.refresh();
+                    }
+                }
+            }
+            ListRow {
+                action: true
+                label: "Choose Folder…"
+                onClicked: {
+                    general.choosingFolder = true;
+                    Window.browseDirAsync("Choose a folder for snapshots", general.snapshotsFolder);
+                }
+            }
+            ListRow {
+                label: "Animated length"
+                detail: "Seconds"
+                fill: true
+                labelWidth: 130 * Theme.unit
+                ValueSlider {
+                    from: 1; to: 5; stepSize: 1; decimals: 0; units: " s"
+                    value: general.gifSeconds
+                    onMoved: { Snapshot.setAnimatedSnapshotDuration(value); general.refresh(); }
+                }
+                ResetButton {
+                    needed: Math.round(general.gifSeconds) !== 3
+                    onClicked: { Snapshot.setAnimatedSnapshotDuration(3); general.refresh(); }
+                }
+            }
+            // the folder chooser's answer, when this page asked (Snap asks it too)
+            Connections {
+                target: Window
+                function onBrowseDirChanged(directory) {
+                    if (general.choosingFolder) {
+                        general.choosingFolder = false;
+                        if (directory !== "") {
+                            Snapshot.setSnapshotsLocation(directory);
+                            general.refresh();
+                        }
+                    }
                 }
             }
         }
