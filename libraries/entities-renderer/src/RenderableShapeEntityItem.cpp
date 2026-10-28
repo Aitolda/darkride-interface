@@ -253,8 +253,13 @@ void ShapeEntityRenderer::doRenderUpdateAsynchronousTyped(const TypedEntityPoint
             // a mirror: the entry "picture" (or true, or "true", as the editor wrote it at first) or "screen"
             QJsonValue mirrorEntry = userDataObject.value("mirror");
             QString mirrorText = mirrorEntry.toBool() ? QStringLiteral("picture") : mirrorEntry.toString().toLower();
-            bool mirrorScreen = mirrorText == "screen";
-            bool mirror = mirrorScreen || mirrorText == "picture" || mirrorText == "true";
+            bool mirror = mirrorText == "screen" || mirrorText == "picture" || mirrorText == "true";
+            // in a headset a Screen mirror is drawn as a Picture one: the Screen method reads its picture by its place
+            // in the flat screen's view, which a stereo picture (two eyes side by side) has none of, and its view is the
+            // whole stereo buffer re-rendered each frame (Caity's Quest 3, qa-town, 2026-10-28: streaks). doRender asks
+            // for this update again when the display changes
+            _mirrorScreenWanted = mirrorText == "screen";
+            bool mirrorScreen = _mirrorScreenWanted && !AbstractViewStateInterface::instance()->isHMDMode();
             if (mirror != _mirror || mirrorScreen != _mirrorScreen) {
                 if (_mirror) {
                     // out of the old mode: the material its own again
@@ -477,6 +482,12 @@ void ShapeEntityRenderer::doRender(RenderArgs* args) {
     if (_mirror && !_mirrorScreen && Mirrors::instance().generation(_mirrorId) != _mirrorGeneration) {
         // its picture has changed hands or size: the update takes the new one (nothing polls for that, so it is
         // asked for from here, where the mirror is drawn every frame it is seen)
+        emit requestRenderUpdate();
+    }
+    if (_mirror && _mirrorScreenWanted && args->_renderMode == RenderArgs::DEFAULT_RENDER_MODE &&
+        _mirrorScreen == (args->_displayMode == RenderArgs::STEREO_HMD)) {
+        // the display changed under a Screen mirror (a headset put on, or the desktop again): the update sets the
+        // method the display can draw (see the userData reading); the main view's own frames only
         emit requestRenderUpdate();
     }
     // Shapes just aren't playing well with zone culling.  Since it's a marginal performance
