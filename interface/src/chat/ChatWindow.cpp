@@ -14,8 +14,10 @@
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QLocale>
+#include <QtCore/QMimeDatabase>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTimer>
@@ -33,6 +35,7 @@
 #include <QtWidgets/QAbstractButton>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
+#include <QtWidgets/QFileDialog>
 #include <QtWidgets/QGraphicsOpacityEffect>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
@@ -62,6 +65,10 @@
 #include "InterfaceLogging.h"
 #include "MainWindow.h"
 #include "ui/PanelTheme.h"
+
+#if defined(Q_OS_MACOS)
+#include <sys/xattr.h>
+#endif
 
 // the web chat's colours (darkride_chat client/src/style.css), from the Darkride website's; under a skin, the skin's
 // own colours take their places (ChatWindow::applyColours, from COLOURS below)
@@ -269,6 +276,35 @@ static QSize pictureBox(QSize size, const QSize& max) {
         size.scale(max, Qt::KeepAspectRatio);
     }
     return size.expandedTo(QSize(16, 16));
+}
+
+// a name from a message (the sender's) as a file's name: letters, digits, spaces, dashes and underscores only (so no
+// path, no ".." and no leading dot), not one of Windows' device names, at most 80 characters; its extension left off
+static QString safeBaseName(const QString& name) {
+    QString base = QFileInfo(name).completeBaseName();
+    base.replace(QRegularExpression(R"([^\p{L}\p{N} _\-]+)"), "_");
+    base = base.trimmed().left(80);
+    static const QRegularExpression DEVICE("^(con|prn|aux|nul|com[1-9]|lpt[1-9])$", QRegularExpression::CaseInsensitiveOption);
+    if (DEVICE.match(base).hasMatch()) {
+        base = "file-" + base;
+    }
+    return base.isEmpty() ? QString("download") : base;
+}
+
+// a file written from chat, marked as downloaded from the internet as browsers mark theirs, so the system asks before
+// running it (Gatekeeper on macOS, SmartScreen on Windows)
+static void markDownloaded(const QString& path) {
+#if defined(Q_OS_MACOS)
+    QByteArray value = QString("0083;%1;Darkride;").arg(QDateTime::currentSecsSinceEpoch(), 8, 16, QChar('0')).toUtf8();
+    setxattr(QFile::encodeName(path).constData(), "com.apple.quarantine", value.constData(), value.size(), 0, 0);
+#elif defined(Q_OS_WIN)
+    QFile zone(path + ":Zone.Identifier");
+    if (zone.open(QIODevice::WriteOnly)) {
+        zone.write("[ZoneTransfer]\r\nZoneId=3\r\n");
+    }
+#else
+    Q_UNUSED(path);
+#endif
 }
 
 static QString compactJson(const QJsonValue& value) {
@@ -1330,19 +1366,7 @@ void ChatWindow::mediaReady(const QString& key, const QString& path, const QStri
     if (opening != _opening.end()) {
         QString name = opening.value();
         _opening.erase(opening);
-        // under its own name, so the system knows what opens it
-        QString folder = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath("darkride-chat");
-        QDir().mkpath(folder);
-        QString safe = name;
-        safe.replace(QRegularExpression(R"([/\\:*?"<>|])"), "_");
-        if (safe.trimmed().isEmpty()) {
-            safe = "download";
-        }
-        QString copy = QDir(folder).filePath(safe);
-        QFile::remove(copy);
-        if (QFile::copy(path, copy)) {
-            QDesktopServices::openUrl(QUrl::fromLocalFile(copy));
-        }
+        openDownload(path, name);
     }
     if (_pictureUses.contains(key)) {
         showPicture(key, path);
@@ -1406,6 +1430,49 @@ void ChatWindow::openMedia(const QJsonObject& media, const QString& name) {
     _composerNote->setText("Opening " + name + "…");
     QTimer::singleShot(4000, _composerNote, &QLabel::clear);
     requestMedia(key, source);
+}
+
+void ChatWindow::openDownload(const QString& path, const QString& name) {
+    // what the file is, from its content (never the name or the type the sender gave): a picture (not SVG, which can
+    // carry scripts), a video, a sound or a PDF opens in the system's viewer
+    QMimeType type = QMimeDatabase().mimeTypeForFile(path, QMimeDatabase::MatchContent);
+    QString kind = type.name();
+    bool viewable = ((kind.startsWith("image/") && !kind.startsWith("image/svg")) || kind.startsWith("video/") ||
+                     kind.startsWith("audio/") || kind == "application/pdf");
+    static const QHash<QString, QString> SUFFIXES { { "image/jpeg", "jpg" },   { "image/tiff", "tiff" },
+                                                    { "video/quicktime", "mov" }, { "audio/mpeg", "mp3" },
+                                                    { "audio/mp4", "m4a" },    { "video/mp4", "mp4" } };
+    QString suffix = SUFFIXES.value(kind, type.preferredSuffix());
+    QString base = safeBaseName(name);
+    if (viewable && !suffix.isEmpty()) {
+        QString folder = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath("darkride-chat");
+        QDir().mkpath(folder);
+        QString copy = QDir(folder).filePath(base + "." + suffix);
+        QFile::remove(copy);
+        if (QFile::copy(path, copy)) {
+            markDownloaded(copy);
+            QDesktopServices::openUrl(QUrl::fromLocalFile(copy));
+        }
+        return;
+    }
+    // anything else (a program, a script, an archive, any other document): saved where the person chooses, marked as
+    // downloaded, and not opened
+    qCDebug(interfaceapp) << "chat: a file of type" << kind << "is offered to save, not opened";
+    QString theirs = QFileInfo(name).suffix();
+    static const QRegularExpression SHORT_SUFFIX("^[A-Za-z0-9]{1,8}$");
+    QString suggested = base + (SHORT_SUFFIX.match(theirs).hasMatch() ? "." + theirs : QString());
+    QString downloads = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    QString target = QFileDialog::getSaveFileName(this, "Save File", QDir(downloads).filePath(suggested));
+    if (target.isEmpty()) {
+        return;
+    }
+    QFile::remove(target);   // the dialog has asked about replacing it
+    bool saved = QFile::copy(path, target);
+    if (saved) {
+        markDownloaded(target);
+    }
+    _composerNote->setText(saved ? "Saved " + QFileInfo(target).fileName() + "." : QString("Couldn't save the file there."));
+    QTimer::singleShot(4000, _composerNote, &QLabel::clear);
 }
 
 void ChatWindow::renderTimeline() {

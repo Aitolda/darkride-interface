@@ -121,6 +121,10 @@ private:
     void showPicture(const QString& key, const QString& path);
     // the whole file, opened by the system's own app (Preview, Photos, a player)
     void openMedia(const QJsonObject& media, const QString& name);
+    // a file from a message, downloaded: opened by the system only when its content is a picture, a video, a sound or
+    // a PDF, under a name of ours with that type's own extension; anything else offered to save. Never handed to the
+    // system under the sender's name, which could make it run (a ".exe", a ".command")
+    void openDownload(const QString& path, const QString& name);
 
     static QPointer<ChatWindow> _instance;
     static QPointer<QDockWidget> _dock;
