@@ -237,21 +237,20 @@ Page {
         function join(username) {
             AddressManager.goToUser(username);
         }
-        // where a friend is: "in <world>"; "in a private world" when the metaverse says you can't get in there (Join
-        // would fail at the door; F4, Caity 10-27 "friends as recommended"); "online"; "offline"
+        // where a friend is: "in <world>"; "in a private world" when they're online but the metaverse gives no place,
+        // which it does only where Join will work (F4, Caity 10-27 "friends as recommended"; Darkside's and
+        // self-hosted worlds decide at their own door, as before); "offline"
         function where(friend) {
             if (!friend.online) {
                 return "offline";
             }
-            if (friend.location && friend.location.canJoin === false) {
+            if (!friend.location) {
                 return "in a private world";
             }
-            return friend.location && friend.location.name ? "in " + friend.location.name : "online";
+            return friend.location.name ? "in " + friend.location.name : "online";
         }
-        // Join only when it will work. The metaverse answers for worlds on Darkride's servers; Darkside's and self-hosted
-        // ones leave canJoin out and decide at their own door, as before
         function canJoin(friend) {
-            return !!friend.online && !!friend.location && friend.location.canJoin !== false;
+            return !!friend.online && !!friend.location;
         }
         // a DM with them, opened in chat in front (F1; social's Friends, which waits while chat is still signing in).
         // AI residents and bots can't use chat yet
@@ -606,13 +605,14 @@ Page {
 
         // where they are, and you two (signed in; the metaverse leaves these out otherwise)
         Section {
-            visible: profile.data !== null && !!profile.data.location
+            visible: profile.data !== null && (!!profile.data.location || whereRow.closed)
             ListRow {
                 id: whereRow
-                readonly property bool closed: !!profile.data && !!profile.data.location
-                                               && profile.data.location.canJoin === false
-                label: !profile.data || !profile.data.location ? ""
-                    : closed ? "In a private world" : "In " + profile.data.location.name
+                // online with no place given: somewhere you can't get in (the metaverse gives one only where Join works)
+                readonly property bool closed: !!profile.data && !profile.mine && profile.data.online === true
+                                               && !profile.data.location
+                label: closed ? "In a private world"
+                    : profile.data && profile.data.location ? "In " + profile.data.location.name : ""
                 RowButton {
                     visible: !profile.mine && !whereRow.closed
                     text: "Join"
