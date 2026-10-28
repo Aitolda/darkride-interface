@@ -409,6 +409,14 @@ async fn handle(state: &Arc<State>, op: &str, command: &Value) -> Result<()> {
             }
             Ok(())
         }
+        // the account's own name, for one that has none yet (ChatService, on its profile event)
+        "set_display_name" => {
+            let client = state.client()?;
+            let name = arg(command, "name")?;
+            client.account().set_display_name(Some(name)).await?;
+            state.emit(json!({ "event": "done", "op": "set_display_name", "name": name }));
+            Ok(())
+        }
         "logout" => {
             forget(state, true).await;
             state.emit(json!({ "event": "state", "state": "signed_out" }));
