@@ -15,6 +15,7 @@
 
 #include <atomic>
 #include <unordered_map>
+#include <set>
 #include <unordered_set>
 #include <functional>
 
@@ -101,6 +102,11 @@ public:
     // new Scene/Engine rendering support
     void setVisibleInScene(bool isVisible, const render::ScenePointer& scene = nullptr);
     bool isVisible() const;
+    // Leaves these shapes (hfm::Model::shapes indices) out of every pass, their shadows too, until shown again: an
+    // avatar's menu hides clothes and hair this way, rather than drawing them invisible. Kept for the model's render
+    // items made later.
+    void setShapesHidden(const std::set<unsigned int>& shapeIDs, const render::ScenePointer& scene);
+    bool isShapeHidden(unsigned int shapeID) const { return _hiddenShapes.count(shapeID) > 0; }
 
     render::hifi::Tag getTagMask() const;
     void setTagMask(uint8_t mask, const render::ScenePointer& scene = nullptr);
@@ -497,6 +503,7 @@ protected:
 
     QVector<std::shared_ptr<ModelMeshPartPayload>> _modelMeshRenderItems;
     render::ItemIDs _modelMeshRenderItemIDs;
+    std::set<unsigned int> _hiddenShapes;   // setShapesHidden
     std::vector<std::string> _modelMeshMaterialNames;
 
     bool _addedToScene { false }; // has been added to scene

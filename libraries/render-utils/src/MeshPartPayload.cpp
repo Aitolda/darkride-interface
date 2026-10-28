@@ -524,6 +524,10 @@ void ModelMeshPartPayload::updateKey(const render::ItemKey& key) {
         builder.withSubMetaCulled();
     }
 
+    if (_hidden) {
+        builder.withInvisible();
+    }
+
     _itemKey = builder.build();
 }
 
@@ -624,6 +628,11 @@ void ModelMeshPartPayload::render(RenderArgs* args) {
     PerformanceTimer perfTimer("ModelMeshPartPayload::render");
 
     if (!args || (args->_renderMode == RenderArgs::RenderMode::DEFAULT_RENDER_MODE && _cauterized)) {
+        return;
+    }
+    // hidden (Model::setShapesHidden): the invisible key keeps a part out of the scene's own fetch, but a group's
+    // parts (an avatar's) reach the passes through their parent (MetaToSubItems), whatever their key
+    if (_hidden) {
         return;
     }
     // settled by getInstancing for this pass (GPU instancing): the impostor choice and the level were made then
@@ -745,7 +754,7 @@ namespace {
 
 render::Instancing ModelMeshPartPayload::getInstancing(RenderArgs* args) {
     render::Instancing answer(render::Instancing::NONE);
-    if (!args || (args->_renderMode == RenderArgs::RenderMode::DEFAULT_RENDER_MODE && _cauterized)) {
+    if (!args || (args->_renderMode == RenderArgs::RenderMode::DEFAULT_RENDER_MODE && _cauterized) || _hidden) {
         return answer;
     }
     if (_impostorSwitch && !_impostorSwitch->evaluate(args).model) {

@@ -138,6 +138,9 @@ public:
 
     void updateKey(const render::ItemKey& key) override;
 
+    // a part left out of every pass, its shadow too, until shown again (Model::setShapesHidden)
+    void setHidden(bool hidden) { _hidden = hidden; }
+
     // matrix palette skinning
     void updateClusterBuffer(const std::vector<glm::mat4>& clusterMatrices);
 
@@ -185,6 +188,7 @@ public:
     ClusterBufferType _clusterBufferType{ ClusterBufferType::Matrices };
 
     int _meshIndex;
+    bool _hidden { false };
     int _shapeID;
     uint32_t _deformerIndex;
 
