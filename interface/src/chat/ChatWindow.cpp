@@ -799,6 +799,8 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     connect(_timeline, &QTextBrowser::anchorClicked, this, [this](const QUrl& url) {
         if (url.scheme() == "https" || url.scheme() == "http") {
             QDesktopServices::openUrl(url);
+        } else if (url.scheme() == "chatprofile") {
+            showProfile(url.path());
         } else if (url.scheme() == URL_SCHEME_HIFI) {
             // a place: gone to as one typed in Explore's address bar
             DependencyManager::get<AddressManager>()->handleLookupString(url.toString());
@@ -1143,7 +1145,12 @@ void ChatWindow::showRoomPage() {
     bool dm = room.value("dm").toBool();
     QString name = room.value("name").toString();
     QString mark = dm ? "@" : room.value("space").toString().isEmpty() ? "" : "#";
-    _roomTitle->setText(mark.isEmpty() ? name : mark + " " + name);
+    // a direct message's person by their username too, when their display name isn't it (names needn't be unique)
+    QString username = dm ? localpartOf(room.value("dm_user").toString()) : QString();
+    QString title = dm && !username.isEmpty() && name.compare(username, Qt::CaseInsensitive) != 0
+        ? name + " · " + username
+        : name;
+    _roomTitle->setText(mark.isEmpty() ? title : mark + " " + title);
     // a direct message's title is the person: a click shows their card
     _roomTitle->setCursor(dm ? Qt::PointingHandCursor : Qt::ArrowCursor);
     _roomTitle->setToolTip(dm ? "Show " + name + "'s profile" : QString());
@@ -1548,14 +1555,23 @@ void ChatWindow::renderTimeline() {
                             "<td width=\"72\"></td><td style=\"padding-right:16px;\">%1</td></tr></table>")
                         .arg(text);
         } else {
+            // the name opens their card; the username beside a display name that isn't it, since display names
+            // needn't be unique (as the nametag shows both)
+            QString username = localpartOf(sender);
+            QString nameHtml = QString("<a href=\"chatprofile:%1\" title=\"Show profile\">"
+                                       "<span style=\"color:%2; font-weight:500;\">%3</span></a>")
+                                   .arg(username.toHtmlEscaped(), COLOUR_CYAN.name(), senderName.toHtmlEscaped());
+            if (senderName.compare(username, Qt::CaseInsensitive) != 0) {
+                nameHtml += QString("&nbsp;<span style=\"color:%1; font-size:12px;\">%2</span>")
+                                .arg(muted, username.toHtmlEscaped());
+            }
             html += QString("<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"margin-top:14px;\"><tr>"
                             "<td width=\"72\" valign=\"top\" style=\"padding-left:16px; padding-top:2px;\">"
                             "<img src=\"%1\" width=\"40\" height=\"40\"></td>"
                             "<td valign=\"top\" style=\"padding-right:16px;\">"
-                            "<span style=\"color:%2; font-weight:500;\">%3</span>&nbsp;&nbsp;"
-                            "<span style=\"color:%4; font-size:12px;\">%5</span><br>%6</td></tr></table>")
-                        .arg(avatarSource(sender, senderName, item.value("avatar").toString()), COLOUR_CYAN.name(),
-                             senderName.toHtmlEscaped(), muted,
+                            "%2&nbsp;&nbsp;"
+                            "<span style=\"color:%3; font-size:12px;\">%4</span><br>%5</td></tr></table>")
+                        .arg(avatarSource(sender, senderName, item.value("avatar").toString()), nameHtml, muted,
                              whenText(ts), text);
         }
         lastSender = sender;
