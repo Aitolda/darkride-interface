@@ -27,21 +27,24 @@ Rectangle {
 
     readonly property var userSpeakingLevel: 0.4;
     property bool gated: false;
+    // the bar's own properties by its id: unqualified, a write from these handlers (called later, by C++ signals) went
+    // to the global object instead ("Invalid write to global property gated", a flood on Windows as the noise gate
+    // opens and closes; windowz, 10-28)
     Component.onCompleted: {
-        AudioScriptingInterface.noiseGateOpened.connect(function() { gated = false; });
-        AudioScriptingInterface.noiseGateClosed.connect(function() { gated = true; });
+        AudioScriptingInterface.noiseGateOpened.connect(function() { micBar.gated = false; });
+        AudioScriptingInterface.noiseGateClosed.connect(function() { micBar.gated = true; });
         HMD.displayModeChanged.connect(function() {
-            muted = AudioScriptingInterface.muted;
-            pushToTalk = AudioScriptingInterface.pushToTalk;
+            micBar.muted = AudioScriptingInterface.muted;
+            micBar.pushToTalk = AudioScriptingInterface.pushToTalk;
         });
         AudioScriptingInterface.mutedChanged.connect(function() {
-            muted = AudioScriptingInterface.muted;
+            micBar.muted = AudioScriptingInterface.muted;
         });
         AudioScriptingInterface.pushToTalkChanged.connect(function() {
-            pushToTalk = AudioScriptingInterface.pushToTalk;
+            micBar.pushToTalk = AudioScriptingInterface.pushToTalk;
         });
         AudioScriptingInterface.pushingToTalkChanged.connect(function() {
-            pushingToTalk = AudioScriptingInterface.pushingToTalk;
+            micBar.pushingToTalk = AudioScriptingInterface.pushingToTalk;
         });
     }
 
