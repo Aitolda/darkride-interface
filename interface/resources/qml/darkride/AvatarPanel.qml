@@ -860,6 +860,8 @@ Page {
                     Layout.fillWidth: true
                     enabled: !nametag.busy
                     placeholderText: nametag.username
+                    // Return saves, as on the Mac (Caity 10-28)
+                    onAccepted: nametag.save()
                 }
             }
             ListRow {
