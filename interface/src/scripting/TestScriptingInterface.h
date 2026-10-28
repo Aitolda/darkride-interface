@@ -311,6 +311,17 @@ public slots:
     Q_INVOKABLE QVariantMap inspectorField(const QString& key);
 
     /**jsdoc
+     * One of the Inspector header's toggle icons for the editor's selection (the Hierarchy rows' four), as the panel
+     * shows it, and a click on it as the mouse's.
+     * @function Test.inspectorToggle
+     * @param {string} name - "Hide", "NoPick", "Lock" or "Scripts".
+     * @param {boolean} [click=false] - Whether to click it.
+     * @returns {object} <code>{ found, shown, look, usable, tip }</code>: whether it's there and shown, "on", "off" or
+     *     "mixed" (before the click's effect), whether a click would change something, and its tooltip.
+     */
+    Q_INVOKABLE QVariantMap inspectorToggle(const QString& name, bool click = false);
+
+    /**jsdoc
      * Saves a picture of the Inspector's whole content, whatever is scrolled into view, as the panel draws it.
      * @function Test.saveInspectorPicture
      * @param {string} path - Where to save it (PNG).

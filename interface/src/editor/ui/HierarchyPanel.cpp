@@ -35,8 +35,9 @@ namespace {
     const int GUTTER_PAD = 2;     // before the first column and after the last
     const QColor GUTTER_FILL("#323232");                // a shade darker than the rows, as Unity's
     const QColor ICON_ON("#d2d2d2");                    // the rows' text colour (editor.qss)
-    const QColor ICON_HINT(210, 210, 210, 95);          // under the pointer, while off
-    const QColor ICON_UNUSABLE(210, 210, 210, 45);      // a lock or scripts that can't be changed here
+    const QColor ICON_HINT(210, 210, 210, 120);         // under the pointer, while off
+    const QColor ICON_OFF(210, 210, 210, 60);           // off: always there, dim, as Photoshop's eyes (Caity, 10-27)
+    const QColor ICON_UNUSABLE(210, 210, 210, 35);      // a lock or scripts that can't be changed here
     const qreal ICON_PEN = 1.2;
 
     const QString CLICK_HOW = "\nClick: with everything under it. Alt-click: this one alone.";
@@ -132,24 +133,20 @@ protected:
             }
             QUuid id = index.data(EntityTreeModel::IdRole).toUuid();
             bool hovered = _panel->_hovered.isValid() && QModelIndex(_panel->_hovered) == index;
+            bool scripted = index.data(EntityTreeModel::ScriptsRole).toInt() != EntityTreeModel::NoScripts;
             for (int t = HierarchyPanel::Hide; t <= HierarchyPanel::Scripts; ++t) {
                 auto toggle = (HierarchyPanel::Toggle)t;
                 bool on = _panel->isOn(toggle, id);
-                if (!on && !hovered) {
-                    continue;   // only what's on shows, and all of them on the row under the pointer, as in Unity
+                if (toggle == HierarchyPanel::Scripts && !on && !hovered && !scripted) {
+                    continue;   // braces only where there's a script to switch, or under the pointer
                 }
-                bool usable = usableHere(toggle, id);
-                painter.setPen(QPen(!usable ? ICON_UNUSABLE : on ? ICON_ON : ICON_HINT, ICON_PEN));
-                QRectF cell(GUTTER_PAD + t * CELL, row.top() + dy, CELL, row.height());
-                if (toggle == HierarchyPanel::Hide) {
-                    drawEye(painter, cell, on);
-                } else if (toggle == HierarchyPanel::NoPick) {
-                    drawPointer(painter, cell, on);
-                } else if (toggle == HierarchyPanel::Lock) {
-                    drawLock(painter, cell, on);
-                } else {
-                    drawScript(painter, cell, on);
-                }
+                // every row shows its toggles, off ones dim; what can't be changed here is worked out for the row
+                // under the pointer and what's on (scripts under a row cost a walk of its descendants)
+                bool usable = on || hovered ? usableHere(toggle, id)
+                                            : toggle != HierarchyPanel::Lock || _panel->_canLock;
+                painter.setPen(QPen(HierarchyPanel::toggleColor(on, hovered, usable), ICON_PEN));
+                HierarchyPanel::paintToggle(painter, toggle, QRectF(GUTTER_PAD + t * CELL, row.top() + dy, CELL,
+                                                                    row.height()), on);
             }
         }
     }
@@ -242,7 +239,7 @@ private:
             return "Hide in your view only, while you build. Everyone else still sees it." + CLICK_HOW;
         }
         if (toggle == HierarchyPanel::NoPick) {
-            return "Can't be selected by your clicks in the 3D view, while you build (the Hierarchy still selects "
+            return "Can't be selected by your clicks in the 3D view, while you build (the Entities list still selects "
                 "it). Only for you." + CLICK_HOW;
         }
         return _panel->_canLock ? "Locked for everyone: no one can move, change or delete it." + CLICK_HOW
@@ -252,7 +249,7 @@ private:
     HierarchyPanel* _panel;
 };
 
-HierarchyPanel::HierarchyPanel(QWidget* parent) : QDockWidget("Hierarchy", parent) {
+HierarchyPanel::HierarchyPanel(QWidget* parent) : QDockWidget("Entities", parent) {
     setObjectName("EditorHierarchy");
     // anywhere, floating or docked, tabbed with another panel (dockable panels, step 2): every change of its window
     // under the GL view's guard (ui/DockTitleBar.h), which once was why it was fixed in place
@@ -456,6 +453,74 @@ QList<QUuid> HierarchyPanel::scriptsToSwitch(const QList<QUuid>& ids) const {
         }
     }
     return switchable;
+}
+
+QVector<HierarchyPanel::ToggleState> HierarchyPanel::statesFor(const QList<QUuid>& ids) const {
+    QVector<ToggleState> states(Scripts + 1);
+    if (!_model || ids.isEmpty()) {
+        return states;
+    }
+    // scripts: only what has a script counts, on or off
+    QList<QUuid> scripted;
+    for (const auto& id : ids) {
+        if (_model->indexForId(id).data(EntityTreeModel::ScriptsRole).toInt() != EntityTreeModel::NoScripts) {
+            scripted << id;
+        }
+    }
+    for (int t = Hide; t <= Scripts; ++t) {
+        auto toggle = (Toggle)t;
+        const QList<QUuid>& counted = toggle == Scripts ? scripted : ids;
+        int on = (int)std::count_if(counted.begin(), counted.end(), [this, toggle](const QUuid& id) {
+            return isOn(toggle, id);
+        });
+        states[t].look = on == 0 ? Off : on == counted.size() ? On : Mixed;
+    }
+    bool anyLoaded = std::any_of(ids.begin(), ids.end(), [this](const QUuid& id) { return _model->isLoaded(id); });
+    states[Lock].usable = _canLock && anyLoaded;
+    states[Lock].why = !_canLock ? _noLockWhy : "Not here yet: it hasn't loaded.";
+    states[Scripts].usable = !_readOnly && !scriptsToSwitch(ids).isEmpty();
+    states[Scripts].why = _readOnly ? QString("You can't change things in this world.")
+                          : scripted.isEmpty() ? QString("No scripts here.")
+                                               : QString("Locked: unlock it to turn its scripts on or off.");
+    return states;
+}
+
+bool HierarchyPanel::toggleIds(Toggle toggle, const QList<QUuid>& ids) {
+    if (!_model) {
+        return false;
+    }
+    QList<QUuid> targets;
+    for (const auto& id : ids) {
+        // a lock is the entity's own: it needs the right, and the entity here to change
+        if (_model->indexForId(id).isValid() && (toggle != Lock || (_canLock && _model->isLoaded(id)))) {
+            targets << id;
+        }
+    }
+    if (toggle == Scripts) {
+        targets = _readOnly ? QList<QUuid>() : scriptsToSwitch(targets);
+    }
+    if (targets.isEmpty()) {
+        return false;
+    }
+    bool on = !std::all_of(targets.begin(), targets.end(), [this, toggle](const QUuid& id) { return isOn(toggle, id); });
+    emit toggleRequested(toggle, targets, on);
+    return true;
+}
+
+void HierarchyPanel::paintToggle(QPainter& painter, Toggle toggle, const QRectF& cell, bool on) {
+    if (toggle == Hide) {
+        drawEye(painter, cell, on);
+    } else if (toggle == NoPick) {
+        drawPointer(painter, cell, on);
+    } else if (toggle == Lock) {
+        drawLock(painter, cell, on);
+    } else {
+        drawScript(painter, cell, on);
+    }
+}
+
+QColor HierarchyPanel::toggleColor(bool on, bool hovered, bool usable) {
+    return !usable ? ICON_UNUSABLE : on ? ICON_ON : hovered ? ICON_HINT : ICON_OFF;
 }
 
 int HierarchyPanel::hiddenCount() const {

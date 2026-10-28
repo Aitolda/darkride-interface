@@ -21,6 +21,8 @@
 #include <QtCore/QSet>
 #include <QtCore/QTimer>
 #include <QtCore/QUuid>
+#include <QtCore/QVector>
+#include <QtGui/QColor>
 #include <QtWidgets/QDockWidget>
 
 class QItemSelection;
@@ -32,6 +34,7 @@ class QToolButton;
 class QTreeView;
 class EntityTreeModel;
 class HierarchyGutter;
+class QPainter;
 
 class HierarchyPanel : public QDockWidget {
     Q_OBJECT
@@ -68,6 +71,22 @@ public:
     bool clickToggle(Toggle toggle, const QUuid& id, bool onlyThis);
     // how many of this world's rows are hidden in this builder's view
     int hiddenCount() const;
+
+    // the toggles for several entities together, as the Inspector's header shows them for its selection (Caity,
+    // 10-27): on when all are, mixed when some are; usable when a click would change something, else why not
+    enum ToggleLook { Off, On, Mixed };
+    struct ToggleState {
+        ToggleLook look { Off };
+        bool usable { true };
+        QString why;
+    };
+    QVector<ToggleState> statesFor(const QList<QUuid>& ids) const;
+    // a click on the Inspector header's toggle: for these alone, by the rows' rules (the lock right; only what has
+    // scripts to switch), on unless all of them are; false when nothing would change
+    bool toggleIds(Toggle toggle, const QList<QUuid>& ids);
+    // a toggle's icon in a cell, in the painter's pen, as the rows draw it; and the pen's colour
+    static void paintToggle(QPainter& painter, Toggle toggle, const QRectF& cell, bool on);
+    static QColor toggleColor(bool on, bool hovered, bool usable);
 
 signals:
     void selectionChangedByUser(const QList<QUuid>& ids);

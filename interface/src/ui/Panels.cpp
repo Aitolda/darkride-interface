@@ -36,7 +36,7 @@ namespace {
     const QString PEOPLE_TAB = "io.darkride.peoplePanel.tab";
     const int PROFILE_TAB = 2;
     // Build mode's own, there only while it's on
-    const QString HIERARCHY = "Hierarchy";
+    const QString HIERARCHY = "Entities";   // Build mode's Hierarchy panel (Caity, 10-27: "Entities")
     const QString INSPECTOR = "Inspector";
 
     struct QmlPanel {

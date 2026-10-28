@@ -48,7 +48,7 @@ public:
      * The panels' names, in View > Panels' order.
      * @function Panels.names
      * @returns {string[]} The names: "Settings", "Avatar", "People", "Chat", "Explore", "My Files", "Console", and Build
-     *     mode's "Hierarchy" and "Inspector" (which open only while it's on).
+     *     mode's "Entities" and "Inspector" (which open only while it's on).
      */
     Q_INVOKABLE QStringList names() const;
 

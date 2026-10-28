@@ -20,6 +20,7 @@
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtGui/QMouseEvent>
+#include <QtWidgets/QAbstractButton>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QLabel>
@@ -370,6 +371,31 @@ QVariantMap TestScriptingInterface::inspectorField(const QString& key) {
         result["mixed"] = field->isMixed();
         result["tip"] = field->toolTip();
         break;
+    }
+    return result;
+}
+
+QVariantMap TestScriptingInterface::inspectorToggle(const QString& name, bool click) {
+    if (QThread::currentThread() != thread()) {
+        QVariantMap result;
+        BLOCKING_INVOKE_METHOD(this, "inspectorToggle", Q_RETURN_ARG(QVariantMap, result), Q_ARG(QString, name),
+                               Q_ARG(bool, click));
+        return result;
+    }
+    QVariantMap result;
+    auto window = qApp->getWindow();
+    QWidget* inspector = window ? window->findChild<QWidget*>("EditorInspector") : nullptr;
+    auto icon = inspector ? inspector->findChild<QAbstractButton*>("EditorInspectorToggle" + name) : nullptr;
+    if (!icon) {
+        return result;
+    }
+    result["found"] = true;
+    result["shown"] = icon->isVisibleTo(inspector);
+    result["look"] = icon->property("look");
+    result["usable"] = icon->property("usable");
+    result["tip"] = icon->toolTip();
+    if (click) {
+        icon->click();
     }
     return result;
 }

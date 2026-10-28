@@ -249,7 +249,7 @@ Editor::Editor() : _selection(this), _undo(this), _terrain(&_undo, this) {
     connect(&_arrivalTimer, &QTimer::timeout, this, [this] {
         if (!_goingTo.isNull() && _treeModel && !_treeModel->isLoaded(_goingTo)) {
             setStatus(QString("%1 hasn't arrived. It may have been deleted since the list was made: "
-                              "Refresh the Hierarchy.").arg(_goingToName), STATUS_CLEAR_MS);
+                              "Refresh the Entities list.").arg(_goingToName), STATUS_CLEAR_MS);
         }
         _goingTo = QUuid();
     });
@@ -571,6 +571,7 @@ void Editor::updateReadOnly() {
         _hierarchy->setReadOnly(_readOnly, reason);
         _hierarchy->setCanLock(!_readOnly && entities->canAdjustLocks(), _readOnly ? reason : NO_LOCK_RIGHT);
     }
+    updateInspectorToggles();
     if (_toolBar) {
         _toolBar->setCreateEnabled(!_readOnly);
     }
@@ -667,6 +668,12 @@ void Editor::createPanels() {
     connect(_inspector, &InspectorPanel::editBegan, this, &Editor::onInspectorEditBegan);
     connect(_inspector, &InspectorPanel::liveEdit, this, &Editor::onInspectorLiveEdit);
     connect(_inspector, &InspectorPanel::committed, this, &Editor::onInspectorCommitted);
+    // the header's toggle icons: the Hierarchy rows' rules, for the selection alone
+    connect(_inspector, &InspectorPanel::toggleClicked, this, [this](int toggle) {
+        if (_hierarchy) {
+            _hierarchy->toggleIds((HierarchyPanel::Toggle)toggle, _selection.ids());
+        }
+    });
     connect(_inspector, &InspectorPanel::editCancelled, this, &Editor::onInspectorEditCancelled);
     connect(_inspector, &InspectorPanel::uploadRequested, this, &Editor::onInspectorUpload);
 
@@ -1895,6 +1902,13 @@ void Editor::refreshInspector(bool selectionChanged) {
         // a light handle's drag is an edit no field is making: the fields follow it
         _inspector->refreshValues(snapshots);
     }
+    updateInspectorToggles();
+}
+
+void Editor::updateInspectorToggles() {
+    if (_inspector && _hierarchy) {
+        _inspector->setToggleStates(_hierarchy->statesFor(_selection.ids()));
+    }
 }
 
 EntityItemProperties Editor::inspectorEdit(const QString& key, const QVariant& value, const glm::vec3& naturalSize,
@@ -2714,6 +2728,7 @@ void Editor::onHierarchyToggle(int toggle, const QList<QUuid>& ids, bool on) {
     if (_hierarchy) {
         _hierarchy->setLocalStates(_hiddenHere, _noPick);
     }
+    updateInspectorToggles();   // the header's eye and pointer: no property changed to refresh it
 }
 
 void Editor::remindOfScriptsOff() {
@@ -2726,7 +2741,7 @@ void Editor::remindOfScriptsOff() {
     }
     QString title = off == 1 ? QString("1 entity has its scripts off")
                              : QString("%1 entities have their scripts off").arg(off);
-    QString text = "They stay off for everyone until they're turned on again in Build mode, in the Hierarchy or the "
+    QString text = "They stay off for everyone until they're turned on again in Build mode, in the Entities list or the "
                    "Inspector.";
     _scriptsOffReminder = title + "\n" + text;
     new popup::Banner(popup::appIcon(), title, text, qApp->getWindow(), SCRIPTS_OFF_REMINDER_MS);

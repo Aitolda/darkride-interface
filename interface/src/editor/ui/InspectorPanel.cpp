@@ -10,7 +10,9 @@
 
 #include <QtCore/QSet>
 #include <QtCore/QUuid>
+#include <QtGui/QPainter>
 #include <QtGui/QResizeEvent>
+#include <QtWidgets/QAbstractButton>
 #include <QtWidgets/QFrame>
 #include <QtWidgets/QGridLayout>
 #include <QtWidgets/QHBoxLayout>
@@ -36,13 +38,82 @@ namespace {
     const QString VISIBLE_KEY = QStringLiteral("visible");
     const QString LOCKED_KEY = QStringLiteral("locked");
 
-    // the header's ticks are the entity's own, so they say what they do for everyone
-    const QHash<QString, QString> HEADER_TIPS {
+    // the ticks that are the entity's own say what they do for everyone
+    const QHash<QString, QString> TICK_TIPS {
         { "visible", "Visible to everyone. Untick it to hide this for everyone." },
-        { "locked", "Locked: no one can move, change or delete it until it's unlocked." },
-        { "ignorePickIntersection", "Ignore Picking: everyone's clicks, lasers and teleports go through it." },
-        { "scriptsEnabled", "Its scripts run, for everyone. Untick to stop them (a door stops opening): its script "
-                            "links are kept, and ticking it runs them again." },
+        { "ignorePickIntersection", "Everyone's clicks, lasers and teleports go through it, in Build mode and out of "
+                                    "it. (The pointer above is your own clicks', in Build mode.)" },
+    };
+
+    // the header's toggle icons, as the Hierarchy's rows have them; what a click does, for the selection alone
+    const char* const TOGGLE_NAMES[] = { "Hide", "NoPick", "Lock", "Scripts" };
+    QString toggleTip(int toggle, HierarchyPanel::ToggleLook look) {
+        const bool on = look == HierarchyPanel::On;
+        const bool mixed = look == HierarchyPanel::Mixed;
+        switch (toggle) {
+            case HierarchyPanel::Hide:
+                return on ? "Hidden in your view only. Click to show it."
+                     : mixed ? "Some of these are hidden in your view. Click to hide them all."
+                             : "Hide it in your view only, while you build. Everyone else still sees it.";
+            case HierarchyPanel::NoPick:
+                return on ? "Your clicks in the 3D view pass through it. Click to select it by clicking again."
+                     : mixed ? "Your clicks pass through some of these. Click for all of them."
+                             : "Let your clicks in the 3D view pass through it, while you build (the Entities list "
+                               "still selects it). Only for you.";
+            case HierarchyPanel::Lock:
+                return on ? "Locked for everyone: no one can move, change or delete it. Click to unlock it."
+                     : mixed ? "Some of these are locked. Click to lock them all."
+                             : "Lock it for everyone: no one can move, change or delete it until it's unlocked.";
+            default:
+                return on ? "Its scripts are off, for everyone. Click to run them again."
+                     : mixed ? "Some of these have their scripts off. Click to turn them all off."
+                             : "Turn its scripts off, for everyone: they stop running (a door stops opening) and "
+                               "keep their links, until they're turned on again.";
+        }
+    }
+
+    // one of the header's toggles, drawn as the Hierarchy's rows draw it (HierarchyPanel::paintToggle): bright while
+    // on, dim while off, a dash under it while mixed
+    class ToggleIcon : public QAbstractButton {
+    public:
+        ToggleIcon(int toggle, QWidget* parent) : QAbstractButton(parent), _toggle(toggle) {
+            setObjectName(QString("EditorInspectorToggle") + TOGGLE_NAMES[toggle]);
+            setFixedSize(26, 22);
+            setFocusPolicy(Qt::NoFocus);
+            setAttribute(Qt::WA_Hover);
+        }
+        void setState(const HierarchyPanel::ToggleState& state) {
+            _state = state;
+            setProperty("look", state.look == HierarchyPanel::On ? "on" : state.look == HierarchyPanel::Mixed ? "mixed" : "off");
+            setProperty("usable", state.usable);
+            setToolTip(state.usable ? toggleTip(_toggle, state.look) : state.why);
+            update();
+        }
+        bool usable() const { return _state.usable; }
+
+    protected:
+        void paintEvent(QPaintEvent*) override {
+            QPainter painter(this);
+            painter.setRenderHint(QPainter::Antialiasing);
+            const bool hovered = underMouse() && _state.usable;
+            if (hovered) {
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor(255, 255, 255, 20));
+                painter.drawRoundedRect(QRectF(rect()).adjusted(1.0, 1.0, -1.0, -1.0), 4.0, 4.0);
+                painter.setBrush(Qt::NoBrush);
+            }
+            const bool on = _state.look == HierarchyPanel::On;
+            const bool mixed = _state.look == HierarchyPanel::Mixed;
+            painter.setPen(QPen(HierarchyPanel::toggleColor(on || mixed, hovered, _state.usable), 1.2));
+            HierarchyPanel::paintToggle(painter, (HierarchyPanel::Toggle)_toggle, QRectF(rect()).adjusted(0.0, -1.0, 0.0, -1.0), on);
+            if (mixed) {
+                painter.drawLine(QPointF(width() / 2.0 - 2.5, height() - 2.0), QPointF(width() / 2.0 + 2.5, height() - 2.0));
+            }
+        }
+
+    private:
+        int _toggle;
+        HierarchyPanel::ToggleState _state;
     };
 
     // the value of a property as text, for the show-when rules
@@ -122,18 +193,21 @@ void InspectorPanel::setCanLock(bool canLock, const QString& why) {
     }
 }
 
+void InspectorPanel::setToggleStates(const QVector<HierarchyPanel::ToggleState>& states) {
+    _toggleStates = states;
+    for (int t = 0; t < _toggleIcons.size() && t < states.size(); ++t) {
+        static_cast<ToggleIcon*>(_toggleIcons[t])->setState(states[t]);
+    }
+}
+
 void InspectorPanel::applyReadOnly() {
     // the fields grey out; the labels stay live so Copy still works on them (they do not scrub). With everything
-    // selected locked, all but Locked do (the world refuses their changes); Locked does without the right to lock
+    // selected locked, they all do (the world refuses their changes): the header's padlock unlocks
     for (auto it = _rows.begin(); it != _rows.end(); ++it) {
-        bool locked = it.key() == LOCKED_KEY;
-        it->editor->setEnabled(!_readOnly && (locked ? _canLock : !_allLocked));
-        if (locked) {
-            it->editor->setToolTip(_canLock ? HEADER_TIPS.value(LOCKED_KEY) : _noLockWhy);
-        }
+        it->editor->setEnabled(!_readOnly && !_allLocked);
     }
     if (_lockNote) {
-        _lockNote->setText(_canLock ? "Locked. Untick Locked to change it."
+        _lockNote->setText(_canLock ? "Locked. Click the padlock above to unlock it."
                                     : "Locked, and you can't unlock things in this world.");
         _lockNote->setVisible(_allLocked && !_readOnly);
     }
@@ -280,6 +354,9 @@ QWidget* InspectorPanel::buildSection(const QString& sectionId, QWidget* parent)
     QHBoxLayout* headTicks = nullptr;
     int rowIndex = 0;
     for (auto spec : specs) {
+        if (spec->headerIcon) {
+            continue;   // one of the header's toggle icons
+        }
         PropertyEditor* editor = nullptr;
         QWidget* label = nullptr;
         if (spec->header) {
@@ -295,6 +372,25 @@ QWidget* InspectorPanel::buildSection(const QString& sectionId, QWidget* parent)
                 headTicks = new QHBoxLayout();
                 headTicks->setSpacing(14);
                 headLayout->addLayout(headTicks);
+                // the Hierarchy rows' toggles, for the selection
+                auto icons = new QHBoxLayout();
+                icons->setSpacing(2);
+                _toggleIcons.clear();
+                for (int t = HierarchyPanel::Hide; t <= HierarchyPanel::Scripts; ++t) {
+                    auto icon = new ToggleIcon(t, head);
+                    if (t < _toggleStates.size()) {
+                        icon->setState(_toggleStates[t]);
+                    }
+                    connect(icon, &QAbstractButton::clicked, this, [this, icon, t] {
+                        if (icon->usable()) {
+                            emit toggleClicked(t);
+                        }
+                    });
+                    icons->addWidget(icon);
+                    _toggleIcons << icon;
+                }
+                icons->addStretch(1);
+                headLayout->addLayout(icons);
                 _lockNote = new QLabel(head);
                 _lockNote->setObjectName("EditorInspectorLockNote");
                 _lockNote->setWordWrap(true);
@@ -303,7 +399,7 @@ QWidget* InspectorPanel::buildSection(const QString& sectionId, QWidget* parent)
                 frameLayout->insertWidget(frameLayout->indexOf(body), head);
             }
             editor = PropertyEditor::create(*spec, head);
-            editor->setToolTip(HEADER_TIPS.value(spec->key));
+            editor->setToolTip(TICK_TIPS.value(spec->key));
             if (auto tick = qobject_cast<BoolEditor*>(editor)) {
                 if (spec->key == VISIBLE_KEY) {
                     editor->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -320,6 +416,9 @@ QWidget* InspectorPanel::buildSection(const QString& sectionId, QWidget* parent)
             }
         } else {
             editor = PropertyEditor::create(*spec, body);
+            if (TICK_TIPS.contains(spec->key)) {
+                editor->setToolTip(TICK_TIPS.value(spec->key));
+            }
             label = editor->createLabel(body);
             label->setObjectName("EditorInspectorLabel");
             bool parts = spec->kind == PropertyKind::VehicleWheels || spec->kind == PropertyKind::VehicleSeats
