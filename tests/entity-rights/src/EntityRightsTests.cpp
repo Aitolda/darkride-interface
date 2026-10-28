@@ -5,7 +5,7 @@
 //  What the entity server lets a node change, delete and add, by the rights the domain gives it: someone who may only
 //  make temporary entities may only change and delete temporary ones, nobody but a world's editors deletes a locked
 //  entity, and a new entity's certificate counts only from an editor. The deletes are sent as the server gets them, so
-//  a locked entity's id goes in as it would from any client.
+//  a locked entity's id goes in as it would from any client. A refused edit goes back out to its sender.
 //
 //  Copyright 2026 Darkride.
 //
@@ -118,9 +118,9 @@ struct World {
         return entity ? entity->getName() : QString();
     }
 
-    // an edit of the name (and, given, the position), as a client sends it
-    void rename(const EntityItemID& id, const SharedNodePointer& sender, const QString& name,
-                const glm::vec3* position = nullptr) {
+    // an edit of the name (and, given, the position), as a client sends it; when it was made
+    quint64 rename(const EntityItemID& id, const SharedNodePointer& sender, const QString& name,
+                   const glm::vec3* position = nullptr) {
         EntityItemProperties properties;
         properties.setName(name);
         if (position) {
@@ -128,6 +128,13 @@ struct World {
         }
         properties.setLastEdited(usecTimestampNow() + 1);
         tree->withWriteLock([&] { tree->updateEntity(id, properties, sender); });
+        return properties.getLastEdited();
+    }
+
+    // whether the entity goes back out last edited after `edit`, so a client that showed that edit takes it back
+    bool sentBackAfter(const EntityItemID& id, quint64 edit) {
+        auto entity = find(id);
+        return entity && entity->getLastEdited() > edit;
     }
 
     // a delete, as the entity server gets it from a client
@@ -182,8 +189,9 @@ void EntityRightsTests::testEdits() {
     // a temporary right changes temporary entities only
     world.rename(world.temporaryID, senders.visitor, "visitor's");
     QCOMPARE(world.name(world.temporaryID), QString("visitor's"));
-    world.rename(world.permanentID, senders.visitor, "visitor's");
+    auto refused = world.rename(world.permanentID, senders.visitor, "visitor's");
     QCOMPARE(world.name(world.permanentID), QString("permanent"));
+    QVERIFY(world.sentBackAfter(world.permanentID, refused));
 
     // a permanent entity that can be grabbed may still be moved by anyone, as by someone without rez rights, but not changed
     glm::vec3 elsewhere(101.0f, 100.0f, 100.0f);
@@ -192,16 +200,18 @@ void EntityRightsTests::testEdits() {
     QCOMPARE(world.find(world.grabbableID)->getWorldPosition(), elsewhere);
 
     // someone who may only come in changes nothing; a permanent right, or an editor's, changes permanent entities
-    world.rename(world.temporaryID, senders.guest, "guest's");
+    refused = world.rename(world.temporaryID, senders.guest, "guest's");
     QCOMPARE(world.name(world.temporaryID), QString("visitor's"));
+    QVERIFY(world.sentBackAfter(world.temporaryID, refused));
     world.rename(world.permanentID, senders.builder, "builder's");
     QCOMPARE(world.name(world.permanentID), QString("builder's"));
     world.rename(world.permanentID, senders.editor, "editor's");
     QCOMPARE(world.name(world.permanentID), QString("editor's"));
 
     // a locked entity stays as it is for all but its lock, as before
-    world.rename(world.lockedID, senders.builder, "builder's");
+    refused = world.rename(world.lockedID, senders.builder, "builder's");
     QCOMPARE(world.name(world.lockedID), QString("locked"));
+    QVERIFY(world.sentBackAfter(world.lockedID, refused));
 }
 
 void EntityRightsTests::testDeletes() {
