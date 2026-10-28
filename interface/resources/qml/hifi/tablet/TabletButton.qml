@@ -26,6 +26,7 @@ Item {
     property double sortOrder: 100
     property int stableOrder: 0
     property int badge: 0  // a count waiting (the Chat button's unread messages), as hifi/toolbars/ToolbarButton.qml
+    property bool muted: false   // the Audio button's microphone muted (the bar draws it red; the tablet, its own icon)
     property var tabletRoot;  // tablet only
     property var flickable: null  // tablet only
     property var gridView: null  // tablet only

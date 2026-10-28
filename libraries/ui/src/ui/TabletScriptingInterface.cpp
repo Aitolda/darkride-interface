@@ -1061,6 +1061,7 @@ static int s_stableOrder = 1;
  *     with larger numbers.
  * @property {number} badge=0 - A count shown in a red badge at the icon's top right, such as unread messages; none at
  *     <code>0</code>.
+ * @property {boolean} muted=false - <code>true</code> for a microphone that is muted: the bar draws its icon red.
  *
  * @property {boolean} inDebugMode - If <code>true</code> and the tablet is being used, the button's <code>isActive</code> 
  *     state toggles each time the button is clicked. <em>Tablet only.</em>

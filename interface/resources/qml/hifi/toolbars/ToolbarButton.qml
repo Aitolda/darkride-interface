@@ -56,6 +56,7 @@ Item {
     property var uuid;
     // a count waiting (the Chat button's unread mentions and direct messages): a red capsule at the top right
     property int badge: 0
+    property bool muted: false   // the Audio button's microphone muted: the bar draws it red (BarButton.qml)
 
     signal clicked()
 
