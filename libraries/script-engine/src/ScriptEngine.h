@@ -655,7 +655,8 @@ public:
      * Writes a description of every global object this script sees to a JSON file: for an object from the engine, its
      * class and the methods, properties, signals and enums of its meta-object, with parameter and return types; for
      * anything else, its kind and members. A developer tool: the file is the machine-readable form of the API in this
-     * script's context.
+     * script's context. The file goes under the application's own data folder (<code>api-dumps/</code>, the path's
+     * file name only); a test run with the Test API on may name any path.
      * @function Script.dumpApi
      * @param {string} path - The file to write.
      * @returns {boolean} <code>true</code> if the file was written.
@@ -903,6 +904,10 @@ signals:
 
 protected:
     void init();
+    /// Script.dumpApi's file: under the application's data folder (api-dumps/<the path's file name>), or the path
+    /// as given when anyPath (a test run with the Test API on). Every script sees Script, a world's entity scripts
+    /// among them, so a script does not choose where the file goes.
+    QString dumpApiFile(const QString& requested, bool anyPath) const;
     /// The QtScript conversions of the engine's types, on this QScriptEngine.
     void registerConversions();
     /// The globals every engine gives a script, through the register calls.

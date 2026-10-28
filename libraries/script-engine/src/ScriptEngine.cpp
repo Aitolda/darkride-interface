@@ -16,6 +16,7 @@
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QEventLoop>
+#include <QtCore/QDir>
 #include <QtCore/QFileInfo>
 #include <QtCore/QTimer>
 #include <QtCore/QThread>
@@ -1759,13 +1760,25 @@ bool ScriptEngine::dumpApi(const QString& path) {
         globals[it.name()] = entry;
     }
     root["globals"] = globals;
-    QFile file(path);
+    const QString fileName = dumpApiFile(path, globalObject().property("Test").isQObject());
+    QFile file(fileName);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        scriptWarningMessage("Script.dumpApi: cannot write " + path);
+        scriptWarningMessage("Script.dumpApi: cannot write " + fileName);
         return false;
     }
     file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    scriptInfoMessage("Script.dumpApi wrote " + fileName);
     return true;
+}
+
+QString ScriptEngine::dumpApiFile(const QString& requested, bool anyPath) const {
+    if (anyPath) {
+        return requested;
+    }
+    QDir folder(QDir(PathUtils::getAppDataPath()).filePath("api-dumps"));
+    folder.mkpath(".");
+    const QString name = QFileInfo(requested).fileName();
+    return folder.filePath(name.isEmpty() ? QStringLiteral("api.json") : name);
 }
 
 void ScriptEngine::print(const QString& message) {
@@ -2544,6 +2557,7 @@ void ScriptEngine::entityScriptContentAvailable(const EntityItemID& entityID, co
 
 #ifdef THREAD_DEBUGGING
     qCDebug(scriptengine) << "ScriptEngine::entityScriptContentAvailable() thread [" << QThread::currentThread() << "] expected thread [" << thread() << "]";
+#endif
 
     // the script arrived after its entity left (its world left while it downloaded): it doesn't run
     if (entityIsGone(_context, entityID)) {
@@ -2556,7 +2570,6 @@ void ScriptEngine::entityScriptContentAvailable(const EntityItemID& entityID, co
         emit entityScriptDetailsUpdated();
         return;
     }
-#endif
 
     auto scriptCache = DependencyManager::get<ScriptCache>();
     bool isFileUrl = isURL && scriptOrURL.startsWith("file://");
