@@ -696,6 +696,58 @@ void EntityTreeRenderer::preUpdate() {
     }
 }
 
+void EntityTreeRenderer::updateAvatarChildren() {
+    PROFILE_RANGE(simulation_physics, "ETR::updateAvatarChildren");
+    if (!_tree || _shuttingDown) {
+        return;
+    }
+    auto scene = _viewState->getMain3DScene();
+    if (!scene) {
+        return;
+    }
+    std::unordered_set<EntityItemID> changedEntities;
+    _changedEntitiesGuard.withWriteLock([&] {
+        changedEntities.swap(_changedEntities);
+    });
+    if (changedEntities.empty()) {
+        return;
+    }
+
+    // the ones under an avatar are updated now; the world's other changes go back for the next frame's pass, with its
+    // time budget and priority sort (the dead and those without a renderable are dropped, as that pass drops them)
+    std::vector<EntityRendererPointer> underAvatars;
+    for (auto it = changedEntities.begin(); it != changedEntities.end();) {
+        EntityItemPointer entity = getEntity(*it);
+        if (entity && entity->hasAncestorOfType(NestableType::Avatar)) {
+            if (!entity->isDead()) {
+                if (EntityRendererPointer renderable = renderableForEntityId(*it)) {
+                    underAvatars.push_back(renderable);
+                }
+            }
+            it = changedEntities.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (!changedEntities.empty()) {
+        _changedEntitiesGuard.withWriteLock([&] {
+            _changedEntities.insert(changedEntities.begin(), changedEntities.end());
+        });
+    }
+    if (underAvatars.empty()) {
+        return;
+    }
+
+    // as the AUTOMATIC pass updates them; the stats and the budget's average cost are left to that pass
+    render::Transaction transaction;
+    for (const EntityRendererPointer& renderable : underAvatars) {
+        bool changed = renderable->entityHasChanged();
+        renderable->getEntity()->setNeedsRenderUpdate(true);
+        renderable->updateInScene(scene, transaction, changed);
+    }
+    scene->enqueueTransaction(transaction);
+}
+
 void EntityTreeRenderer::update(bool simulate) {
     PROFILE_RANGE(simulation_physics, "ETR::update");
     PerformanceTimer perfTimer("ETRupdate");
