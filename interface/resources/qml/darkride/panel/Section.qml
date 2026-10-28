@@ -28,6 +28,7 @@ ColumnLayout {
         Layout.fillWidth: true
         visible: section.title !== ""
         text: section.title.toUpperCase()
+        textFormat: Text.PlainText
         color: Theme.secondaryText
         font.pixelSize: Theme.sectionSize
         font.letterSpacing: 0.3 * Theme.unit
@@ -65,6 +66,7 @@ ColumnLayout {
         Layout.fillWidth: true
         visible: section.footer !== ""
         text: section.footer
+        textFormat: Text.PlainText
         color: Theme.secondaryText
         font.pixelSize: Theme.detailSize
         wrapMode: Text.WordWrap

@@ -382,6 +382,7 @@ Page {
                         Text {
                             width: parent.width
                             text: avatar.favoriteName !== "" ? avatar.favoriteName : (avatar.name !== "" ? avatar.name : "Your avatar")
+                            textFormat: Text.PlainText
                             color: Theme.text
                             font.pixelSize: 16 * Theme.unit
                             font.bold: true
@@ -390,6 +391,7 @@ Page {
                         Text {
                             width: parent.width
                             text: avatar.url
+                            textFormat: Text.PlainText
                             color: Theme.tertiaryText
                             font.pixelSize: Theme.detailSize
                             elide: Text.ElideMiddle
