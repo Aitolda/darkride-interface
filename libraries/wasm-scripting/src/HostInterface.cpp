@@ -594,12 +594,21 @@ const QVector<int>& HostInterface::candidates(const QMetaObject* meta, const QBy
     QVector<int> indices;
     for (int i = meta->methodCount() - 1; i >= 0; --i) {
         QMetaMethod method = meta->method(i);
-        if (method.access() != QMetaMethod::Private && method.methodType() != QMetaMethod::Constructor &&
-            method.methodType() != QMetaMethod::Signal && method.name() == name) {
+        if (callable(method) && method.name() == name) {
             indices.append(i);
         }
     }
     return _candidates.insert(key, indices).value();
+}
+
+// The rules describe() gives the guest, enforced for every form of a call (a plain name, "#index", a signature):
+// a module that does not go through the shim must not reach what the shim never shows. A private method and a
+// constructor are not a script's; a signal is not callable; and nothing QObject itself declares is, deleteLater
+// above all (an object the application owns, deleted under it).
+bool HostInterface::callable(const QMetaMethod& method) {
+    return method.access() != QMetaMethod::Private && method.methodType() != QMetaMethod::Constructor &&
+           method.methodType() != QMetaMethod::Signal && method.enclosingMetaObject() != &QObject::staticMetaObject &&
+           method.name() != "deleteLater";
 }
 
 namespace {
@@ -796,14 +805,14 @@ QVariant HostInterface::callWithCbor(ObjectTable::Handle handle, const QByteArra
     if (name.startsWith('#')) {
         bool ok = false;
         int index = name.mid(1).toInt(&ok);
-        if (!ok || index < 0 || index >= meta->methodCount()) {
+        if (!ok || index < 0 || index >= meta->methodCount() || !callable(meta->method(index))) {
             error = QString("%1 has no method %2").arg(QString::fromUtf8(meta->className()), QString::fromUtf8(methodName));
             return QVariant();
         }
         indices.append(index);
     } else if (name.contains('(')) {
         int index = meta->indexOfMethod(QMetaObject::normalizedSignature(name.constData()).constData());
-        if (index < 0) {
+        if (index < 0 || !callable(meta->method(index))) {
             error = QString("%1 has no method %2").arg(QString::fromUtf8(meta->className()), QString::fromUtf8(methodName));
             return QVariant();
         }
@@ -978,5 +987,9 @@ bool HostInterface::disconnect(int connection) {
 }
 
 void HostInterface::release(ObjectTable::Handle handle) {
+    // a registered global (Entities, MyAvatar, the engine itself) stays: every script of the engine shares the table
+    if (_objects.isGlobal(handle)) {
+        return;
+    }
     _objects.release(handle);
 }
