@@ -102,12 +102,15 @@ Page {
 
             PickerRow {
                 visible: AccountServices.loggedIn
-                label: "Who sees you're online"
-                current: AccountServices.findableBy === "connections" ? "friends" : AccountServices.findableBy
-                // the metaverse's availability: everyone, friends or no one ("connections", gone, meant friends)
+                // "No one" also makes you look offline: the same words in chat and on the website (F3, Caity 10-27
+                // "friends as recommended")
+                label: "Who sees you're online, and where"
+                // the metaverse's availability, as the server has it (social's Friends; "" until it answers), so this
+                // and chat never disagree
+                current: Friends.availability
                 model: [{ text: "Everyone", value: "all" }, { text: "Friends", value: "friends" },
                         { text: "No one", value: "none" }]
-                onChosen: AccountServices.findableBy = value
+                onChosen: Friends.setAvailability(value)
             }
             ListRow {
                 label: "Personal space"
@@ -130,7 +133,7 @@ Page {
 
             ListRow {
                 label: "Look sideways"
-                detail: "degrees a second"
+                detail: "Degrees a second"
                 fill: true
                 labelWidth: 130 * Theme.unit
                 scrubbable: true
@@ -152,7 +155,7 @@ Page {
             }
             ListRow {
                 label: "Look up and down"
-                detail: "degrees a second"
+                detail: "Degrees a second"
                 fill: true
                 labelWidth: 130 * Theme.unit
                 scrubbable: true
@@ -177,7 +180,7 @@ Page {
                 // Walls with its key
                 label: "Collide with the world"
                 // the menu's Ctrl is the Command key on a Mac
-                detail: "off: walk through walls (noclip). Key: " + (Qt.platform.os === "osx" ? "⌘ Shift N" : "Ctrl+Shift+N")
+                detail: "Off: walk through walls (noclip). Key: " + (Qt.platform.os === "osx" ? "⌘ Shift N" : "Ctrl+Shift+N")
                 Toggle {
                     checked: general.collisions
                     onToggled: { MyAvatar.collisionsEnabled = checked; general.refresh(); }
@@ -185,7 +188,7 @@ Page {
             }
             ListRow {
                 label: "Snap turning in VR"
-                detail: "turn in steps rather than smoothly"
+                detail: "Turn in steps rather than smoothly"
                 Toggle {
                     checked: general.snapTurn
                     onToggled: { MyAvatar.setSnapTurn(checked); general.refresh(); }
@@ -193,7 +196,7 @@ Page {
             }
             ListRow {
                 label: "Statistics"
-                detail: "frame rate, ping and loading over the world"
+                detail: "Frame rate, ping and loading over the world"
                 Toggle {
                     checked: general.statistics
                     onToggled: { MenuInterface.setIsOptionChecked("Show Statistics", checked); general.refresh(); }
@@ -311,7 +314,7 @@ Page {
             }
             ListRow {
                 label: "World detail"
-                detail: root.inHeadset ? "in VR" : "on the desktop"
+                detail: root.inHeadset ? "In VR" : "On the desktop"
                 Segmented {
                     model: [{ text: "Low", value: 0 }, { text: "Medium", value: 1 }, { text: "High", value: 2 }]
                     current: LODManager.worldDetail
@@ -320,7 +323,7 @@ Page {
             }
             ListRow {
                 label: "Frame rate"
-                detail: "frames a second"
+                detail: "Frames a second"
                 Segmented {
                     model: [{ text: "Display", value: 3 }, { text: "60", value: 2 }, { text: "30", value: 1 },
                             { text: "20", value: 0 }]
@@ -392,7 +395,7 @@ Page {
             }
             ListRow {
                 label: "Vsync"
-                detail: "wait for the display; off paces frames evenly"
+                detail: "Wait for the display; off paces frames evenly"
                 Toggle { checked: Render.vsyncEnabled; onToggled: Render.vsyncEnabled = checked }
             }
         }
@@ -450,7 +453,7 @@ Page {
             }
             ListRow {
                 label: "Draw distance"
-                detail: "metres"
+                detail: "Metres"
                 scrubbable: true
                 scrubValue: Render.farClip
                 scrubFrom: 10
@@ -672,7 +675,7 @@ Page {
             }
             ListRow {
                 label: "Push to talk"
-                detail: root.inHeadset ? "in VR" : "on the desktop"
+                detail: root.inHeadset ? "In VR" : "On the desktop"
                 Toggle {
                     checked: AudioScriptingInterface.pushToTalk
                     onToggled: AudioScriptingInterface.pushToTalk = checked
@@ -680,7 +683,7 @@ Page {
             }
             ListRow {
                 label: "Warn when muted"
-                detail: "when you speak with the microphone off"
+                detail: "When you speak with the microphone off"
                 Toggle {
                     checked: AudioScriptingInterface.warnWhenMuted
                     onToggled: AudioScriptingInterface.warnWhenMuted = checked
@@ -704,7 +707,7 @@ Page {
             ListRow {
                 objectName: "eachPersonRow"   // a test opens the mixer by it
                 label: "Each person"
-                detail: mixer.open ? "" : "a volume and a mute for everyone here"
+                detail: mixer.open ? "" : "A volume and a mute for everyone here"
                 clickable: true
                 onClicked: mixer.open = !mixer.open
                 Text {

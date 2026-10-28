@@ -81,6 +81,14 @@ public:
      */
     Q_INVOKABLE void toggle(const QString& name);
 
+    /**jsdoc
+     * Opens the People panel in front on someone's profile: the card wherever a name appears (Explore's authors, chat's
+     * names).
+     * @function Panels.showProfile
+     * @param {string} username - Their account name; "" for your own.
+     */
+    Q_INVOKABLE void showProfile(const QString& username);
+
     /// Build mode's own panels (Hierarchy, Inspector): they open only while it's on
     static bool isBuildModeOnly(const QString& name);
 

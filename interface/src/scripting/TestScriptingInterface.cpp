@@ -843,10 +843,43 @@ QVariantMap TestScriptingInterface::barButton(const QString& text, bool click) {
             if (click) {
                 button->click();
             }
-            return QVariantMap { { "active", button->property("active").toBool() } };
+            return QVariantMap { { "active", button->property("active").toBool() },
+                                 { "badge", button->property("badge").toInt() } };
         }
     }
     return QVariantMap();
+}
+
+// an item's texts that are shown, depth first (Test.panelTexts)
+static void collectTexts(QQuickItem* item, QStringList& texts) {
+    if (!item->isVisible()) {
+        return;
+    }
+    if (item->inherits("QQuickText")) {
+        const QString text = item->property("text").toString();
+        if (!text.isEmpty()) {
+            texts << text;
+        }
+    }
+    for (QQuickItem* child : item->childItems()) {
+        collectTexts(child, texts);
+    }
+}
+
+QStringList TestScriptingInterface::panelTexts(const QString& name) {
+    if (QThread::currentThread() != thread()) {
+        QStringList result;
+        BLOCKING_INVOKE_METHOD(this, "panelTexts", Q_RETURN_ARG(QStringList, result), Q_ARG(QString, name));
+        return result;
+    }
+    auto window = qApp->getWindow();
+    auto dock = window ? window->findChild<QmlDock*>(name + "Dock") : nullptr;
+    QQuickItem* page = dock && !dock->isHidden() ? dock->panel() : nullptr;
+    QStringList texts;
+    if (page) {
+        collectTexts(page, texts);
+    }
+    return texts;
 }
 
 bool TestScriptingInterface::saveDockPicture(const QString& objectName, const QString& path) {

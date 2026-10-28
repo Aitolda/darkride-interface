@@ -371,10 +371,18 @@ public slots:
      * @function Test.barButton
      * @param {string} text - The button's text, such as "People".
      * @param {boolean} [click=false] - Whether to click it.
-     * @returns {object} <code>{ active }</code>, whether it shows active (before the click's effect); empty when there's
-     *     no such button.
+     * @returns {object} <code>{ active, badge }</code>: whether it shows active (before the click's effect), and the
+     *     count on its red badge (0 for none); empty when there's no such button.
      */
     Q_INVOKABLE QVariantMap barButton(const QString& text, bool click = false);
+
+    /**jsdoc
+     * The words one of Darkride's QML panels shows now (ui/QmlDock.h): every text in it that's shown, in order.
+     * @function Test.panelTexts
+     * @param {string} name - The panel, such as "People".
+     * @returns {string[]} The texts; empty when the panel hasn't been made or is closed.
+     */
+    Q_INVOKABLE QStringList panelTexts(const QString& name);
 
     /**jsdoc
      * Saves a picture of one dock panel as its widgets draw it, floating or docked, its title bar too.
