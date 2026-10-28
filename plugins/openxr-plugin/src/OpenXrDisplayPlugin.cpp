@@ -141,18 +141,25 @@ void OpenXrDisplayPlugin::customizeContext() {
     gl::initModuleGl();
     Parent::customizeContext();
 
-    // the session uses the present thread's context, which is current here
+    // the session uses the present thread's context, which is current here; one kept from an earlier visit to VR is
+    // used again (see uncustomizeContext)
     if (!_runtime->createSession() || !createSwapchains()) {
         qCWarning(openxr) << "Couldn't start OpenXR rendering";
     }
+    _runtime->setDisplayActive(true);
 }
 
 void OpenXrDisplayPlugin::uncustomizeContext() {
+    _runtime->setDisplayActive(false);
     if (_frameBegun) {
         endXrFrame(false);
     }
+    // Leaving VR keeps the session: Meta's runtime over Link refuses a second session on the same GL context in the same
+    // run (XR_ERROR_GRAPHICS_DEVICE_INVALID even after a clean exit; Caity's Quest 3, 2026-10-28), so coming back to VR
+    // picks this one up again. Its swapchains go (made again on the way back); the runtime ends and destroys the session
+    // when Darkride quits. Until then the headset waits on its own (taken off, the runtime stops the session; put back
+    // on in VR, it starts again).
     destroySwapchains();
-    _runtime->destroySession();
     _layerViewsValid = false;
     Parent::uncustomizeContext();
 }
