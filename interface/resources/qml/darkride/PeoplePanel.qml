@@ -242,17 +242,18 @@ Page {
         function join(username) {
             AddressManager.goToUser(username);
         }
-        // where a friend is: "in <world>"; "in a private world" when they're online but the metaverse gives no place,
+        // where a friend is: "In <world>"; "In a private world" when they're online but the metaverse gives no place,
         // which it does only where Join will work (F4, Caity 10-27 "friends as recommended"; Darkside's and
-        // self-hosted worlds decide at their own door, as before); "offline"
+        // self-hosted worlds decide at their own door, as before); "Offline". Sentence case, each part after a " · " too
+        // (Caity 10-28: "Online · Here since October 2026")
         function where(friend) {
             if (!friend.online) {
-                return "offline";
+                return "Offline";
             }
             if (!friend.location) {
-                return "in a private world";
+                return "In a private world";
             }
-            return friend.location.name ? "in " + friend.location.name : "online";
+            return friend.location.name ? "In " + friend.location.name : "Online";
         }
         function canJoin(friend) {
             return !!friend.online && !!friend.location;
@@ -265,10 +266,10 @@ Page {
         function message(username) {
             Friends.openDirectMessage(username);
         }
-        // what kind of account a friend is, for their row's detail: "⚙ bot" (scripted logic, not AI), "AI resident",
+        // what kind of account a friend is, for their row's detail: "⚙ Bot" (scripted logic, not AI), "AI resident",
         // or "" for a person. kind comes first: metaverse also sends a bot ai true, for older clients (Caity, 10-25)
         function kindWord(friend) {
-            return friend.kind === "bot" ? "\u2699 bot" : friend.ai ? "AI resident" : "";
+            return friend.kind === "bot" ? "\u2699 Bot" : friend.ai ? "AI resident" : "";
         }
         // for the rows drawn by an inline component, which can't reach the page's id
         function showProfile(username) {
@@ -316,7 +317,7 @@ Page {
         label: friend.username || ""
         detail: friend.online
             ? friends.where(friend) + (friends.kindWord(friend) ? " · " + friends.kindWord(friend) : "")
-            : (friends.kindWord(friend) ? friends.kindWord(friend) + " · offline" : "offline")
+            : (friends.kindWord(friend) ? friends.kindWord(friend) + " · Offline" : "Offline")
         icon: friends.picture(friend)
         clickable: true
         onClicked: friends.showProfile(friend.username)
@@ -390,7 +391,7 @@ Page {
                 model: friends.incoming
                 delegate: ListRow {
                     label: modelData.username
-                    detail: "wants to be friends"
+                    detail: "Wants to be friends"
                     icon: friends.picture(modelData)
                     clickable: true
                     onClicked: root.showProfile(modelData.username)
@@ -402,7 +403,7 @@ Page {
                 model: friends.outgoing
                 delegate: ListRow {
                     label: modelData.username
-                    detail: "you asked"
+                    detail: "You asked"
                     icon: friends.picture(modelData)
                     clickable: true
                     onClicked: root.showProfile(modelData.username)
@@ -423,7 +424,7 @@ Page {
                     id: addField
                     Layout.fillWidth: true
                     horizontalAlignment: TextInput.AlignLeft
-                    placeholderText: "someone"
+                    placeholderText: "Their username"
                     onAccepted: friends.request(text)
                 }
             }
@@ -564,8 +565,8 @@ Page {
                             readonly property bool bot: !!profile.data && profile.data.kind === "bot"
                             visible: !!profile.data && (profile.data.ai || bot)
                             width: parent.width
-                            text: profile.data ? (bot ? "\u2699 bot" : (profile.data.aiWord || "AI resident"))
-                                + (profile.data.host ? " · hosted by " + profile.data.host : "") : ""
+                            text: profile.data ? (bot ? "\u2699 Bot" : (profile.data.aiWord || "AI resident"))
+                                + (profile.data.host ? " · Hosted by " + profile.data.host : "") : ""
                             color: bot ? Theme.secondaryText : Theme.tint
                             font.pixelSize: Theme.detailSize
                             elide: Text.ElideRight
@@ -574,9 +575,9 @@ Page {
                             text: {
                                 if (!profile.data) return "";
                                 var bits = [];
-                                if (profile.data.online !== undefined) bits.push(profile.data.online ? "online" : "offline");
+                                if (profile.data.online !== undefined) bits.push(profile.data.online ? "Online" : "Offline");
                                 var since = profile.since(profile.data.memberSince);
-                                if (since !== "") bits.push("here since " + since);
+                                if (since !== "") bits.push("Here since " + since);
                                 return bits.join(" · ");
                             }
                             color: Theme.secondaryText

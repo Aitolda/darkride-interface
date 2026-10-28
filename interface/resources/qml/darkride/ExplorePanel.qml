@@ -178,16 +178,16 @@ Page {
             var instances = world.instances || null;
             var list = [];
             if (!!world.online && !(instances && instances.instanceOnly)) {
-                list.push({ name: "Always on", detail: "the world's own server · " + (world.numUsers || 0) + " here",
+                list.push({ name: "Always on", detail: "The world's own server · " + (world.numUsers || 0) + " here",
                             people: world.numUsers || 0, instance: null, compatible: compatible(world.protocol) });
             }
             ((instances && instances.list) || []).forEach(function (instance) {
                 var bits = [(instance.players || 0) + " here"];
-                if (instance.startedBy) bits.push("started by " + instance.startedBy);
-                if (!instance.latest) bits.push("an older version");
-                if (instance.editing) bits.push("being edited");
+                if (instance.startedBy) bits.push("Started by " + instance.startedBy);
+                if (!instance.latest) bits.push("An older version");
+                if (instance.editing) bits.push("Being edited");
                 var ok = compatible(instance.protocol);
-                if (!ok) bits.push("another version of Darkride");
+                if (!ok) bits.push("Another version of Darkride");
                 list.push({ name: instance.visibility.charAt(0).toUpperCase() + instance.visibility.slice(1) + " instance",
                             detail: bits.join(" · "), people: instance.players || 0, instance: instance, compatible: ok });
             });
@@ -231,7 +231,7 @@ Page {
         function byline(world, rest) {
             var parts = [];
             if (world.username) {
-                parts.push("by <a href=\"" + encodeURIComponent(world.username) + "\">" + escaped(world.username) + "</a>");
+                parts.push("By <a href=\"" + encodeURIComponent(world.username) + "\">" + escaped(world.username) + "</a>");
             }
             if (rest) {
                 parts.push(escaped(rest));
@@ -465,7 +465,7 @@ Page {
                 : ""
             detail: here.current && here.current.instance
                 ? here.current.instance.players + (here.current.instance.players === 1 ? " person" : " people")
-                  + (here.current.instance.latest ? "" : " · an older version")
+                  + (here.current.instance.latest ? "" : " · An older version")
                 : ""
             Text {
                 text: here.current && here.current.instance ? here.current.instance.address : ""
@@ -486,7 +486,7 @@ Page {
         ListRow {
             visible: here.current !== null && here.current.world.instances && here.current.world.instances.canEdit
             label: "Edit mode"
-            detail: "build here, then save to update the world"
+            detail: "Build here, then save to update the world"
             Toggle {
                 checked: here.current !== null && here.current.instance && here.current.instance.editing
                 enabled: !here.busy
@@ -636,7 +636,7 @@ Page {
         ListRow {
             visible: card.open && !!(card.instances && card.instances.canStart) && card.compatible
             label: "New instance"
-            detail: "public: anyone · friends: your friends · private: only you"
+            detail: "Public: anyone · Friends: your friends · Private: only you"
             CardButton { text: "Public"; enabled: explore.hoppingWorld === ""; onPressed: explore.start(card.world, "public", card.report) }
             CardButton { text: "Friends"; enabled: explore.hoppingWorld === ""; onPressed: explore.start(card.world, "friends", card.report) }
             CardButton { text: "Private"; enabled: explore.hoppingWorld === ""; onPressed: explore.start(card.world, "private", card.report) }
@@ -664,7 +664,7 @@ Page {
         }
 
         title: world.label || ""
-        subtitle: explore.byline(world, !compatible ? "another version" : people > 0 ? people + " here" : "")
+        subtitle: explore.byline(world, !compatible ? "Another version" : people > 0 ? people + " here" : "")
         picture: world.id ? explore.picture(world.id) : ""
         pictureRatio: 0.6
         dim: !compatible

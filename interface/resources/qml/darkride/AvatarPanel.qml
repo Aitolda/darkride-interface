@@ -593,7 +593,7 @@ Page {
             }
             ListRow {
                 label: "Collide with the world"
-                detail: "off: walk through walls (noclip)"
+                detail: "Off: walk through walls (noclip)"
                 Toggle {
                     checked: avatar.collisions
                     onToggled: { MyAvatar.collisionsEnabled = checked; avatar.refresh(); }
@@ -717,7 +717,7 @@ Page {
 
                     label: menu.clean(modelData.name)
                     icon: modelData.icon ? menu.folder + encodeURI(modelData.icon) : ""
-                    detail: known ? (type === "button" ? "hold" : "") : type + ", not yet"
+                    detail: known ? (type === "button" ? "Hold" : "") : type.charAt(0).toUpperCase() + type.slice(1) + ", not yet"
                     enabled: known
                     fill: type === "radial"
                     clickable: type === "button" || type === "submenu"
