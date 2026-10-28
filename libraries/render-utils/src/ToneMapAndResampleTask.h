@@ -93,7 +93,6 @@ public:
 
 protected:
     static gpu::PipelinePointer _pipeline;
-    static gpu::PipelinePointer _mirrorPipeline;
     static gpu::PipelinePointer _fsrToneMapPipeline;
     static gpu::PipelinePointer _fsrEasuPipeline;
     static gpu::PipelinePointer _fsrRcasPipeline;

@@ -162,6 +162,12 @@ namespace render {
         DebugFlags _debugFlags { RENDER_DEBUG_NONE };
         gpu::Batch* _batch = nullptr;
 
+        // the finished picture is shown flipped left to right, as a mirror shows you: the selfie view (Caity's design,
+        // 2026-10-28: like FaceTime's own picture) and the full-screen mirror camera. ToneMapAndResample flips the
+        // picture; the 2D UI, drawn after it, stays readable; the pick ray flips with it (ViewState::computePickRay).
+        // Never a stereo view
+        bool _mirrored { false };
+
         uint32_t _globalShapeKey { 0 };
         uint32_t _itemShapeKey { 0 };
         bool _enableTexturing { true };
