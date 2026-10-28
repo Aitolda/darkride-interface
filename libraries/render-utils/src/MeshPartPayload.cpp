@@ -228,7 +228,9 @@ void MeshPartPayload::render(RenderArgs* args) {
         outColor = procedural->getColor(outColor);
         const bool forward = DeferredLightingEffect::isForwardLit(args);
         const ProceduralProgramKey programKey(outColor.a < 1.0f, false, false, forward);
-        if (!enableMaterialProceduralShaders || procedural->compilationFailed(programKey)) {
+        // a shadow pass wants depth alone (see ModelMeshPartPayload::render)
+        const bool plainShadow = args->_renderMode == RenderArgs::RenderMode::SHADOW_RENDER_MODE && !procedural->hasVertexShader();
+        if (plainShadow || !enableMaterialProceduralShaders || procedural->compilationFailed(programKey)) {
             // the plain material underneath, through the standard pipeline (bindPlainPipeline)
             if (!bindPlainPipeline(args, buildShapeKey(false))) {
                 return;
@@ -659,7 +661,13 @@ void ModelMeshPartPayload::render(RenderArgs* args) {
         outColor = procedural->getColor(outColor);
         const bool forward = DeferredLightingEffect::isForwardLit(args);
         const ProceduralProgramKey programKey(outColor.a < 1.0f, _shapeKey.isDeformed(), _shapeKey.isDualQuatSkinned(), forward);
-        if (!enableMaterialProceduralShaders || !sceneIsReady || procedural->compilationFailed(programKey)) {
+        // a shadow pass wants depth alone: a part whose shader only colours its pixels casts its mesh's shadow through
+        // the standard shadow pipeline (one pipeline for all such parts, no shader setup a draw); a shader that moves
+        // vertices keeps its own program there, so its shadow follows the moved shape. 20 Lightlings' three neon parts
+        // in four cascades were 240 full-shader draws a frame, each with Procedural::prepare (performance's crowd run,
+        // 2026-10-28)
+        const bool plainShadow = args->_renderMode == RenderArgs::RenderMode::SHADOW_RENDER_MODE && !procedural->hasVertexShader();
+        if (plainShadow || !enableMaterialProceduralShaders || !sceneIsReady || procedural->compilationFailed(programKey)) {
             // the plain material underneath, through the standard pipeline (bindPlainPipeline): the part shows, and
             // the shader takes over when it can
             if (!bindPlainPipeline(args, _plainShapeKey)) {
