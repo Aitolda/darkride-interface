@@ -26,7 +26,8 @@
 #                                    shell is brought to the front by macOS at launch and by Qt when it has launched,
 #                                    and takes the keyboard. open passes on only the environment it's given, so the
 #                                    TIVOLI_, HIFI_, DARKRIDE_, QT_, XDG_, DYLD_ and CFFIXED_ variables are handed
-#                                    over; the client's exit status isn't (read its log).
+#                                    over; the client's exit status isn't, so once it has gone the system log's
+#                                    record of its end is read instead (client_exit_line).
 #                                    A release build (bundle id com.tivolicloud.interface: 1.0.x, PRODUCTION builds)
 #                                    shares the installed Darkride's "Tivoli Cloud VR" folders, and 1.0.x writes its
 #                                    log, QML cache and web data there whatever XDG_CONFIG_HOME and TIVOLI_APP_DATA_DIR
@@ -53,6 +54,11 @@
 #   stop_client_helpers <pid> <since>
 #                                    stops the VT decoder and encoder services and the Safari helper whose own logs
 #                                    name client <pid> since <since> ("YYYY-mm-dd HH:MM:SS"), and nothing else
+#   client_exit_line <pid> <log> [<since>]
+#                                    one line when client <pid> has gone (macOS): when, how it ended (its exit status,
+#                                    or the signal that ended it, from launchd's record in the system log since <since>,
+#                                    "YYYY-mm-dd HH:MM:SS", or the last 2 minutes) and when its log last wrote; printed,
+#                                    and added to the end of <log>
 #   lock_take [purpose] [minutes] [--quiet]
 #                                    waits for the machine lock and holds it until this runner exits (or lock_give):
 #                                    one test with windows on the GPU at a time. --quiet for timing runs (no builds).
@@ -148,6 +154,54 @@ stop_client_helpers() {
     done
 }
 
+# How a client launched through open ended (performance, qa, 10-28): open's own status says nothing about the client,
+# which isn't the runner's child. launchd reports each app's end to RunningBoard, which logs it as
+# "[app<...>:<pid>] termination reported by launchd (<namespace>, <code>, <wait status>)": namespace 0 is the app's own
+# exit (the status as wait gives it), 2 a signal (code = its number), 15 RunningBoard's own kill. Two clients that
+# vanished with no crash report on 10-28 were SIGSEGV there.
+client_exit_line() {
+    _gone=$(date '+%H:%M:%S')
+    _entry=""; _try=0
+    while [ -z "$_entry" ] && [ "$_try" -lt 5 ]; do
+        [ "$_try" = 0 ] || sleep 1
+        _entry=$(/usr/bin/log show --style compact --start "${3:-$(date -v-2M '+%Y-%m-%d %H:%M:%S')}" --predicate \
+            "process == \"runningboardd\" AND eventMessage CONTAINS \":$1] termination reported by launchd\"" 2>/dev/null |
+            grep -E 'termination reported by launchd \([0-9-]+, [0-9-]+, [0-9-]+\)' | tail -1)
+        _try=$((_try + 1))
+    done
+    # the record's own time (compact style: "YYYY-mm-dd HH:MM:SS.mmm ..."), and its three numbers
+    [ -z "$_entry" ] || _gone=$(printf '%s\n' "$_entry" | cut -c12-23)
+    _record=$(printf '%s\n' "$_entry" | grep -oE 'launchd \([0-9-]+, [0-9-]+, [0-9-]+\)' | grep -oE '[0-9-]+, [0-9-]+, [0-9-]+')
+    if [ -z "$_record" ]; then
+        _how="no record of its end in the system log"
+    else
+        _ns=${_record%%,*}; _rest=${_record#*, }; _code=${_rest%%,*}; _wait=${_rest#*, }
+        _sig=$((_wait & 127))
+        if [ "$_ns" = 2 ]; then
+            _sig=$_code
+        fi
+        if [ "$_ns" = 0 ] && [ "$_sig" = 0 ]; then
+            _how="exited with status $((_wait >> 8))"
+        elif [ "$_ns" = 0 ] || [ "$_ns" = 2 ]; then
+            _how="ended by signal SIG$(kill -l "$_sig" 2>/dev/null || echo "$_sig")"
+            case "$_sig" in
+                4|5|6|7|8|10|11) _how="$_how, a crash" ;;
+            esac
+        elif [ "$_ns" = 15 ]; then
+            _how="stopped by macOS (RunningBoard), wait status $_wait"
+        else
+            _how="ended (launchd's record: $_record)"
+        fi
+    fi
+    _last=$(tail -n 400 "$2" 2>/dev/null | grep -aoE '^\[[0-9/]+ [0-9:]+\]' | tail -1)
+    _line="client_start: client $1 gone at $_gone, $_how; its log's last line at ${_last:-(none)}"
+    echo "$_line" >> "$2"
+    case "$_how" in
+        "exited with status 0") echo "$_line" ;;
+        *) echo "$_line" >&2 ;;
+    esac
+}
+
 client_start() {
     _log=$1; shift
     case "$BIN" in
@@ -235,6 +289,7 @@ client_start() {
     wait $_opener
     _status=$?
     [ -z "$_watch" ] || kill "$_watch" 2>/dev/null
+    [ -z "$_cpid" ] || client_exit_line "$_cpid" "$_log" "$_since"
     [ -z "$_cpid" ] || stop_client_helpers "$_cpid" "$_since"
     if [ -z "$_cpid" ]; then
         echo "client_start: no client started from $_app (open's status $_status); see above and $_log" >&2
