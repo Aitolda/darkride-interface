@@ -1658,7 +1658,8 @@ void Model::updateClusterMatrices() {
 void Model::updateBlendshapes() {
     // post the blender if we're not currently waiting for one to finish
     auto modelBlender = DependencyManager::get<ModelBlender>();
-    if (modelBlender->shouldComputeBlendshapes() && getHFMModel().hasBlendedMeshes() && _blendshapeCoefficients != _blendedBlendshapeCoefficients) {
+    // the cheap test first: the coefficients change on a blink, a word or an expression; hasBlendedMeshes walks the meshes
+    if (modelBlender->shouldComputeBlendshapes() && _blendshapeCoefficients != _blendedBlendshapeCoefficients && getHFMModel().hasBlendedMeshes()) {
         _blendedBlendshapeCoefficients = _blendshapeCoefficients;
         modelBlender->noteRequiresBlend(getThisPointer());
     }
@@ -1979,6 +1980,18 @@ static void packBlendshapeOffsets(BlendshapeOffsetUnpacked* unpacked, Blendshape
 static auto& packBlendshapeOffsets = packBlendshapeOffsets_ref;
 #endif
 
+// the packing of a zero offset, made once with the packer itself (it is not all-zero bits: the length packs as 1.0f)
+static const BlendshapeOffsetPacked& packedZeroBlendshapeOffset() {
+    static const BlendshapeOffsetPacked zero = [] {
+        BlendshapeOffsetUnpacked unpacked;
+        memset(&unpacked, 0, sizeof(unpacked));
+        BlendshapeOffsetPacked packed;
+        packBlendshapeOffsets(&unpacked, &packed, 1);
+        return packed;
+    }();
+    return zero;
+}
+
 class Blender : public QRunnable {
 public:
 
@@ -2033,15 +2046,33 @@ void Blender::run() {
         }
         int numVertsInMesh = meshIter->vertices.size();
         blendedMeshSizes.push_back(numVertsInMesh);
+        auto packed = packedBlendshapeOffsets.data() + offset;
+
+        // a mesh none of whose shapes is in use this blend (a hidden hairstyle, a face at rest) takes the packed zero
+        // offset for every vertex: no clearing, no accumulation, no packing. The Lightling's hidden twin tails (10.1k
+        // vertices, one shape at 0) were cleared and re-packed at every blink of every Lightling in view (avatars and
+        // performance, 2026-10-28)
+        const float EPSILON = 0.0001f;
+        const int numShapes = qMin(_blendshapeCoefficients.size(), meshIter->blendshapes.size());
+        // per slot: a mesh's blendshapes are indexed by the model's slots, with empty entries for the shapes it lacks,
+        // so a blink (slot 0) must not count for a mesh whose only shape sits at slot 88 (avatars' catch)
+        bool anyShapeInUse = false;
+        for (int i = 0; i < numShapes && !anyShapeInUse; i++) {
+            anyShapeInUse = _blendshapeCoefficients.at(i) >= EPSILON && !meshIter->blendshapes.at(i).indices.isEmpty();
+        }
+        if (!anyShapeInUse) {
+            std::fill(packed, packed + numVertsInMesh, packedZeroBlendshapeOffset());
+            offset += numVertsInMesh;
+            continue;
+        }
 
         // initialize offsets to zero
         memset(unpackedBlendshapeOffsets.data(), 0, numVertsInMesh * sizeof(BlendshapeOffsetUnpacked));
 
         // for each blendshape in this mesh, accumulate the offsets into unpackedBlendshapeOffsets.
         const float NORMAL_COEFFICIENT_SCALE = 0.01f;
-        for (int i = 0, n = qMin(_blendshapeCoefficients.size(), meshIter->blendshapes.size()); i < n; i++) {
+        for (int i = 0; i < numShapes; i++) {
             float vertexCoefficient = _blendshapeCoefficients.at(i);
-            const float EPSILON = 0.0001f;
             if (vertexCoefficient < EPSILON) {
                 continue;
             }
@@ -2062,7 +2093,6 @@ void Blender::run() {
 
         // convert unpackedBlendshapeOffsets into packedBlendshapeOffsets for the gpu.
         auto unpacked = unpackedBlendshapeOffsets.data();
-        auto packed = packedBlendshapeOffsets.data() + offset;
         packBlendshapeOffsets(unpacked, packed, numVertsInMesh);
 
         offset += numVertsInMesh;
