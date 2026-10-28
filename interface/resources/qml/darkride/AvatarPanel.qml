@@ -833,22 +833,50 @@ Page {
                 ? (nametag.status !== "" ? nametag.status : "Whether nametags show at all is in Settings, Displays.")
                 : "Sign in to set the name and pronoun others see above your head."
 
+            // the saved nametag as the metaverse draws it, in two pictures: the next loads unseen while the one shown
+            // stays, so a Save swaps them without the section shrinking in between (Caity 10-28: "the UI crunches up")
             Item {
-                visible: nametag.signedIn && nametagPicture.status === Image.Ready
+                id: nametagPreview
+                readonly property string wanted: nametag.signedIn && nametag.username !== ""
+                    ? MetaverseRequests.metaverseUrl() + "/api/user/" + nametag.username.toLowerCase()
+                      + "/nametag?" + nametag.pictureStamp
+                    : ""
+                property Item shown: null
+
+                function load() {
+                    (shown === pictureA ? pictureB : pictureA).source = wanted;
+                }
+                function arrived(picture) {
+                    if (picture.status === Image.Ready && String(picture.source) === wanted) {
+                        shown = picture;
+                    }
+                }
+                onWantedChanged: load()
+                Component.onCompleted: load()
+
+                visible: nametag.signedIn && shown !== null
                 width: parent ? parent.width : 0
-                height: visible ? nametagPicture.height + 2 * Theme.cardPadding : 0
+                height: visible ? shown.height + 2 * Theme.cardPadding : 0
 
                 Image {
-                    id: nametagPicture
+                    id: pictureA
+                    visible: nametagPreview.shown === pictureA
                     anchors.centerIn: parent
                     width: Math.min(sourceSize.width, parent.width - 2 * Theme.cardPadding)
                     height: width * sourceSize.height / Math.max(1, sourceSize.width)
                     fillMode: Image.PreserveAspectFit
                     cache: false
-                    source: nametag.signedIn && nametag.username !== ""
-                        ? MetaverseRequests.metaverseUrl() + "/api/user/" + nametag.username.toLowerCase()
-                          + "/nametag?" + nametag.pictureStamp
-                        : ""
+                    onStatusChanged: nametagPreview.arrived(pictureA)
+                }
+                Image {
+                    id: pictureB
+                    visible: nametagPreview.shown === pictureB
+                    anchors.centerIn: parent
+                    width: Math.min(sourceSize.width, parent.width - 2 * Theme.cardPadding)
+                    height: width * sourceSize.height / Math.max(1, sourceSize.width)
+                    fillMode: Image.PreserveAspectFit
+                    cache: false
+                    onStatusChanged: nametagPreview.arrived(pictureB)
                 }
             }
             ListRow {
