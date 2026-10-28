@@ -908,6 +908,8 @@ protected:
     /// as given when anyPath (a test run with the Test API on). Every script sees Script, a world's entity scripts
     /// among them, so a script does not choose where the file goes.
     QString dumpApiFile(const QString& requested, bool anyPath) const;
+    /// Set where the Test API is registered (a --testScript run), by the host, never from a global a script can assign.
+    bool _testApiOn { false };
     /// The QtScript conversions of the engine's types, on this QScriptEngine.
     void registerConversions();
     /// The globals every engine gives a script, through the register calls.

@@ -988,6 +988,9 @@ void ScriptEngine::registerGlobalObject(const QString& name, QObject* object) {
 #ifdef THREAD_DEBUGGING
     qCDebug(scriptengine) << "ScriptEngine::registerGlobalObject() called on thread [" << QThread::currentThread() << "] name:" << name;
 #endif
+    if (object && name == QLatin1String("Test")) {
+        _testApiOn = true;
+    }
 
     if (!globalObject().property(name).isValid()) {
         if (object) {
@@ -1760,7 +1763,7 @@ bool ScriptEngine::dumpApi(const QString& path) {
         globals[it.name()] = entry;
     }
     root["globals"] = globals;
-    const QString fileName = dumpApiFile(path, globalObject().property("Test").isQObject());
+    const QString fileName = dumpApiFile(path, _testApiOn);
     QFile file(fileName);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         scriptWarningMessage("Script.dumpApi: cannot write " + fileName);

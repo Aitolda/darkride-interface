@@ -328,6 +328,9 @@ void WasmScriptEngine::registerGlobalObject(const QString& name, QObject* object
         qCDebug(scriptengine) << "WasmScriptEngine: global" << name << "is null, not registered";
         return;
     }
+    if (name == QLatin1String("Test")) {
+        _testApiOn = true;
+    }
     if (_objects->global(name) == ObjectTable::NULL_HANDLE) {
         _objects->registerGlobal(name, object);
     }
@@ -1503,7 +1506,7 @@ bool WasmScriptEngine::dumpApi(const QString& path, const QVariantMap& globals) 
     root["fileName"] = _fileNameString;
     root["engine"] = _runsJavaScript ? "JavaScript on WebAssembly" : "WebAssembly";
     root["globals"] = QJsonObject::fromVariantMap(globals);
-    const QString fileName = dumpApiFile(path, _objects->globalNames().contains("Test"));
+    const QString fileName = dumpApiFile(path, _testApiOn);
     QFile file(fileName);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         scriptWarningMessage("Script.dumpApi: cannot write " + fileName);
