@@ -599,8 +599,10 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     auto meText = new QVBoxLayout();
     meText->setSpacing(0);
     _userName = new QLabel(me);
+    _userName->setTextFormat(Qt::PlainText);   // what the network says (names, room names, errors): never styled text
     _userName->setObjectName("ChatMeName");
     _userStatus = new QLabel(me);
+    _userStatus->setTextFormat(Qt::PlainText);
     _userStatus->setObjectName("ChatMeStatus");
     meText->addWidget(_userName);
     meText->addWidget(_userStatus);
@@ -647,6 +649,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     auto stateLayout = new QVBoxLayout(statePage);
     stateLayout->addStretch(1);
     _stateText = new QLabel(statePage);
+    _stateText->setTextFormat(Qt::PlainText);
     _stateText->setObjectName("ChatState");
     _stateText->setAlignment(Qt::AlignCenter);
     _stateText->setWordWrap(true);
@@ -666,6 +669,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     auto inviteLayout = new QVBoxLayout(invitePage);
     inviteLayout->addStretch(1);
     _inviteText = new QLabel(invitePage);
+    _inviteText->setTextFormat(Qt::PlainText);
     _inviteText->setObjectName("ChatState");
     _inviteText->setAlignment(Qt::AlignCenter);
     _inviteText->setWordWrap(true);
@@ -714,6 +718,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     _composer->installEventFilter(this);
     composerLayout->addWidget(_composer);
     _composerNote = new QLabel(composerArea);
+    _composerNote->setTextFormat(Qt::PlainText);
     _composerNote->setObjectName("ChatComposerNote");
     _composerNote->setFixedHeight(18);
     composerLayout->addWidget(_composerNote);
@@ -743,6 +748,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     tabs->addStretch(1);
     friendsLayout->addLayout(tabs);
     _addFriendNote = new QLabel(friendsPage);
+    _addFriendNote->setTextFormat(Qt::PlainText);
     _addFriendNote->setObjectName("ChatFriendsNote");
     _addFriendNote->setContentsMargins(16, 0, 16, 0);
     _addFriendNote->setWordWrap(true);
@@ -760,6 +766,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     _friendsList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     listLayout->addWidget(_friendsList, 1);
     _friendsEmpty = new QLabel(listPage);
+    _friendsEmpty->setTextFormat(Qt::PlainText);
     _friendsEmpty->setObjectName("ChatState");
     _friendsEmpty->setAlignment(Qt::AlignCenter);
     _friendsEmpty->setWordWrap(true);
@@ -1906,6 +1913,7 @@ void ChatWindow::updateFriends() {
     };
     auto heading = [this](const QString& text) {
         auto label = new QLabel(text);
+        label->setTextFormat(Qt::PlainText);
         label->setObjectName("ChatFriendsHeading");
         label->setContentsMargins(16, 8, 16, 4);
         auto item = new QListWidgetItem(_friendsList);
