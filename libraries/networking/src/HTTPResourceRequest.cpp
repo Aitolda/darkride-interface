@@ -11,6 +11,7 @@
 
 #include "HTTPResourceRequest.h"
 
+#include <QAbstractNetworkCache>
 #include <QFile>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -357,6 +358,13 @@ void HTTPResourceRequest::onDownloadProgress(qint64 bytesReceived, qint64 bytesT
 void HTTPResourceRequest::onTimeout() {
     qCDebug(networking) << "Timeout, no data for 10 s:" << _requestUrl.toString();
     Q_ASSERT(_state == InProgress);
+    // A download that stops short of its size and never finishes can be a cut-short copy in the disk cache: with
+    // PreferNetwork the server's "not modified" sends Qt back to its own copy, which ends at the same byte on every
+    // retry. That copy goes, under the address asked for and the one a redirect led to, so the retry downloads it whole.
+    if (auto cache = NetworkAccessManager::getInstance().cache()) {
+        cache->remove(_requestUrl);
+        cache->remove(_reply->url());
+    }
     _reply->disconnect(this);
     _reply->abort();
     _reply->deleteLater();
