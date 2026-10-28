@@ -1672,6 +1672,19 @@ int EntityTree::processEditPacketData(ReceivedMessage& message, const unsigned c
                 }
             }
 
+            // a zone's edit filter runs on the entity server: setting or changing it takes the right to change locks (the
+            // domain's owners and editors), as the domain's own filter does
+            if (properties.filterURLChanged() && validEditPacket && !senderNode->isAllowedEditor()) {
+                qCDebug(entities) << "User [" << senderNode->getUUID()
+                    << "] can't change locks, so can't set a zone's edit filter; edit rejected";
+                if (isAdd) {
+                    // tell the client that sent it that the entity was not added
+                    QWriteLocker locker(&_recentlyDeletedEntitiesLock);
+                    _recentlyDeletedEntityItemIDs.insert(usecTimestampNow(), entityItemID);
+                }
+                validEditPacket = false;
+            }
+
             if (!isClone) {
                 if ((isAdd || properties.lifetimeChanged()) &&
                     ((!senderNode->getCanRez() && senderNode->getCanRezTmp()) ||
