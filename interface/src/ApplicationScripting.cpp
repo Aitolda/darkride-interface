@@ -244,6 +244,7 @@ void Application::setupQmlSurface(QQmlContext* surfaceContext, bool setAdditiona
         surfaceContext->setContextProperty("AvatarThumbnails", DependencyManager::get<AvatarThumbnails>().data());
         surfaceContext->setContextProperty("SystemToolbar", SystemToolbar::instance());
         surfaceContext->setContextProperty("Skins", DependencyManager::get<Skins>().data());
+        surfaceContext->setContextProperty("Panels", DependencyManager::get<Panels>().data());
 
         surfaceContext->setContextProperty("Account", AccountServicesScriptingInterface::getInstance()); // DEPRECATED - TO BE REMOVED
         surfaceContext->setContextProperty("GlobalServices", AccountServicesScriptingInterface::getInstance()); // DEPRECATED - TO BE REMOVED

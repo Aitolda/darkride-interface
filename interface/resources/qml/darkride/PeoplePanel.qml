@@ -10,8 +10,9 @@
 //    panels' search bar (search, Cards / Tiles / List), as Explore's worlds and the avatars in My Files are;
 //  Profile: someone's profile (the metaverse's /api/user/<name>/profile): picture, names, About, since when, an AI
 //    resident's word and host; signed in, how you two stand (with the matching friend action), the friends you share,
-//    and online and where as they allow, with Join. Yours when no one is chosen. Explore opens it on an author: it
-//    sets io.darkride.peoplePanel.profile and the tab, and the bar opens this panel, which reads them as it shows.
+//    and online and where as they allow, with Join. Yours when no one is chosen. Explore's authors and chat's names
+//    open it (Panels.showProfile): that sets io.darkride.peoplePanel.profile and the tab, which this reads as it
+//    shows, or calls showProfile here when it's in sight.
 //  The friends are the metaverse's (/api/v1/friends and its requests, through MetaverseRequests); joining one is
 //  AddressManager.goToUser. There is no search for people by name: that is a privacy call (Caity's). It replaces
 //  High Fidelity's People app (pal.js and Pal.qml), whose connections the metaverse no longer has.
@@ -144,10 +145,7 @@ Page {
         // a friend as a collection's item, the friend kept for the row's buttons
         function entries(list) {
             return list.map(function (friend) {
-                var where = friend.online
-                    ? (friend.location && friend.location.name ? "in " + friend.location.name : "online")
-                    : "offline";
-                return { key: friend.username, title: friend.username, subtitle: where + (kindWord(friend) ? " · " + kindWord(friend) : ""),
+                return { key: friend.username, title: friend.username, subtitle: where(friend) + (kindWord(friend) ? " · " + kindWord(friend) : ""),
                          picture: picture(friend), friend: friend };
             }).filter(friendBar.matches);
         }
@@ -195,6 +193,8 @@ Page {
                     status = done(answer && answer.data ? answer.data : {});
                 }
                 load();
+                // the bar's request badge and chat's friends hear it at once, not at their next minute
+                Friends.refresh();
                 if (root.currentTab === 2) {
                     profile.load();
                 }
@@ -236,6 +236,30 @@ Page {
         }
         function join(username) {
             AddressManager.goToUser(username);
+        }
+        // where a friend is: "in <world>"; "in a private world" when the metaverse says you can't get in there (Join
+        // would fail at the door; F4, Caity 10-27 "friends as recommended"); "online"; "offline"
+        function where(friend) {
+            if (!friend.online) {
+                return "offline";
+            }
+            if (friend.location && friend.location.canJoin === false) {
+                return "in a private world";
+            }
+            return friend.location && friend.location.name ? "in " + friend.location.name : "online";
+        }
+        // Join only when it will work. The metaverse answers for worlds on Darkride's servers; Darkside's and self-hosted
+        // ones leave canJoin out and decide at their own door, as before
+        function canJoin(friend) {
+            return !!friend.online && !!friend.location && friend.location.canJoin !== false;
+        }
+        // a DM with them, opened in chat in front (F1; social's Friends, which waits while chat is still signing in).
+        // AI residents and bots can't use chat yet
+        function canMessage(person) {
+            return signedIn && Friends.canMessage && !!person && person.kind !== "bot" && !person.ai;
+        }
+        function message(username) {
+            Friends.openDirectMessage(username);
         }
         // what kind of account a friend is, for their row's detail: "⚙ bot" (scripted logic, not AI), "AI resident",
         // or "" for a person. kind comes first: metaverse also sends a bot ai true, for older clients (Caity, 10-25)
@@ -287,8 +311,7 @@ Page {
         property var friend: ({})
         label: friend.username || ""
         detail: friend.online
-            ? (friend.location && friend.location.name ? "in " + friend.location.name : "online")
-              + (friends.kindWord(friend) ? " · " + friends.kindWord(friend) : "")
+            ? friends.where(friend) + (friends.kindWord(friend) ? " · " + friends.kindWord(friend) : "")
             : (friends.kindWord(friend) ? friends.kindWord(friend) + " · offline" : "offline")
         icon: friends.picture(friend)
         clickable: true
@@ -310,7 +333,12 @@ Page {
             }
         }
         RowButton {
-            visible: friendRow.friend.online && !!friendRow.friend.location
+            visible: friends.canMessage(friendRow.friend)
+            text: "Message"
+            onPressed: friends.message(friendRow.friend.username)
+        }
+        RowButton {
+            visible: friends.canJoin(friendRow.friend)
             text: "Join"
             strong: true
             onPressed: friends.join(friendRow.friend.username)
@@ -322,7 +350,7 @@ Page {
         id: friendTile
         property var friend: ({})
         title: friend.username || ""
-        subtitle: friend.online ? (friend.location && friend.location.name ? "in " + friend.location.name : "online") : "offline"
+        subtitle: friends.where(friend)
         picture: friends.picture(friend)
         pictureRatio: 1
         onClicked: friends.showProfile(friend.username)
@@ -330,7 +358,12 @@ Page {
             Layout.fillWidth: true
         }
         RowButton {
-            visible: friendTile.friend.online && !!friendTile.friend.location
+            visible: friends.canMessage(friendTile.friend)
+            text: "Message"
+            onPressed: friends.message(friendTile.friend.username)
+        }
+        RowButton {
+            visible: friends.canJoin(friendTile.friend)
             text: "Join"
             strong: true
             onPressed: friends.join(friendTile.friend.username)
@@ -575,13 +608,26 @@ Page {
         Section {
             visible: profile.data !== null && !!profile.data.location
             ListRow {
-                label: profile.data && profile.data.location ? "In " + profile.data.location.name : ""
+                id: whereRow
+                readonly property bool closed: !!profile.data && !!profile.data.location
+                                               && profile.data.location.canJoin === false
+                label: !profile.data || !profile.data.location ? ""
+                    : closed ? "In a private world" : "In " + profile.data.location.name
                 RowButton {
-                    visible: !profile.mine
+                    visible: !profile.mine && !whereRow.closed
                     text: "Join"
                     strong: true
                     onPressed: friends.join(profile.data.username)
                 }
+            }
+        }
+
+        Section {
+            visible: profile.data !== null && !profile.mine && friends.canMessage(profile.data)
+            ListRow {
+                action: true
+                label: "Message"
+                onClicked: friends.message(profile.data.username)
             }
         }
 

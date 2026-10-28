@@ -102,12 +102,15 @@ Page {
 
             PickerRow {
                 visible: AccountServices.loggedIn
-                label: "Who sees you're online"
-                current: AccountServices.findableBy === "connections" ? "friends" : AccountServices.findableBy
-                // the metaverse's availability: everyone, friends or no one ("connections", gone, meant friends)
+                // "No one" also makes you look offline: the same words in chat and on the website (F3, Caity 10-27
+                // "friends as recommended")
+                label: "Who sees you're online, and where"
+                // the metaverse's availability, as the server has it (social's Friends; "" until it answers), so this
+                // and chat never disagree
+                current: Friends.availability
                 model: [{ text: "Everyone", value: "all" }, { text: "Friends", value: "friends" },
                         { text: "No one", value: "none" }]
-                onChosen: AccountServices.findableBy = value
+                onChosen: Friends.setAvailability(value)
             }
             ListRow {
                 label: "Personal space"

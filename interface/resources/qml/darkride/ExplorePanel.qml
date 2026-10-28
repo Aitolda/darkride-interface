@@ -10,7 +10,7 @@
 //  under the panels' search bar, pinned at the top (Caity, 10-24): the search (the metaverse's), Cards / Tiles / List
 //  (a tile's or a row's click opens its card alone), and the order: Relevance (the metaverse's own: people in it,
 //  then the newest), Likes, People, Name; sorted here, over the worlds loaded. An author's name opens their profile
-//  in the People panel (its Profile tab, through the bar).
+//  in the People panel (its Profile tab, Panels.showProfile).
 //
 //  The version check (with the metaverse's version-check, Caity's yes 10-24): the client's protocol signature goes with
 //  a list's request and with an instance's start, so a world or an instance running another version of Darkride is
@@ -238,11 +238,9 @@ Page {
             }
             return "<style>a { color: " + Theme.tint + "; text-decoration: none; }</style>" + parts.join(" · ");
         }
-        // someone's profile: the People panel opens on its Profile tab (the bar hears "Darkride-People", buttons.ts)
+        // someone's profile: the People panel opens on it, wherever it is (the card chat's names open too)
         function openProfile(username) {
-            Settings.setValue("io.darkride.peoplePanel.profile", username);
-            Settings.setValue("io.darkride.peoplePanel.tab", 2);
-            Messages.sendLocalMessage("Darkride-People", "profile");
+            Panels.showProfile(username);
         }
 
         function picture(worldId) {
