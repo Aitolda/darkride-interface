@@ -628,6 +628,11 @@ void ModelMeshPartPayload::render(RenderArgs* args) {
     if (!args || (args->_renderMode == RenderArgs::RenderMode::DEFAULT_RENDER_MODE && _cauterized)) {
         return;
     }
+    // hidden (Model::setShapesHidden): the invisible key keeps a part out of the scene's own fetch, but a group's
+    // parts (an avatar's) reach the passes through their parent (MetaToSubItems), whatever their key
+    if (_hidden) {
+        return;
+    }
     // settled by getInstancing for this pass (GPU instancing): the impostor choice and the level were made then
     const bool settled = _settledPass != 0 && _settledPass == args->_instancingPass;
     // the model's impostor card stands in for it in this view, or the two dissolve into each other (IMPOSTORS.md 2.4)
@@ -741,7 +746,7 @@ namespace {
 
 render::Instancing ModelMeshPartPayload::getInstancing(RenderArgs* args) {
     render::Instancing answer(render::Instancing::NONE);
-    if (!args || (args->_renderMode == RenderArgs::RenderMode::DEFAULT_RENDER_MODE && _cauterized)) {
+    if (!args || (args->_renderMode == RenderArgs::RenderMode::DEFAULT_RENDER_MODE && _cauterized) || _hidden) {
         return answer;
     }
     if (_impostorSwitch && !_impostorSwitch->evaluate(args).model) {
