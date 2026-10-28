@@ -20,6 +20,7 @@
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtGui/QMouseEvent>
+#include <QtWidgets/QAbstractButton>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QLabel>
@@ -370,6 +371,31 @@ QVariantMap TestScriptingInterface::inspectorField(const QString& key) {
         result["mixed"] = field->isMixed();
         result["tip"] = field->toolTip();
         break;
+    }
+    return result;
+}
+
+QVariantMap TestScriptingInterface::inspectorToggle(const QString& name, bool click) {
+    if (QThread::currentThread() != thread()) {
+        QVariantMap result;
+        BLOCKING_INVOKE_METHOD(this, "inspectorToggle", Q_RETURN_ARG(QVariantMap, result), Q_ARG(QString, name),
+                               Q_ARG(bool, click));
+        return result;
+    }
+    QVariantMap result;
+    auto window = qApp->getWindow();
+    QWidget* inspector = window ? window->findChild<QWidget*>("EditorInspector") : nullptr;
+    auto icon = inspector ? inspector->findChild<QAbstractButton*>("EditorInspectorToggle" + name) : nullptr;
+    if (!icon) {
+        return result;
+    }
+    result["found"] = true;
+    result["shown"] = icon->isVisibleTo(inspector);
+    result["look"] = icon->property("look");
+    result["usable"] = icon->property("usable");
+    result["tip"] = icon->toolTip();
+    if (click) {
+        icon->click();
     }
     return result;
 }
@@ -843,10 +869,43 @@ QVariantMap TestScriptingInterface::barButton(const QString& text, bool click) {
             if (click) {
                 button->click();
             }
-            return QVariantMap { { "active", button->property("active").toBool() } };
+            return QVariantMap { { "active", button->property("active").toBool() },
+                                 { "badge", button->property("badge").toInt() } };
         }
     }
     return QVariantMap();
+}
+
+// an item's texts that are shown, depth first (Test.panelTexts)
+static void collectTexts(QQuickItem* item, QStringList& texts) {
+    if (!item->isVisible()) {
+        return;
+    }
+    if (item->inherits("QQuickText")) {
+        const QString text = item->property("text").toString();
+        if (!text.isEmpty()) {
+            texts << text;
+        }
+    }
+    for (QQuickItem* child : item->childItems()) {
+        collectTexts(child, texts);
+    }
+}
+
+QStringList TestScriptingInterface::panelTexts(const QString& name) {
+    if (QThread::currentThread() != thread()) {
+        QStringList result;
+        BLOCKING_INVOKE_METHOD(this, "panelTexts", Q_RETURN_ARG(QStringList, result), Q_ARG(QString, name));
+        return result;
+    }
+    auto window = qApp->getWindow();
+    auto dock = window ? window->findChild<QmlDock*>(name + "Dock") : nullptr;
+    QQuickItem* page = dock && !dock->isHidden() ? dock->panel() : nullptr;
+    QStringList texts;
+    if (page) {
+        collectTexts(page, texts);
+    }
+    return texts;
 }
 
 bool TestScriptingInterface::saveDockPicture(const QString& objectName, const QString& path) {

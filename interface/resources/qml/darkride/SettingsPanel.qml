@@ -107,12 +107,15 @@ Page {
 
             PickerRow {
                 visible: AccountServices.loggedIn
-                label: "Who sees you're online"
-                current: AccountServices.findableBy === "connections" ? "friends" : AccountServices.findableBy
-                // the metaverse's availability: everyone, friends or no one ("connections", gone, meant friends)
+                // "No one" also makes you look offline: the same words in chat and on the website (F3, Caity 10-27
+                // "friends as recommended")
+                label: "Who sees you're online, and where"
+                // the metaverse's availability, as the server has it (social's Friends; "" until it answers), so this
+                // and chat never disagree
+                current: Friends.availability
                 model: [{ text: "Everyone", value: "all" }, { text: "Friends", value: "friends" },
                         { text: "No one", value: "none" }]
-                onChosen: AccountServices.findableBy = value
+                onChosen: Friends.setAvailability(value)
             }
             ListRow {
                 label: "Personal space"
@@ -135,7 +138,7 @@ Page {
 
             ListRow {
                 label: "Look sideways"
-                detail: "degrees a second"
+                detail: "Degrees a second"
                 fill: true
                 labelWidth: 130 * Theme.unit
                 scrubbable: true
@@ -157,7 +160,7 @@ Page {
             }
             ListRow {
                 label: "Look up and down"
-                detail: "degrees a second"
+                detail: "Degrees a second"
                 fill: true
                 labelWidth: 130 * Theme.unit
                 scrubbable: true
@@ -182,7 +185,7 @@ Page {
                 // Walls with its key
                 label: "Collide with the world"
                 // the menu's Ctrl is the Command key on a Mac
-                detail: "off: walk through walls (noclip). Key: " + (Qt.platform.os === "osx" ? "⌘ Shift N" : "Ctrl+Shift+N")
+                detail: "Off: walk through walls (noclip). Key: " + (Qt.platform.os === "osx" ? "⌘ Shift N" : "Ctrl+Shift+N")
                 Toggle {
                     checked: general.collisions
                     onToggled: { MyAvatar.collisionsEnabled = checked; general.refresh(); }
@@ -190,7 +193,7 @@ Page {
             }
             ListRow {
                 label: "Snap turning in VR"
-                detail: "turn in steps rather than smoothly"
+                detail: "Turn in steps rather than smoothly"
                 Toggle {
                     checked: general.snapTurn
                     onToggled: { MyAvatar.setSnapTurn(checked); general.refresh(); }
@@ -198,10 +201,92 @@ Page {
             }
             ListRow {
                 label: "Statistics"
-                detail: "frame rate, ping and loading over the world"
+                detail: "Frame rate, ping and loading over the world"
                 Toggle {
                     checked: general.statistics
                     onToggled: { MenuInterface.setIsOptionChecked("Show Statistics", checked); general.refresh(); }
+                }
+            }
+        }
+
+        // Face tracking (avatars' input plugin "Face Tracking"; Caity's go 10-25 18:33): off unless turned on, the camera
+        // running only while it's on. InputConfiguration has no change signal, so the page asks once a second while it
+        // shows. The section hides where the plugin isn't (no answer from it).
+        Section {
+            id: face
+            title: "Face tracking"
+            footer: "Your camera moves your avatar's face. The picture never leaves this computer; only your expressions "
+                  + "are shared, like your voice is. Off unless you turn it on; the camera runs only while it's on."
+            visible: face.settings.status !== undefined
+
+            property var settings: ({})
+            readonly property bool isOn: !!face.settings.enabled
+            readonly property string privacyPage: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"
+
+            function refresh() {
+                face.settings = InputConfiguration.configurationSettings("Face Tracking") || ({});
+            }
+            function change(values) {
+                InputConfiguration.setConfigurationSettings(values, "Face Tracking");
+                refresh();
+            }
+
+            Timer {
+                interval: 1000
+                repeat: true
+                triggeredOnStart: true
+                running: root.visible && root.currentTab === 0
+                onTriggered: face.refresh()
+            }
+
+            ListRow {
+                label: "Face tracking"
+                // what the camera is doing, in the plugin's words; blocked: where to allow it, as a link
+                detail: !face.isOn ? "" : face.settings.status === "blocked"
+                    ? face.settings.statusText + (Qt.platform.os === "osx" ? " <a href=\"privacy\">Open Privacy Settings</a>" : "")
+                    : (face.settings.statusText || "")
+                detailFormat: Text.StyledText
+                onLinkActivated: Qt.openUrlExternally(face.privacyPage)
+                Toggle {
+                    checked: face.isOn
+                    onToggled: face.change({ enabled: checked })
+                }
+            }
+            PickerRow {
+                visible: face.isOn
+                label: "Camera"
+                current: face.settings.camera || ""
+                model: {
+                    var choices = [{ text: "System default", value: "" }];
+                    var cameras = face.settings.cameras || [];
+                    for (var i = 0; i < cameras.length; i++) {
+                        choices.push({ text: cameras[i].name, value: cameras[i].id });
+                    }
+                    return choices;
+                }
+                onChosen: face.change({ camera: value })
+            }
+            ListRow {
+                visible: face.isOn
+                label: "Mouth strength"
+                detail: "small avatar mouths want 2 or 3"
+                fill: true
+                labelWidth: 120 * Theme.unit
+                scrubbable: true
+                scrubValue: face.settings.mouthStrength || 1
+                scrubFrom: 0.5
+                scrubTo: 3
+                scrubStep: 0.05
+                onScrubbed: face.change({ mouthStrength: Math.round(value * 10) / 10 })
+
+                ValueSlider {
+                    from: 0.5; to: 3; stepSize: 0.1; decimals: 1; units: " ×"
+                    value: face.settings.mouthStrength || 1
+                    onMoved: face.change({ mouthStrength: value })
+                }
+                ResetButton {
+                    needed: Math.abs((face.settings.mouthStrength || 1) - 1) > 0.01
+                    onClicked: face.change({ mouthStrength: 1 })
                 }
             }
         }
@@ -374,7 +459,7 @@ Page {
             }
             ListRow {
                 label: "World detail"
-                detail: root.inHeadset ? "in VR" : "on the desktop"
+                detail: root.inHeadset ? "In VR" : "On the desktop"
                 Segmented {
                     model: [{ text: "Low", value: 0 }, { text: "Medium", value: 1 }, { text: "High", value: 2 }]
                     current: LODManager.worldDetail
@@ -383,7 +468,7 @@ Page {
             }
             ListRow {
                 label: "Frame rate"
-                detail: "frames a second"
+                detail: "Frames a second"
                 Segmented {
                     model: [{ text: "Display", value: 3 }, { text: "60", value: 2 }, { text: "30", value: 1 },
                             { text: "20", value: 0 }]
@@ -455,7 +540,7 @@ Page {
             }
             ListRow {
                 label: "Vsync"
-                detail: "wait for the display; off paces frames evenly"
+                detail: "Wait for the display; off paces frames evenly"
                 Toggle { checked: Render.vsyncEnabled; onToggled: Render.vsyncEnabled = checked }
             }
         }
@@ -513,7 +598,7 @@ Page {
             }
             ListRow {
                 label: "Draw distance"
-                detail: "metres"
+                detail: "Metres"
                 scrubbable: true
                 scrubValue: Render.farClip
                 scrubFrom: 10
@@ -735,7 +820,7 @@ Page {
             }
             ListRow {
                 label: "Push to talk"
-                detail: root.inHeadset ? "in VR" : "on the desktop"
+                detail: root.inHeadset ? "In VR" : "On the desktop"
                 Toggle {
                     checked: AudioScriptingInterface.pushToTalk
                     onToggled: AudioScriptingInterface.pushToTalk = checked
@@ -743,7 +828,7 @@ Page {
             }
             ListRow {
                 label: "Warn when muted"
-                detail: "when you speak with the microphone off"
+                detail: "When you speak with the microphone off"
                 Toggle {
                     checked: AudioScriptingInterface.warnWhenMuted
                     onToggled: AudioScriptingInterface.warnWhenMuted = checked
@@ -767,7 +852,7 @@ Page {
             ListRow {
                 objectName: "eachPersonRow"   // a test opens the mixer by it
                 label: "Each person"
-                detail: mixer.open ? "" : "a volume and a mute for everyone here"
+                detail: mixer.open ? "" : "A volume and a mute for everyone here"
                 clickable: true
                 onClicked: mixer.open = !mixer.open
                 Text {

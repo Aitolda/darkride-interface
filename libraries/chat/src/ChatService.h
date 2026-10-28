@@ -129,6 +129,9 @@ private:
     QString _token;
     QElapsedTimer _tokenAge;
     QString _expectedUser;
+    // the name Darkride gives the chat account with the token (the display name, else the username as written), for
+    // an account that has none yet
+    QString _tokenDisplayName;
     // sign-ins tried since the last one that worked, so a refusal doesn't loop
     int _signInAttempts { 0 };
     QString _lastSignInError;

@@ -125,8 +125,14 @@ protected:
     float _headClipDistance;  // Near clip distance to use if no separate head model
 
 private:
+    void updateFaceTrackingOnlyBlendshapes();
+
     std::atomic<bool> _texturesLoaded { false };   // set and cleared on the model's own thread, read from any
     QHash<int, float> _ownBlendshapeOverrides;
+    // the engine's face shapes that only face tracking or a script moves on this model (the .fst's faceTrackingBs
+    // lines), and the model they were read from
+    QVector<int> _faceTrackingOnlyBlendshapes;
+    std::weak_ptr<const void> _faceTrackingOnlyBlendshapesModel;
 };
 
 #endif // hifi_SkeletonModel_h

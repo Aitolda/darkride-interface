@@ -81,6 +81,7 @@ void ChatService::onAccountLoggedOut() {
     _retryTimer.stop();
     _token.clear();
     _expectedUser.clear();
+    _tokenDisplayName.clear();
     settle();
     if (!_chat) {
         setState(State::SignedOut, "Sign in to Darkride to use chat.");
@@ -115,6 +116,7 @@ void ChatService::chatTokenReceived(QNetworkReply* reply) {
     _token = token;
     _tokenAge.start();
     _expectedUser = data.value("user_id").toString();
+    _tokenDisplayName = data.value("display_name").toString().trimmed();
     if (_chat && homeserver != _homeserver) {
         freeLibrary();
     }
@@ -227,10 +229,21 @@ void ChatService::handleEvent(const QByteArray& json) {
     } else if (kind == "profile") {
         _profileName = event.value("name").toString();
         _profileAvatar = event.value("avatar").toString();
+        // a chat account the app made has no name yet (only the web chat named one at its first sign-in): the one
+        // Darkride gives with the token, never over a name that's set; later changes come from the metaverse (F7)
+        // (shown once the homeserver has it: the "done" below)
+        if (_profileName.isEmpty() && !_tokenDisplayName.isEmpty()) {
+            qCDebug(chat_service) << "chat: the account has no name yet; naming it as Darkride does";
+            command({ { "op", "set_display_name" }, { "name", _tokenDisplayName } });
+        }
         emit profileChanged();
     } else if (kind == "media") {
         emit mediaReady(event.value("key").toString(), event.value("path").toString(), event.value("error").toString());
     } else if (kind == "done") {
+        if (event.value("op").toString() == "set_display_name") {
+            _profileName = event.value("name").toString();
+            emit profileChanged();
+        }
         emit commandDone(event);
     } else if (kind == "error") {
         QString op = event.value("op").toString();

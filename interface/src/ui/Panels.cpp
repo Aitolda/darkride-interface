@@ -10,10 +10,12 @@
 #include "Panels.h"
 
 #include <QtGui/QScreen>
+#include <QtQuick/QQuickItem>
 #include <QtWidgets/QDockWidget>
 
 #include <gl/GLHelpers.h>
 #include <MainWindow.h>
+#include <SettingHandle.h>
 
 #include "Application.h"
 #include "InterfaceLogging.h"
@@ -28,8 +30,13 @@ namespace {
     const QString CHAT = "Chat";
     const QString MY_FILES = "My Files";
     const QString CONSOLE = "Console";
+    const QString PEOPLE = "People";
+    // People's saved person and tab (PeoplePanel.qml), and its Profile tab
+    const QString PEOPLE_PROFILE = "io.darkride.peoplePanel.profile";
+    const QString PEOPLE_TAB = "io.darkride.peoplePanel.tab";
+    const int PROFILE_TAB = 2;
     // Build mode's own, there only while it's on
-    const QString HIERARCHY = "Hierarchy";
+    const QString HIERARCHY = "Entities";   // Build mode's Hierarchy panel (Caity, 10-27: "Entities")
     const QString INSPECTOR = "Inspector";
 
     struct QmlPanel {
@@ -140,6 +147,21 @@ void Panels::close(const QString& name) {
 
 void Panels::toggle(const QString& name) {
     QMetaObject::invokeMethod(this, [this, name] { change(name, Change::Toggle); });
+}
+
+void Panels::showProfile(const QString& username) {
+    QMetaObject::invokeMethod(this, [this, username] {
+        // the person and the tab as People reads them when it shows (PeoplePanel.qml readSettings)
+        Setting::Handle<QVariant>(PEOPLE_PROFILE).set(username);
+        Setting::Handle<QVariant>(PEOPLE_TAB).set(PROFILE_TAB);
+        // in sight already, it hears it at once; else it reads them as it shows
+        auto people = qobject_cast<QmlDock*>(_restored ? dock(PEOPLE) : nullptr);
+        QQuickItem* page = people ? people->panel() : nullptr;
+        if (page && page->isVisible()) {
+            QMetaObject::invokeMethod(page, "showProfile", Q_ARG(QVariant, username));
+        }
+        change(PEOPLE, Change::Open);
+    });
 }
 
 QDockWidget* Panels::dock(const QString& name) {

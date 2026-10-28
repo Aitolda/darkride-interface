@@ -18,6 +18,7 @@
 
 #include <thread>
 #include <glm/glm.hpp>
+#include <QtCore/QAbstractNativeEventFilter>
 #include <QtGui/QScreen>
 #include <QtGui/QWindow>
 #include <QProcessEnvironment>
@@ -65,6 +66,44 @@ const QString ACTIVE_DISPLAY_PLUGIN_SETTING_NAME = "activeDisplayPlugin";
 // Application's getMyAvatar is private; this is the same call
 static std::shared_ptr<MyAvatar> getMyAvatar() {
     return DependencyManager::get<AvatarManager>()->getMyAvatar();
+}
+
+#if defined(Q_OS_WIN)
+// Windows sends every top-level window WM_ACTIVATEAPP when the front app changes. Qt's application state misses some of
+// those changes: a window activated while another app is in front (a start-up activateWindow, Window.setFocus) only
+// flashes the taskbar button, yet Qt calls the app active, and when the player later clicks it, Qt has no change to
+// report. So the refresh-rate regime takes Windows' word, checked against the foreground window (foregroundChanged):
+// that same background activation sends a WM_ACTIVATEAPP too (laptop, test-1028-win-11, 10-28).
+class ForegroundFilter : public QAbstractNativeEventFilter {
+public:
+    explicit ForegroundFilter(Display* display) : _display(display) {}
+
+    bool nativeEventFilter(const QByteArray& eventType, void* message, long*) override {
+        auto msg = static_cast<MSG*>(message);
+        if (eventType == "windows_generic_MSG" && msg->message == WM_ACTIVATEAPP) {
+            bool inFront = msg->wParam != FALSE;
+            // queued: this runs inside the window procedure; each top-level window gets its own copy, and a repeat changes nothing
+            QMetaObject::invokeMethod(_display, [display = _display, inFront] { display->foregroundChanged(inFront); }, Qt::QueuedConnection);
+        }
+        return false;
+    }
+
+private:
+    Display* _display;
+};
+#endif
+
+Display::Display() {
+#if defined(Q_OS_WIN)
+    _foregroundFilter = std::make_unique<ForegroundFilter>(this);
+    QCoreApplication::instance()->installNativeEventFilter(_foregroundFilter.get());
+#endif
+}
+
+Display::~Display() {
+    if (_foregroundFilter && QCoreApplication::instance()) {
+        QCoreApplication::instance()->removeNativeEventFilter(_foregroundFilter.get());
+    }
 }
 
 // The field-of-view setting is a horizontal angle and the vertical one is derived from the aspect
@@ -200,6 +239,16 @@ void Display::initializePlugins() {
         connect(autoSwitchDisplayModeTimer, SIGNAL(timeout()), this, SLOT(switchDisplayMode()));
         autoSwitchDisplayModeTimer->start(INTERVAL_TO_CHECK_HMD_WORN_STATUS);
     }
+
+#if defined(Q_OS_WIN)
+    // the safety net under WM_ACTIVATEAPP: whatever Windows sent or didn't, the regime catches up within half a second.
+    // Started here, once a plug-in is active: started with the constructor it ran during the start-up's own event
+    // processing, and asking for the active plug-in then made one before the GL context (test-1028-win-12's crash).
+    static const int FOREGROUND_CHECK_INTERVAL_MS = 500;
+    _foregroundCheck.setInterval(FOREGROUND_CHECK_INTERVAL_MS);
+    connect(&_foregroundCheck, &QTimer::timeout, this, &Display::checkForeground);
+    _foregroundCheck.start();
+#endif
 }
 
 DisplayPluginPointer Display::getActiveDisplayPlugin() const {
@@ -230,11 +279,13 @@ float Display::getRenderResolutionScale() const {
 }
 
 bool Display::isThrottleRendering() const {
-    // In the background (another app in front, or minimized) the refresh rate is lowered on purpose: automatic LOD holds
-    // still rather than read the slow frames as time to spare and add detail that would make the return stutter.
+    // In the background (another app in front, or minimized) and at rest (in front, untouched and still: the resting
+    // rate) the refresh rate is lowered on purpose: automatic LOD holds still rather than read the slow frames as time
+    // to spare and add detail that would make the return stutter.
     auto regime = qApp->getRefreshRateManager().getRefreshRateRegime();
     if (regime == RefreshRateManager::RefreshRateRegime::UNFOCUS ||
-        regime == RefreshRateManager::RefreshRateRegime::MINIMIZED) {
+        regime == RefreshRateManager::RefreshRateRegime::MINIMIZED ||
+        regime == RefreshRateManager::RefreshRateRegime::FOCUS_INACTIVE) {
         return true;
     }
     if (_displayPlugin) {
@@ -378,6 +429,18 @@ void Display::raiseWindow() const {
 
 bool Display::isForeground() const {
     return _isForeground && !qApp->getWindow()->isMinimized();
+}
+
+bool Display::isAppInFront() const {
+#if defined(Q_OS_WIN)
+    // Qt can call the app active while another app is in front (see ForegroundFilter), so ask Windows whose window is in front
+    if (HWND foreground = GetForegroundWindow()) {
+        DWORD process = 0;
+        GetWindowThreadProcessId(foreground, &process);
+        return process == GetCurrentProcessId();
+    }
+#endif
+    return QGuiApplication::applicationState() == Qt::ApplicationActive;
 }
 
 void Display::resizeGL() {
@@ -635,8 +698,9 @@ void Display::endHMDSession() {
 void Display::activeChanged(Qt::ApplicationState state) {
     switch (state) {
         case Qt::ApplicationActive:
-            _isForeground = true;
-            if (!qApp->isAboutToQuit() && qApp->getSignInGate().startUpFinished()) {
+            // on Windows, Qt says active when one of our windows is activated behind another app's; then nothing changes
+            _isForeground = isAppInFront();
+            if (_isForeground && !qApp->isAboutToQuit() && qApp->getSignInGate().startUpFinished()) {
                 qApp->getRefreshRateManager().setRefreshRateRegime(RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE);
             }
             break;
@@ -654,6 +718,41 @@ void Display::activeChanged(Qt::ApplicationState state) {
             _isForeground = false;
             break;
     }
+}
+
+void Display::foregroundChanged(bool inFront) {
+    // a window of ours activated behind another app's gets "came to the front" too: only our own foreground window counts
+    if (inFront && !isAppInFront()) {
+        qCDebug(interfaceapp) << "Activated behind another app's window: the refresh regime stays";
+        return;
+    }
+    _isForeground = inFront;
+    // a minimized window keeps the minimized regime; restoring it sets the full rate (Application's WindowStateChange)
+    if (!qApp->isAboutToQuit() && qApp->getSignInGate().startUpFinished() && !qApp->getWindow()->isMinimized()) {
+        qApp->getRefreshRateManager().setRefreshRateRegime(inFront ? RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE :
+            RefreshRateManager::RefreshRateRegime::UNFOCUS);
+    }
+}
+
+void Display::checkForeground() {
+#if defined(Q_OS_WIN)
+    // one call to Windows; no decision before start-up has finished, while no window is in front (between two windows)
+    // or in a headset, whose rate doesn't follow the regime. plugin(), not isHMDMode(): asking for the active plug-in
+    // makes one when there is none
+    if (qApp->isAboutToQuit() || !qApp->getSignInGate().startUpFinished() || !_displayPlugin || _displayPlugin->isHmd() ||
+        !GetForegroundWindow()) {
+        return;
+    }
+    auto regime = qApp->getRefreshRateManager().getRefreshRateRegime();
+    bool regimeInFront = regime == RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE ||
+                         regime == RefreshRateManager::RefreshRateRegime::FOCUS_INACTIVE;
+    bool regimeBehind = regime == RefreshRateManager::RefreshRateRegime::UNFOCUS;
+    bool inFront = isAppInFront();
+    if ((inFront && regimeBehind) || (!inFront && regimeInFront)) {
+        qCDebug(interfaceapp) << "The app is" << (inFront ? "in front" : "behind") << "(the foreground window's process); the refresh regime follows";
+        foregroundChanged(inFront);
+    }
+#endif
 }
 
 void Display::windowMinimizedChanged(bool minimized) {

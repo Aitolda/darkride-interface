@@ -311,6 +311,17 @@ public slots:
     Q_INVOKABLE QVariantMap inspectorField(const QString& key);
 
     /**jsdoc
+     * One of the Inspector header's toggle icons for the editor's selection (the Hierarchy rows' four), as the panel
+     * shows it, and a click on it as the mouse's.
+     * @function Test.inspectorToggle
+     * @param {string} name - "Hide", "NoPick", "Lock" or "Scripts".
+     * @param {boolean} [click=false] - Whether to click it.
+     * @returns {object} <code>{ found, shown, look, usable, tip }</code>: whether it's there and shown, "on", "off" or
+     *     "mixed" (before the click's effect), whether a click would change something, and its tooltip.
+     */
+    Q_INVOKABLE QVariantMap inspectorToggle(const QString& name, bool click = false);
+
+    /**jsdoc
      * Saves a picture of the Inspector's whole content, whatever is scrolled into view, as the panel draws it.
      * @function Test.saveInspectorPicture
      * @param {string} path - Where to save it (PNG).
@@ -371,10 +382,18 @@ public slots:
      * @function Test.barButton
      * @param {string} text - The button's text, such as "People".
      * @param {boolean} [click=false] - Whether to click it.
-     * @returns {object} <code>{ active }</code>, whether it shows active (before the click's effect); empty when there's
-     *     no such button.
+     * @returns {object} <code>{ active, badge }</code>: whether it shows active (before the click's effect), and the
+     *     count on its red badge (0 for none); empty when there's no such button.
      */
     Q_INVOKABLE QVariantMap barButton(const QString& text, bool click = false);
+
+    /**jsdoc
+     * The words one of Darkride's QML panels shows now (ui/QmlDock.h): every text in it that's shown, in order.
+     * @function Test.panelTexts
+     * @param {string} name - The panel, such as "People".
+     * @returns {string[]} The texts; empty when the panel hasn't been made or is closed.
+     */
+    Q_INVOKABLE QStringList panelTexts(const QString& name);
 
     /**jsdoc
      * Saves a picture of one dock panel as its widgets draw it, floating or docked, its title bar too.

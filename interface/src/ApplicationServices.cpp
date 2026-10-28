@@ -92,6 +92,7 @@
 #include "ui/MetaverseRequests.h"
 #include "ui/PanelTheme.h"
 #include "ui/Panels.h"
+#include "chat/FriendsScriptingInterface.h"
 #include "scripting/HMDScriptingInterface.h"
 #include "scripting/KeyboardScriptingInterface.h"
 #include "scripting/SelectionScriptingInterface.h"
@@ -230,6 +231,7 @@ void registerApplicationServices(int listenPort, const QString& defaultScriptsOv
     DependencyManager::set<DiscoverabilityManager>();
     DependencyManager::set<ChatService>();       // Darkride chat (libraries/chat), signed in with the account
     DependencyManager::set<FriendsService>();    // the account's friends, for the chat window's Friends page
+    DependencyManager::set<FriendsScriptingInterface>();   // and for scripts and the panels ("Friends")
     DependencyManager::set<SceneScriptingInterface>();
     DependencyManager::set<OffscreenUi>();
     DependencyManager::set<PathUtils>();
@@ -263,6 +265,7 @@ void registerApplicationServices(int listenPort, const QString& defaultScriptsOv
     DependencyManager::set<LocationBookmarks>();
     DependencyManager::set<Snapshot>();
     DependencyManager::set<ResourceManager>();
+    MyAvatar::useBuiltInDefaultAvatar();   // the default avatar's files from the app's own copy
     DependencyManager::set<SelectionScriptingInterface>();
     DependencyManager::set<Editor>();
     DependencyManager::set<ImpostorBaker>();

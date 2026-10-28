@@ -16,7 +16,6 @@
 #include "SignInGate.h"
 
 #include <QtCore/QThread>
-#include <QtGui/QGuiApplication>
 #include <QtQuick/QQuickItem>
 
 #include <AccountManager.h>
@@ -102,7 +101,7 @@ void SignInGate::pauseUntilLoginDetermined() {
     _previousAvatarTargetScale = myAvatar->getTargetScale();
     _previousAvatarSkeletonModel = myAvatar->getSkeletonModelURL().toString();
     myAvatar->setTargetScale(1.0f);
-    myAvatar->setSkeletonModelURLFromScript(myAvatar->defaultFullAvatarModelUrl().toString());
+    myAvatar->setSkeletonModelURLFromScript(MyAvatar::defaultAvatarURL().toString());
     myAvatar->setEnableMeshVisible(false);
 
     qApp->getControllerScriptingInterface()->disableMapping(STANDARD_TO_ACTION_MAPPING_NAME);
@@ -232,8 +231,9 @@ void SignInGate::resumeAfterLoginDialogActionTaken() {
     qApp->getViewState().restorePreviousMode();
     _startUpFinished = true;
     StartupProfiler::instant("signed in: scripts loading, going to the starting location");
-    // the app's actual state: a player who switched to another app while this one loaded is not in front
-    qApp->getRefreshRateManager().setRefreshRateRegime(QGuiApplication::applicationState() == Qt::ApplicationActive ?
+    // the app's actual state: a player who switched to another app while this one loaded is not in front (on Windows,
+    // Qt's application state can say active then: Display::isAppInFront asks Windows)
+    qApp->getRefreshRateManager().setRefreshRateRegime(qApp->getDisplay().isAppInFront() ?
         RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE : RefreshRateManager::RefreshRateRegime::UNFOCUS);
     _signInPending = false;
 }

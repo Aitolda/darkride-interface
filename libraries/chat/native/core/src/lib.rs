@@ -4,7 +4,9 @@
 //! spike (src/bin/spike.rs) drives the same commands from stdin.
 //!
 //! Commands: {"op": ...}
-//!   login_jwt {token}            sign in with the metaverse's chat token (POST /api/v1/user/chat-token)
+//!   login_jwt {token}            sign in with the metaverse's chat token (POST /api/v1/user/chat-token); once
+//!                                signed in (and at each start after), General (#general, else #lobby) and Darkride's
+//!                                space (#darkride) are joined when you aren't in them, as the web chat does
 //!   open {room, count?}          follow a room's timeline (a room id or #alias), at least count (30) of its
 //!                                newest events; "timeline" events follow
 //!   close {room}
@@ -45,7 +47,7 @@
 //!   media {key, path?, error?}   a media command finished: the file, or why not
 //!   done {op, room?, start?}     a command finished (open, back, create_dm, join, leave); start: the room's
 //!                                first message is in, there's nothing older
-//!   error {op, message}
+//!   error {op, message}          op join_general: joining General or the space at the start didn't work
 
 // the SDK's futures are deep; matrix-rust-sdk's own crates raise this too
 #![recursion_limit = "256"]
@@ -72,7 +74,8 @@ use matrix_sdk::{
     ruma::{
         EventId, OwnedRoomId, RoomAliasId, RoomId, RoomOrAliasId, TransactionId, UInt, UserId,
         api::client::{
-            media::get_content_thumbnail::v3::Method, receipt::create_receipt::v3::ReceiptType, room::create_room,
+            media::get_content_thumbnail::v3::Method, membership::joined_rooms, receipt::create_receipt::v3::ReceiptType,
+            room::create_room,
         },
         events::{
             InitialStateEvent,
@@ -376,6 +379,12 @@ async fn handle(state: &Arc<State>, op: &str, command: &Value) -> Result<()> {
         "create_dm" => {
             let client = state.client()?;
             let user = <&UserId>::try_from(arg(command, "user")?)?;
+            // the one you already have with them, if any: asked twice (two clicks, or before the room list came in),
+            // there's still one conversation
+            if let Some(room) = client.get_dm_room(user) {
+                state.emit(json!({ "event": "done", "op": "create_dm", "room": room.room_id() }));
+                return Ok(());
+            }
             // encrypted only when asked, as in the web client, which encrypts only behind ?e2ee=1 until round 5: a DM
             // the other side can't decrypt is worse than one that isn't encrypted (CHAT.md 4.9)
             let initial_state = if command["encrypted"].as_bool().unwrap_or(false) {
@@ -398,6 +407,14 @@ async fn handle(state: &Arc<State>, op: &str, command: &Value) -> Result<()> {
                 Ok(path) => state.emit(json!({ "event": "media", "key": key, "path": path })),
                 Err(e) => state.emit(json!({ "event": "media", "key": key, "error": format!("{e:#}") })),
             }
+            Ok(())
+        }
+        // the account's own name, for one that has none yet (ChatService, on its profile event)
+        "set_display_name" => {
+            let client = state.client()?;
+            let name = arg(command, "name")?;
+            client.account().set_display_name(Some(name)).await?;
+            state.emit(json!({ "event": "done", "op": "set_display_name", "name": name }));
             Ok(())
         }
         "logout" => {
@@ -557,6 +574,15 @@ async fn started(state: &Arc<State>, client: Client) -> Result<()> {
             rooms_state.emit(json!({ "event": "rooms", "rooms": out, "spaces": spaces }));
         }
     }));
+    // General and the space: the server's own auto-join skips sign-ins with a chat token, so a new account would
+    // otherwise start with no rooms at all
+    let join_state = state.clone();
+    let join_client = client.clone();
+    tasks.push(tokio::spawn(async move {
+        if let Err(e) = join_general(&join_client).await {
+            join_state.emit(json!({ "event": "error", "op": "join_general", "message": format!("{e:#}") }));
+        }
+    }));
     *state.tasks.lock().unwrap() = tasks;
     state.emit(json!({ "event": "state", "state": "ready", "user": client.user_id() }));
 
@@ -628,6 +654,27 @@ async fn room_json(room: &Room, space: Option<&OwnedRoomId>) -> Value {
         "unread": room.num_unread_messages(),
         "notifications": room.unread_notification_counts().notification_count,
     })
+}
+
+/// joins General (#general, else #lobby on older servers) and Darkride's space (#darkride) when the server says you
+/// aren't in them; the ones you're in are left alone
+async fn join_general(client: &Client) -> Result<()> {
+    let server = client.user_id().ok_or_else(|| anyhow!("not signed in"))?.server_name().to_owned();
+    let joined = client.send(joined_rooms::v3::Request::new()).await?.joined_rooms;
+    for names in [&["general", "lobby"][..], &["darkride"][..]] {
+        for name in names {
+            let alias = RoomAliasId::parse(format!("#{name}:{server}"))?;
+            // a name this server doesn't have: the next one
+            let Ok(found) = client.resolve_room_alias(&alias).await else {
+                continue;
+            };
+            if !joined.contains(&found.room_id) {
+                client.join_room_by_id_or_alias(<&RoomOrAliasId>::from(&*found.room_id), &found.servers).await?;
+            }
+            break;
+        }
+    }
+    Ok(())
 }
 
 async fn room_by_id_or_alias(state: &State, target: &str) -> Result<Room> {

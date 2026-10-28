@@ -304,6 +304,41 @@ void EntityTree::postAddEntity(EntityItemPointer entity) {
     emit addingEntityPointer(entity.get());
 }
 
+// Whether a node's rights cover changing or deleting an entity: someone who may only make temporary entities may only
+// change temporary ones. A permanent entity takes the right to make permanent entities, or the right to change locks.
+bool EntityTree::senderMayChange(const SharedNodePointer& senderNode, const EntityItemPointer& entity) {
+    if (senderNode->isAllowedEditor() || senderNode->getCanRez() || senderNode->getCanRezCertified()) {
+        return true;
+    }
+    return (senderNode->getCanRezTmp() || senderNode->getCanRezTmpCertified()) &&
+        entity->getLifetime() != ENTITY_ITEM_IMMORTAL_LIFETIME;
+}
+
+// Whether a delete from a node that can't change locks may go ahead: the entity, and every child the delete takes with
+// it, unlocked and within the node's rights (senderMayChange).
+bool EntityTree::senderMayDelete(const SharedNodePointer& senderNode, const EntityItemPointer& entity) {
+    if (entity->getLocked() || !senderMayChange(senderNode, entity)) {
+        return false;
+    }
+    for (SpatiallyNestablePointer child : entity->getChildren()) {
+        if (child && child->getNestableType() == NestableType::Entity &&
+            !senderMayDelete(senderNode, std::static_pointer_cast<EntityItem>(child))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// A refused edit is taken back on its sender's screen too: the client shows its own edit at once, and takes the server's
+// copy only if it was edited later. So the entity goes out again (all of it, as ever), last edited after the refused
+// edit. Physics updates aren't sent back: they come many times a second, and are refused as before.
+void EntityTree::sendBackRefusedEdit(const EntityItemPointer& entity, const EntityItemProperties& refused) {
+    if (getIsServer()) {
+        entity->setLastEdited(std::max(usecTimestampNow(), refused.getLastEdited() + 1));
+        entity->markAsChangedOnServer();
+    }
+}
+
 bool EntityTree::updateEntity(const EntityItemID& entityID, const EntityItemProperties& properties, const SharedNodePointer& senderNode, bool isPhysics) {
     EntityItemPointer entity;
     {
@@ -343,14 +378,22 @@ bool EntityTree::updateEntity(EntityItemPointer entity, const EntityItemProperti
         allowAnyRez = (
             senderNode->getCanRez() || 
             senderNode->getCanRezCertified() ||
-            senderNode->getCanRezTmp() || 
+            senderNode->getCanRezTmp() ||
             senderNode->getCanRezTmpCertified()
         );
+        // a temporary right alone changes only temporary entities: a permanent one is treated as by someone without rez
+        // rights (below: simulation properties only, and only if it can be grabbed)
+        if (allowAnyRez && getIsServer() && !senderMayChange(senderNode, entity)) {
+            allowAnyRez = false;
+        }
         senderID = senderNode->getUUID();
     }
 
     if (!allowLockChange && (entity->getLocked() != properties.getLocked())) {
         qCDebug(entities) << "Refusing disallowed lock adjustment.";
+        if (!isPhysics) {
+            sendBackRefusedEdit(entity, properties);
+        }
         return false;
     }
 
@@ -556,6 +599,9 @@ bool EntityTree::updateEntity(EntityItemPointer entity, const EntityItemProperti
                     emit editingEntityPointer(entity);
                 }
             } else {
+                if (!isPhysics) {
+                    sendBackRefusedEdit(entity, properties);
+                }
                 return false;
             }
         }
@@ -1703,6 +1749,13 @@ int EntityTree::processEditPacketData(ReceivedMessage& message, const unsigned c
                     properties.setLocked(false);
                     bumpTimestamp(properties);
                 }
+
+                if (isAdd && !properties.getCertificateID().isEmpty() && !senderNode->isAllowedEditor()) {
+                    // nobody issues certificates any more, so a new entity's certificate is only a claim: it's dropped, and
+                    // the rights for an uncertified entity apply (a world's editors keep theirs, for content they bring in)
+                    properties.setCertificateID(QString());
+                    bumpTimestamp(properties);
+                }
             }
 
             // If we got a valid edit packet, then it could be a new entity or it could be an update to
@@ -2304,6 +2357,18 @@ int EntityTree::processEraseMessageDetails(const QByteArray& dataByteArray, cons
         }
 
         bool force = sourceNode->isAllowedEditor();
+        if (!force) {
+            // someone who can't change locks deletes only what's unlocked and within their rights, children included;
+            // the zone's edit filter still has its say on what is left
+            ids.erase(std::remove_if(ids.begin(), ids.end(), [&](const EntityItemID& entityID) {
+                EntityItemPointer entity = findEntityByEntityItemID(entityID);
+                if (entity && !senderMayDelete(sourceNode, entity)) {
+                    qCDebug(entities) << "User [" << sourceNode->getUUID() << "] may not delete entity" << entityID;
+                    return true;
+                }
+                return false;
+            }), ids.end());
+        }
         bool ignoreWarnings = true;
         deleteEntitiesByID(ids, force, ignoreWarnings);
     }

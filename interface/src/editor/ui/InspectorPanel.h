@@ -23,6 +23,9 @@
 #include <EntityItemProperties.h>
 #include <EntityTypes.h>
 
+#include "HierarchyPanel.h"
+
+class QAbstractButton;
 class QLabel;
 class QScrollArea;
 class QVBoxLayout;
@@ -53,11 +56,16 @@ public:
     void setLoadProblem(const QString& problem);
     // everything shown, whatever is scrolled into view (a scripted test's picture)
     QPixmap contentPicture() const;
+    // the header's four toggle icons for the selection (HierarchyPanel::statesFor): hidden in this view, clicks pass
+    // through here, locked, scripts off
+    void setToggleStates(const QVector<HierarchyPanel::ToggleState>& states);
     // the Terrain tool, which a Terrain's Layers section reads and sets the layers through (they live in the
     // terrain file on this client, not in a property); set once, before any terrain is shown
     void setTerrainEditor(EditorTerrain* terrain) { _terrainEditor = terrain; }
 
 signals:
+    // a header toggle icon clicked, for the selection (a HierarchyPanel::Toggle)
+    void toggleClicked(int toggle);
     // a Terrain's Layers section selected a layer: the one the Paint tools paint
     void terrainLayerChosen(int slot);
     // a Terrain's Layers section showed its list again: names or order may have changed
@@ -100,7 +108,9 @@ private:
     bool _readOnly { false };
     bool _canLock { true };
     QString _noLockWhy;
-    bool _allLocked { false };   // everything selected is locked: only Locked can change
+    bool _allLocked { false };   // everything selected is locked: only the lock can change
+    QVector<HierarchyPanel::ToggleState> _toggleStates;
+    QList<QAbstractButton*> _toggleIcons;   // in the header, made with it
     QScrollArea* _scroll { nullptr };
     QWidget* _empty { nullptr };
     QLabel* _emptyLabel { nullptr };

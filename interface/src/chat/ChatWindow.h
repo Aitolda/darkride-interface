@@ -51,6 +51,9 @@ public:
     // main window; shown or hidden as it was
     static void resetDock();
     static QKeySequence shortcut();
+    // chat in front on your direct message with a Darkride user, made if there is none yet (Friends.openDirectMessage,
+    // People's Message); while chat is signing in, once it's ready
+    static void openDirectMessage(const QString& username);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -94,6 +97,10 @@ private:
                       bool dimmed = false);
     // a friend's direct message, made when there is none yet
     void messageFriend(const QString& username);
+    // the direct message openDirectMessage asked for, once chat is ready
+    void openWantedDm();
+    // someone's card: People's profile, in front (editor-ui's Panels.showProfile), from a name or picture here
+    void showProfile(const QString& username);
     void sendFriendRequest();
     // "who sees where I am" (the metaverse's availability), from your name at the foot of the sidebar
     void showAvailabilityMenu();
@@ -159,6 +166,7 @@ private:
     QString _friendsTab { "online" };
     bool _friendsShown { false };               // the Friends page is up (the last room stays _room)
     QString _dmWanted;                           // a friend's chat account whose new DM is being made, to open
+    QString _dmWantedUser;                       // a username whose DM is to open once chat is ready
     QTimer* _friendsTimer { nullptr };          // asks for the lists again every minute while the window is up
     QTimer* _renderTimer { nullptr };           // the conversation drawn once for a burst of timeline events
     qint64 _friendsAskedAt { 0 };

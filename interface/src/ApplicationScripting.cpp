@@ -78,6 +78,7 @@
 #include "avatar/AvatarThumbnails.h"
 #include "ui/MetaverseRequests.h"
 #include "ui/Panels.h"
+#include "chat/FriendsScriptingInterface.h"
 #include "ui/Skins.h"
 #include "ui/SystemToolbar.h"
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
@@ -129,6 +130,7 @@ void Application::onDesktopRootContextCreated(QQmlContext* surfaceContext) {
     // Darkride's own panels (the Settings panel first): the disk cache's size and place, and the metaverse's API
     surfaceContext->setContextProperty("DiskCache", DependencyManager::get<DiskCacheScriptingInterface>().data());
     surfaceContext->setContextProperty("MetaverseRequests", DependencyManager::get<MetaverseRequests>().data());
+    surfaceContext->setContextProperty("Friends", DependencyManager::get<FriendsScriptingInterface>().data());
     surfaceContext->setContextProperty("AvatarThumbnails", DependencyManager::get<AvatarThumbnails>().data());
     surfaceContext->setContextProperty("SystemToolbar", SystemToolbar::instance());
     surfaceContext->setContextProperty("Skins", DependencyManager::get<Skins>().data());
@@ -241,9 +243,11 @@ void Application::setupQmlSurface(QQmlContext* surfaceContext, bool setAdditiona
         surfaceContext->setContextProperty("Performance", new PerformanceScriptingInterface());
         surfaceContext->setContextProperty("DiskCache", DependencyManager::get<DiskCacheScriptingInterface>().data());
         surfaceContext->setContextProperty("MetaverseRequests", DependencyManager::get<MetaverseRequests>().data());
+        surfaceContext->setContextProperty("Friends", DependencyManager::get<FriendsScriptingInterface>().data());
         surfaceContext->setContextProperty("AvatarThumbnails", DependencyManager::get<AvatarThumbnails>().data());
         surfaceContext->setContextProperty("SystemToolbar", SystemToolbar::instance());
         surfaceContext->setContextProperty("Skins", DependencyManager::get<Skins>().data());
+        surfaceContext->setContextProperty("Panels", DependencyManager::get<Panels>().data());
 
         surfaceContext->setContextProperty("Account", AccountServicesScriptingInterface::getInstance()); // DEPRECATED - TO BE REMOVED
         surfaceContext->setContextProperty("GlobalServices", AccountServicesScriptingInterface::getInstance()); // DEPRECATED - TO BE REMOVED
@@ -375,6 +379,7 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
     scriptEngine->registerGlobalObject("TextToSpeech", DependencyManager::get<TTSScriptingInterface>().data());
     scriptEngine->registerGlobalObject("Chat", DependencyManager::get<ChatScriptingInterface>().data());
     scriptEngine->registerGlobalObject("Panels", DependencyManager::get<Panels>().data());
+    scriptEngine->registerGlobalObject("Friends", DependencyManager::get<FriendsScriptingInterface>().data());
     scriptEngine->registerGlobalObject("DiskCache", DependencyManager::get<DiskCacheScriptingInterface>().data());
 
     // Caches

@@ -295,6 +295,7 @@ void SystemToolbar::refresh(QToolButton* button, TabletButtonProxy* proxy) {
     button->setText(properties.value(active ? "activeText" : "text", properties.value("text")).toString());
     // a skin's style sheet can tell an open app's button: QToolButton[active="true"]
     button->setProperty("active", active);
+    button->setProperty("badge", properties.value("badge").toInt());   // for tests (Test.barButton)
     button->style()->unpolish(button);
     button->style()->polish(button);
 }

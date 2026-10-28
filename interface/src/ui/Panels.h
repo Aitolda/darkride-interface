@@ -48,7 +48,7 @@ public:
      * The panels' names, in View > Panels' order.
      * @function Panels.names
      * @returns {string[]} The names: "Settings", "Avatar", "People", "Chat", "Explore", "My Files", "Console", and Build
-     *     mode's "Hierarchy" and "Inspector" (which open only while it's on).
+     *     mode's "Entities" and "Inspector" (which open only while it's on).
      */
     Q_INVOKABLE QStringList names() const;
 
@@ -80,6 +80,14 @@ public:
      * @param {string} name - The panel.
      */
     Q_INVOKABLE void toggle(const QString& name);
+
+    /**jsdoc
+     * Opens the People panel in front on someone's profile: the card wherever a name appears (Explore's authors, chat's
+     * names).
+     * @function Panels.showProfile
+     * @param {string} username - Their account name; "" for your own.
+     */
+    Q_INVOKABLE void showProfile(const QString& username);
 
     /// Build mode's own panels (Hierarchy, Inspector): they open only while it's on
     static bool isBuildModeOnly(const QString& name);

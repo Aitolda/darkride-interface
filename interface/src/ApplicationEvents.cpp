@@ -252,7 +252,8 @@ bool Application::eventFilter(QObject* object, QEvent* event) {
     }
 #endif
 
-    if (eventType == QEvent::KeyPress || eventType == QEvent::KeyRelease || eventType == QEvent::MouseMove) {
+    if (eventType == QEvent::KeyPress || eventType == QEvent::KeyRelease || eventType == QEvent::MouseMove ||
+        eventType == QEvent::MouseButtonPress || eventType == QEvent::Wheel) {
         getRefreshRateManager().resetInactiveTimer();
     }
 
