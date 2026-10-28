@@ -68,6 +68,7 @@ private:
 
     void rebuild();
     void refresh(QToolButton* button, TabletButtonProxy* proxy);
+    void fitCells();   // every button the size of the largest
     void updateVisibility();
     void rememberArea();
     int buttonSize() const;   // an icon's size: smaller in a column

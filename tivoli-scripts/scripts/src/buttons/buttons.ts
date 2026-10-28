@@ -116,13 +116,8 @@ export class Buttons {
 		// 	MarketHandler,
 		// );
 
-		const things = this.buttonManager.addWebButton(
-			"Things",
-			'data:image/svg;xml,<svg fill="#fff" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#00bcd4" d="M0 0h8v24H0z"/><path fill="#ff9800" d="M8 0h8v24H8z"/><path fill="#ff5722" d="M16 0h8v24h-8z"/><g fill="#fff"><circle cx="7.2" cy="14.4" r="3.2"/><circle cx="14.8" cy="18" r="2"/><circle cx="15.2" cy="8.8" r="4.8"/></g></svg>',
-			null,
-			13,
-			"big",
-		);
+		// (Tivoli's "Things" web page had its button here: obsolete, gone (Caity 10-28); its page stays in
+		// frontend/src/app/things until the clean-up)
 
 		Controller.enableMapping(this.exploreMappingName);
 	}

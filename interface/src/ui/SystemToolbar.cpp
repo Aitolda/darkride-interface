@@ -286,6 +286,22 @@ void SystemToolbar::rebuild() {
         refresh(button, proxy);
         addWidget(button);
     }
+    fitCells();
+}
+
+// every button in one cell, the widest's: icons on one line and labels centred under them, whatever their words (Caity
+// 10-28: the bar's buttons sat out of line, each as wide as its own label)
+void SystemToolbar::fitCells() {
+    const auto buttons = findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly);
+    QSize cell;
+    for (QToolButton* button : buttons) {
+        button->setMinimumSize(0, 0);
+        button->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        cell = cell.expandedTo(button->sizeHint());
+    }
+    for (QToolButton* button : buttons) {
+        button->setFixedSize(cell);
+    }
 }
 
 void SystemToolbar::refresh(QToolButton* button, TabletButtonProxy* proxy) {
@@ -298,6 +314,9 @@ void SystemToolbar::refresh(QToolButton* button, TabletButtonProxy* proxy) {
     button->setProperty("badge", properties.value("badge").toInt());   // for tests (Test.barButton)
     button->style()->unpolish(button);
     button->style()->polish(button);
+    if (button->parent() == this) {
+        fitCells();   // a new label (Enter VR, Leave VR) may want a wider cell
+    }
 }
 
 // the QML bar's button: a rounded square in the button's colour with its icon inside, shrunk into a grey square when
