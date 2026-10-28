@@ -39,7 +39,8 @@ public:
     void setInFront(bool inFront);
 
     // [{username, ai, image, online, location: {domainId, worldId, name, path} | null}], online first, then by name;
-    // location is null unless the friend lets you see it and you could join them there (the metaverse's rule, 10-28)
+    // location is null unless the friend lets you see it and you could join them there (the metaverse's rule, 10-28);
+    // otherVersion ("older" or "newer", next to a null location): online in the other version's copy of the worlds
     QJsonArray friends() const { return _friends; }
     // [{username, image, createdAt}]: asked of you, and asked by you
     QJsonArray incoming() const { return _incoming; }

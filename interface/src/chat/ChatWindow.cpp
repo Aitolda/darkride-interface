@@ -1979,8 +1979,14 @@ void ChatWindow::updateFriends() {
             bool online = person.value("online").toBool();
             QJsonObject location = person.value("location").toObject();
             QString world = location.value("name").toString();
-            // the metaverse gives where they are only when you could join them there (F4), as People says it
-            QString status = !online ? "Offline" : location.isEmpty() ? "In a private world" : "In " + world;
+            // the metaverse gives where they are only when you could join them there (F4), as People says it; a
+            // friend in the other version's copy of the worlds (the 1.1 beta beside 1.0) is said to be there instead
+            QString otherVersion = person.value("otherVersion").toString();
+            QString status = !online                  ? "Offline"
+                             : !location.isEmpty()     ? "In " + world
+                             : otherVersion == "older" ? "On an older version of Darkride"
+                             : otherVersion == "newer" ? "On the Darkride beta"
+                                                       : "In a private world";
             QList<QPushButton*> buttons;
             auto message = button("Message");
             connect(message, &QPushButton::clicked, this, [this, username] { messageFriend(username); });
