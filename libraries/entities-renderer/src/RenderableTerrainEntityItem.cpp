@@ -15,6 +15,7 @@
 #include <set>
 
 #include <glm/gtx/transform.hpp>
+#include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -1404,6 +1405,9 @@ gpu::TexturePointer TerrainEntityRenderer::topTileFor(const terrain::TopSurface&
 
 void TerrainEntityRenderer::fetchTerrain(const QString& url, uint32_t version) {
     dropRequest();
+    if (url != _requestURL || version != _requestVersion) {
+        _fetchFailures = 0;
+    }
     _requestURL = url;
     _requestVersion = version;
     // a save writes the file at the same URL, so the version goes into the request: caches on the way (the client's
@@ -1433,20 +1437,44 @@ void TerrainEntityRenderer::fetchTerrain(const QString& url, uint32_t version) {
         if (!entity) {
             return;
         }
+        bool loaded = false;
         if (request->getResult() != ResourceRequest::Success) {
             qCWarning(entitiesrenderer) << "Terrain file" << url << "could not be fetched:" << request->getResultString();
-            entity->clearGrid();
         } else {
             QString error;
-            if (!entity->loadGrid(request->getData(), error)) {
+            loaded = entity->loadGrid(request->getData(), error);
+            if (!loaded) {
                 qCWarning(entitiesrenderer) << "Terrain file" << url << "is not usable:" << error;
-                entity->clearGrid();
             }
+        }
+        if (loaded) {
+            _fetchFailures = 0;
+        } else {
+            // no ground until a later fetch brings the file whole (one first visit in five to the LAN copy of
+            // Darkside got a file cut short at its first chunk, reported a success, and had no ground at all for
+            // the visit, 2026-10-28)
+            entity->clearGrid();
+            fetchTerrainLater(url, version);
         }
         entity->setGridSource(url, version);
         entity->gridEdited();
     });
     _request->send();
+}
+
+void TerrainEntityRenderer::fetchTerrainLater(const QString& url, uint32_t version) {
+    const int RETRY_FIRST_MS = 1000;
+    const int RETRY_LONGEST_MS = 30000;
+    const int delay = std::min(RETRY_FIRST_MS << std::min(_fetchFailures, 5), RETRY_LONGEST_MS);
+    _fetchFailures++;
+    qCWarning(entitiesrenderer) << "Terrain file" << url << "is fetched again in" << delay / 1000 << "s";
+    QTimer::singleShot(delay, this, [this, url, version] {
+        auto entity = std::dynamic_pointer_cast<RenderableTerrainEntityItem>(_entity);
+        // not if the entity has moved on to another file, or a fetch is already on its way
+        if (entity && !_request && entity->getTerrainURL() == url && entity->getTerrainVersion() == version) {
+            fetchTerrain(url, version);
+        }
+    });
 }
 
 void TerrainEntityRenderer::dropRequest() {
