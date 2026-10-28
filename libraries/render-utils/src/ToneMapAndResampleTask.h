@@ -79,7 +79,7 @@ public:
     // NaN Pixels)
     static void setShowNaNPixels(bool show) { _showNaNPixels = show; }
 
-    // FSR in VR too (Developer > Render > Upscaling (FSR) in VR), for trying it in a headset; off, VR keeps the stretch
+    // FSR in VR too (Developer > Render > Upscaling (FSR) in VR), on by default; off, VR keeps the stretch
     static void setUpscaleFSRInVR(bool on) { _upscaleFSRInVR = on; }
 
     // Inputs: lightingFramebuffer, destinationFramebuffer
