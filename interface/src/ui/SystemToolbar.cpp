@@ -11,6 +11,7 @@
 
 #include <algorithm>
 
+#include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
@@ -34,14 +35,19 @@
 
 namespace {
     const QString QML_TOOLBAR = "com.highfidelity.interface.toolbar.system";   // the floating bar (hifi/Desktop.qml)
-    const int BUTTON = 48;              // as the QML bar draws them (hifi/toolbars/ToolbarButton.qml)
-    // in a column, on the left or the right: a skin's padding made a button 94 px tall, and ten no longer fitted a
-    // laptop's window (10-24)
-    const int SIDE_BUTTON = 36;
-    const qreal RADIUS = 4.0;
-    const qreal ACTIVE_PADDING = 8.0;
-    const qreal BADGE = 18.0;           // the unread count's red capsule, at the icon's top right (the Chat button)
+    // look A, "plain icons" (Caity 10-28, team/editor-ui/mockups/toolbar-1028.png): one line icon per button on the
+    // dark bar, its label under it, every button in the same cell; an open panel lights its button Darkride cyan, the
+    // pointer greys it, a muted microphone is red. The floating bar draws the same (hifi/toolbars/BarButton.qml).
+    const QSize ICON_AREA(44, 28);      // the icon with room at its top right for the badge
+    const QRectF ICON(10, 4, 24, 24);
+    const QSize SIDE_CELL(68, 58);      // in a column, on the left or the right
+    const QSize ROW_CELL(64, 58);       // in a row, along the top or the bottom
+    const qreal BADGE = 15.0;           // the count's red capsule, at the icon's top right (Chat, People)
+    const QColor ICON_COLOR("#f4f6f8");
+    const QColor OPEN_COLOR("#00afff");      // Darkride cyan
+    const QColor MUTED_COLOR("#ff5555");
     const QStringList PLACES { "floating", "top", "left", "right", "bottom" };
+
 
     Qt::ToolBarArea areaOf(const QString& place) {
         if (place == "top") return Qt::TopToolBarArea;
@@ -126,32 +132,36 @@ SystemToolbar::SystemToolbar() : QToolBar("Buttons") {
     setFloatable(false);
     setAllowedAreas(Qt::AllToolBarAreas);
     setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-    setIconSize(QSize(BUTTON, BUTTON));
+    setIconSize(ICON_AREA);
     toggleViewAction()->setEnabled(false);   // the main window's toolbar menu doesn't hide it: Settings places it
     setSkinned(false);
-    connect(this, &QToolBar::orientationChanged, this, [this]() {
-        const QSize size(buttonSize(), buttonSize());
-        setIconSize(size);
-        for (QToolButton* button : findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly)) {
-            button->setIconSize(size);
-        }
-        rebuild();   // the pictures again, a badge drawn for the new size
-    });
+    connect(this, &QToolBar::orientationChanged, this, &SystemToolbar::fitCells);   // a column's cells are wider
     hide();
 }
 
-int SystemToolbar::buttonSize() const {
-    return orientation() == Qt::Vertical ? SIDE_BUTTON : BUTTON;
+// by its label ("Enter VR": icons/bar/enter-vr.svg); a button the bar has none for (a script's own) shows its own icon
+// in the bar's colours
+QString SystemToolbar::iconFor(const QString& text, bool muted) const {
+    QString name = text.trimmed().toLower().replace(' ', '-');
+    if (name == "audio" && muted) {
+        name = "audio-muted";
+    }
+    const QString path = "icons/bar/" + name + ".svg";
+    return !name.isEmpty() && QFile::exists(PathUtils::resourcesPath() + path) ? path : QString();
 }
 
 void SystemToolbar::setSkinned(bool skinned) {
-    // its own look, until a skin gives one (the QML bar's: white captions on a dark strip)
+    _skinned = skinned;
+    // its own look (A), until a skin gives one; the skin's style sheet can tell an open panel's button by
+    // QToolButton[active="true"]
     setStyleSheet(skinned ? QString() :
-        "QToolBar#systemToolbar { background: #1d1f21; border: none; spacing: 4px; padding: 6px; }"
-        "QToolBar#systemToolbar QToolButton { color: #ffffff; font-size: 12px; border: none; border-radius: 6px;"
-        " padding: 2px 4px; }"
-        "QToolBar#systemToolbar QToolButton:hover { background: rgba(255, 255, 255, 0.10); }"
-        "QToolBar#systemToolbar QToolButton:pressed { background: rgba(255, 255, 255, 0.18); }");
+        "QToolBar#systemToolbar { background: #171b2d; border: none; spacing: 2px; padding: 8px 6px; }"
+        "QToolBar#systemToolbar QToolButton { color: #9aa1bd; font-size: 11px; border: none; border-radius: 9px;"
+        " padding: 0px; }"
+        "QToolBar#systemToolbar QToolButton:hover { background: #333a5a; }"
+        "QToolBar#systemToolbar QToolButton:pressed { background: #3d4568; }"
+        "QToolBar#systemToolbar QToolButton[active=\"true\"] { color: #00afff; background: rgba(0, 175, 255, 36); }");
+    rebuild();   // the icons in the new colours
 }
 
 void SystemToolbar::attach(QMainWindow* window, TabletProxy* tablet) {
@@ -266,7 +276,7 @@ void SystemToolbar::rebuild() {
         }
         auto button = new QToolButton(this);
         button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-        button->setIconSize(QSize(buttonSize(), buttonSize()));
+        button->setIconSize(ICON_AREA);
         button->setAutoRaise(true);
         button->setFocusPolicy(Qt::NoFocus);
         QPointer<TabletButtonProxy> weak(proxy);
@@ -293,7 +303,7 @@ void SystemToolbar::rebuild() {
 // 10-28: the bar's buttons sat out of line, each as wide as its own label)
 void SystemToolbar::fitCells() {
     const auto buttons = findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly);
-    QSize cell;
+    QSize cell = orientation() == Qt::Vertical ? SIDE_CELL : ROW_CELL;
     for (QToolButton* button : buttons) {
         button->setMinimumSize(0, 0);
         button->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
@@ -307,7 +317,13 @@ void SystemToolbar::fitCells() {
 void SystemToolbar::refresh(QToolButton* button, TabletButtonProxy* proxy) {
     const QVariantMap properties = proxy->getProperties();
     const bool active = properties.value("isActive").toBool();
-    button->setIcon(QIcon(buttonPicture(properties, active)));
+    // QIcon's own disabled and selected forms would grey or darken it: the one picture in every mode
+    QIcon icon;
+    const QPixmap picture = buttonPicture(properties, active);
+    for (auto mode : { QIcon::Normal, QIcon::Active, QIcon::Selected }) {
+        icon.addPixmap(picture, mode);
+    }
+    button->setIcon(icon);
     button->setText(properties.value(active ? "activeText" : "text", properties.value("text")).toString());
     // a skin's style sheet can tell an open app's button: QToolButton[active="true"]
     button->setProperty("active", active);
@@ -319,53 +335,52 @@ void SystemToolbar::refresh(QToolButton* button, TabletButtonProxy* proxy) {
     }
 }
 
-// the QML bar's button: a rounded square in the button's colour with its icon inside, shrunk into a grey square when
-// its app is open
+// a button's picture: its line icon, white, cyan while its panel is open, red for a muted microphone (a skin's text
+// colour under a skin), with the count waiting as a red capsule at the icon's top right
 QPixmap SystemToolbar::buttonPicture(const QVariantMap& properties, bool active) const {
     const qreal ratio = devicePixelRatioF();
-    QPixmap pixmap(QSize(BUTTON, BUTTON) * ratio);
+    QPixmap pixmap(ICON_AREA * ratio);
     pixmap.setDevicePixelRatio(ratio);
     pixmap.fill(Qt::transparent);
+
+    const bool muted = properties.value("muted").toBool();
+    const QColor color = muted ? MUTED_COLOR : active ? OPEN_COLOR
+        : _skinned ? palette().color(QPalette::ButtonText) : ICON_COLOR;
+    QString source = iconFor(properties.value("text").toString(), muted);
+    if (source.isEmpty()) {
+        source = active ? properties.value("activeIcon", properties.value("icon")).toString()
+                        : properties.value("icon").toString();
+    }
+    // the icon alone, then filled with the colour where it's drawn
+    QImage glyph((ICON.size() * ratio).toSize(), QImage::Format_ARGB32_Premultiplied);
+    glyph.setDevicePixelRatio(ratio);
+    glyph.fill(Qt::transparent);
+    {
+        QPainter painter(&glyph);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        drawIcon(painter, source, QRectF(QPointF(0, 0), ICON.size()));
+        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        painter.fillRect(QRectF(QPointF(0, 0), ICON.size()), color);
+    }
+
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setRenderHint(QPainter::SmoothPixmapTransform);
-    painter.setPen(Qt::NoPen);
+    painter.drawImage(ICON.topLeft(), glyph);
 
-    QRectF square(0, 0, BUTTON, BUTTON);
-    if (active) {
-        painter.setBrush(QColor(153, 153, 153, 153));
-        painter.drawRoundedRect(square, RADIUS, RADIUS);
-        square.adjust(ACTIVE_PADDING / 2, ACTIVE_PADDING / 2, -ACTIVE_PADDING / 2, -ACTIVE_PADDING / 2);
-    }
-    QPainterPath shape;
-    shape.addRoundedRect(square, RADIUS, RADIUS);
-    painter.setClipPath(shape);
-    painter.fillPath(shape, QColor(properties.value("backgroundColor", "#1d1f21").toString()));
-
-    const qreal padding = properties.value("iconPadding", 8).toReal();
-    const QString icon = active ? properties.value("activeIcon", properties.value("icon")).toString()
-                                : properties.value("icon").toString();
-    drawIcon(painter, icon, square.adjusted(padding, padding, -padding, -padding));
-
-    // a count waiting (chat's unread mentions and direct messages): a red capsule over the top right corner, as the
-    // Dock's
+    // a count waiting (chat's unread mentions and direct messages, People's friend requests), as the Dock's
     const int badge = properties.value("badge").toInt();
     if (badge > 0) {
-        painter.setClipping(false);
-        // drawn at 48 px and shown at the bar's size: the same size on screen either way
-        const qreal scale = qreal(BUTTON) / buttonSize();
-        const qreal height = BADGE * scale;
         const QString number = badge > 99 ? "99+" : QString::number(badge);
         QFont font = painter.font();
-        font.setPixelSize(qRound(12 * scale));
+        font.setPixelSize(10);
         font.setBold(true);
         painter.setFont(font);
-        const qreal width = std::min<qreal>(BUTTON, std::max(height, QFontMetricsF(font).horizontalAdvance(number) +
-                                                                          9.0 * scale));
-        const QRectF capsule(BUTTON - width, 0, width, height);
+        const qreal width = std::max(BADGE, QFontMetricsF(font).horizontalAdvance(number) + 7.0);
+        const QRectF capsule(std::min<qreal>(ICON.right() - 5, ICON_AREA.width() - width), 0, width, BADGE);
         painter.setBrush(QColor(255, 59, 48));   // Apple's system red
         painter.setPen(Qt::NoPen);
-        painter.drawRoundedRect(capsule, height / 2, height / 2);
+        painter.drawRoundedRect(capsule, BADGE / 2, BADGE / 2);
         painter.setPen(Qt::white);
         painter.drawText(capsule, Qt::AlignCenter, number);
     }

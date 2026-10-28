@@ -382,8 +382,9 @@ public slots:
      * @function Test.barButton
      * @param {string} text - The button's text, such as "People".
      * @param {boolean} [click=false] - Whether to click it.
-     * @returns {object} <code>{ active, badge }</code>: whether it shows active (before the click's effect), and the
-     *     count on its red badge (0 for none); empty when there's no such button.
+     * @returns {object} <code>{ active, badge, x, y, width, height, barWidth, barHeight }</code>: whether it shows
+     *     active (before the click's effect), the count on its red badge (0 for none), its cell in the bar and the bar's
+     *     size; empty when there's no such button.
      */
     Q_INVOKABLE QVariantMap barButton(const QString& text, bool click = false);
 

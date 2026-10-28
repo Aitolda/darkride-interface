@@ -17,21 +17,25 @@ var TABLET_BUTTON_NAME = "Audio";
 var HOME_BUTTON_TEXTURE = "http://hifi-content.s3.amazonaws.com/alan/dev/tablet-with-home-button.fbx/tablet-with-home-button.fbm/button-root.png";
 var AUDIO_QML_SOURCE = "hifi/audio/Audio.qml";
 
+// muted: the bar draws its microphone red (ui/SystemToolbar.cpp, hifi/toolbars/BarButton.qml)
 var MUTE_ICONS = {
     icon: "icons/tablet-icons/mic-mute.svg",
-    backgroundColor: "#f44336" // red 500
+    backgroundColor: "#f44336", // red 500
+    muted: true
     // icon: "icons/tablet-icons/mic-mute-i.svg",
     // activeIcon: "icons/tablet-icons/mic-mute-a.svg"
 };
 
 var UNMUTE_ICONS = {
     icon: "icons/tablet-icons/mic-unmute-i.svg",
-    backgroundColor: "#1d1f21"
+    backgroundColor: "#1d1f21",
+    muted: false
     // activeIcon: "icons/tablet-icons/mic-unmute-a.svg",
 };
 var PTT_ICONS = {
     icon: "icons/tablet-icons/mic-ptt-i.svg",
-    backgroundColor: "#1d1f21"
+    backgroundColor: "#1d1f21",
+    muted: false
     // activeIcon: "icons/tablet-icons/mic-ptt-a.svg"
 };
 

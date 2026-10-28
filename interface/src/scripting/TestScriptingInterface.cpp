@@ -869,8 +869,12 @@ QVariantMap TestScriptingInterface::barButton(const QString& text, bool click) {
             if (click) {
                 button->click();
             }
+            // its cell in the bar, for the kits that check every button has the same (toolbar-a)
             return QVariantMap { { "active", button->property("active").toBool() },
-                                 { "badge", button->property("badge").toInt() } };
+                                 { "badge", button->property("badge").toInt() },
+                                 { "x", button->x() }, { "y", button->y() },
+                                 { "width", button->width() }, { "height", button->height() },
+                                 { "barWidth", bar->width() }, { "barHeight", bar->height() } };
         }
     }
     return QVariantMap();

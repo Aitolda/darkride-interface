@@ -52,6 +52,10 @@ public:
     /// a skin is on: the bar drops its own look for the application's style sheet (Skins)
     void setSkinned(bool skinned);
 
+    /// the bar's own line icon for a button (look A), by its label and, for Audio, whether it's muted
+    /// ("icons/bar/audio-muted.svg"), or "" when the bar has none for it; the floating bar asks it too (BarButton.qml)
+    Q_INVOKABLE QString iconFor(const QString& text, bool muted) const;
+
 signals:
     void placeChanged();
 
@@ -71,7 +75,6 @@ private:
     void fitCells();   // every button the size of the largest
     void updateVisibility();
     void rememberArea();
-    int buttonSize() const;   // an icon's size: smaller in a column
     QPixmap buttonPicture(const QVariantMap& properties, bool active) const;
 
     QPointer<QMainWindow> _window;
@@ -81,6 +84,7 @@ private:
     // always waited: not on the sign-in screen
     bool _allowed { false };
     bool _wanted { false };   // updateVisibility's word, which setVisible keeps to
+    bool _skinned { false };  // a skin's style sheet draws the bar: the icons take its text colour
 };
 
 #endif // hifi_SystemToolbar_h
