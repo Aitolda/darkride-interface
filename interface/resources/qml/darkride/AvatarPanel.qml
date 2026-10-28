@@ -221,7 +221,8 @@ Page {
             MetaverseRequests.send("GET", "/api/user/files", null, function (error, code, data) {
                 busy = false;
                 if (error || !data) {
-                    status = "Couldn't list My Files: " + error + ".";
+                    console.log("Avatar: My Files failed: " + code + " " + error);
+                    status = "Couldn't list My Files. Try again in a moment.";
                     return;
                 }
                 var found = [];
@@ -775,7 +776,8 @@ Page {
             MetaverseRequests.send("GET", "/api/user/nametag-details", null, function (error, code, data) {
                 busy = false;
                 if (error) {
-                    status = "Couldn't read your nametag: " + error + ".";
+                    console.log("Avatar: nametag failed: " + code + " " + error);
+                    status = "Couldn't read your nametag. Try again in a moment.";
                     return;
                 }
                 displayNameField.text = data && data.displayName ? data.displayName : "";
@@ -793,7 +795,8 @@ Page {
                                    function (error, code, data) {
                 busy = false;
                 if (error) {
-                    status = "Not saved: " + error + ".";
+                    console.log("Avatar: nametag save failed: " + code + " " + error);
+                    status = "Couldn't save your nametag. Try again in a moment.";
                     return;
                 }
                 status = "Saved. Others see it after you rejoin the world.";

@@ -43,6 +43,27 @@ Page {
     readonly property var kinds: ["popular", "liked", "private"]
     readonly property string tabSetting: "io.darkride.explorePanel.tab"
     readonly property string protocol: Window.protocolSignature()
+
+    // what a failed metaverse request tells the player: the metaverse's own words where it wrote them for people (its
+    // rule, 10-28: a 409, a 429, or a 400/403/404 whose message is a sentence, not "Forbidden" or "Not Found"; its
+    // validation answers are lists), else ours by the status; its technical words go to the log, never the panel
+    // (Caity 10-28: "amateur hour"). gone: the 404's sentence; serverDown: a 5xx's
+    function plainly(code, data, failed, gone, serverDown) {
+        var message = data && typeof data.message === "string" ? data.message.trim() : "";
+        var forPeople = message !== "" && message !== "Forbidden" && message !== "Not Found";
+        if (forPeople && [400, 403, 404, 409, 429].indexOf(code) >= 0) {
+            return /[.!?]$/.test(message) ? message : message + ".";
+        }
+        if (data && data.message) {
+            console.log("Explore: the metaverse answered " + code + " " + JSON.stringify(data.message));
+        }
+        return code === 0 ? "Couldn't reach Darkride. Check your connection and try again."
+            : code === 401 ? "Sign in again, then try once more."
+            : code === 403 ? "You can't do that here."
+            : code === 404 ? gone
+            : code >= 500 ? serverDown
+            : failed;
+    }
     Component.onCompleted: {
         currentTab = Math.max(0, Math.min(2, Settings.getValue(tabSetting, 0)));
         explore.load(true);
@@ -117,7 +138,8 @@ Page {
             };
             MetaverseRequests.send("GET", path + query(), null, function (error, code, data) {
                 if (error) {
-                    status = "Couldn't list the worlds: " + error + ".";
+                    console.log("Explore: worlds failed: " + code + " " + error);
+                    status = "Couldn't list the worlds. Try again in a moment.";
                 } else {
                     status = "";
                     online = Array.isArray(data) ? data : [];
@@ -300,7 +322,9 @@ Page {
                                    { visibility: visibility, protocol: root.protocol }, function (error, code, data) {
                 if (error || !data || !data.address) {
                     hoppingWorld = "";
-                    done(data && data.message ? String(data.message) : "Couldn't start an instance: " + error + ".");
+                    done(root.plainly(code, data, "Couldn't start an instance. Try again in a minute.",
+                                      "That world isn't there any more.",
+                                      "Couldn't start a server right now. Try again in a minute."));
                     return;
                 }
                 done("");
@@ -373,7 +397,10 @@ Page {
                                    function (error, code, data) {
                 busy = false;
                 if (error) {
-                    status = "Couldn't change edit mode: " + ((data && data.message) || error) + ".";
+                    status = root.plainly(code, data,
+                                          on ? "Couldn't turn edit mode on." : "Couldn't turn edit mode off.",
+                                          "That instance is gone.",
+                                          "Couldn't reach the instance's server. Try again in a minute.");
                     return;
                 }
                 current = data;
@@ -386,7 +413,9 @@ Page {
             MetaverseRequests.send("POST", "/api/instances/" + current.instance.id + "/save", null,
                                    function (error, code, data) {
                 busy = false;
-                status = error ? "Couldn't save: " + ((data && data.message) || error) + "."
+                status = error ? root.plainly(code, data, "Couldn't save the world. Try again in a moment.",
+                                              "That instance is gone.",
+                                              "Couldn't reach the instance's server. Try again in a minute.")
                     : "Saved as version " + data.version + ", " + data.entities + " entities.";
                 refresh();
             });
@@ -397,7 +426,9 @@ Page {
             confirmClose = false;
             MetaverseRequests.send("DELETE", "/api/instances/" + current.instance.id, null, function (error, code, data) {
                 busy = false;
-                status = error ? "Couldn't close the instance: " + ((data && data.message) || error) + "." : "";
+                status = error ? root.plainly(code, data, "Couldn't close the instance. Try again in a moment.",
+                                              "That instance is already gone.",
+                                              "Couldn't reach the instance's server. Try again in a minute.") : "";
                 if (!error) {
                     current = null;
                 }

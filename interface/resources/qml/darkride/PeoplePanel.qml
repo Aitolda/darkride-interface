@@ -167,7 +167,8 @@ Page {
             MetaverseRequests.send("GET", "/api/v1/friends", null, function (error, code, answer) {
                 busy = false;
                 if (error) {
-                    status = "Couldn't read your friends: " + error + ".";
+                    console.log("People: friends failed: " + code + " " + error);
+                    status = "Couldn't read your friends. Try again in a moment.";
                     return;
                 }
                 var list = (answer && answer.data && answer.data.friends) || [];
@@ -493,7 +494,9 @@ Page {
                 busy = false;
                 if (error) {
                     data = null;
-                    status = code === 404 ? "There's no one called " + asked + "." : "Couldn't read the profile: " + error + ".";
+                    console.log("People: profile failed: " + code + " " + error);
+                    status = code === 404 ? "There's no one called " + asked + "."
+                        : "Couldn't read the profile. Try again in a moment.";
                     return;
                 }
                 data = answer;
