@@ -10,7 +10,9 @@
 
 #include <algorithm>
 
+#include <QtCore/QDateTime>
 #include <QtCore/QJsonDocument>
+#include <QtCore/QSet>
 #include <QtCore/QUrl>
 #include <QtNetwork/QNetworkAccessManager>
 #include <QtNetwork/QNetworkReply>
@@ -19,8 +21,11 @@
 
 #include "ChatLogging.h"
 
-// the requests waiting for you, asked again (a badge's worth: one small answer a minute while signed in)
-static const int REQUESTS_REFRESH_MS = 60 * 1000;
+// the requests waiting for you, asked again (a badge's worth: one small answer each time, while signed in): every 10 s
+// while the app is in front, once a minute behind it; coming to the front asks at once, unless asked just now
+static const int REQUESTS_REFRESH_MS = 10 * 1000;
+static const int REQUESTS_REFRESH_BEHIND_MS = 60 * 1000;
+static const int REQUESTS_FRESH_MS = 3 * 1000;
 
 static QString named(const QString& username) {
     return QString::fromUtf8(QUrl::toPercentEncoding(username));
@@ -46,11 +51,25 @@ static QString reasonOf(QNetworkReply* reply) {
 
 FriendsService::FriendsService() {
     _requestsTimer.setInterval(REQUESTS_REFRESH_MS);
-    connect(&_requestsTimer, &QTimer::timeout, this, [this] {
-        if (DependencyManager::get<AccountManager>()->isLoggedIn()) {
-            request("requests", "/api/v1/friends/requests", QNetworkAccessManager::GetOperation);
-        }
-    });
+    connect(&_requestsTimer, &QTimer::timeout, this, &FriendsService::askRequests);
+}
+
+void FriendsService::setInFront(bool inFront) {
+    if (inFront == _inFront) {
+        return;
+    }
+    _inFront = inFront;
+    _requestsTimer.setInterval(inFront ? REQUESTS_REFRESH_MS : REQUESTS_REFRESH_BEHIND_MS);
+    if (inFront && QDateTime::currentMSecsSinceEpoch() - _requestsAskedAt > REQUESTS_FRESH_MS) {
+        askRequests();
+    }
+}
+
+void FriendsService::askRequests() {
+    if (DependencyManager::get<AccountManager>()->isLoggedIn()) {
+        _requestsAskedAt = QDateTime::currentMSecsSinceEpoch();
+        request("requests", "/api/v1/friends/requests", QNetworkAccessManager::GetOperation);
+    }
 }
 
 void FriendsService::start() {
@@ -78,6 +97,7 @@ void FriendsService::refresh() {
         return;
     }
     request("friends", "/api/v1/friends", QNetworkAccessManager::GetOperation);
+    _requestsAskedAt = QDateTime::currentMSecsSinceEpoch();
     request("requests", "/api/v1/friends/requests", QNetworkAccessManager::GetOperation);
     request("availability", "/api/v1/user/availability", QNetworkAccessManager::GetOperation);
 }
@@ -149,8 +169,21 @@ void FriendsService::replied(QNetworkReply* reply, const QJsonObject& request) {
         emit changed();
     } else if (action == "requests") {
         _incoming = data.value("incoming").toArray();
-        _outgoing = data.value("outgoing").toArray();
+        QJsonArray outgoing = data.value("outgoing").toArray();
+        // a request of yours gone (taken up or turned down, elsewhere): the friends asked again too
+        QSet<QString> still;
+        for (const QJsonValue& value : outgoing) {
+            still.insert(value.toObject().value("username").toString());
+        }
+        bool answered = false;
+        for (const QJsonValue& value : _outgoing) {
+            answered = answered || !still.contains(value.toObject().value("username").toString());
+        }
+        _outgoing = outgoing;
         emit changed();
+        if (answered) {
+            this->request("friends", "/api/v1/friends", QNetworkAccessManager::GetOperation);
+        }
     } else if (action == "availability" || action == "setAvailability") {
         QString availability = data.value("availability").toString();
         if (action == "setAvailability" && availability.isEmpty()) {

@@ -32,8 +32,11 @@ class FriendsService : public QObject, public Dependency {
 public:
     FriendsService();
 
-    // follows the Darkride account from now on: everything asked at sign-in, then the requests once a minute
+    // follows the Darkride account from now on: everything asked at sign-in, then the requests every 10 s while the
+    // app is in front, once a minute behind it
     void start();
+    // the app came to the front (the requests asked at once) or went behind
+    void setInFront(bool inFront);
 
     // [{username, ai, image, online, location: {domainId, worldId, name, path} | null}], online first, then by name;
     // location is null unless the friend lets you see it and you could join them there (the metaverse's rule, 10-28)
@@ -75,6 +78,7 @@ private slots:
 private:
     void request(const QString& action, const QString& path, int operation, const QString& username = QString(),
                  const QJsonObject& body = QJsonObject());
+    void askRequests();
 
     QJsonArray _friends;
     QJsonArray _incoming;
@@ -82,6 +86,8 @@ private:
     QString _availability;
     QString _error;
     QTimer _requestsTimer;
+    bool _inFront { true };
+    qint64 _requestsAskedAt { 0 };
 };
 
 #endif // hifi_FriendsService_h
