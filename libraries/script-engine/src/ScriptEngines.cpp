@@ -345,12 +345,16 @@ void ScriptEngines::loadScripts() {
         auto url = script.toUrl();
         if (!url.isEmpty()) {
             // a script of the app's own that the app no longer has (deleted from the repo, as the old Create app's
-            // system/create/edit.js was, 10-24) is left out, and so drops off the list when it is next saved
+            // system/create/edit.js was, 10-24) is left out, and so drops off the list when it is next saved.
+            // expandScriptPath gives a URL path ("/C:/..." on Windows), so the file is looked for by its local path.
             const QUrl normalized = normalizeScriptURL(url);
-            if (normalized.scheme() == "file" && normalized.path().startsWith("/~/") &&
-                !QFileInfo::exists(expandScriptPath(normalized.path()))) {
-                qCDebug(scriptengine) << "A saved script the app no longer has is left out:" << url;
-                continue;
+            if (normalized.scheme() == "file" && normalized.path().startsWith("/~/")) {
+                QUrl expanded = normalized;
+                expanded.setPath(expandScriptPath(normalized.path()));
+                if (!QFileInfo::exists(expanded.toLocalFile())) {
+                    qCDebug(scriptengine) << "A saved script the app no longer has is left out:" << url;
+                    continue;
+                }
             }
             if (defaultScriptsOverrideSet && url == DEFAULT_SCRIPTS_LOCATION) {
                 _defaultScriptsWasRunning = true;
