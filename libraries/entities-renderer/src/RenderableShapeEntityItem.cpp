@@ -495,6 +495,15 @@ void ShapeEntityRenderer::doRender(RenderArgs* args) {
     RenderLayer renderLayer;
     glm::vec4 outColor;
     Pipeline pipelineType;
+    {
+        // Material entities add and remove their layers on the main thread under _materialsLock; [] here inserted
+        // into the map under this renderer's lock instead, on the render thread (two writers at once)
+        std::lock_guard<std::mutex> lock(_materialsLock);
+        auto found = _materials.find("0");
+        if (found != _materials.end()) {
+            materials = found->second;
+        }
+    }
     withReadLock([&] {
         geometryShape = geometryCache->getShapeForEntityShape(_shape);
         primitiveMode = _primitiveMode;
@@ -513,7 +522,6 @@ void ShapeEntityRenderer::doRender(RenderArgs* args) {
             _renderTransform.setRotation(rotation);
         }
         batch.setModelTransform(_renderTransform);  // use a transform with scale, rotation, registration point and translation
-        materials = _materials["0"];
         pipelineType = getPipelineType(materials);
         auto& schema = materials.getSchemaBuffer().get<graphics::MultiMaterial::Schema>();
         outColor = glm::vec4(ColorUtils::tosRGBVec3(schema._albedo), schema._opacity);

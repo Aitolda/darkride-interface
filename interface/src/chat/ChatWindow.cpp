@@ -2,8 +2,9 @@
 //  ChatWindow.cpp
 //  interface/src/chat
 //
-//  Distributed under the Apache License, Version 2.0.
-//  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
+//  Copyright 2026 Darkride.
+//
+//  Distributed under the MIT License.
 //
 
 #include "ChatWindow.h"
@@ -14,8 +15,10 @@
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QLocale>
+#include <QtCore/QMimeDatabase>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTimer>
@@ -33,6 +36,7 @@
 #include <QtWidgets/QAbstractButton>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
+#include <QtWidgets/QFileDialog>
 #include <QtWidgets/QGraphicsOpacityEffect>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
@@ -62,6 +66,10 @@
 #include "InterfaceLogging.h"
 #include "MainWindow.h"
 #include "ui/PanelTheme.h"
+
+#if defined(Q_OS_MACOS)
+#include <sys/xattr.h>
+#endif
 
 // the web chat's colours (darkride_chat client/src/style.css), from the Darkride website's; under a skin, the skin's
 // own colours take their places (ChatWindow::applyColours, from COLOURS below)
@@ -103,6 +111,10 @@ static const QString FRIENDS_ROW = "friends:";
 // a friend's lists again at most this often when the window comes forward
 static const qint64 FRIENDS_FRESH_MS = 15 * 1000;
 static const int FRIENDS_REFRESH_MS = 60 * 1000;
+// timeline events this close together are drawn once (a busy or flooded room); and the most items a conversation
+// shows, the chat library's own cap (TIMELINE_ITEMS_MAX), so scrolling up stops asking for older ones there
+static const int RENDER_DELAY_MS = 50;
+static const int TIMELINE_ITEMS_MAX = 500;
 // a message's picture fits in this, as Discord's do in a narrower column (narrow: the chat panel docked beside the
 // 3D view, one column at a time)
 static const QSize PICTURE_MAX(400, 300);
@@ -117,6 +129,10 @@ static const int SHORT_HEIGHT = 360;
 static const QSize FLOATING_SIZE(940, 640);
 // a GIF bigger than this shows as its first frame from a thumbnail rather than playing
 static const qint64 GIF_PLAY_MAX_BYTES = 12 * 1024 * 1024;
+// a GIF plays only this big in pixels too (frames are decoded on the main thread); a picture bigger than the second
+// isn't decoded here at all (its grey box still opens it in the system's viewer)
+static const qint64 GIF_PLAY_MAX_PIXELS = 1000 * 1000;
+static const qint64 PICTURE_MAX_PIXELS = 60 * 1000 * 1000;
 static const int AVATAR_FETCH_SIZE = 96;
 
 static Setting::Handle<QByteArray> chatWindowGeometry("chat/windowGeometry");
@@ -269,6 +285,35 @@ static QSize pictureBox(QSize size, const QSize& max) {
         size.scale(max, Qt::KeepAspectRatio);
     }
     return size.expandedTo(QSize(16, 16));
+}
+
+// a name from a message (the sender's) as a file's name: letters, digits, spaces, dashes and underscores only (so no
+// path, no ".." and no leading dot), not one of Windows' device names, at most 80 characters; its extension left off
+static QString safeBaseName(const QString& name) {
+    QString base = QFileInfo(name).completeBaseName();
+    base.replace(QRegularExpression(R"([^\p{L}\p{N} _\-]+)"), "_");
+    base = base.trimmed().left(80);
+    static const QRegularExpression DEVICE("^(con|prn|aux|nul|com[1-9]|lpt[1-9])$", QRegularExpression::CaseInsensitiveOption);
+    if (DEVICE.match(base).hasMatch()) {
+        base = "file-" + base;
+    }
+    return base.isEmpty() ? QString("download") : base;
+}
+
+// a file written from chat, marked as downloaded from the internet as browsers mark theirs, so the system asks before
+// running it (Gatekeeper on macOS, SmartScreen on Windows)
+static void markDownloaded(const QString& path) {
+#if defined(Q_OS_MACOS)
+    QByteArray value = QString("0083;%1;Darkride;").arg(QDateTime::currentSecsSinceEpoch(), 8, 16, QChar('0')).toUtf8();
+    setxattr(QFile::encodeName(path).constData(), "com.apple.quarantine", value.constData(), value.size(), 0, 0);
+#elif defined(Q_OS_WIN)
+    QFile zone(path + ":Zone.Identifier");
+    if (zone.open(QIODevice::WriteOnly)) {
+        zone.write("[ZoneTransfer]\r\nZoneId=3\r\n");
+    }
+#else
+    Q_UNUSED(path);
+#endif
 }
 
 static QString compactJson(const QJsonValue& value) {
@@ -599,8 +644,10 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     auto meText = new QVBoxLayout();
     meText->setSpacing(0);
     _userName = new QLabel(me);
+    _userName->setTextFormat(Qt::PlainText);   // what the network says (names, room names, errors): never styled text
     _userName->setObjectName("ChatMeName");
     _userStatus = new QLabel(me);
+    _userStatus->setTextFormat(Qt::PlainText);
     _userStatus->setObjectName("ChatMeStatus");
     meText->addWidget(_userName);
     meText->addWidget(_userStatus);
@@ -647,6 +694,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     auto stateLayout = new QVBoxLayout(statePage);
     stateLayout->addStretch(1);
     _stateText = new QLabel(statePage);
+    _stateText->setTextFormat(Qt::PlainText);
     _stateText->setObjectName("ChatState");
     _stateText->setAlignment(Qt::AlignCenter);
     _stateText->setWordWrap(true);
@@ -666,6 +714,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     auto inviteLayout = new QVBoxLayout(invitePage);
     inviteLayout->addStretch(1);
     _inviteText = new QLabel(invitePage);
+    _inviteText->setTextFormat(Qt::PlainText);
     _inviteText->setObjectName("ChatState");
     _inviteText->setAlignment(Qt::AlignCenter);
     _inviteText->setWordWrap(true);
@@ -714,6 +763,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     _composer->installEventFilter(this);
     composerLayout->addWidget(_composer);
     _composerNote = new QLabel(composerArea);
+    _composerNote->setTextFormat(Qt::PlainText);
     _composerNote->setObjectName("ChatComposerNote");
     _composerNote->setFixedHeight(18);
     composerLayout->addWidget(_composerNote);
@@ -743,6 +793,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     tabs->addStretch(1);
     friendsLayout->addLayout(tabs);
     _addFriendNote = new QLabel(friendsPage);
+    _addFriendNote->setTextFormat(Qt::PlainText);
     _addFriendNote->setObjectName("ChatFriendsNote");
     _addFriendNote->setContentsMargins(16, 0, 16, 0);
     _addFriendNote->setWordWrap(true);
@@ -760,6 +811,7 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     _friendsList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     listLayout->addWidget(_friendsList, 1);
     _friendsEmpty = new QLabel(listPage);
+    _friendsEmpty->setTextFormat(Qt::PlainText);
     _friendsEmpty->setObjectName("ChatState");
     _friendsEmpty->setAlignment(Qt::AlignCenter);
     _friendsEmpty->setWordWrap(true);
@@ -789,6 +841,14 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     connect(send, &QPushButton::clicked, this, &ChatWindow::sendFriendRequest);
     connect(_addFriendName, &QLineEdit::returnPressed, this, &ChatWindow::sendFriendRequest);
     _friendsTabs.value(_friendsTab)->setChecked(true);
+    // a busy or flooded room sends timeline events faster than the conversation can be drawn: they're drawn together
+    _renderTimer = new QTimer(this);
+    _renderTimer->setSingleShot(true);
+    _renderTimer->setInterval(RENDER_DELAY_MS);
+    connect(_renderTimer, &QTimer::timeout, this, [this] {
+        renderTimeline();
+        markReadIfSeen();
+    });
     _friendsTimer = new QTimer(this);
     _friendsTimer->setInterval(FRIENDS_REFRESH_MS);
     connect(_friendsTimer, &QTimer::timeout, this, [this] { askFriends(true); });
@@ -818,7 +878,8 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
         }
         _stickToBottom = value >= _timeline->verticalScrollBar()->maximum() - 4;
         auto service = DependencyManager::get<ChatService>();
-        if (value == 0 && service && !_room.isEmpty() && !_roomStart && !_loadingOlder && !_items.isEmpty()) {
+        if (value == 0 && service && !_room.isEmpty() && !_roomStart && !_loadingOlder && !_items.isEmpty() &&
+            _items.size() < TIMELINE_ITEMS_MAX) {
             _loadingOlder = true;
             _anchorBottom = true;
             service->loadOlder(_room);
@@ -864,6 +925,11 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
             if (op == "send" || op == "join" || op == "leave" || op == "open" || op == "edit" || op == "delete" ||
                 op == "react") {
                 _composerNote->setText("Couldn't " + op + ": " + message);
+            }
+            // older messages can be asked for again (a scroll to the top), not stopped for good by one failure
+            if (op == "back") {
+                _loadingOlder = false;
+                _anchorBottom = false;
             }
         });
     }
@@ -918,6 +984,16 @@ void ChatWindow::updateState() {
         _rooms = QJsonArray();
         _roomList->clear();
         _roomTitle->clear();
+        // the media folder goes with a sign-out (the library's forget), so nothing fetched before is known any more:
+        // after signing in again, pictures and files are asked for again, and the last account's pictures are gone
+        _mediaFiles.clear();
+        _mediaWanted.clear();
+        _mediaFailed.clear();
+        _opening.clear();
+        _pictureSizes.clear();
+        _avatarImages.clear();
+        qDeleteAll(_movies);
+        _movies.clear();
         _stateText->setText(service ? service->stateText() : QString("Chat isn't running."));
         _retryButton->setVisible(service && service->state() == ChatService::State::Unavailable);
         _pages->setCurrentIndex(0);
@@ -1147,8 +1223,9 @@ void ChatWindow::updateTimeline(const QString& room, const QJsonArray& items) {
         return;
     }
     _items = items;
-    renderTimeline();
-    markReadIfSeen();
+    if (!_renderTimer->isActive()) {
+        _renderTimer->start();
+    }
 }
 
 void ChatWindow::commandDone(const QJsonObject& done) {
@@ -1222,7 +1299,8 @@ QString ChatWindow::mediaHtml(const QJsonObject& item) {
     QJsonValue shownSource;
     int width = 0, height = 0;
     QSize own((int)media.value("width").toDouble(), (int)media.value("height").toDouble());
-    if (kind == "image" && mimetype == "image/gif" && !encrypted && (size == 0 || size <= GIF_PLAY_MAX_BYTES)) {
+    // (a size the message gives: one that gives none gets the server's still, not the whole file)
+    if (kind == "image" && mimetype == "image/gif" && !encrypted && size > 0 && size <= GIF_PLAY_MAX_BYTES) {
         key = "file|" + compactJson(source);   // the whole GIF, to play it
         shownSource = source;
     } else if (kind == "image" || kind == "video") {
@@ -1330,19 +1408,7 @@ void ChatWindow::mediaReady(const QString& key, const QString& path, const QStri
     if (opening != _opening.end()) {
         QString name = opening.value();
         _opening.erase(opening);
-        // under its own name, so the system knows what opens it
-        QString folder = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath("darkride-chat");
-        QDir().mkpath(folder);
-        QString safe = name;
-        safe.replace(QRegularExpression(R"([/\\:*?"<>|])"), "_");
-        if (safe.trimmed().isEmpty()) {
-            safe = "download";
-        }
-        QString copy = QDir(folder).filePath(safe);
-        QFile::remove(copy);
-        if (QFile::copy(path, copy)) {
-            QDesktopServices::openUrl(QUrl::fromLocalFile(copy));
-        }
+        openDownload(path, name);
     }
     if (_pictureUses.contains(key)) {
         showPicture(key, path);
@@ -1362,7 +1428,14 @@ void ChatWindow::showPicture(const QString& key, const QString& path) {
             return;
         }
     }
-    if (reader.supportsAnimation() && reader.imageCount() > 1) {
+    // the file itself decides, not what the message said about it
+    qint64 pixels = own.isValid() ? (qint64)own.width() * own.height() : 0;
+    if (pixels > PICTURE_MAX_PIXELS) {
+        qCDebug(interfaceapp) << "chat: a picture of" << own << "isn't shown here";
+        return;
+    }
+    bool animate = QFileInfo(path).size() <= GIF_PLAY_MAX_BYTES && pixels <= GIF_PLAY_MAX_PIXELS;
+    if (animate && reader.supportsAnimation() && reader.imageCount() > 1) {
         if (_movies.contains(key)) {
             return;
         }
@@ -1382,6 +1455,11 @@ void ChatWindow::showPicture(const QString& key, const QString& path) {
         });
         movie->start();
         return;
+    }
+    // (a GIF too big to play shows its first frame) decoded no bigger than the conversation shows it
+    QSize most = _pictureMax * devicePixelRatioF();
+    if (own.isValid() && (own.width() > most.width() || own.height() > most.height())) {
+        reader.setScaledSize(own.scaled(most, Qt::KeepAspectRatio));
     }
     QImage image = reader.read();
     for (const PictureUse& use : _pictureUses.values(key)) {
@@ -1408,7 +1486,53 @@ void ChatWindow::openMedia(const QJsonObject& media, const QString& name) {
     requestMedia(key, source);
 }
 
+void ChatWindow::openDownload(const QString& path, const QString& name) {
+    // what the file is, from its content (never the name or the type the sender gave): a picture (not SVG, which can
+    // carry scripts), a video, a sound or a PDF opens in the system's viewer
+    QMimeType type = QMimeDatabase().mimeTypeForFile(path, QMimeDatabase::MatchContent);
+    QString kind = type.name();
+    bool viewable = ((kind.startsWith("image/") && !kind.startsWith("image/svg")) || kind.startsWith("video/") ||
+                     kind.startsWith("audio/") || kind == "application/pdf");
+    static const QHash<QString, QString> SUFFIXES { { "image/jpeg", "jpg" },   { "image/tiff", "tiff" },
+                                                    { "video/quicktime", "mov" }, { "audio/mpeg", "mp3" },
+                                                    { "audio/mp4", "m4a" },    { "video/mp4", "mp4" } };
+    QString suffix = SUFFIXES.value(kind, type.preferredSuffix());
+    QString base = safeBaseName(name);
+    if (viewable && !suffix.isEmpty()) {
+        QString folder = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath("darkride-chat");
+        QDir().mkpath(folder);
+        QString copy = QDir(folder).filePath(base + "." + suffix);
+        QFile::remove(copy);
+        if (QFile::copy(path, copy)) {
+            markDownloaded(copy);
+            QDesktopServices::openUrl(QUrl::fromLocalFile(copy));
+        }
+        return;
+    }
+    // anything else (a program, a script, an archive, any other document): saved where the person chooses, marked as
+    // downloaded, and not opened
+    qCDebug(interfaceapp) << "chat: a file of type" << kind << "is offered to save, not opened";
+    QString theirs = QFileInfo(name).suffix();
+    static const QRegularExpression SHORT_SUFFIX("^[A-Za-z0-9]{1,8}$");
+    QString suggested = base + (SHORT_SUFFIX.match(theirs).hasMatch() ? "." + theirs : QString());
+    QString downloads = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    QString target = QFileDialog::getSaveFileName(this, "Save File", QDir(downloads).filePath(suggested));
+    if (target.isEmpty()) {
+        return;
+    }
+    QFile::remove(target);   // the dialog has asked about replacing it
+    bool saved = QFile::copy(path, target);
+    if (saved) {
+        markDownloaded(target);
+    }
+    _composerNote->setText(saved ? "Saved " + QFileInfo(target).fileName() + "." : QString("Couldn't save the file there."));
+    QTimer::singleShot(4000, _composerNote, &QLabel::clear);
+}
+
 void ChatWindow::renderTimeline() {
+    if (_renderTimer) {
+        _renderTimer->stop();   // drawn now: a draw waiting for the burst's end isn't needed
+    }
     QScrollBar* scroll = _timeline->verticalScrollBar();
     int fromBottom = scroll->maximum() - scroll->value();
     int fromTop = scroll->value();
@@ -1906,6 +2030,7 @@ void ChatWindow::updateFriends() {
     };
     auto heading = [this](const QString& text) {
         auto label = new QLabel(text);
+        label->setTextFormat(Qt::PlainText);
         label->setObjectName("ChatFriendsHeading");
         label->setContentsMargins(16, 8, 16, 4);
         auto item = new QListWidgetItem(_friendsList);

@@ -8,8 +8,9 @@
 //  player drags it into the main window beside Build mode's panels. Narrower than the two columns need, it shows one
 //  at a time. Under a skin it takes the skin's colours. ChatService (libraries/chat) does the talking.
 //
-//  Distributed under the Apache License, Version 2.0.
-//  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
+//  Copyright 2026 Darkride.
+//
+//  Distributed under the MIT License.
 //
 
 #ifndef hifi_ChatWindow_h
@@ -121,6 +122,10 @@ private:
     void showPicture(const QString& key, const QString& path);
     // the whole file, opened by the system's own app (Preview, Photos, a player)
     void openMedia(const QJsonObject& media, const QString& name);
+    // a file from a message, downloaded: opened by the system only when its content is a picture, a video, a sound or
+    // a PDF, under a name of ours with that type's own extension; anything else offered to save. Never handed to the
+    // system under the sender's name, which could make it run (a ".exe", a ".command")
+    void openDownload(const QString& path, const QString& name);
 
     static QPointer<ChatWindow> _instance;
     static QPointer<QDockWidget> _dock;
@@ -155,6 +160,7 @@ private:
     bool _friendsShown { false };               // the Friends page is up (the last room stays _room)
     QString _dmWanted;                           // a friend's chat account whose new DM is being made, to open
     QTimer* _friendsTimer { nullptr };          // asks for the lists again every minute while the window is up
+    QTimer* _renderTimer { nullptr };           // the conversation drawn once for a burst of timeline events
     qint64 _friendsAskedAt { 0 };
 
     QJsonArray _rooms;

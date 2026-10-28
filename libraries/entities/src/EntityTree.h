@@ -165,6 +165,11 @@ public:
 
     int processEraseMessage(ReceivedMessage& message, const SharedNodePointer& sourceNode);
     int processEraseMessageDetails(const QByteArray& buffer, const SharedNodePointer& sourceNode);
+
+    // whether a node's rights cover changing an entity (a temporary rez right: temporary entities only), and deleting it
+    // with its children (unlocked too)
+    static bool senderMayChange(const SharedNodePointer& senderNode, const EntityItemPointer& entity);
+    static bool senderMayDelete(const SharedNodePointer& senderNode, const EntityItemPointer& entity);
     bool shouldEraseEntity(EntityItemID entityID, const SharedNodePointer& sourceNode);
 
 

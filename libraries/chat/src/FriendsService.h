@@ -7,8 +7,9 @@
 //  (the metaverse's availability: all, friends, none). The chat window's Friends page shows them; the routes are the
 //  metaverse's /api/v1/friends and /api/v1/user/availability, the same the web chat uses.
 //
-//  Distributed under the Apache License, Version 2.0.
-//  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
+//  Copyright 2026 Darkride.
+//
+//  Distributed under the MIT License.
 //
 
 #ifndef hifi_FriendsService_h

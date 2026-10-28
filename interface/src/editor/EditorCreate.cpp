@@ -91,6 +91,15 @@ QString EditorUpload::uploadingStatus(const QString& fileName, int percent, cons
 QString EditorUpload::safeFileName(const QString& name) {
     QString s = name;
     s.replace(QRegularExpression("[^A-Za-z0-9._-]+"), "_");
+    // at most 64 characters, its ending kept (".preview.jpg", an extension): a long entity or file name made paths
+    // past Windows' 260 (an impostor's cache file; qa's 1.1 review #24)
+    const int MAX_LENGTH = 64;
+    const int MAX_ENDING = 20;
+    if (s.length() > MAX_LENGTH) {
+        int dot = s.indexOf('.', s.length() - MAX_ENDING);
+        QString ending = dot >= 0 ? s.mid(dot) : QString();
+        s = s.left(MAX_LENGTH - ending.length()) + ending;
+    }
     return s;
 }
 

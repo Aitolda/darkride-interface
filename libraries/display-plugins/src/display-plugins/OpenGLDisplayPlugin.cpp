@@ -1141,7 +1141,19 @@ glm::uvec2 OpenGLDisplayPlugin::getSurfacePixels() const {
     uvec2 result;
     auto window = _container->getPrimaryWidget();
     if (window) {
-        result = toGlm(window->geometry().size() * window->devicePixelRatio());
+        // the exact ratio: QWidget::devicePixelRatio() is a whole number, 1 at Windows' 125 % or 150 %, which drew the
+        // view at two-thirds of the window's pixels; the GL context already uses the exact one (gl/Context.cpp)
+        result = toGlm(window->geometry().size() * window->devicePixelRatioF());
+#if defined(Q_OS_WIN)
+        // the view's own window as Windows has it: just after a change of the display's scale it can differ from the
+        // widget's size until the size is put again (ViewportContainer), and a frame drawn at the widget's shape was
+        // stretched into it, squashed sideways. Drawn at the window's own pixels, the picture keeps its shape
+        RECT client;
+        HWND hwnd = (HWND)window->internalWinId();
+        if (hwnd && GetClientRect(hwnd, &client) && client.right > 0 && client.bottom > 0) {
+            result = uvec2(client.right, client.bottom);
+        }
+#endif
     }
     return result;
 }

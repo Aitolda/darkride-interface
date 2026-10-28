@@ -90,6 +90,8 @@ InspectorPanel::InspectorPanel(QWidget* parent) : QDockWidget("Inspector", paren
     _title = new QLabel(_content);
     _title->setObjectName("EditorInspectorTitle");
     _title->setWordWrap(true);
+    // entity names are the world's: shown as typed, never as styled text
+    _title->setTextFormat(Qt::PlainText);
     _contentLayout->addWidget(_title);
     // what the selection could not load (setLoadProblem), under the title; hidden while nothing has failed
     _loadProblem = new QLabel(_content);

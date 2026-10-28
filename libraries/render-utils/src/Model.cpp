@@ -1407,8 +1407,24 @@ void Model::loadURLFinished(bool success) {
             _renderGeometry->setTextureLoadPriority(this, _loadingPriority);
         }
         if (isLoaded()) {
+            const HFMModel& hfmModel = getHFMModel();
+            QVariantMap objects;
+            for (const auto& joint : hfmModel.joints) {
+                if (!joint.extras.isEmpty()) {
+                    objects[joint.name] = joint.extras;
+                }
+            }
+            QVariantMap materials;
+            for (const auto& material : hfmModel.materials) {
+                if (!material.extras.isEmpty()) {
+                    materials[material.name] = material.extras;
+                }
+            }
             std::lock_guard<std::mutex> lock(_cachedMeshExtentsMutex);
-            _cachedUnscaledMeshExtents = getHFMModel().getUnscaledMeshExtents();
+            _cachedUnscaledMeshExtents = hfmModel.getUnscaledMeshExtents();
+            _cachedExtras.clear();
+            _cachedExtras["objects"] = objects;
+            _cachedExtras["materials"] = materials;
             _hasCachedUnscaledMeshExtents = true;
         }
     }
@@ -1419,6 +1435,14 @@ bool Model::getCachedUnscaledMeshExtents(Extents& extents) const {
     std::lock_guard<std::mutex> lock(_cachedMeshExtentsMutex);
     if (_hasCachedUnscaledMeshExtents) {
         extents = _cachedUnscaledMeshExtents;
+    }
+    return _hasCachedUnscaledMeshExtents;
+}
+
+bool Model::getCachedExtras(QVariantMap& extras) const {
+    std::lock_guard<std::mutex> lock(_cachedMeshExtentsMutex);
+    if (_hasCachedUnscaledMeshExtents) {
+        extras = _cachedExtras;
     }
     return _hasCachedUnscaledMeshExtents;
 }
@@ -1649,6 +1673,7 @@ void Model::deleteGeometry() {
     {
         std::lock_guard<std::mutex> lock(_cachedMeshExtentsMutex);
         _hasCachedUnscaledMeshExtents = false;
+        _cachedExtras.clear();
     }
     _renderGeometry.reset();
 }

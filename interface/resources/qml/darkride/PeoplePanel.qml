@@ -558,6 +558,7 @@ Page {
                         Text {
                             width: parent.width
                             text: profile.data ? (profile.data.displayName || profile.data.username) : ""
+                            textFormat: Text.PlainText
                             color: Theme.text
                             font.pixelSize: 20 * Theme.unit
                             font.bold: true
@@ -566,6 +567,7 @@ Page {
                         Text {
                             visible: !!profile.data && !!profile.data.displayName && profile.data.displayName !== profile.data.username
                             text: profile.data ? profile.data.username : ""
+                            textFormat: Text.PlainText
                             color: Theme.secondaryText
                             font.pixelSize: Theme.bodySize
                         }
@@ -577,6 +579,7 @@ Page {
                             width: parent.width
                             text: profile.data ? (bot ? "\u2699 Bot" : (profile.data.aiWord || "AI resident"))
                                 + (profile.data.host ? " · Hosted by " + profile.data.host : "") : ""
+                            textFormat: Text.PlainText
                             color: bot ? Theme.secondaryText : Theme.tint
                             font.pixelSize: Theme.detailSize
                             elide: Text.ElideRight
@@ -611,6 +614,7 @@ Page {
                     width: parent.width - 2 * Theme.cardPadding
                     anchors.verticalCenter: parent.verticalCenter
                     text: profile.data ? profile.data.about || "" : ""
+                    textFormat: Text.PlainText
                     color: Theme.text
                     font.pixelSize: Theme.bodySize
                     wrapMode: Text.WordWrap

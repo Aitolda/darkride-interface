@@ -55,7 +55,7 @@ public:
 
     // Present thread, with the display plugin's OpenGL context current.
     bool createSession();
-    void destroySession();
+    void destroySession();   // a running session is ended first (endRunningSession)
     // Present thread. Handles session state changes; returns false when the runtime wants the app to quit.
     bool pollEvents();
 
@@ -66,6 +66,10 @@ public:
     bool isSessionFocused() const { return _sessionState == XR_SESSION_STATE_FOCUSED; }
     bool shouldRender() const;
     bool isUserPresent() const { return _userPresent; }
+    // The headset is off the player's head: the runtime stopped the session (Meta's over Link: FOCUSED, VISIBLE,
+    // SYNCHRONIZED, STOPPING, IDLE within a second of taking it off; READY again when it goes back on), or a presence
+    // event said so. Before a session, unknown: not off.
+    bool isHeadsetOff() const;
 
     // Frame timing, written by the present thread after each xrWaitFrame.
     void setFrameTiming(XrTime predictedDisplayTime, XrDuration predictedDisplayPeriod);
@@ -93,6 +97,7 @@ public:
     uint32_t getSessionGeneration() const { return _sessionGeneration; }
 
 private:
+    void endRunningSession();
     bool createInstance();
     bool findSystem();
     void updateSessionState(XrSessionState state);

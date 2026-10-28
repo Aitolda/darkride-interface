@@ -378,7 +378,11 @@ void OpenXrDisplayPlugin::hmdPresent() {
 }
 
 bool OpenXrDisplayPlugin::isHmdMounted() const {
-    return _runtime->isUserPresent();
+    return !_runtime->isHeadsetOff();
+}
+
+bool OpenXrDisplayPlugin::isHeadsetOff() const {
+    return _runtime->isHeadsetOff();
 }
 
 void OpenXrDisplayPlugin::postPreview() {

@@ -321,7 +321,7 @@ bool WasmScriptEngine::hasValidScriptSuffix(const QString& scriptFileName) {
 
 void WasmScriptEngine::registerGlobalObject(const QString& name, QObject* object) {
     if (QThread::currentThread() != thread()) {
-        QMetaObject::invokeMethod(this, "registerGlobalObject", Q_ARG(const QString&, name), Q_ARG(QObject*, object));
+        QMetaObject::invokeMethod(this, [this, name, object] { registerGlobalObject(name, object); });
         return;
     }
     if (!object) {
@@ -422,25 +422,33 @@ bool WasmScriptEngine::fetchModuleBytes() {
     if (!url.isValid() || url.scheme().isEmpty()) {
         return false;
     }
-    bool done = false;
-    bool ok = false;
-    QString failure;
+    // the cache's answer can come after a stop ended the wait, so it lands in a shared record, never in this frame
+    struct Pending {
+        bool done { false };
+        bool ok { false };
+        QString failure;
+        QByteArray bytes;
+    };
+    auto pending = std::make_shared<Pending>();
     auto scriptCache = DependencyManager::get<ScriptCache>();
-    scriptCache->getScriptBytes(url.toString(), [this, &done, &ok, &failure](const QString&, const QByteArray& bytes, bool success, const QString& status) {
-        done = true;
-        ok = success && !bytes.isEmpty();
-        failure = status;
-        if (ok) {
-            _moduleBytes = bytes;
-        }
+    scriptCache->getScriptBytes(url.toString(), [pending](const QString&, const QByteArray& bytes, bool success, const QString& status) {
+        pending->ok = success && !bytes.isEmpty();
+        pending->failure = status;
+        pending->bytes = bytes;
+        pending->done = true;
     }, false, 0);
-    while (!done && !isStopping()) {
+    while (!pending->done && !isStopping()) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     }
-    if (!ok) {
-        scriptErrorMessage("ERROR Loading module (" + failure + "):" + _fileNameString);
+    if (!pending->done) {
+        return false;  // stopping: the answer, if it comes, goes nowhere
     }
-    return ok;
+    if (!pending->ok) {
+        scriptErrorMessage("ERROR Loading module (" + pending->failure + "):" + _fileNameString);
+        return false;
+    }
+    _moduleBytes = pending->bytes;
+    return true;
 }
 
 // --- running ----------------------------------------------------------------------------------------------------
@@ -961,6 +969,12 @@ void WasmScriptEngine::postCallback(const ModuleInstancePointer& instance, int32
 
 // --- entity scripts -------------------------------------------------------------------------------------------------
 
+// Whether .wasm entity scripts (client and server) run: off unless DARKRIDE_WASM_ENTITY_SCRIPTS=1, for development.
+static bool wasmEntityScriptsEnabled() {
+    static const bool enabled = qEnvironmentVariable("DARKRIDE_WASM_ENTITY_SCRIPTS") == "1";
+    return enabled;
+}
+
 void WasmScriptEngine::loadEntityScript(const EntityItemID& entityID, const QString& entityScript, bool forceRedownload) {
     if (QThread::currentThread() != thread()) {
         QMetaObject::invokeMethod(this, "loadEntityScript", Q_ARG(const EntityItemID&, entityID),
@@ -996,6 +1010,16 @@ void WasmScriptEngine::loadEntityScript(const EntityItemID& entityID, const QStr
     newDetails.scriptText = entityScript;
     newDetails.status = EntityScriptStatus::LOADING;
     newDetails.definingSandboxURL = currentSandboxURL;
+    if (isWasmScript(entityScript) && !wasmEntityScriptsEnabled()) {
+        // a module comes from wherever the entity's owner put it and speaks to the host directly, not through the
+        // shim; until a module has an object table of its own, only JavaScript entity scripts run
+        newDetails.status = EntityScriptStatus::ERROR_LOADING_SCRIPT;
+        newDetails.errorInfo = "WebAssembly entity scripts are not enabled";
+        setEntityScriptDetails(entityID, newDetails);
+        scriptWarningMessage("A WebAssembly entity script is not run: " + entityScript +
+                             " (DARKRIDE_WASM_ENTITY_SCRIPTS=1 enables them, for development)");
+        return;
+    }
     setEntityScriptDetails(entityID, newDetails);
 
     auto scriptCache = DependencyManager::get<ScriptCache>();
@@ -1444,27 +1468,29 @@ QVariantMap WasmScriptEngine::resolveModule(const QString& moduleId, const QStri
 // The text of a script through the cache, waited for on this thread (an event loop, as the QtScript engine's
 // include and require wait), with a stop seen in time.
 QVariantMap WasmScriptEngine::fetchScript(const QString& url, bool forceDownload) {
-    QVariantMap result;
-    result["url"] = url;
-    result["success"] = false;
+    // the loader's signal can still come after this returns (a stop ends the wait early, and the reply's events are
+    // queued ahead of the loader's deletion), so the result lives on the heap and the loader is disconnected first
+    auto result = std::make_shared<QVariantMap>();
+    (*result)["url"] = url;
+    (*result)["success"] = false;
     if (isStopping()) {
-        result["status"] = "Stopped";
-        return result;
+        (*result)["status"] = "Stopped";
+        return *result;
     }
     auto scriptCache = DependencyManager::get<ScriptCache>();
     if (forceDownload) {
         scriptCache->deleteScript(url);
     }
     BatchLoader* loader = new BatchLoader(QList<QUrl>({ QUrl(url) }));
-    connect(loader, &BatchLoader::finished, this, [this, url, &result](const QMap<QUrl, QString>& data, const QMap<QUrl, QString>& status) {
+    connect(loader, &BatchLoader::finished, this, [this, url, result](const QMap<QUrl, QString>& data, const QMap<QUrl, QString>& status) {
         if (isStopping()) {
-            result["status"] = "Stopped";
+            (*result)["status"] = "Stopped";
             return;
         }
         QString contents = data[QUrl(url)];
-        result["status"] = status[QUrl(url)];
-        result["success"] = !contents.isNull() && ScriptCache::isSuccessStatus(status[QUrl(url)]);
-        result["contents"] = contents;
+        (*result)["status"] = status[QUrl(url)];
+        (*result)["success"] = !contents.isNull() && ScriptCache::isSuccessStatus(status[QUrl(url)]);
+        (*result)["contents"] = contents;
     });
     connect(this, &QObject::destroyed, loader, &QObject::deleteLater);
     const int MAX_RETRIES = 1;
@@ -1481,8 +1507,9 @@ QVariantMap WasmScriptEngine::fetchScript(const QString& url, bool forceDownload
         monitor.start(500);
         loop.exec();
     }
+    disconnect(loader, nullptr, this, nullptr);
     loader->deleteLater();
-    return result;
+    return *result;
 }
 
 bool WasmScriptEngine::dumpApi(const QString& path, const QVariantMap& globals) {
@@ -1492,12 +1519,14 @@ bool WasmScriptEngine::dumpApi(const QString& path, const QVariantMap& globals) 
     root["fileName"] = _fileNameString;
     root["engine"] = _runsJavaScript ? "JavaScript on WebAssembly" : "WebAssembly";
     root["globals"] = QJsonObject::fromVariantMap(globals);
-    QFile file(path);
+    const QString fileName = dumpApiFile(path, _testApiOn);
+    QFile file(fileName);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        scriptWarningMessage("Script.dumpApi: cannot write " + path);
+        scriptWarningMessage("Script.dumpApi: cannot write " + fileName);
         return false;
     }
     file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    scriptInfoMessage("Script.dumpApi wrote " + fileName);
     return true;
 }
 
