@@ -958,6 +958,7 @@ void Application::updateRenderArgs(float deltaTime) {
 
         _viewState.updateCamera(appRenderArgs._renderArgs, deltaTime);
         appRenderArgs._eyeToWorld = _viewState.camera().getTransform();
+        getRefreshRateManager().noteCameraTransform(appRenderArgs._eyeToWorld);
         appRenderArgs._isStereo = false;
 
         {
