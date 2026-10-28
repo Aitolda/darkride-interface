@@ -738,14 +738,18 @@ void EntityTreeRenderer::updateAvatarChildren() {
         return;
     }
 
-    // as the AUTOMATIC pass updates them; the stats and the budget's average cost are left to that pass
-    render::Transaction transaction;
-    for (const EntityRendererPointer& renderable : underAvatars) {
-        bool changed = renderable->entityHasChanged();
-        renderable->getEntity()->setNeedsRenderUpdate(true);
-        renderable->updateInScene(scene, transaction, changed);
+    // as the AUTOMATIC pass updates them; the stats and the budget's average cost are left to that pass. Outside the
+    // budget: in a crowd every moving avatar's children land here each frame (avatars, 10-28), so the count is shown
+    {
+        PROFILE_RANGE_EX(simulation_physics, "UpdateAvatarChildren", 0xffff00ff, (uint64_t)underAvatars.size());
+        render::Transaction transaction;
+        for (const EntityRendererPointer& renderable : underAvatars) {
+            bool changed = renderable->entityHasChanged();
+            renderable->getEntity()->setNeedsRenderUpdate(true);
+            renderable->updateInScene(scene, transaction, changed);
+        }
+        scene->enqueueTransaction(transaction);
     }
-    scene->enqueueTransaction(transaction);
 }
 
 void EntityTreeRenderer::update(bool simulate) {
