@@ -184,11 +184,16 @@ Page {
         }
 
         // a request's or a removal's answer: { username, friends, requested }, or a message
-        function act(method, path, body, done) {
+        // failed: the action's own sentence when it doesn't go through. The server's own words ("username should
+        // not be empty,username must be a string") are for the log, never the panel (Caity 10-28: "amateur hour")
+        function act(method, path, body, done, failed) {
             MetaverseRequests.send(method, path, body, function (error, code, answer) {
-                var message = answer && answer.message ? String(answer.message) : "";
                 if (error) {
-                    status = message !== "" ? message : "That didn't go through: " + error + ".";
+                    console.log("People: " + method + " " + path + " failed: " + code + " "
+                        + (answer && answer.message ? answer.message : error));
+                    status = code === 0 ? "Couldn't reach Darkride. Check your connection and try again."
+                        : code === 401 ? "Sign in again, then try once more."
+                        : failed;
                 } else if (done) {
                     status = done(answer && answer.data ? answer.data : {});
                 }
@@ -211,28 +216,28 @@ Page {
                 addField.text = "";
                 return data.friends ? "You and " + data.username + " are friends now."
                     : "Asked " + (data.username || username) + ". You'll be friends when they accept.";
-            });
+            }, "Couldn't send the request. Check the username and try again.");
         }
         function accept(username) {
             act("POST", "/api/v1/friends/requests/" + encodeURIComponent(username) + "/accept", {}, function (data) {
                 return "You and " + username + " are friends now.";
-            });
+            }, "Couldn't accept " + username + "'s request. Try again in a moment.");
         }
         function decline(username) {
             act("POST", "/api/v1/friends/requests/" + encodeURIComponent(username) + "/decline", {}, function () {
                 return "Declined " + username + "'s request.";
-            });
+            }, "Couldn't decline " + username + "'s request. Try again in a moment.");
         }
         function withdraw(username) {
             act("DELETE", "/api/v1/friends/requests/" + encodeURIComponent(username), null, function () {
                 return "Withdrew your request to " + username + ".";
-            });
+            }, "Couldn't withdraw your request to " + username + ". Try again in a moment.");
         }
         function remove(username) {
             removing = "";
             act("DELETE", "/api/v1/friends/" + encodeURIComponent(username), null, function () {
                 return username + " is no longer a friend.";
-            });
+            }, "Couldn't remove " + username + " from your friends. Try again in a moment.");
         }
         function join(username) {
             AddressManager.goToUser(username);
