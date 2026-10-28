@@ -121,9 +121,14 @@ Item {
             fillMode: Image.PreserveAspectFit
             sourceSize.width: 48
             sourceSize.height: 48
-            source: button.urlHelper(button.barIcon !== "" ? button.barIcon
-                : button.isActive ? (button.isEntered ? button.activeHoverIcon : button.activeIcon)
-                : (button.isEntered ? button.hoverIcon : button.icon))
+            // none until the bar has copied the button's properties onto it (an empty path would load the resources'
+            // folder as a picture)
+            source: {
+                var path = button.barIcon !== "" ? button.barIcon
+                    : button.isActive ? (button.isEntered ? button.activeHoverIcon : button.activeIcon)
+                    : (button.isEntered ? button.hoverIcon : button.icon);
+                return path ? button.urlHelper(path) : "";
+            }
         }
         ColorOverlay {
             anchors.fill: parent
