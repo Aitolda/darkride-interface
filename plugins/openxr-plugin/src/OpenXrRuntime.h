@@ -63,6 +63,10 @@ public:
     XrSpace getReferenceSpace() const { return _referenceSpace; }
     XrSpace getViewSpace() const { return _viewSpace; }
     bool isSessionRunning() const { return _sessionRunning; }
+    // The OpenXR display is the active one. Leaving VR keeps the session (Meta's runtime refuses a second one in the same
+    // run), so the input side stops reading the headset and controllers while this is false.
+    bool isDisplayActive() const { return _displayActive; }
+    void setDisplayActive(bool active) { _displayActive = active; }
     bool isSessionFocused() const { return _sessionState == XR_SESSION_STATE_FOCUSED; }
     bool shouldRender() const;
     bool isUserPresent() const { return _userPresent; }
@@ -114,6 +118,7 @@ private:
 
     std::atomic<XrSessionState> _sessionState { XR_SESSION_STATE_UNKNOWN };
     std::atomic<bool> _sessionRunning { false };
+    std::atomic<bool> _displayActive { false };
     std::atomic<bool> _userPresent { true };
     std::atomic<uint32_t> _sessionGeneration { 0 };
 

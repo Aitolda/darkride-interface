@@ -318,6 +318,10 @@ void OpenXrInputPlugin::InputDevice::update(float deltaTime, const controller::I
         releaseSessionObjects();
         return;
     }
+    // out of VR the session is kept, still attached: the headset and controllers just don't drive the avatar
+    if (!_runtime->isDisplayActive()) {
+        return;
+    }
     if (_actionSet == XR_NULL_HANDLE && !createActions()) {
         return;
     }
