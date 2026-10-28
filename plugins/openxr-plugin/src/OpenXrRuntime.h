@@ -55,7 +55,7 @@ public:
 
     // Present thread, with the display plugin's OpenGL context current.
     bool createSession();
-    void destroySession();
+    void destroySession();   // a running session is ended first (endRunningSession)
     // Present thread. Handles session state changes; returns false when the runtime wants the app to quit.
     bool pollEvents();
 
@@ -93,6 +93,7 @@ public:
     uint32_t getSessionGeneration() const { return _sessionGeneration; }
 
 private:
+    void endRunningSession();
     bool createInstance();
     bool findSystem();
     void updateSessionState(XrSessionState state);
