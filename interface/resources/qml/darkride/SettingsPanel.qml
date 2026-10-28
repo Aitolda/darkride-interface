@@ -204,6 +204,88 @@ Page {
             }
         }
 
+        // Face tracking (avatars' input plugin "Face Tracking"; Caity's go 10-25 18:33): off unless turned on, the camera
+        // running only while it's on. InputConfiguration has no change signal, so the page asks once a second while it
+        // shows. The section hides where the plugin isn't (no answer from it).
+        Section {
+            id: face
+            title: "Face tracking"
+            footer: "Your camera moves your avatar's face. The picture never leaves this computer; only your expressions "
+                  + "are shared, like your voice is. Off unless you turn it on; the camera runs only while it's on."
+            visible: face.settings.status !== undefined
+
+            property var settings: ({})
+            readonly property bool isOn: !!face.settings.enabled
+            readonly property string privacyPage: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"
+
+            function refresh() {
+                face.settings = InputConfiguration.configurationSettings("Face Tracking") || ({});
+            }
+            function change(values) {
+                InputConfiguration.setConfigurationSettings(values, "Face Tracking");
+                refresh();
+            }
+
+            Timer {
+                interval: 1000
+                repeat: true
+                triggeredOnStart: true
+                running: root.visible && root.currentTab === 0
+                onTriggered: face.refresh()
+            }
+
+            ListRow {
+                label: "Face tracking"
+                // what the camera is doing, in the plugin's words; blocked: where to allow it, as a link
+                detail: !face.isOn ? "" : face.settings.status === "blocked"
+                    ? face.settings.statusText + (Qt.platform.os === "osx" ? " <a href=\"privacy\">Open Privacy Settings</a>" : "")
+                    : (face.settings.statusText || "")
+                detailFormat: Text.StyledText
+                onLinkActivated: Qt.openUrlExternally(face.privacyPage)
+                Toggle {
+                    checked: face.isOn
+                    onToggled: face.change({ enabled: checked })
+                }
+            }
+            PickerRow {
+                visible: face.isOn
+                label: "Camera"
+                current: face.settings.camera || ""
+                model: {
+                    var choices = [{ text: "System default", value: "" }];
+                    var cameras = face.settings.cameras || [];
+                    for (var i = 0; i < cameras.length; i++) {
+                        choices.push({ text: cameras[i].name, value: cameras[i].id });
+                    }
+                    return choices;
+                }
+                onChosen: face.change({ camera: value })
+            }
+            ListRow {
+                visible: face.isOn
+                label: "Mouth strength"
+                detail: "small avatar mouths want 2 or 3"
+                fill: true
+                labelWidth: 120 * Theme.unit
+                scrubbable: true
+                scrubValue: face.settings.mouthStrength || 1
+                scrubFrom: 0.5
+                scrubTo: 3
+                scrubStep: 0.05
+                onScrubbed: face.change({ mouthStrength: Math.round(value * 10) / 10 })
+
+                ValueSlider {
+                    from: 0.5; to: 3; stepSize: 0.1; decimals: 1; units: " ×"
+                    value: face.settings.mouthStrength || 1
+                    onMoved: face.change({ mouthStrength: value })
+                }
+                ResetButton {
+                    needed: Math.abs((face.settings.mouthStrength || 1) - 1) > 0.01
+                    onClicked: face.change({ mouthStrength: 1 })
+                }
+            }
+        }
+
         Section {
             title: "Cache"
             footer: "The cache keeps the models, sounds and pictures of the worlds you visit, so a second visit loads "

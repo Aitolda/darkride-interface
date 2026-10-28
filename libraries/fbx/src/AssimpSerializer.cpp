@@ -10,6 +10,7 @@
 //
 
 #include "AssimpSerializer.h"
+#include "FSTReader.h"
 
 #include <algorithm>
 
@@ -419,7 +420,7 @@ void AssimpSerializer::processMeshes(const hifi::VariantHash& mapping) {
             }
         }
 
-        hifi::VariantHash blendshapeMappings = mapping.value("bs").toHash();
+        hifi::VariantHash blendshapeMappings = FSTReader::getBlendshapeMappings(mapping);
 
         if (mMesh->mNumAnimMeshes > 0) {
             bool isBlendshapeChannelNamesEmpty = hfmModel->blendshapeChannelNames.size() == 0;
