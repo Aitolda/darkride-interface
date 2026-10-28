@@ -55,13 +55,10 @@ function removeFromStoryIDsToMaybeDelete(story_id) {
     print('storyIDsToMaybeDelete[] now:', JSON.stringify(storyIDsToMaybeDelete));
 }
 
+// the Settings panel's General tab, with its Snapshots section, as Settings > General... opens it (the old General
+// Settings window until 10-28)
 function openSnapSettings() {
-    if ((HMD.active && Settings.getValue("hmdTabletBecomesToolbar", false))
-        || (!HMD.active && Settings.getValue("desktopTabletBecomesToolbar", true))) {
-        Desktop.show("hifi/dialogs/GeneralPreferencesDialog.qml", "GeneralPreferencesDialog");
-    } else {
-        ui.openNewAppOnTop("hifi/tablet/TabletGeneralPreferences.qml");
-    }
+    Menu.triggerOption("General...");
 }
 
 function fileExtensionMatches(filePath, extension) {

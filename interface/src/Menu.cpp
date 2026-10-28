@@ -60,6 +60,7 @@
 #include "ui/DialogsManager.h"
 #include "chat/ChatWindow.h"
 #include "ui/Panels.h"
+#include "ui/QmlDock.h"
 #include "ui/Popup.h"
 #include "ui/WindowLayout.h"
 #include "ui/StandAloneJSConsole.h"
@@ -106,6 +107,29 @@ static void editOrPostKey(const char* action, Qt::Key key) {
     }
     QKeyEvent* keyEvent = new QKeyEvent(QEvent::KeyPress, key, Qt::ControlModifier);
     QCoreApplication::postEvent(QCoreApplication::instance(), keyEvent);
+}
+
+// The Settings panel (qml/darkride/SettingsPanel.qml) on one of its tabs: on the desktop its dock, in a headset the
+// tablet, as the bar's gear opens it. The page reads the tab it saved when it's made; one already made is told.
+static const char* SETTINGS_TAB_SETTING = "io.darkride.settings.tab";
+static const int SETTINGS_TAB_GENERAL = 0;
+static const int SETTINGS_TAB_SOUND = 2;
+
+static void openSettingsTab(int tab) {
+    // a default of -1: a handle saves only a value unlike its default, and the General tab is 0
+    Setting::Handle<int>(SETTINGS_TAB_SETTING, -1).set(tab);
+    if (qApp->isHMDMode()) {
+        auto tablet = DependencyManager::get<TabletScriptingInterface>()->getTablet("com.highfidelity.interface.tablet.system");
+        tablet->loadQMLSource("qrc:///qml/darkride/SettingsPanel.qml");
+        DependencyManager::get<HMDScriptingInterface>()->openTablet();
+        return;
+    }
+    auto window = qApp->getWindow();
+    auto dock = window ? window->findChild<QmlDock*>("SettingsDock") : nullptr;
+    if (dock && dock->panel()) {
+        dock->panel()->setProperty("currentTab", tab);
+    }
+    DependencyManager::get<Panels>()->open("Settings");
 }
 
 Menu::Menu() {
@@ -522,12 +546,12 @@ Menu::Menu() {
     // Settings menu ----------------------------------
     MenuWrapper* settingsMenu = addMenu("Settings");
 
-    // Settings > General...
+    // Settings > General...: Darkride's Settings, the bar's gear's panel (High Fidelity's General Settings window had
+    // little left that worked: its snapshot settings moved into it; Caity 10-28, OLD-SETTINGS.md)
     action = addActionToQMenuAndActionHash(settingsMenu, MenuOption::Preferences, Qt::CTRL | Qt::Key_G, nullptr, nullptr);
     connect(action, &QAction::triggered, [] {
         if (!qApp->getLoginDialogPoppedUp()) {
-            qApp->showDialog(QString("hifi/dialogs/GeneralPreferencesDialog.qml"),
-                QString("hifi/tablet/TabletGeneralPreferences.qml"), "GeneralPreferencesDialog");
+            openSettingsTab(SETTINGS_TAB_GENERAL);
         }
     });
 
@@ -543,17 +567,10 @@ Menu::Menu() {
             }
     });
 
-    // Settings > Audio...
+    // Settings > Audio...: the Settings panel's Sound tab
     action = addActionToQMenuAndActionHash(settingsMenu, "Audio...");
     connect(action, &QAction::triggered, [] {
-        static const QUrl tabletUrl("hifi/audio/Audio.qml");
-        auto tablet = DependencyManager::get<TabletScriptingInterface>()->getTablet("com.highfidelity.interface.tablet.system");
-        auto hmd = DependencyManager::get<HMDScriptingInterface>();
-        tablet->pushOntoStack(tabletUrl);
-
-        if (!hmd->getShouldShowTablet()) {
-            hmd->toggleShouldShowTablet();
-        }
+        openSettingsTab(SETTINGS_TAB_SOUND);
     });
 
     // Settings > Developer Menu
