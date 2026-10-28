@@ -13,6 +13,8 @@
 
 #include <QMetaType>
 #include <QRunnable>
+#include <QCoreApplication>
+#include <QThread>
 #include <QThreadPool>
 
 #include <unordered_map>
@@ -169,7 +171,10 @@ void Model::setOffset(const glm::vec3& offset) {
     _snappedToRegistrationPoint = false;
 }
 
+// main thread only: it walks the materials, which the main thread changes (a script's textures edit, the opacity check
+// in areTexturesLoaded). Called from a script thread it raced those changes and could corrupt a material's texture map.
 void Model::calculateTextureInfo() {
+    _textureInfoRequested = false;
     if (!_hasCalculatedTextureInfo && isLoaded() && getNetworkModel()->areTexturesLoaded() && !_modelMeshRenderItems.isEmpty()) {
         size_t textureSize = 0;
         int textureCount = 0;
@@ -186,13 +191,31 @@ void Model::calculateTextureInfo() {
     }
 }
 
+// off the main thread: the last values, and one queued request to work them out again if they aren't final
+void Model::requestTextureInfo() {
+    if (_hasCalculatedTextureInfo) {
+        return;
+    }
+    if (QThread::currentThread() == thread()) {
+        calculateTextureInfo();
+    } else if (!_textureInfoRequested.exchange(true)) {
+        // a weak pointer, not this: the caller's ModelPointer may be the last one, so the Model can go on the caller's
+        // thread while the main thread runs the request; locked there, the main thread holds it while it works
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [weakModel = weak_from_this()] {
+            if (auto model = weakModel.lock()) {
+                model->calculateTextureInfo();
+            }
+        }, Qt::QueuedConnection);
+    }
+}
+
 size_t Model::getRenderInfoTextureSize() {
-    calculateTextureInfo();
+    requestTextureInfo();
     return _renderInfoTextureSize;
 }
 
 int Model::getRenderInfoTextureCount() {
-    calculateTextureInfo();
+    requestTextureInfo();
     return _renderInfoTextureCount;
 }
 
@@ -1190,6 +1213,8 @@ void Model::removeFromScene(const render::ScenePointer& scene, render::Transacti
     _renderInfoVertexCount = 0;
     _renderInfoDrawCalls = 0;
     _renderInfoTextureSize = 0;
+    _renderInfoTextureCount = 0;
+    _hasCalculatedTextureInfo = false;
     _renderInfoHasTransparent = false;
 }
 
@@ -1381,8 +1406,21 @@ void Model::loadURLFinished(bool success) {
         if (_renderGeometry) {
             _renderGeometry->setTextureLoadPriority(this, _loadingPriority);
         }
+        if (isLoaded()) {
+            std::lock_guard<std::mutex> lock(_cachedMeshExtentsMutex);
+            _cachedUnscaledMeshExtents = getHFMModel().getUnscaledMeshExtents();
+            _hasCachedUnscaledMeshExtents = true;
+        }
     }
     emit setURLFinished(success);
+}
+
+bool Model::getCachedUnscaledMeshExtents(Extents& extents) const {
+    std::lock_guard<std::mutex> lock(_cachedMeshExtentsMutex);
+    if (_hasCachedUnscaledMeshExtents) {
+        extents = _cachedUnscaledMeshExtents;
+    }
+    return _hasCachedUnscaledMeshExtents;
 }
 
 bool Model::getJointPositionInWorldFrame(int jointIndex, glm::vec3& position) const {
@@ -1608,6 +1646,10 @@ void Model::deleteGeometry() {
     _meshStates.clear();
     _rig.destroyAnimGraph();
     _blendedBlendshapeCoefficients.clear();
+    {
+        std::lock_guard<std::mutex> lock(_cachedMeshExtentsMutex);
+        _hasCachedUnscaledMeshExtents = false;
+    }
     _renderGeometry.reset();
 }
 
