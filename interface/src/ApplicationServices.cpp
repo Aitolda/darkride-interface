@@ -265,6 +265,7 @@ void registerApplicationServices(int listenPort, const QString& defaultScriptsOv
     DependencyManager::set<LocationBookmarks>();
     DependencyManager::set<Snapshot>();
     DependencyManager::set<ResourceManager>();
+    MyAvatar::useBuiltInDefaultAvatar();   // the default avatar's files from the app's own copy
     DependencyManager::set<SelectionScriptingInterface>();
     DependencyManager::set<Editor>();
     DependencyManager::set<ImpostorBaker>();

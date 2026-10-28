@@ -34,6 +34,7 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QSet>
 #include <QtCore/QtEndian>
 
 // disabled because it causes crashes with Assimp::DefaultLogger::WriteToStreams
@@ -371,6 +372,38 @@ aiAnimMesh* AssimpSerializer::getBlendshapeByName(QString name, aiMesh* mMesh) {
 }
 
 void AssimpSerializer::processMeshes(const hifi::VariantHash& mapping) {
+    // The model's own blend shapes (hfm::Model::ownBlendshapeNames), when the .fst asks for them, as FBXSerializer keeps
+    // them: each of a mesh's shapes that no standard name takes, by its name, in a slot after the standard ones
+    const hifi::VariantHash ownBlendshapeDefaults = mapping.value("blendshapeDefault").toHash();
+    const bool keepOwnBlendshapes = !ownBlendshapeDefaults.isEmpty() ||
+        mapping.value("ownBlendshapes").toString().trimmed().compare("true", Qt::CaseInsensitive) == 0;
+    QHash<QString, int> ownBlendshapeSlots;
+
+    // a shape's offsets from the mesh, times its weight, for the vertices it moves
+    auto fillBlendshape = [](hfm::Blendshape& blendshape, const aiMesh* mMesh, const aiAnimMesh* animMesh, float weight) {
+        for (size_t vertexIndex = 0; vertexIndex < animMesh->mNumVertices; vertexIndex++) {
+            auto v = (asVec3(animMesh->mVertices[vertexIndex]) - asVec3(mMesh->mVertices[vertexIndex])) * weight;
+
+            auto n = animMesh->HasNormals() ?
+                (asVec3(animMesh->mNormals[vertexIndex]) - asVec3(mMesh->mNormals[vertexIndex])) * weight :
+                vec3(0.0f);
+
+            auto t = animMesh->HasTangentsAndBitangents() ?
+                (asVec3(animMesh->mTangents[vertexIndex]) - asVec3(mMesh->mTangents[vertexIndex])) * weight :
+                vec3(0.0f);
+
+            if (isEmptyVec3(v) && isEmptyVec3(n) && isEmptyVec3(t)) {
+                continue;
+            }
+
+            blendshape.indices.push_back(vertexIndex);
+
+            blendshape.vertices.push_back(v);
+            if (animMesh->HasNormals()) blendshape.normals.push_back(n);
+            if (animMesh->HasTangentsAndBitangents()) blendshape.tangents.push_back(t);
+        }
+    };
+
     for (size_t meshIndex = 0; meshIndex < scene->mNumMeshes; meshIndex++) {
         aiMesh* mMesh = scene->mMeshes[meshIndex];
 
@@ -424,6 +457,7 @@ void AssimpSerializer::processMeshes(const hifi::VariantHash& mapping) {
 
         if (mMesh->mNumAnimMeshes > 0) {
             bool isBlendshapeChannelNamesEmpty = hfmModel->blendshapeChannelNames.size() == 0;
+            QSet<QString> standardShapes;   // this mesh's shapes the standard names take
 
             for (size_t i = 0; i < (int)Blendshapes::BlendshapeCount; i++) {
                 const QString fromName = BLENDSHAPE_NAMES[i];
@@ -456,29 +490,38 @@ void AssimpSerializer::processMeshes(const hifi::VariantHash& mapping) {
                 if (animMesh == nullptr) {
                     continue;
                 }
-                
-                for (size_t vertexIndex = 0; vertexIndex < animMesh->mNumVertices; vertexIndex++) {
-                    auto v = (asVec3(animMesh->mVertices[vertexIndex]) - asVec3(mMesh->mVertices[vertexIndex])) * weight;
+                standardShapes.insert(toName);
+                fillBlendshape(*blendshapePtr, mMesh, animMesh, weight);
+            }
 
-                    auto n = animMesh->HasNormals() ?
-                        (asVec3(animMesh->mNormals[vertexIndex]) - asVec3(mMesh->mNormals[vertexIndex])) * weight :
-                        vec3(0.0f);
-
-                    auto t = animMesh->HasTangentsAndBitangents() ?
-                        (asVec3(animMesh->mTangents[vertexIndex]) - asVec3(mMesh->mTangents[vertexIndex])) * weight :
-                        vec3(0.0f);
-                    
-                    if (isEmptyVec3(v) && isEmptyVec3(n) && isEmptyVec3(t)) {
+            if (keepOwnBlendshapes) {
+                for (size_t i = 0; i < mMesh->mNumAnimMeshes; i++) {
+                    const aiAnimMesh* animMesh = mMesh->mAnimMeshes[i];
+                    const QString name = animMesh->mName.C_Str();
+                    if (name.isEmpty() || standardShapes.contains(name)) {
                         continue;
                     }
-
-                    blendshapePtr->indices.push_back(vertexIndex);
-                    
-                    blendshapePtr->vertices.push_back(v);
-                    if (animMesh->HasNormals()) blendshapePtr->normals.push_back(n);
-                    if (animMesh->HasTangentsAndBitangents()) blendshapePtr->tangents.push_back(t);
+                    auto slot = ownBlendshapeSlots.find(name);
+                    if (slot == ownBlendshapeSlots.end()) {
+                        slot = ownBlendshapeSlots.insert(name, hfmModel->ownBlendshapeNames.size());
+                        hfmModel->ownBlendshapeNames << name;
+                    }
+                    const int index = (int)Blendshapes::BlendshapeCount + *slot;
+                    if (meshPtr->blendshapes.size() <= index) {
+                        meshPtr->blendshapes.resize(index + 1);
+                    }
+                    fillBlendshape(meshPtr->blendshapes[index], mMesh, animMesh, 1.0f);
                 }
             }
+        }
+    }
+
+    // the own blend shapes' starting weights
+    hfmModel->ownBlendshapeDefaults.fill(0.0f, hfmModel->ownBlendshapeNames.size());
+    for (auto it = ownBlendshapeDefaults.begin(); it != ownBlendshapeDefaults.end(); ++it) {
+        const int slot = hfmModel->ownBlendshapeNames.indexOf(it.key());
+        if (slot >= 0) {
+            hfmModel->ownBlendshapeDefaults[slot] = glm::clamp(it.value().toFloat(), 0.0f, 1.0f);
         }
     }
 }

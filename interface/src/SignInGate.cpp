@@ -101,7 +101,7 @@ void SignInGate::pauseUntilLoginDetermined() {
     _previousAvatarTargetScale = myAvatar->getTargetScale();
     _previousAvatarSkeletonModel = myAvatar->getSkeletonModelURL().toString();
     myAvatar->setTargetScale(1.0f);
-    myAvatar->setSkeletonModelURLFromScript(myAvatar->defaultFullAvatarModelUrl().toString());
+    myAvatar->setSkeletonModelURLFromScript(MyAvatar::defaultAvatarURL().toString());
     myAvatar->setEnableMeshVisible(false);
 
     qApp->getControllerScriptingInterface()->disableMapping(STANDARD_TO_ACTION_MAPPING_NAME);

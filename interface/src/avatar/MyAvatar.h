@@ -1400,6 +1400,14 @@ public:
      */
     Q_INVOKABLE float getIKErrorOnLastSolve() const;
 
+    // The default avatar, which a new player wears and the Avatar panel's Default puts back: the Lightling, at its fixed
+    // web address, so every viewer (1.0.x too) loads the same model and its poses fit. An empty address on the wire still
+    // means AvatarData's default, the mannequin, which 1.0.x players and agents without an avatar of their own wear.
+    static QUrl defaultAvatarURL();
+    // This app reads the default avatar's folder from its own copy (resources/meshes/lightling), never the web: once the
+    // resource manager exists
+    static void useBuiltInDefaultAvatar();
+
     /**jsdoc
      * Randomizes the colors of the default avatar.
      * <code>MyAvatar.useFullAvatarURL(MyAvatar.getDefaultFullAvatarURL(), "Default")</code> will set you back.

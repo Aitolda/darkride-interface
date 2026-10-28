@@ -38,6 +38,7 @@
 #include <udt/PacketHeaders.h>
 #include <PathUtils.h>
 #include <PerfStat.h>
+#include <ResourceManager.h>
 #include <SharedUtil.h>
 #include <SoundCache.h>
 #include <ModelEntityItem.h>
@@ -88,6 +89,11 @@ const int SCRIPTED_MOTOR_WORLD_FRAME = 2;
 const int SCRIPTED_MOTOR_SIMPLE_MODE = 0;
 const int SCRIPTED_MOTOR_DYNAMIC_MODE = 1;
 const QString& DEFAULT_AVATAR_COLLISION_SOUND_URL = "qrc:/sounds/Body_Hits_Impact.wav";
+// the default avatar's folder on the web (published once by metaverse and never changed: a new version gets a new folder)
+// and this app's own copy of it (MyAvatar::useBuiltInDefaultAvatar). The web copy is for 1.0.x viewers, a plain
+// Lightling without custom shaders; the one built in has them.
+const QString DEFAULT_AVATAR_FOLDER_URL = "https://cdn.darkride.ai/avatars/lightling-1/";
+const QString DEFAULT_AVATAR_BUILT_IN_FOLDER = "meshes/lightling/";
 
 const float MyAvatar::ZOOM_MIN = 0.5f;
 const float MyAvatar::ZOOM_MAX = 25.0f;
@@ -196,8 +202,7 @@ MyAvatar::MyAvatar(QThread* thread) :
     _scaleSetting(QStringList() << AVATAR_SETTINGS_GROUP_NAME << "scale", _targetScale),
     _yawSpeedSetting(QStringList() << AVATAR_SETTINGS_GROUP_NAME << "yawSpeed", _yawSpeed),
     _pitchSpeedSetting(QStringList() << AVATAR_SETTINGS_GROUP_NAME << "pitchSpeed", _pitchSpeed),
-    _fullAvatarURLSetting(QStringList() << AVATAR_SETTINGS_GROUP_NAME << "fullAvatarURL",
-                          AvatarData::defaultFullAvatarModelUrl()),
+    _fullAvatarURLSetting(QStringList() << AVATAR_SETTINGS_GROUP_NAME << "fullAvatarURL", defaultAvatarURL()),
     _fullAvatarModelNameSetting(QStringList() << AVATAR_SETTINGS_GROUP_NAME << "fullAvatarModelName", _fullAvatarModelName),
     _animGraphURLSetting(QStringList() << AVATAR_SETTINGS_GROUP_NAME << "animGraphURL", QUrl("")),
     _displayNameSetting(QStringList() << AVATAR_SETTINGS_GROUP_NAME << "displayName", ""),
@@ -1309,7 +1314,7 @@ void MyAvatar::restoreRoleAnimation(const QString& role) {
 
 void MyAvatar::saveAvatarUrl() {
     if (qApp->getSaveAvatarOverrideUrl() || !qApp->getAvatarOverrideUrl().isValid()) {
-        _fullAvatarURLSetting.set(_fullAvatarURLFromPreferences == AvatarData::defaultFullAvatarModelUrl() ?
+        _fullAvatarURLSetting.set(_fullAvatarURLFromPreferences == defaultAvatarURL() ?
                                   "" :
                                   _fullAvatarURLFromPreferences.toString());
     }
@@ -1351,8 +1356,8 @@ void MyAvatar::saveData() {
     // --replaceAvatarURL (so _saveAvatarOverrideUrl is true)
     if (qApp->getSaveAvatarOverrideUrl() || !qApp->getAvatarOverrideUrl().isValid() ) {
         _fullAvatarURLSetting.set(
-            _fullAvatarURLFromPreferences == AvatarData::defaultFullAvatarModelUrl() ?
-            AvatarData::defaultFullAvatarModelUrl() :
+            _fullAvatarURLFromPreferences == defaultAvatarURL() ?
+            defaultAvatarURL() :
             _fullAvatarURLFromPreferences.toString()
         );
     }
@@ -2026,11 +2031,15 @@ void MyAvatar::loadData() {
     _pitchSpeed = _pitchSpeedSetting.get(_pitchSpeed);
 
     _prefOverrideAnimGraphUrl.set(_animGraphURLSetting.get().toString());
-    _fullAvatarURLFromPreferences = _fullAvatarURLSetting.get(QUrl(AvatarData::defaultFullAvatarModelUrl()));
+    _fullAvatarURLFromPreferences = _fullAvatarURLSetting.get(defaultAvatarURL());
     if (_fullAvatarURLFromPreferences.host().endsWith("tivolicloud.com", Qt::CaseInsensitive)) {
         // Avatars served by the Tivoli metaverse (e.g. the old randomized default) can no longer load.
         qCDebug(interfaceapp) << "Ignoring saved avatar URL from the defunct Tivoli metaverse:" << _fullAvatarURLFromPreferences;
-        _fullAvatarURLFromPreferences = AvatarData::defaultFullAvatarModelUrl();
+        _fullAvatarURLFromPreferences = defaultAvatarURL();
+    }
+    if (_fullAvatarURLFromPreferences.isEmpty() || _fullAvatarURLFromPreferences == AvatarData::defaultFullAvatarModelUrl()) {
+        // the default as earlier versions saved it (empty, or the mannequin's address): the default is the Lightling now
+        _fullAvatarURLFromPreferences = defaultAvatarURL();
     }
     _fullAvatarModelName = _fullAvatarModelNameSetting.get(DEFAULT_FULL_AVATAR_MODEL_NAME).toString();
 
@@ -2657,6 +2666,7 @@ void MyAvatar::resetFullAvatarURL() {
 
 void MyAvatar::randomizeDefaultAvatar() {
     bool isDefault = (
+        getSkeletonModelURL() == defaultAvatarURL() ||
         getSkeletonModelURL() == Avatar::defaultFullAvatarModelUrl() ||
         getSkeletonModelURL().isEmpty() ||
         getFullAvatarModelName() == "Default"
@@ -2667,14 +2677,25 @@ void MyAvatar::randomizeDefaultAvatar() {
     if (isDefault) {
         // reload if currently default
         useFullAvatarURL(
-            Avatar::defaultFullAvatarModelUrl(),
+            defaultAvatarURL(),
             DEFAULT_FULL_AVATAR_MODEL_NAME
         ); 
     }
 }
 
 QUrl MyAvatar::getDefaultFullAvatarURL() {
-    return Avatar::defaultFullAvatarModelUrl();
+    return defaultAvatarURL();
+}
+
+QUrl MyAvatar::defaultAvatarURL() {
+    return QUrl(DEFAULT_AVATAR_FOLDER_URL + "lightling.fst");
+}
+
+void MyAvatar::useBuiltInDefaultAvatar() {
+    // every request for the folder's files (the model, its materials, their shaders and pictures) is read from the copy
+    // in the app's resources: nothing is downloaded, and the default avatar shows at once, online or not
+    DependencyManager::get<ResourceManager>()->setUrlPrefixOverride(
+        DEFAULT_AVATAR_FOLDER_URL, PathUtils::resourcesUrl(DEFAULT_AVATAR_BUILT_IN_FOLDER).toString());
 }
 
 bool MyAvatar::isSkeletonModelLoaded() const {
