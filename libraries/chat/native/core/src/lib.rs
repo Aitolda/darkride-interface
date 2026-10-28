@@ -118,6 +118,9 @@ fn default_device_name() -> String {
 
 /// How many of a timeline's newest items an event carries at first; open can ask for more, and each back adds its count
 const TIMELINE_ITEMS: usize = 100;
+/// the most of a room's items the viewer is sent, however far back it scrolls: every timeline event carries them all,
+/// so a busy room's events stay small (the viewer stops asking at the same number, ChatWindow.cpp)
+const TIMELINE_ITEMS_MAX: usize = 500;
 
 pub type EventSink = Arc<dyn Fn(String) + Send + Sync>;
 
@@ -698,8 +701,9 @@ async fn show_more(state: &Arc<State>, timeline: &Timeline, count: usize) {
     if count == 0 {
         return;
     }
-    let shown = shown.fetch_add(count, Ordering::SeqCst) + count;
-    state.emit(timeline_json(&room, &timeline.items().await, shown, timeline.room().own_user_id()));
+    let more = (shown.load(Ordering::SeqCst) + count).min(TIMELINE_ITEMS_MAX);
+    shown.store(more, Ordering::SeqCst);
+    state.emit(timeline_json(&room, &timeline.items().await, more, timeline.room().own_user_id()));
 }
 
 async fn open_timeline(state: &Arc<State>, target: &str) -> Result<Arc<Timeline>> {

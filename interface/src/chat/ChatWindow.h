@@ -155,6 +155,7 @@ private:
     bool _friendsShown { false };               // the Friends page is up (the last room stays _room)
     QString _dmWanted;                           // a friend's chat account whose new DM is being made, to open
     QTimer* _friendsTimer { nullptr };          // asks for the lists again every minute while the window is up
+    QTimer* _renderTimer { nullptr };           // the conversation drawn once for a burst of timeline events
     qint64 _friendsAskedAt { 0 };
 
     QJsonArray _rooms;

@@ -103,6 +103,10 @@ static const QString FRIENDS_ROW = "friends:";
 // a friend's lists again at most this often when the window comes forward
 static const qint64 FRIENDS_FRESH_MS = 15 * 1000;
 static const int FRIENDS_REFRESH_MS = 60 * 1000;
+// timeline events this close together are drawn once (a busy or flooded room); and the most items a conversation
+// shows, the chat library's own cap (TIMELINE_ITEMS_MAX), so scrolling up stops asking for older ones there
+static const int RENDER_DELAY_MS = 50;
+static const int TIMELINE_ITEMS_MAX = 500;
 // a message's picture fits in this, as Discord's do in a narrower column (narrow: the chat panel docked beside the
 // 3D view, one column at a time)
 static const QSize PICTURE_MAX(400, 300);
@@ -789,6 +793,14 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
     connect(send, &QPushButton::clicked, this, &ChatWindow::sendFriendRequest);
     connect(_addFriendName, &QLineEdit::returnPressed, this, &ChatWindow::sendFriendRequest);
     _friendsTabs.value(_friendsTab)->setChecked(true);
+    // a busy or flooded room sends timeline events faster than the conversation can be drawn: they're drawn together
+    _renderTimer = new QTimer(this);
+    _renderTimer->setSingleShot(true);
+    _renderTimer->setInterval(RENDER_DELAY_MS);
+    connect(_renderTimer, &QTimer::timeout, this, [this] {
+        renderTimeline();
+        markReadIfSeen();
+    });
     _friendsTimer = new QTimer(this);
     _friendsTimer->setInterval(FRIENDS_REFRESH_MS);
     connect(_friendsTimer, &QTimer::timeout, this, [this] { askFriends(true); });
@@ -818,7 +830,8 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
         }
         _stickToBottom = value >= _timeline->verticalScrollBar()->maximum() - 4;
         auto service = DependencyManager::get<ChatService>();
-        if (value == 0 && service && !_room.isEmpty() && !_roomStart && !_loadingOlder && !_items.isEmpty()) {
+        if (value == 0 && service && !_room.isEmpty() && !_roomStart && !_loadingOlder && !_items.isEmpty() &&
+            _items.size() < TIMELINE_ITEMS_MAX) {
             _loadingOlder = true;
             _anchorBottom = true;
             service->loadOlder(_room);
@@ -1147,8 +1160,9 @@ void ChatWindow::updateTimeline(const QString& room, const QJsonArray& items) {
         return;
     }
     _items = items;
-    renderTimeline();
-    markReadIfSeen();
+    if (!_renderTimer->isActive()) {
+        _renderTimer->start();
+    }
 }
 
 void ChatWindow::commandDone(const QJsonObject& done) {
@@ -1409,6 +1423,9 @@ void ChatWindow::openMedia(const QJsonObject& media, const QString& name) {
 }
 
 void ChatWindow::renderTimeline() {
+    if (_renderTimer) {
+        _renderTimer->stop();   // drawn now: a draw waiting for the burst's end isn't needed
+    }
     QScrollBar* scroll = _timeline->verticalScrollBar();
     int fromBottom = scroll->maximum() - scroll->value();
     int fromTop = scroll->value();
