@@ -263,6 +263,12 @@ bool Procedural::isReady() const {
     return true;
 }
 
+bool Procedural::compilationFailed(const ProceduralProgramKey& key) const {
+    auto pipeline = _proceduralPipelines.find(key);
+    return pipeline != _proceduralPipelines.end() && pipeline->second && pipeline->second->getProgram() &&
+           pipeline->second->getProgram()->compilationHasFailed();
+}
+
 void Procedural::prepare(gpu::Batch& batch,
                          const glm::vec3& position,
                          const glm::vec3& size,

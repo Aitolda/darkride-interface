@@ -25,6 +25,7 @@
 class AABox;
 
 namespace render {
+    class ShapePlumber;
     class RenderDetails {
     public:
         enum Type {
@@ -121,6 +122,9 @@ namespace render {
         std::shared_ptr<gpu::Context> _context;
         std::shared_ptr<gpu::Framebuffer> _blitFramebuffer;
         std::shared_ptr<render::ShapePipeline> _shapePipeline;
+        // while a shape item draws: the plumber its pass picks pipelines from, for an item whose own pipeline (a custom
+        // shader) can't draw and falls back to a plain one (MeshPartPayload::bindPlainPipeline)
+        const render::ShapePlumber* _shapePlumber { nullptr };
         std::stack<ViewFrustum> _viewFrustums;
         glm::ivec4 _viewport { 0.0f, 0.0f, 1.0f, 1.0f };
         glm::vec3 _boomOffset { 0.0f, 0.0f, 1.0f };
