@@ -923,9 +923,8 @@ Page {
             // when it isn't ready yet, and stopped when the tab or the panel goes
             ListRow {
                 id: testSound
-                objectName: "testSoundRow"   // a test plays it by it
-                // PLACEHOLDER until the new test clip turns up: put it in interface/resources/sounds/ and name it here
-                readonly property url source: Qt.resolvedUrl("../../sounds/sample.wav")
+                // Darkride's own test clip, 9.6 s (Caity chose it 10-28)
+                readonly property url source: Qt.resolvedUrl("../../sounds/test-sound.mp3")
                 property var sound: null
                 property var injector: null
                 property int tries: 0
