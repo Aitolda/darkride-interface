@@ -10,6 +10,7 @@
 #include <QBitArray>
 #include <QObject>
 #include <QUrl>
+#include <QVariantMap>
 #include <QMutex>
 
 #include <atomic>
@@ -263,6 +264,9 @@ public:
     /// Any thread: the loaded model's HFMModel::getUnscaledMeshExtents, cached on the main thread as its geometry arrives
     /// and goes; false while there is none
     bool getCachedUnscaledMeshExtents(Extents& extents) const;
+    /// Any thread: the loaded model's glTF extras ("objects": by joint name, "materials": by material name), cached on
+    /// the main thread with the extents; false (and extras left as they were) while there is no geometry
+    bool getCachedExtras(QVariantMap& extras) const;
 
     void setTranslation(const glm::vec3& translation);
     void setRotation(const glm::quat& rotation);
@@ -519,8 +523,9 @@ protected:
     std::atomic<int> _renderInfoDrawCalls { 0 };
     std::atomic<bool> _renderInfoHasTransparent { false };
 
-    mutable std::mutex _cachedMeshExtentsMutex;
+    mutable std::mutex _cachedMeshExtentsMutex;   // the extents and the extras
     Extents _cachedUnscaledMeshExtents;
+    QVariantMap _cachedExtras;
     bool _hasCachedUnscaledMeshExtents { false };
 
     // This Render ItemKey Global Flags capture the Model wide global set of flags that should be communicated to all the render items representing the Model.
