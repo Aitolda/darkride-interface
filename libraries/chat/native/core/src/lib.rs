@@ -937,6 +937,11 @@ fn media_json(
 }
 
 /// A media command: the file kept in the data folder's media/, fetched (and decrypted) the first time
+/// media fetched at once, whoever asks (a room of pictures opened fetches them a few at a time, not all together)
+static MEDIA_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+/// the largest media file written to the chat's folder; the homeserver's own upload limit is the same
+const MEDIA_MAX_BYTES: usize = 50 * 1024 * 1024;
+
 async fn fetch_media(state: &Arc<State>, command: &Value) -> Result<String> {
     let client = state.client()?;
     let source: MediaSource = serde_json::from_value(command["source"].clone()).context("the media's source")?;
@@ -958,8 +963,12 @@ async fn fetch_media(state: &Arc<State>, command: &Value) -> Result<String> {
     let folder = state.config.data_dir.join("media");
     let path = folder.join(format!("{:016x}", hasher.finish()));
     if !path.exists() {
+        let _slot = MEDIA_SLOTS.acquire().await?;
         // the SDK's own cache would keep a second copy in its database
         let bytes = client.media().get_media_content(&request, false).await?;
+        if bytes.len() > MEDIA_MAX_BYTES {
+            return Err(anyhow!("too big to fetch ({} MB)", bytes.len() / (1024 * 1024)));
+        }
         std::fs::create_dir_all(&folder)?;
         let partial = path.with_extension("part");
         std::fs::write(&partial, bytes)?;

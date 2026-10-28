@@ -14,6 +14,7 @@
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QLocale>
 #include <QtCore/QRegularExpression>
@@ -117,6 +118,10 @@ static const int SHORT_HEIGHT = 360;
 static const QSize FLOATING_SIZE(940, 640);
 // a GIF bigger than this shows as its first frame from a thumbnail rather than playing
 static const qint64 GIF_PLAY_MAX_BYTES = 12 * 1024 * 1024;
+// a GIF plays only this big in pixels too (frames are decoded on the main thread); a picture bigger than the second
+// isn't decoded here at all (its grey box still opens it in the system's viewer)
+static const qint64 GIF_PLAY_MAX_PIXELS = 1000 * 1000;
+static const qint64 PICTURE_MAX_PIXELS = 60 * 1000 * 1000;
 static const int AVATAR_FETCH_SIZE = 96;
 
 static Setting::Handle<QByteArray> chatWindowGeometry("chat/windowGeometry");
@@ -1222,7 +1227,8 @@ QString ChatWindow::mediaHtml(const QJsonObject& item) {
     QJsonValue shownSource;
     int width = 0, height = 0;
     QSize own((int)media.value("width").toDouble(), (int)media.value("height").toDouble());
-    if (kind == "image" && mimetype == "image/gif" && !encrypted && (size == 0 || size <= GIF_PLAY_MAX_BYTES)) {
+    // (a size the message gives: one that gives none gets the server's still, not the whole file)
+    if (kind == "image" && mimetype == "image/gif" && !encrypted && size > 0 && size <= GIF_PLAY_MAX_BYTES) {
         key = "file|" + compactJson(source);   // the whole GIF, to play it
         shownSource = source;
     } else if (kind == "image" || kind == "video") {
@@ -1362,7 +1368,14 @@ void ChatWindow::showPicture(const QString& key, const QString& path) {
             return;
         }
     }
-    if (reader.supportsAnimation() && reader.imageCount() > 1) {
+    // the file itself decides, not what the message said about it
+    qint64 pixels = own.isValid() ? (qint64)own.width() * own.height() : 0;
+    if (pixels > PICTURE_MAX_PIXELS) {
+        qCDebug(interfaceapp) << "chat: a picture of" << own << "isn't shown here";
+        return;
+    }
+    bool animate = QFileInfo(path).size() <= GIF_PLAY_MAX_BYTES && pixels <= GIF_PLAY_MAX_PIXELS;
+    if (animate && reader.supportsAnimation() && reader.imageCount() > 1) {
         if (_movies.contains(key)) {
             return;
         }
@@ -1382,6 +1395,11 @@ void ChatWindow::showPicture(const QString& key, const QString& path) {
         });
         movie->start();
         return;
+    }
+    // (a GIF too big to play shows its first frame) decoded no bigger than the conversation shows it
+    QSize most = _pictureMax * devicePixelRatioF();
+    if (own.isValid() && (own.width() > most.width() || own.height() > most.height())) {
+        reader.setScaledSize(own.scaled(most, Qt::KeepAspectRatio));
     }
     QImage image = reader.read();
     for (const PictureUse& use : _pictureUses.values(key)) {
