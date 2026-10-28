@@ -400,7 +400,9 @@ Page {
         Section {
             title: "View"
             footer: "Drag a label sideways to change its number: Shift for big steps, Alt for small ones. A resolution "
-                + "scale above 1× draws more pixels than the window has: sharper, and slower in proportion."
+                + "scale above 1× draws more pixels than the window has: sharper, and slower in proportion. Below 1× "
+                + "it draws fewer and scales them up, sharpened: faster, and a little softer. The slider stops at the "
+                + "usual steps; click the number beside any slider to type a value."
 
             ListRow {
                 label: "Resolution scale"
@@ -415,6 +417,8 @@ Page {
 
                 ValueSlider {
                     from: 0.1; to: 2; stepSize: 0.05; decimals: 2; units: "×"
+                    // 0.5 to 0.77: FSR 1's Performance, Balanced, Quality and Ultra Quality (1/2, 1/1.7, 1/1.5, 1/1.3)
+                    stops: [0.25, 0.5, 0.59, 0.67, 0.77, 1, 1.25, 1.5, 2]
                     value: Render.viewportResolutionScale
                     onMoved: Render.viewportResolutionScale = value
                 }
