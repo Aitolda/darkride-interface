@@ -405,9 +405,6 @@ else()
     COMMAND "${CMAKE_COMMAND}" -E remove_directory
       "${INTERFACE_EXEC_DIR}/scripts/developer/tests"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-      "${PROJECT_SOURCE_DIR}/resources/serverless/tutorial.json"
-      "${RESOURCES_DEV_DIR}/serverless/tutorial.json"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
       "${PROJECT_SOURCE_DIR}/resources/serverless/redirect.json"
       "${RESOURCES_DEV_DIR}/serverless/redirect.json"
 
