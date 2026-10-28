@@ -113,7 +113,8 @@ static void editOrPostKey(const char* action, Qt::Key key) {
 // tablet, as the bar's gear opens it. The page reads the tab it saved when it's made; one already made is told.
 static const char* SETTINGS_TAB_SETTING = "io.darkride.settings.tab";
 static const int SETTINGS_TAB_GENERAL = 0;
-static const int SETTINGS_TAB_SOUND = 2;
+static const int SETTINGS_TAB_CONTROLS = 1;
+static const int SETTINGS_TAB_SOUND = 3;
 
 static void openSettingsTab(int tab) {
     // a default of -1: a handle saves only a value unlike its default, and the General tab is 0
@@ -547,7 +548,7 @@ Menu::Menu() {
     MenuWrapper* settingsMenu = addMenu("Settings");
 
     // Settings > General...: Darkride's Settings, the bar's gear's panel (High Fidelity's General Settings window had
-    // little left that worked: its snapshot settings moved into it; Caity 10-28, OLD-SETTINGS.md)
+    // little left that worked: its snapshot settings moved into it; Caity 10-28)
     action = addActionToQMenuAndActionHash(settingsMenu, MenuOption::Preferences, Qt::CTRL | Qt::Key_G, nullptr, nullptr);
     connect(action, &QAction::triggered, [] {
         if (!qApp->getLoginDialogPoppedUp()) {
@@ -555,16 +556,11 @@ Menu::Menu() {
         }
     });
 
-    // Settings > Controls...
+    // Settings > Controls...: the Settings panel's Controls tab (High Fidelity's Controls page opens from its devices'
+    // Set Up... and its VR movement Options...; Caity 10-28)
     action = addActionToQMenuAndActionHash(settingsMenu, "Controls...");
     connect(action, &QAction::triggered, [] {
-            auto tablet = DependencyManager::get<TabletScriptingInterface>()->getTablet("com.highfidelity.interface.tablet.system");
-            auto hmd = DependencyManager::get<HMDScriptingInterface>();
-            tablet->pushOntoStack("hifi/tablet/ControllerSettings.qml");
-
-            if (!hmd->getShouldShowTablet()) {
-                hmd->toggleShouldShowTablet();
-            }
+        openSettingsTab(SETTINGS_TAB_CONTROLS);
     });
 
     // Settings > Audio...: the Settings panel's Sound tab
