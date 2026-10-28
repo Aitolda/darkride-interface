@@ -35,10 +35,13 @@ Item {
     Component.onCompleted: {
         AudioScriptingInterface.noiseGateOpened.connect(function() { micBar.gated = false; });
         AudioScriptingInterface.noiseGateClosed.connect(function() { micBar.gated = true; });
-        HMD.displayModeChanged.connect(function() {
-            micBar.muted = AudioScriptingInterface.muted;
-            micBar.pushToTalk = AudioScriptingInterface.pushToTalk;
-        });
+        // (the tablet's home page is made once before the HMD object is there)
+        if (micBar.hasHMD) {
+            HMD.displayModeChanged.connect(function() {
+                micBar.muted = AudioScriptingInterface.muted;
+                micBar.pushToTalk = AudioScriptingInterface.pushToTalk;
+            });
+        }
         AudioScriptingInterface.mutedChanged.connect(function() {
             micBar.muted = AudioScriptingInterface.muted;
         });
@@ -50,6 +53,7 @@ Item {
         });
     }
 
+    readonly property bool hasHMD: typeof HMD !== "undefined" && HMD !== null
     property bool standalone: false   // the view's own (AvatarInputsBar.qml), not the tablet's
     property var dragTarget: null
     property real scale: 1
@@ -123,7 +127,7 @@ Item {
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: micBar.mode === "muted" || micBar.mode === "waiting"
-                text: micBar.mode === "muted" ? "Muted" : HMD.active ? "Hold to talk" : "Hold T to talk"
+                text: micBar.mode === "muted" ? "Muted" : micBar.hasHMD && HMD.active ? "Hold to talk" : "Hold T to talk"
                 color: micBar.mode === "muted" ? "#ff5555" : "#9aa1bd"
                 font.pixelSize: 13 * micBar.scale
                 font.weight: micBar.mode === "muted" ? Font.DemiBold : Font.Normal
