@@ -18,6 +18,7 @@
 
 #include <thread>
 #include <glm/glm.hpp>
+#include <QtCore/QAbstractNativeEventFilter>
 #include <QtGui/QScreen>
 #include <QtGui/QWindow>
 #include <QProcessEnvironment>
@@ -65,6 +66,43 @@ const QString ACTIVE_DISPLAY_PLUGIN_SETTING_NAME = "activeDisplayPlugin";
 // Application's getMyAvatar is private; this is the same call
 static std::shared_ptr<MyAvatar> getMyAvatar() {
     return DependencyManager::get<AvatarManager>()->getMyAvatar();
+}
+
+#if defined(Q_OS_WIN)
+// Windows sends every top-level window WM_ACTIVATEAPP when the front app changes. Qt's application state misses some of
+// those changes: a window activated while another app is in front (a start-up activateWindow, Window.setFocus) only
+// flashes the taskbar button, yet Qt calls the app active, and when the player later clicks it, Qt has no change to
+// report. So the refresh-rate regime takes Windows' word.
+class ForegroundFilter : public QAbstractNativeEventFilter {
+public:
+    explicit ForegroundFilter(Display* display) : _display(display) {}
+
+    bool nativeEventFilter(const QByteArray& eventType, void* message, long*) override {
+        auto msg = static_cast<MSG*>(message);
+        if (eventType == "windows_generic_MSG" && msg->message == WM_ACTIVATEAPP) {
+            bool inFront = msg->wParam != FALSE;
+            // queued: this runs inside the window procedure; each top-level window gets its own copy, and a repeat changes nothing
+            QMetaObject::invokeMethod(_display, [display = _display, inFront] { display->foregroundChanged(inFront); }, Qt::QueuedConnection);
+        }
+        return false;
+    }
+
+private:
+    Display* _display;
+};
+#endif
+
+Display::Display() {
+#if defined(Q_OS_WIN)
+    _foregroundFilter = std::make_unique<ForegroundFilter>(this);
+    QCoreApplication::instance()->installNativeEventFilter(_foregroundFilter.get());
+#endif
+}
+
+Display::~Display() {
+    if (_foregroundFilter) {
+        QCoreApplication::instance()->removeNativeEventFilter(_foregroundFilter.get());
+    }
 }
 
 // The field-of-view setting is a horizontal angle and the vertical one is derived from the aspect
@@ -380,6 +418,18 @@ bool Display::isForeground() const {
     return _isForeground && !qApp->getWindow()->isMinimized();
 }
 
+bool Display::isAppInFront() const {
+#if defined(Q_OS_WIN)
+    // Qt can call the app active while another app is in front (see ForegroundFilter), so ask Windows whose window is in front
+    if (HWND foreground = GetForegroundWindow()) {
+        DWORD process = 0;
+        GetWindowThreadProcessId(foreground, &process);
+        return process == GetCurrentProcessId();
+    }
+#endif
+    return QGuiApplication::applicationState() == Qt::ApplicationActive;
+}
+
 void Display::resizeGL() {
     PROFILE_RANGE(render, __FUNCTION__);
     if (nullptr == _displayPlugin) {
@@ -635,8 +685,9 @@ void Display::endHMDSession() {
 void Display::activeChanged(Qt::ApplicationState state) {
     switch (state) {
         case Qt::ApplicationActive:
-            _isForeground = true;
-            if (!qApp->isAboutToQuit() && qApp->getSignInGate().startUpFinished()) {
+            // on Windows, Qt says active when one of our windows is activated behind another app's; then nothing changes
+            _isForeground = isAppInFront();
+            if (_isForeground && !qApp->isAboutToQuit() && qApp->getSignInGate().startUpFinished()) {
                 qApp->getRefreshRateManager().setRefreshRateRegime(RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE);
             }
             break;
@@ -653,6 +704,15 @@ void Display::activeChanged(Qt::ApplicationState state) {
         default:
             _isForeground = false;
             break;
+    }
+}
+
+void Display::foregroundChanged(bool inFront) {
+    _isForeground = inFront;
+    // a minimized window keeps the minimized regime; restoring it sets the full rate (Application's WindowStateChange)
+    if (!qApp->isAboutToQuit() && qApp->getSignInGate().startUpFinished() && !qApp->getWindow()->isMinimized()) {
+        qApp->getRefreshRateManager().setRefreshRateRegime(inFront ? RefreshRateManager::RefreshRateRegime::FOCUS_ACTIVE :
+            RefreshRateManager::RefreshRateRegime::UNFOCUS);
     }
 }
 
