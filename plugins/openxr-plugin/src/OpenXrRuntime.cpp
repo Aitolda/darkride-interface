@@ -10,8 +10,10 @@
 
 #include "OpenXrRuntime.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 #include <QtCore/QCoreApplication>
@@ -217,6 +219,7 @@ bool OpenXrRuntime::createSession() {
         qCWarning(openxr) << "No OpenGL context is current, so no OpenXR session can be made";
         return false;
     }
+    qCDebug(openxr) << "Making a session with the GL context" << (void*)binding.hGLRC << "on device context" << (void*)binding.hDC;
     createInfo.next = &binding;
 #else
 #error "The OpenXR plugin has no graphics binding for this platform yet"
@@ -266,8 +269,7 @@ void OpenXrRuntime::destroySession() {
         return;
     }
     if (_sessionRunning) {
-        xrEndSession(_session);
-        _sessionRunning = false;
+        endRunningSession();
     }
     // Destroying the session destroys its spaces, swapchains, action spaces and hand trackers.
     xrDestroySession(_session);
@@ -277,6 +279,45 @@ void OpenXrRuntime::destroySession() {
     _sessionState = XR_SESSION_STATE_UNKNOWN;
     _displayTime = 0;
     qCDebug(openxr) << "OpenXR session destroyed";
+}
+
+// A running session ends the way the spec's lifecycle has it before it is destroyed: the app asks to exit, keeps its
+// frame loop going (empty frames) until the runtime moves the session to STOPPING, and then ends it (updateSessionState).
+// Destroying a session that was still running left Meta's runtime refusing the next one with
+// XR_ERROR_GRAPHICS_DEVICE_INVALID, so a player who left VR couldn't come back without restarting (Caity's Quest 3 over
+// Link, 2026-10-28). Called on the present thread with no frame begun (uncustomizeContext ends one first).
+void OpenXrRuntime::endRunningSession() {
+    static const auto EXIT_TIMEOUT = std::chrono::seconds(2);
+    const auto deadline = std::chrono::steady_clock::now() + EXIT_TIMEOUT;
+    if (check(xrRequestExitSession(_session), "xrRequestExitSession")) {
+        while (_sessionRunning && std::chrono::steady_clock::now() < deadline) {
+            XrSessionState state = _sessionState;
+            if (state == XR_SESSION_STATE_SYNCHRONIZED || state == XR_SESSION_STATE_VISIBLE ||
+                state == XR_SESSION_STATE_FOCUSED) {
+                XrFrameWaitInfo waitInfo { XR_TYPE_FRAME_WAIT_INFO };
+                XrFrameState frameState { XR_TYPE_FRAME_STATE };
+                if (XR_SUCCEEDED(xrWaitFrame(_session, &waitInfo, &frameState))) {
+                    XrFrameBeginInfo beginInfo { XR_TYPE_FRAME_BEGIN_INFO };
+                    xrBeginFrame(_session, &beginInfo);
+                    XrFrameEndInfo endInfo { XR_TYPE_FRAME_END_INFO };
+                    endInfo.displayTime = frameState.predictedDisplayTime;
+                    endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+                    endInfo.layerCount = 0;
+                    xrEndFrame(_session, &endInfo);
+                }
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            pollEvents();   // STOPPING calls xrEndSession and clears _sessionRunning
+        }
+    }
+    if (_sessionRunning) {
+        qCWarning(openxr) << "The session didn't reach STOPPING after the exit request; ending it anyway";
+        check(xrEndSession(_session), "xrEndSession");
+        _sessionRunning = false;
+    } else {
+        qCDebug(openxr) << "The session ended cleanly";
+    }
 }
 
 bool OpenXrRuntime::shouldRender() const {
