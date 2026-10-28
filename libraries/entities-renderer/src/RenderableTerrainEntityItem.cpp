@@ -15,6 +15,7 @@
 #include <set>
 
 #include <glm/gtx/transform.hpp>
+#include <QCryptographicHash>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
@@ -1442,9 +1443,16 @@ void TerrainEntityRenderer::fetchTerrain(const QString& url, uint32_t version) {
             qCWarning(entitiesrenderer) << "Terrain file" << url << "could not be fetched:" << request->getResultString();
         } else {
             QString error;
-            loaded = entity->loadGrid(request->getData(), error);
+            const QByteArray data = request->getData();
+            loaded = entity->loadGrid(data, error);
             if (!loaded) {
-                qCWarning(entitiesrenderer) << "Terrain file" << url << "is not usable:" << error;
+                // what the loader was given, to tell a short read from a short file: its size and the SHA-256 of all
+                // of it (the asset's name for an ATP file) and of its first KB
+                qCWarning(entitiesrenderer) << "Terrain file" << url << "is not usable:" << error << "; given" << data.size()
+                                            << "bytes, sha256"
+                                            << QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex()
+                                            << ", of the first 1 KB"
+                                            << QCryptographicHash::hash(data.left(1024), QCryptographicHash::Sha256).toHex();
             }
         }
         if (loaded) {
