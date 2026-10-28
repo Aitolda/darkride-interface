@@ -36,6 +36,8 @@ public:
     QQuickItem* panel() const;
     // the page and its view gone, at quit before the QML engine (Panels::releaseQml)
     void releaseContent();
+    // the page made before the panel first shows, whichever way it shows (Panels, the saved layout, a drag)
+    void setVisible(bool visible) override;
 
 protected:
     bool event(QEvent* event) override;

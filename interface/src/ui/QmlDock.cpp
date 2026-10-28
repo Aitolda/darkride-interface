@@ -46,6 +46,17 @@ QmlDock::QmlDock(const QString& name, const QUrl& source, QWidget* parent) : QDo
     });
 }
 
+// Made before the dock's own window exists: a panel first opened floating (never docked) showed a blank square until
+// it was docked once (Caity's friends test, 10-28, the Avatar panel). Its QML view, made only after the window was on
+// screen, was the window's first OpenGL widget, and Qt then destroys and recreates the window, which on macOS (a tool
+// window) came back empty. Made first, the window is created for it.
+void QmlDock::setVisible(bool visible) {
+    if (visible) {
+        makeContent();
+    }
+    QDockWidget::setVisible(visible);
+}
+
 void QmlDock::makeContent() {
     if (_view) {
         return;
