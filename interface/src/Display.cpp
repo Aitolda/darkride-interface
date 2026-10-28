@@ -100,7 +100,7 @@ Display::Display() {
 }
 
 Display::~Display() {
-    if (_foregroundFilter) {
+    if (_foregroundFilter && QCoreApplication::instance()) {
         QCoreApplication::instance()->removeNativeEventFilter(_foregroundFilter.get());
     }
 }
