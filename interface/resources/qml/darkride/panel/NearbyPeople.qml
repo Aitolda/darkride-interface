@@ -33,8 +33,8 @@ Item {
     }
 
     // the metaverse's word on each session here, by session id without braces: { kind, shown }
-    // (GET /api/v1/users?status=<domain>, signed in; metaverse website-1029 4be078a). Asked again, at most every 5 s,
-    // only when someone arrives who wasn't here at the last ask (a visitor it doesn't list isn't asked about each time)
+    // (GET /api/v1/users?status=<domain>, for the signed in; metaverse website-1029 4be078a). Asked again, every 5 s
+    // at most, only when someone arrives who wasn't here at the last ask (a visitor it doesn't list isn't asked again)
     property var accounts: ({})
     property var askedAbout: ({})
     property string accountsDomain: ""
@@ -48,7 +48,8 @@ Item {
     function askAccounts() {
         var domain = String(AddressManager.domainID);
         var none = "00000000-0000-0000-0000-000000000000";
-        if (!AccountServices.loggedIn || bare(domain) === "" || bare(domain) === none) {
+        // asked signed out too: the metaverse then answers 401 and everyone stays listed, as before
+        if (bare(domain) === "" || bare(domain) === none) {
             return;
         }
         accountsDomain = domain;
@@ -59,7 +60,9 @@ Item {
         MetaverseRequests.send("GET", "/api/v1/users?status=" + encodeURIComponent(bare(domain)), null,
                                function (error, code, answer) {
             if (error) {
-                console.log("People: who's here failed: " + code + " " + error);
+                if (code !== 401) {
+                    console.log("People: who's here failed: " + code + " " + error);
+                }
                 return;
             }
             var users = (answer && answer.data && answer.data.users) || (answer && answer.users) || [];
