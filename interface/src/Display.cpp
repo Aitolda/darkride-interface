@@ -97,11 +97,6 @@ Display::Display() {
 #if defined(Q_OS_WIN)
     _foregroundFilter = std::make_unique<ForegroundFilter>(this);
     QCoreApplication::instance()->installNativeEventFilter(_foregroundFilter.get());
-    // the safety net under the messages: whatever Windows sent or didn't, the regime catches up within half a second
-    static const int FOREGROUND_CHECK_INTERVAL_MS = 500;
-    _foregroundCheck.setInterval(FOREGROUND_CHECK_INTERVAL_MS);
-    connect(&_foregroundCheck, &QTimer::timeout, this, &Display::checkForeground);
-    _foregroundCheck.start();
 #endif
 }
 
@@ -244,6 +239,16 @@ void Display::initializePlugins() {
         connect(autoSwitchDisplayModeTimer, SIGNAL(timeout()), this, SLOT(switchDisplayMode()));
         autoSwitchDisplayModeTimer->start(INTERVAL_TO_CHECK_HMD_WORN_STATUS);
     }
+
+#if defined(Q_OS_WIN)
+    // the safety net under WM_ACTIVATEAPP: whatever Windows sent or didn't, the regime catches up within half a second.
+    // Started here, once a plug-in is active: started with the constructor it ran during the start-up's own event
+    // processing, and asking for the active plug-in then made one before the GL context (test-1028-win-12's crash).
+    static const int FOREGROUND_CHECK_INTERVAL_MS = 500;
+    _foregroundCheck.setInterval(FOREGROUND_CHECK_INTERVAL_MS);
+    connect(&_foregroundCheck, &QTimer::timeout, this, &Display::checkForeground);
+    _foregroundCheck.start();
+#endif
 }
 
 DisplayPluginPointer Display::getActiveDisplayPlugin() const {
@@ -729,9 +734,11 @@ void Display::foregroundChanged(bool inFront) {
 
 void Display::checkForeground() {
 #if defined(Q_OS_WIN)
-    // one call to Windows; no decision while no window is in front (between two windows) or in a headset, whose rate
-    // doesn't follow the regime
-    if (!GetForegroundWindow() || isHMDMode() || qApp->isAboutToQuit() || !qApp->getSignInGate().startUpFinished()) {
+    // one call to Windows; no decision before start-up has finished, while no window is in front (between two windows)
+    // or in a headset, whose rate doesn't follow the regime. plugin(), not isHMDMode(): asking for the active plug-in
+    // makes one when there is none
+    if (qApp->isAboutToQuit() || !qApp->getSignInGate().startUpFinished() || !_displayPlugin || _displayPlugin->isHmd() ||
+        !GetForegroundWindow()) {
         return;
     }
     auto regime = qApp->getRefreshRateManager().getRefreshRateRegime();
