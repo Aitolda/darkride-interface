@@ -184,6 +184,7 @@ bool OpenXrRuntime::findSystem() {
                   "xrGetInstanceProcAddr(xrLocateHandJointsEXT)");
     }
     qCInfo(openxr) << "Hand tracking:" << (_handTrackingSupported ? "available" : "not available");
+    qCInfo(openxr) << "Presence events (" XR_EXT_USER_PRESENCE_EXTENSION_NAME "):" << (_userPresenceExtension ? "offered" : "not offered");
     return true;
 }
 
@@ -282,6 +283,11 @@ bool OpenXrRuntime::shouldRender() const {
     XrSessionState state = _sessionState;
     return _sessionRunning &&
            (state == XR_SESSION_STATE_SYNCHRONIZED || state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED);
+}
+
+bool OpenXrRuntime::isHeadsetOff() const {
+    XrSessionState state = _sessionState;
+    return !_userPresent || state == XR_SESSION_STATE_IDLE || state == XR_SESSION_STATE_STOPPING;
 }
 
 void OpenXrRuntime::updateSessionState(XrSessionState state) {
