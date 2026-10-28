@@ -908,6 +908,11 @@ ChatWindow::ChatWindow(QWidget* parent) : QWidget(parent) {
                 op == "react") {
                 _composerNote->setText("Couldn't " + op + ": " + message);
             }
+            // older messages can be asked for again (a scroll to the top), not stopped for good by one failure
+            if (op == "back") {
+                _loadingOlder = false;
+                _anchorBottom = false;
+            }
         });
     }
 
@@ -961,6 +966,16 @@ void ChatWindow::updateState() {
         _rooms = QJsonArray();
         _roomList->clear();
         _roomTitle->clear();
+        // the media folder goes with a sign-out (the library's forget), so nothing fetched before is known any more:
+        // after signing in again, pictures and files are asked for again, and the last account's pictures are gone
+        _mediaFiles.clear();
+        _mediaWanted.clear();
+        _mediaFailed.clear();
+        _opening.clear();
+        _pictureSizes.clear();
+        _avatarImages.clear();
+        qDeleteAll(_movies);
+        _movies.clear();
         _stateText->setText(service ? service->stateText() : QString("Chat isn't running."));
         _retryButton->setVisible(service && service->state() == ChatService::State::Unavailable);
         _pages->setCurrentIndex(0);
