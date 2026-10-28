@@ -42,6 +42,7 @@
 #include <StartupProfiler.h>
 #include <AccountManager.h>
 #include <ChatService.h>
+#include <FriendsService.h>
 #include <AddressManager.h>
 #include <BuildInfo.h>
 #include <DebugDraw.h>
@@ -950,8 +951,17 @@ void Application::setupInterface() {
 #endif
 
     StartupProfiler::phase("constructor: chat started");
-    // Darkride chat (libraries/chat) follows the account from here: signed in to chat while it is signed in
+    // Darkride chat (libraries/chat) follows the account from here: signed in to chat while it is signed in; and the
+    // friends, for the requests waiting (the bar's People badge)
     DependencyManager::get<ChatService>()->start();
+    DependencyManager::get<FriendsService>()->start();
+    // the requests asked more often while the app is in front
+    DependencyManager::get<FriendsService>()->setInFront(applicationState() == Qt::ApplicationActive);
+    connect(this, &Application::applicationStateChanged, this, [](Qt::ApplicationState state) {
+        if (auto friends = DependencyManager::get<FriendsService>()) {
+            friends->setInFront(state == Qt::ApplicationActive);
+        }
+    });
 
     StartupProfiler::phase("constructor: initializeUi");
     // Initialize the user interface and menu system

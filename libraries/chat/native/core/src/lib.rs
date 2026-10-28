@@ -376,6 +376,12 @@ async fn handle(state: &Arc<State>, op: &str, command: &Value) -> Result<()> {
         "create_dm" => {
             let client = state.client()?;
             let user = <&UserId>::try_from(arg(command, "user")?)?;
+            // the one you already have with them, if any: asked twice (two clicks, or before the room list came in),
+            // there's still one conversation
+            if let Some(room) = client.get_dm_room(user) {
+                state.emit(json!({ "event": "done", "op": "create_dm", "room": room.room_id() }));
+                return Ok(());
+            }
             // encrypted only when asked, as in the web client, which encrypts only behind ?e2ee=1 until round 5: a DM
             // the other side can't decrypt is worse than one that isn't encrypted (CHAT.md 4.9)
             let initial_state = if command["encrypted"].as_bool().unwrap_or(false) {
