@@ -296,6 +296,7 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
 
     if (property(hifi::properties::TEST).isValid()) {
         scriptEngine->registerGlobalObject("Test", TestScriptingInterface::getInstance());
+        scriptEngine->setTestApiRegistered();
     }
 
     scriptEngine->registerGlobalObject("PlatformInfo", PlatformInfoScriptingInterface::getInstance());

@@ -321,15 +321,12 @@ bool WasmScriptEngine::hasValidScriptSuffix(const QString& scriptFileName) {
 
 void WasmScriptEngine::registerGlobalObject(const QString& name, QObject* object) {
     if (QThread::currentThread() != thread()) {
-        QMetaObject::invokeMethod(this, "registerGlobalObject", Q_ARG(const QString&, name), Q_ARG(QObject*, object));
+        QMetaObject::invokeMethod(this, [this, name, object] { registerGlobalObject(name, object); });
         return;
     }
     if (!object) {
         qCDebug(scriptengine) << "WasmScriptEngine: global" << name << "is null, not registered";
         return;
-    }
-    if (name == QLatin1String("Test")) {
-        _testApiOn = true;
     }
     if (_objects->global(name) == ObjectTable::NULL_HANDLE) {
         _objects->registerGlobal(name, object);

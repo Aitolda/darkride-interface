@@ -197,14 +197,12 @@ public:
     // NOTE - these are NOT intended to be public interfaces available to scripts, the are only Q_INVOKABLE so we can
     //        properly ensure they are only called on the correct thread
 
-    /**jsdoc
-     * @function Script.registerGlobalObject
-     * @param {string} name - Name.
-     * @param {object} object - Object.
-     * @deprecated This function is deprecated and will be removed.
-     */
-    /// registers a global object by name
-    Q_INVOKABLE virtual void registerGlobalObject(const QString& name, QObject* object);
+    /// registers a global object by name (the host's, not a script's: a script could replace a global every script
+    /// of a shared engine relies on; the thread hop inside needs no meta-method)
+    virtual void registerGlobalObject(const QString& name, QObject* object);
+    /// The application says so where it registers the Test API (a --testScript run): Script.dumpApi may then write
+    /// to any path. Not a script's to call.
+    void setTestApiRegistered() { _testApiOn = true; }
 
     /// A plain value (numbers by name, as DriveKeys and PickType are; a number; text) under a global name, unless
     /// the name is taken: for a host that would otherwise put one on the QtScript global object itself, so that

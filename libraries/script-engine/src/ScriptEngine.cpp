@@ -980,17 +980,12 @@ void ScriptEngine::registerGlobalObject(const QString& name, QObject* object) {
 #ifdef THREAD_DEBUGGING
         qCDebug(scriptengine) << "*** WARNING *** ScriptEngine::registerGlobalObject() called on wrong thread [" << QThread::currentThread() << "], invoking on correct thread [" << thread() << "]  name:" << name;
 #endif
-        QMetaObject::invokeMethod(this, "registerGlobalObject",
-                                  Q_ARG(const QString&, name),
-                                  Q_ARG(QObject*, object));
+        QMetaObject::invokeMethod(this, [this, name, object] { registerGlobalObject(name, object); });
         return;
     }
 #ifdef THREAD_DEBUGGING
     qCDebug(scriptengine) << "ScriptEngine::registerGlobalObject() called on thread [" << QThread::currentThread() << "] name:" << name;
 #endif
-    if (object && name == QLatin1String("Test")) {
-        _testApiOn = true;
-    }
 
     if (!globalObject().property(name).isValid()) {
         if (object) {
