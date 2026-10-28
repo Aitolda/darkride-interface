@@ -24,6 +24,12 @@ if (NOT SERVER_ONLY AND NOT ANDROID)
   add_subdirectory(${DIR})
   set(DIR "openxr-plugin")
   add_subdirectory(${DIR})
+  # webcam face tracking: Mac only for now (Windows once its TensorFlow Lite port has been built and tested there; not
+  # Linux yet)
+  if (APPLE)
+    set(DIR "face-tracking-plugin")
+    add_subdirectory(${DIR})
+  endif()
 endif()
 
 # audio codecs, for the client and the servers
