@@ -1141,7 +1141,9 @@ glm::uvec2 OpenGLDisplayPlugin::getSurfacePixels() const {
     uvec2 result;
     auto window = _container->getPrimaryWidget();
     if (window) {
-        result = toGlm(window->geometry().size() * window->devicePixelRatio());
+        // the exact ratio: QWidget::devicePixelRatio() is a whole number, 1 at Windows' 125 % or 150 %, which drew the
+        // view at two-thirds of the window's pixels; the GL context already uses the exact one (gl/Context.cpp)
+        result = toGlm(window->geometry().size() * window->devicePixelRatioF());
     }
     return result;
 }
