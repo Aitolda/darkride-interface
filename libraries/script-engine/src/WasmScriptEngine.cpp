@@ -1180,8 +1180,11 @@ void WasmScriptEngine::unloadEntityScript(const EntityItemID& entityID, bool sho
 
 void WasmScriptEngine::unloadAllEntityScripts(bool blockingCall) {
     if (QThread::currentThread() != thread()) {
-        QMetaObject::invokeMethod(this, "unloadAllEntityScripts", blockingCall ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
-                                  Q_ARG(bool, blockingCall));
+        if (blockingCall) {
+            waitForEntityScriptsToUnload();
+        } else {
+            QMetaObject::invokeMethod(this, "unloadAllEntityScripts", Qt::QueuedConnection, Q_ARG(bool, false));
+        }
         return;
     }
     QList<EntityItemID> keys;
