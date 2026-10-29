@@ -12,6 +12,7 @@
 #ifndef hifi_ScriptEngine_h
 #define hifi_ScriptEngine_h
 
+#include <functional>
 #include <unordered_map>
 #include <vector>
 
@@ -902,6 +903,14 @@ signals:
 
 protected:
     void init();
+    /// From another thread, the entity scripts unloaded on the engine's thread and waited for here, while this
+    /// thread's objects keep answering the unload handlers' blocking calls (waitServingCalls). A blocking invocation
+    /// let the two threads wait on each other: a seated avatar's sit script asks MyAvatar for its animation roles in
+    /// unload, and Darkride never quit (qa, 2026-10-29). Gives up, with a warning, after MAX_ENTITY_UNLOAD_WAIT_MS.
+    void waitForEntityScriptsToUnload();
+    /// Waits on the calling thread until finished() holds, serving meanwhile the queued and blocking invocations of
+    /// this thread's objects, and only those (no user input, no timers). False when milliseconds passed first.
+    static bool waitServingCalls(const std::function<bool()>& finished, int milliseconds);
     /// Script.dumpApi's file: under the application's data folder (api-dumps/<the path's file name>), or the path
     /// as given when anyPath (a test run with the Test API on). Every script sees Script, a world's entity scripts
     /// among them, so a script does not choose where the file goes.

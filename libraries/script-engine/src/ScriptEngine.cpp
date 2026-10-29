@@ -14,7 +14,11 @@
 #include <chrono>
 #include <thread>
 
+#include <atomic>
+#include <memory>
+
 #include <QtCore/QCoreApplication>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QEventLoop>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
@@ -2807,14 +2811,49 @@ QList<EntityItemID> ScriptEngine::getListOfEntityScriptIDs() {
     return _entityScripts.keys();
 }
 
+const int MAX_ENTITY_UNLOAD_WAIT_MS = 3000; // for a world's unload handlers, at quit or a world change
+const int SERVING_POLL_MS = 5;
+
+bool ScriptEngine::waitServingCalls(const std::function<bool()>& finished, int milliseconds) {
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (!finished()) {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        if (elapsed.elapsed() >= milliseconds) {
+            return false;
+        }
+        QThread::msleep(SERVING_POLL_MS);
+    }
+    return true;
+}
+
+void ScriptEngine::waitForEntityScriptsToUnload() {
+    QThread* engineThread = thread();
+    if (!engineThread || !engineThread->isRunning()) {
+        return; // nothing runs there, so no unload handler will
+    }
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    QMetaObject::invokeMethod(this, [this, done] {
+        unloadAllEntityScripts(false);
+        done->store(true);
+    }, Qt::QueuedConnection);
+    if (!waitServingCalls([done] { return done->load(); }, MAX_ENTITY_UNLOAD_WAIT_MS)) {
+        qCWarning(scriptengine) << "The entity scripts of" << getFilename() << "did not unload within"
+                                << MAX_ENTITY_UNLOAD_WAIT_MS << "ms; going on without waiting for them";
+    }
+}
+
 void ScriptEngine::unloadAllEntityScripts(bool blockingCall) {
     if (QThread::currentThread() != thread()) {
 #ifdef THREAD_DEBUGGING
         qCDebug(scriptengine) << "*** WARNING *** ScriptEngine::unloadAllEntityScripts() called on wrong thread [" << QThread::currentThread() << "], invoking on correct thread [" << thread() << "]";
 #endif
 
-        QMetaObject::invokeMethod(this, "unloadAllEntityScripts",
-            blockingCall ? Qt::BlockingQueuedConnection : Qt::QueuedConnection);
+        if (blockingCall) {
+            waitForEntityScriptsToUnload();
+        } else {
+            QMetaObject::invokeMethod(this, "unloadAllEntityScripts", Qt::QueuedConnection);
+        }
         return;
     }
 #ifdef THREAD_DEBUGGING
