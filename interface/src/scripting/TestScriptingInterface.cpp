@@ -25,6 +25,7 @@
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
+#include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QStyle>
 #include <QtWidgets/QToolBar>
@@ -49,6 +50,7 @@
 #include <gl/GLHelpers.h>
 
 #include "avatar/AvatarImporter.h"
+#include "chat/WorldChat.h"
 #include "editor/Editor.h"
 #include "ui/DockTitleBar.h"
 #include "ui/QmlDock.h"
@@ -926,6 +928,59 @@ bool TestScriptingInterface::saveDockPicture(const QString& objectName, const QS
     }
     QPixmap picture = dock->grab();
     return !picture.isNull() && picture.save(path);
+}
+
+// the widget that has the keyboard; in a test client running behind other windows (no window active), the one that
+// would have it: chat's floating window's, else the main window's
+static QWidget* keyboardWidget() {
+    if (QWidget* focus = QApplication::focusWidget()) {
+        return focus;
+    }
+    auto window = qApp->getWindow();
+    auto dock = window ? window->findChild<QDockWidget*>("ChatDock") : nullptr;
+    if (dock && dock->isVisible() && dock->isFloating() && dock->focusWidget()) {
+        return dock->focusWidget();
+    }
+    return window ? window->focusWidget() : nullptr;
+}
+
+QVariantMap TestScriptingInterface::worldChat() {
+    if (QThread::currentThread() != thread()) {
+        QVariantMap result;
+        BLOCKING_INVOKE_METHOD(this, "worldChat", Q_RETURN_ARG(QVariantMap, result));
+        return result;
+    }
+    auto world = WorldChat::instance();
+    auto window = qApp->getWindow();
+    auto dock = window ? window->findChild<QDockWidget*>("ChatDock") : nullptr;
+    QWidget* focus = keyboardWidget();
+    auto box = qobject_cast<QPlainTextEdit*>(focus);
+    return { { "items", world->items().toVariantList() },
+             { "unread", world->unread() },
+             { "chatOpen", dock && dock->isVisible() },
+             { "focus", focus ? (focus->objectName().isEmpty() ? QString(focus->metaObject()->className()) : focus->objectName())
+                              : QString() },
+             { "focusText", box ? box->toPlainText() : QString() } };
+}
+
+void TestScriptingInterface::typeKeys(const QString& text, bool toView) {
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, "typeKeys", Q_ARG(QString, text), Q_ARG(bool, toView));
+        return;
+    }
+    for (QChar c : text) {
+        // the 3D view's keys go to the application, as GLWidget hands them on; the rest to the focused widget
+        QObject* target = toView ? static_cast<QObject*>(qApp) : static_cast<QObject*>(keyboardWidget());
+        if (!target) {
+            return;
+        }
+        int key = c == '\n' ? Qt::Key_Return : c == QChar(0x1b) ? Qt::Key_Escape : (int)c.toUpper().unicode();
+        QString typed = c == '\n' ? QString("\r") : c == QChar(0x1b) ? QString(QChar(0x1b)) : QString(c);
+        QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier, typed);
+        QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier, typed);
+        QCoreApplication::sendEvent(target, &press);
+        QCoreApplication::sendEvent(target, &release);
+    }
 }
 
 bool TestScriptingInterface::setChatBadge(int count) {
