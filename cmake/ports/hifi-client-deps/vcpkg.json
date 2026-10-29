@@ -32,7 +32,7 @@
     },
     {
       "name": "tensorflow-lite",
-      "platform": "osx"
+      "platform": "osx | windows"
     }
   ]
 }
