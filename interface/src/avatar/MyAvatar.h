@@ -2829,8 +2829,9 @@ private:
 
     bool cameraInsideHead(const glm::vec3& cameraPosition) const;
     // how much of your own avatar to hide from your own view because the third-person camera is right at it (camera
-    // collision pulls it in as far as the eyes in a corner, and the near plane would cut the avatar open): nothing, the
-    // head, or all of it; set each frame by updateCloseCamera, with a margin so it doesn't flicker as the camera eases out
+    // collision pulls it in as far as the eyes in a corner, and the near plane would cut the avatar open): nothing, or
+    // all of it, for the camera near the head or nearer still (preDisplaySide hides the whole avatar for both, 10-29);
+    // set each frame by updateCloseCamera, with a margin so it doesn't flicker as the camera eases out
     enum class CloseCamera { None, Head, Body };
     void updateCloseCamera(const glm::vec3& cameraPosition);
     // whether the camera is within margin (meters) of the head or anything on it (hair, ears, eyes): of any bone in

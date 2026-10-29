@@ -3347,21 +3347,21 @@ void MyAvatar::attachmentDataToEntityProperties(const AttachmentData& data, Enti
 }
 
 void MyAvatar::initHeadBones() {
-    int neckJointIndex = -1;
+    // the head is hidden from its own joint down, and CauterizedModel collapses it to that joint: the neck stays whole.
+    // High Fidelity started at the neck, which folded the neck's skin (the collar, the tops of the shoulders) into one
+    // point under a first-person camera looking down (Caity's desk test s7, 10-29)
+    int headJointIndex = -1;
     if (_skeletonModel->isLoaded()) {
-        neckJointIndex = getJointIndex("Neck");
+        headJointIndex = getJointIndex("Head");
     }
-    if (neckJointIndex == -1) {
-        neckJointIndex = (getJointIndex("Head") - 1);
-        if (neckJointIndex < 0) {
-            // return if the head is not even there. can't cauterize!!
-            return;
-        }
+    if (headJointIndex < 0) {
+        // return if the head is not even there. can't cauterize!!
+        return;
     }
     _headBoneSet.clear();
     std::queue<int> q;
-    q.push(neckJointIndex);
-    _headBoneSet.insert(neckJointIndex);
+    q.push(headJointIndex);
+    _headBoneSet.insert(headJointIndex);
 
     // hfmJoints only hold links to parents not children, so we have to do a bit of extra work here.
     while (q.size() > 0) {
@@ -3586,10 +3586,13 @@ void MyAvatar::preDisplaySide(const RenderArgs* renderArgs) {
 
     // toggle using the cauterizedBones depending on where the camera is and the rendering pass type.
     const bool shouldDrawHead = shouldRenderHead(renderArgs);
-    const bool shouldDrawBody = _closeCamera != CloseCamera::Body;
+    // a close camera hides the whole avatar, even when only its head is in the way: the head alone collapses to its
+    // joint and leaves the neck open, and a camera held in behind you (a seat back, a wall) looks down into it
+    // (Caity's beta bug #3, 10-29, seated in the Cinema)
+    const bool shouldDrawBody = _closeCamera == CloseCamera::None;
     if (shouldDrawHead != _prevShouldDrawHead || shouldDrawBody != _prevShouldDrawBody) {
         _cauterizationNeedsUpdate = true;
-        // the whole body is hidden the way the head is, every bone collapsed to the neck in your own view only:
+        // the whole body is hidden the way the head is, every bone collapsed to the head joint in your own view only:
         // shadows and the secondary camera still draw it whole (CauterizedMeshPartPayload::bindTransform), and
         // simulate() hides the entities on any of its joints, as it does those on the head's
         if (shouldDrawBody) {
@@ -3627,7 +3630,7 @@ void MyAvatar::preDisplaySide(const RenderArgs* renderArgs) {
 
 void MyAvatar::updateCloseCamera(const glm::vec3& cameraPosition) {
     // not in first person, which hides the head already and shows the body on purpose, nor in the HMD's own view.
-    // No neck, nothing to collapse to (initHeadBones leaves the set empty)
+    // No head, nothing to collapse to (initHeadBones leaves the set empty)
     const CameraMode mode = qApp->getCamera().getMode();
     const bool firstPerson = mode == CAMERA_MODE_FIRST_PERSON || mode == CAMERA_MODE_FIRST_PERSON_LOOK_AT;
     if (firstPerson || qApp->isHMDMode() || !_skeletonModel || !_skeletonModel->isLoaded() || _headBoneSet.empty()) {
@@ -3666,7 +3669,7 @@ void MyAvatar::updateCloseCamera(const glm::vec3& cameraPosition) {
         _closeCamera = CloseCamera::None;
     }
     if (_closeCamera != was) {
-        static const char* NAMES[] = { "nothing", "the head", "the whole avatar" };
+        static const char* NAMES[] = { "nothing", "the whole avatar (near the head)", "the whole avatar (at the pivot)" };
         qCDebug(interfaceapp) << "the camera is" << distance << "from its pivot (camera mode" << (int)mode
                               << ", the avatar's size" << getModelScale() << (nearShapes ? ", near the head's shapes" : "")
                               << "): hiding" << NAMES[(int)_closeCamera];
@@ -7485,29 +7488,26 @@ glm::vec3 MyAvatar::getCameraEyesPosition(float deltaTime) {
     glm::vec3 avatarUpVector = getWorldOrientation() * Vectors::UP;
     // Compute the offset between the default and real eye positions.
     glm::vec3 defaultEyesToEyesVector = getHead()->getEyePosition() - defaultEyesPosition;
-    const float FRONT_OFFSET_IDLE_MULTIPLIER = 3.5f;
     const float FRONT_OFFSET_JUMP_MULTIPLIER = 1.5f;
-    float frontOffset = FRONT_OFFSET_IDLE_MULTIPLIER * glm::length(defaultEyesPosition - getDefaultEyePosition());
-
-    // Looking down will move the camera forward to meet the real eye position
-    float mixAlpha = glm::dot(_lookAtPitch * Vectors::FRONT, -avatarUpVector);
+    // looking down, the camera keeps up with the real eyes' forward offset, its height the default's so it doesn't bob:
+    // looking down turns the head forward of the pivot (0.04 m at 40 deg down seated, 0.18 m at 80), and a camera left
+    // behind it sees the neck narrow into the hidden head's point (Caity's desk test s7, 10-29). High Fidelity moved it
+    // only past 45 deg down, and only up to 3.5 times the default eyes' offset
+    float frontOffset = glm::dot(defaultEyesToEyesVector, avatarFrontVector);
 
     bool isLanding = false;
     // When jumping the camera should follow the real eye on the Y coordenate
     float upOffset = 0.0f;
     if (isJumping() || _characterController.getState() == CharacterController::State::Takeoff) {
         upOffset = glm::dot(defaultEyesToEyesVector, avatarUpVector);
-        frontOffset = glm::dot(defaultEyesToEyesVector, avatarFrontVector) * FRONT_OFFSET_JUMP_MULTIPLIER;
-        mixAlpha = 1.0f;
+        frontOffset *= FRONT_OFFSET_JUMP_MULTIPLIER;
         _landingAfterJumpTime = 0.0f;
     } else {
-        // Limit the range effect from 45 to 0 degrees
-        // between the front camera and the down vectors
-        const float HEAD_OFFSET_RANGE_IN_DEGREES = 45.0f;
-        const float HEAD_OFFSET_RANGE_OUT_DEGREES = 0.0f;
-        float rangeIn = glm::cos(glm::radians(HEAD_OFFSET_RANGE_IN_DEGREES));
-        float rangeOut = glm::cos(glm::radians(HEAD_OFFSET_RANGE_OUT_DEGREES));
-        mixAlpha = mixAlpha < rangeIn ? 0.0f : (mixAlpha - rangeIn) / (rangeOut - rangeIn);
+        // none of it looking level, all of it from 30 deg down: the everyday view stays where it was, without the
+        // head's sway as you sprint (3.5 cm) or its lurch as you stop (6 cm) (walk-camera-test, 10-29)
+        const float FULL_FRONT_OFFSET_DEGREES = 30.0f;
+        float lookingDown = glm::dot(_lookAtPitch * Vectors::FRONT, -avatarUpVector);
+        frontOffset *= glm::clamp(lookingDown / glm::sin(glm::radians(FULL_FRONT_OFFSET_DEGREES)), 0.0f, 1.0f);
         const float WAIT_TO_LAND_TIME = 1.0f;
         if (_landingAfterJumpTime < WAIT_TO_LAND_TIME) {
             _landingAfterJumpTime += deltaTime;
@@ -7516,7 +7516,7 @@ glm::vec3 MyAvatar::getCameraEyesPosition(float deltaTime) {
     }
     const float FPS = 60.0f;
     float timeScale = deltaTime * FPS;
-    frontOffset = frontOffset < 0.0f ? 0.0f : mixAlpha * frontOffset;
+    frontOffset = frontOffset < 0.0f ? 0.0f : frontOffset;
     glm::vec3 cameraOffset = upOffset * Vectors::UP + frontOffset * Vectors::FRONT;
     const float JUMPING_TAU = 0.1f;
     const float NO_JUMP_TAU = 0.3f;
