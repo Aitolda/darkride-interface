@@ -320,9 +320,9 @@ void OpenXrInputPlugin::InputDevice::update(float deltaTime, const controller::I
     }
     // out of VR the session is kept, still attached: the headset and controllers just don't drive the avatar. Its
     // events are still answered here, every frame on the main thread, since nobody else polls them while the display
-    // plugin is inactive: the headset taken off ends the session (STOPPING), put back on it waits READY for the next
-    // entry. A STOPPING left unanswered hung Meta's runtime for a minute at quit and crashed it (Caity's Quest 3,
-    // 2026-10-28)
+    // plugin is inactive: the headset taken off ends the session (STOPPING); put back on, READY begins it again and the
+    // runtime object feeds it empty frames until VR is entered. A STOPPING left unanswered hung Meta's runtime for a
+    // minute at quit and crashed it (Caity's Quest 3, 2026-10-28)
     if (!_runtime->isDisplayActive()) {
         _runtime->pollEvents();
         return;
