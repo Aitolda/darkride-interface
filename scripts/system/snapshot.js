@@ -573,34 +573,10 @@ function takeSnapshot(target) {
     }, FINISH_SOUND_DELAY);
 }
     
+// High Fidelity's sharing asked its metaverse whether a world's "user stories" were open; Darkride's metaverse has no
+// user stories, so the answer is always no and nothing is asked (the request failed on every VR snapshot; Caity 10-29)
 function isDomainOpen(id, callback) {
-    print("Checking open status of domain with ID:", id);
-    var status = false;
-    if (id) {
-        var options = [
-            'now=' + new Date().toISOString(),
-            'include_actions=concurrency',
-            'domain_id=' + id.slice(1, -1),
-            'restriction=open,hifi' // If we're sharing, we're logged in
-            // If we're here, protocol matches, and it is online
-        ];
-        var url = METAVERSE_BASE + "/api/v1/user_stories?" + options.join('&');
-
-        request({
-            uri: url,
-            method: 'GET'
-        }, function (error, response) {
-            if (error || (response.status !== 'success')) {
-                print("ERROR getting open status of domain: ", error || response.status);
-            } else {
-                status = response.total_entries ? true : false;
-            }
-            print("Domain open status:", status);
-            callback(status);
-        });
-    } else {
-        callback(status);
-    }
+    callback(false);
 }
 
 function stillSnapshotTaken(pathStillSnapshot, notify) {

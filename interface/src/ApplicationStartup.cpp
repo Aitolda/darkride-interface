@@ -399,6 +399,11 @@ Application::Application(int& argc, char** argv, QElapsedTimer& startupTimer, bo
 {
     setProperty(hifi::properties::CRASHED, _previousSessionCrashed);
 
+    // High Fidelity's Developer > UI > Desktop/HMD Tablet Becomes Toolbar are gone (Caity 10-29): a value saved unticked
+    // would leave the bar broken with no way back, so both stay at their defaults
+    _desktopTabletBecomesToolbarSetting.set(DEFAULT_DESKTOP_TABLET_BECOMES_TOOLBAR);
+    _hmdTabletBecomesToolbarSetting.set(DEFAULT_HMD_TABLET_BECOMES_TOOLBAR);
+
     // The client comes up in ten stages, in this order; each is a function below and a group of rows in the start-up
     // profile (the phase marks inside it). A stage reads what it needs from the DependencyManager rather than from a
     // local of an earlier stage, so each one says what it depends on.
