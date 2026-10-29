@@ -12,9 +12,9 @@
 #define hifi_OpenXrRuntime_h
 
 #include <array>
-#include <mutex>
 #include <atomic>
 #include <mutex>
+#include <thread>
 
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QString>
@@ -71,7 +71,8 @@ public:
     // The OpenXR display is the active one. Leaving VR keeps the session (Meta's runtime refuses a second one in the same
     // run), so the input side stops reading the headset and controllers while this is false.
     bool isDisplayActive() const { return _displayActive; }
-    // A session that went READY while the display was off (the headset put on at the desk) begins when VR is entered.
+    // Off: a running session is fed empty frames by a thread of its own until VR is entered (startIdleFrames). On: that
+    // thread stops before the present thread's frames begin.
     void setDisplayActive(bool active);
     bool isSessionFocused() const { return _sessionState == XR_SESSION_STATE_FOCUSED; }
     bool shouldRender() const;
@@ -109,6 +110,15 @@ public:
 private:
     void endRunningSession(bool withFrames);   // withFrames: the frame loop keeps going until STOPPING (present thread)
     void beginSession();
+    // A session running while the OpenXR display is off (the headset put on at the desk, or VR left with it on) is fed
+    // empty frames by a thread of its own, so that its state at the runtime and here stay the same. Begun and left
+    // without frames, Meta's runtime over Link walked the session up to FOCUSED and down to STOPPING by itself within a
+    // second, refused the end (not running) and never offered the session again: the next entry into VR began it and
+    // drew nothing, a black headset with a live preview (Caity's Quest 3, 2026-10-29).
+    void startIdleFrames();
+    void stopIdleFrames();   // joins the thread (which takes no lock but _frameMutex); from any thread but its own
+    // One frame of nothing: wait, begin, end with no layers. Under _frameMutex, so the session isn't ended mid-frame.
+    bool submitEmptyFrame();
     bool createInstance();
     bool findSystem();
     void updateSessionState(XrSessionState state);
@@ -130,8 +140,10 @@ private:
     std::atomic<XrSessionState> _sessionState { XR_SESSION_STATE_UNKNOWN };
     std::atomic<bool> _sessionRunning { false };
     std::atomic<bool> _displayActive { false };
-    std::atomic<bool> _sessionReadyPending { false };   // READY seen while the display was off
     std::mutex _eventMutex;   // pollEvents and the session's begin and end, from whichever thread polls
+    std::mutex _frameMutex;   // a frame (wait, begin, end) and the session's end never overlap; taken after _eventMutex
+    std::thread _idleFrames;
+    std::atomic<bool> _idleFramesStop { false };
     std::atomic<bool> _userPresent { true };
     std::atomic<uint32_t> _sessionGeneration { 0 };
 
