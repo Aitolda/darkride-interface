@@ -508,23 +508,21 @@ Menu::Menu() {
     auto locationBookmarks = DependencyManager::get<LocationBookmarks>();
     locationBookmarks->setupMenus(this, navigateMenu);
 
-    // Navigate > Copy Address
+    // Navigate > Copy Path (Copy Address is gone: Explore's Copy Link, Caity 10-29)
     auto addressManager = DependencyManager::get<AddressManager>();
-    addActionToQMenuAndActionHash(navigateMenu, MenuOption::CopyAddress, 0,
-        addressManager.data(), SLOT(copyAddress()));
-
-    // Navigate > Copy Path
     addActionToQMenuAndActionHash(navigateMenu, MenuOption::CopyPath, 0,
         addressManager.data(), SLOT(copyPath()));
 
-    // Navigate > Start-up Location
+    // Start-up Location: Settings > General > Start in sets it (SettingsPanel.qml, by these two items' names), so the
+    // items stay, kept off the menu bar (Caity 10-29)
     MenuWrapper* startupLocationMenu = navigateMenu->addMenu(MenuOption::StartUpLocation);
     QActionGroup* startupLocatiopnGroup = new QActionGroup(startupLocationMenu);
     startupLocatiopnGroup->setExclusive(true);
-    startupLocatiopnGroup->addAction(addCheckableActionToQMenuAndActionHash(startupLocationMenu, MenuOption::HomeLocation, 0, 
+    startupLocatiopnGroup->addAction(addCheckableActionToQMenuAndActionHash(startupLocationMenu, MenuOption::HomeLocation, 0,
         false));
-    startupLocatiopnGroup->addAction(addCheckableActionToQMenuAndActionHash(startupLocationMenu, MenuOption::LastLocation, 0, 
+    startupLocatiopnGroup->addAction(addCheckableActionToQMenuAndActionHash(startupLocationMenu, MenuOption::LastLocation, 0,
         true));
+    startupLocationMenu->setVisible(false);
 
     // Navigate > Walk Through Walls: your avatar not colliding with the world (noclip; Caity, 10-25: it belongs where the
     // settings are, with a key). The same switch as MyAvatar.collisionsEnabled, the Avatar panel's "Collide with the
@@ -692,10 +690,6 @@ Menu::Menu() {
         essLogAction->setEnabled(nodeList->getThisNodeCanRez());
     }
 
-    // Developer > Scripting > Script Log (HMD friendly)...
-    addActionToQMenuAndActionHash(scriptingOptionsMenu, "Script Log (HMD friendly)...", Qt::NoButton,
-                                           qApp, SLOT(showScriptLogs()));
-
     // Developer > Scripting > Verbose Logging
     addCheckableActionToQMenuAndActionHash(scriptingOptionsMenu, MenuOption::VerboseLogging, 0, false,
                                            qApp, SLOT(updateVerboseLogging()));
@@ -714,25 +708,12 @@ Menu::Menu() {
         action->setEnabled(false);
     }
 
-    // Developer > UI >>>
+    // Developer > UI >>> (High Fidelity's Desktop/HMD Tablet Becomes Toolbar are gone, Caity 10-29: unticked, the bar
+    // broke; Application keeps both at their defaults)
     MenuWrapper* uiOptionsMenu = developerMenu->addMenu("UI");
-    action = addCheckableActionToQMenuAndActionHash(uiOptionsMenu, MenuOption::DesktopTabletToToolbar, 0,
-                                                    qApp->getDesktopTabletBecomesToolbarSetting());
-    
+
     // Developer > UI > Show Overlays
     addCheckableActionToQMenuAndActionHash(uiOptionsMenu, MenuOption::Overlays, 0, true);
-    
-    // Developer > UI > Desktop Tablet Becomes Toolbar
-    connect(action, &QAction::triggered, [action] {
-        qApp->setDesktopTabletBecomesToolbarSetting(action->isChecked());
-    });
-    
-     // Developer > UI > HMD Tablet Becomes Toolbar
-    action = addCheckableActionToQMenuAndActionHash(uiOptionsMenu, MenuOption::HMDTabletToToolbar, 0,
-                                                    qApp->getHmdTabletBecomesToolbarSetting());
-    connect(action, &QAction::triggered, [action] {
-        qApp->setHmdTabletBecomesToolbarSetting(action->isChecked());
-    });
 
     // Developer > Render >>>
     MenuWrapper* renderOptionsMenu = developerMenu->addMenu("Render");
@@ -901,9 +882,8 @@ Menu::Menu() {
         });
     }
 
-    // Developer > Render > LOD Tools
-    addActionToQMenuAndActionHash(renderOptionsMenu, MenuOption::LodTools, 0,
-                                  qApp, SLOT(loadLODToolsDialog()));
+    // (High Fidelity's Developer > Render > LOD Tools is gone: Settings > Displays has World detail and Draw distance,
+    // Caity 10-29)
 
     // HACK enable texture decimation
     {
@@ -1006,7 +986,7 @@ Menu::Menu() {
 
     addCheckableActionToQMenuAndActionHash(avatarDebugMenu, MenuOption::ShowTrackedObjects, 0, false, qApp, SLOT(setShowTrackedObjects(bool)));
 
-    addActionToQMenuAndActionHash(avatarDebugMenu, MenuOption::PackageModel, 0, qApp, SLOT(packageModel()));
+    // (High Fidelity's Package Avatar as .fst is gone: File > Import Avatar, Caity 10-29)
 
     // Developer > Hands >>>
     MenuWrapper* handOptionsMenu = developerMenu->addMenu("Hands");
@@ -1028,7 +1008,7 @@ Menu::Menu() {
         qApp->showDialog(QString("hifi/dialogs/NetworkingPreferencesDialog.qml"),
             QString("hifi/tablet/TabletNetworkingPreferences.qml"), "NetworkingPreferencesDialog");
     });
-    addActionToQMenuAndActionHash(networkMenu, MenuOption::ReloadContent, 0, qApp, SLOT(reloadResourceCaches()));
+    // (Clear Cache && Reload is Edit's; its copy here is gone, Caity 10-29)
 
 	action = addActionToQMenuAndActionHash(networkMenu, MenuOption::ClearDiskCaches);
     connect(action, &QAction::triggered, [] {
@@ -1222,29 +1202,12 @@ Menu::Menu() {
     });
     helpMenu->addSeparator();
 
-    // Help > Online Documentation, JavaScript API Reference, Changelog and Report a Bug stay greyed out until
-    // Darkride has those pages (Tivoli's are gone)
-    action = addActionToQMenuAndActionHash(helpMenu, "Online Documentation");
-    action->setEnabled(false);
-
-    // Help > Discord Server
+    // Help > Discord Server (High Fidelity's Controls Reference and the greyed-out Online Documentation, JavaScript API
+    // Reference, Changelog and Report a Bug are gone, Caity 10-29)
     action = addActionToQMenuAndActionHash(helpMenu, "Discord Server");
     connect(action, &QAction::triggered, qApp, [] {
         QDesktopServices::openUrl(QUrl("https://discord.gg/fQqG7dT9wY"));
     });
-
-    action = addActionToQMenuAndActionHash(helpMenu, "JavaScript API Reference");
-    action->setEnabled(false);
-
-    addActionToQMenuAndActionHash(helpMenu, "Controls Reference", 0, qApp, SLOT(showHelp()));
-
-    helpMenu->addSeparator();
-
-    action = addActionToQMenuAndActionHash(helpMenu, "Changelog");
-    action->setEnabled(false);
-
-    action = addActionToQMenuAndActionHash(helpMenu, "Report a Bug");
-    action->setEnabled(false);
 }
 
 void Menu::addMenuItem(const MenuItemProperties& properties) {
