@@ -6,8 +6,8 @@
 //  Avatar: the avatar worn (its picture and name); Favorites; the avatars in My Files as a collection (Caity, 10-24:
 //    she has 100+), under the panels' search bar (search, Cards / Tiles / List, Name / Newest / Folder), each with its
 //    picture when there is one beside it (<name>.preview.jpg or .png, or preview.jpg/.png in its folder: the
-//    picture an .fst's `preview` field names); wearing one by its URL, the default, its scale, its collisions with
-//    the world, and putting it in My Files; for an avatar in your own My Files, a picture: taken of you wearing it
+//    picture an .fst's `preview` field names); wearing one from a link (Wear from Link…: an .fst as it is, a .glb
+//    imported first), the default, its scale, its collisions with the world, and putting it in My Files; for an avatar in your own My Files, a picture: taken of you wearing it
 //    or chosen from this computer (AvatarThumbnails), saved beside its .fst as <name>.preview.jpg, private when the
 //    avatar is (Caity, 10-24); the pictures load through the engine's loader (image://resource/), which asks the files
 //    host again with your login for a private one;
@@ -69,6 +69,9 @@ Page {
     Connections {
         target: MyAvatar
         function onSkeletonModelURLChanged() {
+            if (avatar.linkGiven) {
+                avatar.linkWorn();
+            }
             avatar.refresh();
             menu.reload();
         }
@@ -90,6 +93,8 @@ Page {
         property bool collisions: true
         property real scale: 1
         property bool adding: false
+        property bool linking: false         // Wear from Link…'s box is open
+        property bool linkGiven: false       // a link is being worn (after its license or the importer's questions)
         property string removing: ""         // the favourite whose Remove waits for a second press
 
         // the Avatar page's own setting, kept so a favourite worn there is still named here
@@ -127,6 +132,7 @@ Page {
         }
 
         function wear(address, modelName) {
+            linkGiven = false;
             var before = String(MyAvatar.getFullAvatarURLFromPreferences());
             MyAvatar.useFullAvatarURL(address, modelName);
             var after = String(MyAvatar.getFullAvatarURLFromPreferences());
@@ -140,6 +146,7 @@ Page {
             refresh();
         }
         function wearDefault() {
+            linkGiven = false;
             MyAvatar.randomizeDefaultAvatar();
             MyAvatar.useFullAvatarURL(MyAvatar.getDefaultFullAvatarURL(), "Default");
             MyAvatar.scale = 1;
@@ -147,6 +154,7 @@ Page {
             refresh();
         }
         function wearFavorite(favorite) {
+            linkGiven = false;
             var bookmark = (AvatarBookmarks.getBookmarks() || {})[favorite] || {};
             var before = String(MyAvatar.getFullAvatarURLFromPreferences());
             AvatarBookmarks.loadBookmark(favorite);
@@ -158,6 +166,22 @@ Page {
             }
             Settings.setValue(favoriteNameSetting, favorite);
             refresh();
+        }
+        // the same asks as a link dropped on the window, but not "Wear it?" (Wear was pressed): an .fst's license, or a
+        // .glb's import (Application::wearAvatarLink); the avatar changes once they're answered (linkWorn)
+        function wearLink(link) {
+            link = link.trim();
+            if (link === "" || link === url) {
+                return;
+            }
+            linking = false;
+            linkGiven = true;
+            ApplicationInterface.wearAvatarLink(link);
+        }
+        function linkWorn() {
+            linkGiven = false;
+            MyAvatar.scale = 1;
+            Settings.setValue(favoriteNameSetting, "");
         }
         function addFavorite(favorite) {
             favorite = favorite.trim();
@@ -357,7 +381,9 @@ Page {
 
         Section {
             title: "Wearing"
-            footer: thumb.status
+            footer: thumb.status !== "" ? thumb.status
+                : avatar.linking ? "A link to an avatar's .fst or .glb file. A .glb is set up for Darkride first, then you test it or keep it."
+                : ""
             Item {
                 width: parent ? parent.width : 0
                 height: wornRow.implicitHeight + 2 * Theme.rowPadding + 4 * Theme.unit
@@ -419,6 +445,45 @@ Page {
                 action: true
                 label: "Use the Default Avatar"
                 onClicked: avatar.wearDefault()
+            }
+            // here too: a player who wore avatars by their link didn't find the box below My Files (Caity, 10-29)
+            ListRow {
+                visible: !avatar.linking
+                action: true
+                label: "Wear from Link…"
+                onClicked: {
+                    // the link worn, selected: a paste replaces it, and it can be copied
+                    linkField.text = avatar.url;
+                    avatar.linking = true;
+                    linkField.forceActiveFocus();
+                    linkField.selectAll();
+                }
+            }
+            ListRow {
+                visible: avatar.linking
+                label: "Link"
+                fill: true
+                Field {
+                    id: linkField
+                    objectName: "wearLinkField"   // a test fills it
+                    Layout.fillWidth: true
+                    horizontalAlignment: TextInput.AlignLeft
+                    placeholderText: "https://…/avatar.fst"
+                    onAccepted: avatar.wearLink(text)
+                }
+            }
+            ListRow {
+                visible: avatar.linking
+                action: true
+                label: "Cancel"
+                onClicked: avatar.linking = false
+            }
+            ListRow {
+                visible: avatar.linking
+                action: true
+                label: "Wear"
+                enabled: linkField.text.trim() !== "" && linkField.text.trim() !== avatar.url
+                onClicked: avatar.wearLink(linkField.text)
             }
         }
 
@@ -543,29 +608,6 @@ Page {
                 ? "Private: other players see it when they're on Darkride 1.2 or newer; it can't be downloaded from a browser."
                 : ""
             onActivated: avatar.wear(item.url, item.title)
-        }
-
-        Section {
-            title: "Wear by URL"
-
-            ListRow {
-                label: "URL"
-                fill: true
-                Field {
-                    id: urlField
-                    Layout.fillWidth: true
-                    text: avatar.url
-                    horizontalAlignment: TextInput.AlignLeft
-                    placeholderText: "https://…/avatar.fst"
-                    onAccepted: if (text.trim() !== "" && text.trim() !== avatar.url) { avatar.wear(text.trim(), text.trim().split("/").pop()); }
-                }
-            }
-            ListRow {
-                visible: urlField.text.trim() !== "" && urlField.text.trim() !== avatar.url
-                action: true
-                label: "Wear This URL"
-                onClicked: avatar.wear(urlField.text.trim(), urlField.text.trim().split("/").pop())
-            }
         }
 
         Section {
