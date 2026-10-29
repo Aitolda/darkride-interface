@@ -918,6 +918,62 @@ Page {
                 devices: AudioScriptingInterface.devices.output
                 isInput: false
             }
+            // a short clip through the speakers chosen above (Caity 10-28; High Fidelity's audio page had "Test your
+            // sound", gone with the bar's Audio button): the clip is loaded the first time it's played, a moment later
+            // when it isn't ready yet, and stopped when the tab or the panel goes
+            ListRow {
+                id: testSound
+                // Darkride's own test clip, 9.6 s (Caity chose it 10-28)
+                readonly property url source: Qt.resolvedUrl("../../sounds/test-sound.mp3")
+                property var sound: null
+                property var injector: null
+                property int tries: 0
+                label: "Test sound"
+                detail: "A short clip through your speakers"
+                onVisibleChanged: if (!visible) stop()
+
+                function play() {
+                    if (!sound) {
+                        sound = SoundCache.getSound(source);
+                    }
+                    var playing = AudioScriptingInterface.playSystemSound(sound);
+                    if (!playing) {
+                        // not loaded yet: again shortly, for up to five seconds
+                        if (++tries < 25) {
+                            retry.start();
+                        } else {
+                            tries = 0;
+                        }
+                        return;
+                    }
+                    tries = 0;
+                    injector = playing;
+                    playing.finished.connect(function () {
+                        if (injector === playing) {
+                            injector = null;
+                        }
+                    });
+                }
+                function stop() {
+                    retry.stop();
+                    tries = 0;
+                    if (injector) {
+                        var playing = injector;
+                        injector = null;
+                        playing.stop();
+                    }
+                }
+
+                Timer {
+                    id: retry
+                    interval: 200
+                    onTriggered: testSound.play()
+                }
+                RowButton {
+                    text: testSound.injector || retry.running ? "Stop" : "Play"
+                    onPressed: testSound.injector || retry.running ? testSound.stop() : testSound.play()
+                }
+            }
         }
 
         Section {
