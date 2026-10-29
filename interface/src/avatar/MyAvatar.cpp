@@ -7489,10 +7489,10 @@ glm::vec3 MyAvatar::getCameraEyesPosition(float deltaTime) {
     // Compute the offset between the default and real eye positions.
     glm::vec3 defaultEyesToEyesVector = getHead()->getEyePosition() - defaultEyesPosition;
     const float FRONT_OFFSET_JUMP_MULTIPLIER = 1.5f;
-    // the camera keeps up with the real eyes' forward offset at every pitch, its height the default's so it doesn't
-    // bob: looking down turns the head forward of the pivot (0.04 m at 40 deg down seated, 0.18 m at 80), and a camera
-    // left behind it sees the neck narrow into the hidden head's point (Caity's desk test s7, 10-29). High Fidelity
-    // moved it only past 45 deg down, and only up to 3.5 times the default eyes' offset
+    // looking down, the camera keeps up with the real eyes' forward offset, its height the default's so it doesn't bob:
+    // looking down turns the head forward of the pivot (0.04 m at 40 deg down seated, 0.18 m at 80), and a camera left
+    // behind it sees the neck narrow into the hidden head's point (Caity's desk test s7, 10-29). High Fidelity moved it
+    // only past 45 deg down, and only up to 3.5 times the default eyes' offset
     float frontOffset = glm::dot(defaultEyesToEyesVector, avatarFrontVector);
 
     bool isLanding = false;
@@ -7503,6 +7503,11 @@ glm::vec3 MyAvatar::getCameraEyesPosition(float deltaTime) {
         frontOffset *= FRONT_OFFSET_JUMP_MULTIPLIER;
         _landingAfterJumpTime = 0.0f;
     } else {
+        // none of it looking level, all of it from 30 deg down: the everyday view stays where it was, without the
+        // head's sway as you sprint (3.5 cm) or its lurch as you stop (6 cm) (walk-camera-test, 10-29)
+        const float FULL_FRONT_OFFSET_DEGREES = 30.0f;
+        float lookingDown = glm::dot(_lookAtPitch * Vectors::FRONT, -avatarUpVector);
+        frontOffset *= glm::clamp(lookingDown / glm::sin(glm::radians(FULL_FRONT_OFFSET_DEGREES)), 0.0f, 1.0f);
         const float WAIT_TO_LAND_TIME = 1.0f;
         if (_landingAfterJumpTime < WAIT_TO_LAND_TIME) {
             _landingAfterJumpTime += deltaTime;
