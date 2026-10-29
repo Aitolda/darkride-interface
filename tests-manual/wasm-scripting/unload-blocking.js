@@ -25,14 +25,21 @@
         "    print('UNLOAD-TEST unload saw ' + roles.length + ' animation roles');" +
         "  };" +
         "})";
-    var id = Entities.addEntity({
-        type: "Box", name: "unload-test", position: { x: 0, y: 2, z: -3 }, dimensions: { x: 0.5, y: 0.5, z: 0.5 },
-        color: { red: 120, green: 200, blue: 120 }, lifetime: 120, script: script
-    });
+    function add() {
+        return Entities.addEntity({
+            type: "Box", name: "unload-test", position: { x: 0, y: 2, z: -3 }, dimensions: { x: 0.5, y: 0.5, z: 0.5 },
+            color: { red: 120, green: 200, blue: 120 }, lifetime: 120, script: script
+        });
+    }
+    var id = add();
     var tries = 0;
     var timer = Script.setInterval(function () {
         var name = Entities.getEntityProperties(id, ["name"]).name;
         tries++;
+        if (name === undefined && tries % 4 === 0) {
+            // the world was not ready for the first add (the QtScript engine starts its script sooner): again
+            id = add();
+        }
         if (name === LOADED || tries > 40) {
             Script.clearInterval(timer);
             print("UNLOAD-TEST entity script " + (name === LOADED ? "loaded" : "NOT loaded (" + name + ")") + " after " +
