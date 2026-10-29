@@ -29,7 +29,8 @@
 (function() {
     Script.include("/~/system/libraries/flightAssist.js");
 
-    var SIT_ANIMATION_URL = "https://s3-us-west-1.amazonaws.com/hifi-content/clement/production/animations/sitting_idle.fbx";
+    // our own copy of High Fidelity's sitting animation, once on its storage (Caity 10-29; physics's OK)
+    var SIT_ANIMATION_URL = Script.resourcesPath() + "avatar/animations/vehicle_sitting_idle.fbx";
     var SIT_ANIMATION_FPS = 30;
     var SIT_ANIMATION_FIRST_FRAME = 1;
     var SIT_ANIMATION_LAST_FRAME = 350;
