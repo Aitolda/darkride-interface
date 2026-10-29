@@ -63,6 +63,7 @@
 #include <gl/GLHelpers.h>
 
 #include "Application.h"
+#include "ChatTabletPage.h"
 #include "InterfaceLogging.h"
 #include "MainWindow.h"
 #include "ui/PanelTheme.h"
@@ -2259,6 +2260,11 @@ void ChatWindow::messageFriend(const QString& username) {
 }
 
 void ChatWindow::openDirectMessage(const QString& username) {
+    // in VR, on the tablet: a headset draws no panels
+    if (qApp->isHMDMode() && ChatTabletPage::get()) {
+        ChatTabletPage::get()->openDirectMessage(username);
+        return;
+    }
     DependencyManager::get<Panels>()->open("Chat");
     ChatWindow* chat = content();
     auto service = DependencyManager::get<ChatService>();

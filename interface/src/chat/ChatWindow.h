@@ -52,7 +52,7 @@ public:
     static void resetDock();
     static QKeySequence shortcut();
     // chat in front on your direct message with a Darkride user, made if there is none yet (Friends.openDirectMessage,
-    // People's Message); while chat is signing in, once it's ready
+    // People's Message); while chat is signing in, once it's ready. In VR, on the tablet (ChatTabletPage)
     static void openDirectMessage(const QString& username);
 
 protected:

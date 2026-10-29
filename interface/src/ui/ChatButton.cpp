@@ -17,7 +17,9 @@
 #include <DependencyManager.h>
 #include <ui/TabletScriptingInterface.h>
 
+#include "Application.h"
 #include "WindowLayout.h"
+#include "chat/ChatTabletPage.h"
 #include "chat/ChatWindow.h"
 
 namespace {
@@ -42,7 +44,14 @@ ChatButton::ChatButton(TabletProxy* tablet) : QObject(tablet) {
         { "sortOrder", SORT_ORDER },
         { "badge", 0 },
     });
-    connect(_button, &TabletButtonProxy::clicked, this, [this] {
+    // in VR on the tablet (a headset draws no panels), else the panel
+    auto page = ChatTabletPage::make(tablet);
+    connect(page, &ChatTabletPage::showingChanged, this, &ChatButton::updateActive);
+    connect(_button, &TabletButtonProxy::clicked, this, [this, page] {
+        if (qApp->isHMDMode()) {
+            page->toggle();
+            return;
+        }
         ChatWindow::toggle();
         watchDock();   // opened before the layout's restore made the panel
     });
@@ -61,11 +70,13 @@ void ChatButton::watchDock() {
     }
     _dock = ChatWindow::dock();
     // open is not hidden: a panel tabbed behind another, or the window minimised, is still open
-    connect(_dock, &QDockWidget::visibilityChanged, this, [this] { setActive(_dock && !_dock->isHidden()); });
-    setActive(!_dock->isHidden());
+    connect(_dock, &QDockWidget::visibilityChanged, this, &ChatButton::updateActive);
+    updateActive();
 }
 
-void ChatButton::setActive(bool active) {
+void ChatButton::updateActive() {
+    auto page = ChatTabletPage::get();
+    bool active = (_dock && !_dock->isHidden()) || (page && page->isShowing());
     if (_button) {
         _button->editProperties({ { "isActive", active } });
     }
