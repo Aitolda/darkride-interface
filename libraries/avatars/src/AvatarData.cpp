@@ -390,7 +390,7 @@ QByteArray AvatarData::toByteArray(AvatarDataDetail dataDetail, quint64 lastSent
             hasSensorToWorldMatrix = sendAll || sensorToWorldMatrixChangedSince(lastSentTime);
             hasAdditionalFlags = sendAll || additionalFlagsChangedSince(lastSentTime);
             hasParentInfo = sendAll || parentInfoChangedSince(lastSentTime);
-            hasAvatarLocalPosition = hasParent() && (sendAll ||
+            hasAvatarLocalPosition = hasParentForLocalPosition() && (sendAll ||
                 tranlationChangedSince(lastSentTime) ||
                 parentInfoChangedSince(lastSentTime));
             hasHandControllers = _controllerLeftHandMatrixCache.isValid() || _controllerRightHandMatrixCache.isValid();
@@ -1055,7 +1055,7 @@ int AvatarData::parseDataFromBuffer(const QByteArray& buffer) {
                 _globalPosition = _serverPosition;
                 _globalPositionChanged = now;
             }
-            if (!hasParent()) {
+            if (!hasParentForLocalPosition()) {
                 setLocalPosition(_serverPosition);
             }
         }
@@ -1300,7 +1300,10 @@ int AvatarData::parseDataFromBuffer(const QByteArray& buffer) {
             setLocalPosition(position);
             _globalPosition = getWorldPosition();
             _globalPositionChanged = now;
-        } else {
+        } else if (hasParentForLocalPosition()) {
+            // the mixer, which can't find the parent: kept to pass on; the world position stays the one the avatar sent
+            setLocalPosition(position);
+        } else if (shouldLogError(now)) {
             qCWarning(avatars) << "received localPosition for avatar with no parent";
         }
         sourceBuffer += sizeof(AvatarDataPacket::AvatarLocalPosition);
