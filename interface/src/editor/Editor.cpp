@@ -59,6 +59,7 @@
 #include <EntityTreeRenderer.h>
 #include <RenderableEntityItem.h>
 #include <LightEntityItem.h>
+#include <TextEntityItem.h>
 #include <ParticleEffectEntityItem.h>
 #include <VehiclePropertyGroup.h>
 #include <WheeledVehicleSpec.h>
@@ -1941,6 +1942,134 @@ EntityItemProperties Editor::inspectorEdit(const QString& key, const QVariant& v
     return properties;
 }
 
+// an Inspector edit that scales what it changes, and so its children
+static bool scalesChildren(const QString& key) {
+    return key == SCALE_KEY || key == QStringLiteral("dimensions");
+}
+
+// an entity's new size over its old, along each of its axes (1 along one it had no size on)
+static glm::vec3 sizeRatio(const glm::vec3& before, const glm::vec3& after) {
+    glm::vec3 ratio(1.0f);
+    for (int i = 0; i < 3; ++i) {
+        if (before[i] > 0.0f) {
+            ratio[i] = after[i] / before[i];
+        }
+    }
+    return ratio;
+}
+
+// a scale along a parent's x, y and z, seen along each axis of something turned by `rotation` in it: exact for a scale
+// the same along all three and for a turn by right angles; otherwise the nearest without a skew, which entities can't
+// have (Unity's children skew)
+static glm::vec3 scaleAlong(const glm::vec3& ratio, const glm::quat& rotation) {
+    return glm::vec3(glm::length(ratio * (rotation * Vectors::UNIT_X)), glm::length(ratio * (rotation * Vectors::UNIT_Y)),
+                     glm::length(ratio * (rotation * Vectors::UNIT_Z)));
+}
+
+QVector<Editor::ScaledChild> Editor::childrenToScale(const QList<QUuid>& ids) const {
+    QVector<ScaledChild> children;
+    auto tree = entityTree();
+    if (!tree) {
+        return children;
+    }
+    tree->withReadLock([&] {
+        auto add = [&](const EntityItemPointer& parent, int parentIndex) {
+            parent->forEachChild([&](const SpatiallyNestablePointer& nestable) {
+                if (nestable->getNestableType() != NestableType::Entity || ids.contains(nestable->getID())) {
+                    return;
+                }
+                auto child = std::static_pointer_cast<EntityItem>(nestable);
+                if (child->getLocked()) {
+                    return;
+                }
+                ScaledChild entry;
+                entry.id = child->getID();
+                entry.parent = parentIndex;
+                entry.localPosition = child->getLocalPosition();
+                entry.dimensions = child->getUnscaledDimensions();
+                entry.localRotation = child->getLocalOrientation();
+                quint16 joint = child->getParentJointIndex();
+                if (joint != INVALID_JOINT_INDEX) {
+                    entry.frame = parent->getAbsoluteJointRotationInObjectFrame(joint);
+                }
+                if (child->getType() == EntityTypes::Text) {
+                    entry.lineHeight = std::static_pointer_cast<TextEntityItem>(child)->getLineHeight();
+                } else if (child->getType() == EntityTypes::Light) {
+                    entry.falloff = std::static_pointer_cast<LightEntityItem>(child)->getFalloffRadius();
+                }
+                children << entry;
+            });
+        };
+        for (int i = 0; i < ids.size(); ++i) {
+            int first = children.size();
+            if (auto entity = tree->findEntityByEntityItemID(ids[i])) {
+                add(entity, -1 - i);
+            }
+            for (int j = first; j < children.size(); ++j) {
+                if (auto child = tree->findEntityByEntityItemID(children[j].id)) {
+                    add(child, j);
+                }
+            }
+        }
+    });
+    return children;
+}
+
+QVector<EntityItemProperties> Editor::childScaleEdits(const QVector<ScaledChild>& children,
+                                                      const QVector<glm::vec3>& ratios) {
+    QVector<EntityItemProperties> edits;
+    QVector<glm::vec3> own;   // each child's scale along its own axes, which its own children grow by
+    for (const auto& child : children) {
+        glm::vec3 ratio = child.parent < 0 ? ratios.value(-1 - child.parent, glm::vec3(1.0f)) : own[child.parent];
+        // its offset grows along its parent's axes (a joint's offset along the joint's)
+        glm::vec3 offset = glm::inverse(child.frame) * (ratio * (child.frame * child.localPosition));
+        own << scaleAlong(ratio, child.frame * child.localRotation);
+        glm::vec3 scale = own.last();
+        EntityItemProperties properties;
+        properties.setLocalPosition(offset);
+        if (child.falloff > 0.0f) {
+            // a light's range is a sphere: it grows by its mean, its glow with it
+            scale = glm::vec3((scale.x + scale.y + scale.z) / 3.0f);
+            properties.setFalloffRadius(child.falloff * scale.x);
+        }
+        properties.setLocalDimensions(glm::max(child.dimensions * scale, glm::vec3(MIN_DIMENSION)));
+        if (child.lineHeight > 0.0f) {
+            properties.setLineHeight(child.lineHeight * scale.y);
+        }
+        edits << properties;
+    }
+    return edits;
+}
+
+EntityItemProperties Editor::childScaleBefore(const ScaledChild& child) {
+    EntityItemProperties properties;
+    properties.setLocalPosition(child.localPosition);
+    properties.setLocalDimensions(child.dimensions);
+    if (child.falloff > 0.0f) {
+        properties.setFalloffRadius(child.falloff);
+    }
+    if (child.lineHeight > 0.0f) {
+        properties.setLineHeight(child.lineHeight);
+    }
+    return properties;
+}
+
+void Editor::sendChildScale(const QVector<ScaledChild>& children, const QVector<EntityItemProperties>& edits, bool final) {
+    auto entities = DependencyManager::get<EntityScriptingInterface>();
+    auto tree = entityTree();
+    for (int i = 0; i < children.size() && i < edits.size(); ++i) {
+        entities->editEntity(children[i].id, edits[i]);
+        if (!final && tree) {
+            // as for the entity scaled: while the drag lasts, the old collision shape is good enough
+            tree->withWriteLock([&] {
+                if (auto entity = tree->findEntityByEntityItemID(children[i].id)) {
+                    entity->clearDirtyFlags(Simulation::DIRTY_SHAPE | Simulation::DIRTY_MASS);
+                }
+            });
+        }
+    }
+}
+
 void Editor::onInspectorEditBegan(const QString& key) {
     // a scrub starts (or a colour picker opens): what the entities hold now is the undo point
     _inspectorEditKey = key;
@@ -1969,6 +2098,7 @@ void Editor::onInspectorEditBegan(const QString& key) {
         _inspectorBefore << before;
         _inspectorNatural << naturalSize;
     }
+    _inspectorChildren = scalesChildren(key) ? childrenToScale(_inspectorEditIds) : QVector<ScaledChild>();
 }
 
 void Editor::onInspectorLiveEdit(const QString& key, const QVariant& value) {
@@ -1995,8 +2125,14 @@ void Editor::applyLiveEdit(const QString& key, QVariant value) {
     _liveEditClock.restart();
     _liveEditValue = QVariant();
     auto entities = DependencyManager::get<EntityScriptingInterface>();
+    QVector<glm::vec3> ratios;
     for (int i = 0; i < _inspectorEditIds.size(); ++i) {
-        entities->editEntity(_inspectorEditIds[i], inspectorEdit(key, value, _inspectorNatural[i], _inspectorBefore[i]));
+        EntityItemProperties edit = inspectorEdit(key, value, _inspectorNatural[i], _inspectorBefore[i]);
+        entities->editEntity(_inspectorEditIds[i], edit);
+        ratios << sizeRatio(_inspectorBefore[i].getDimensions(), edit.getDimensions());
+    }
+    if (!_inspectorChildren.isEmpty()) {
+        sendChildScale(_inspectorChildren, childScaleEdits(_inspectorChildren, ratios), true);
     }
 }
 
@@ -2011,10 +2147,16 @@ void Editor::onInspectorEditCancelled(const QString& key) {
     for (int i = 0; i < _inspectorEditIds.size(); ++i) {
         entities->editEntity(_inspectorEditIds[i], _inspectorBefore[i]);
     }
+    QVector<EntityItemProperties> childrenBefore;
+    for (const auto& child : _inspectorChildren) {
+        childrenBefore << childScaleBefore(child);
+    }
+    sendChildScale(_inspectorChildren, childrenBefore, true);
     _inspectorEditKey.clear();
     _inspectorEditIds.clear();
     _inspectorBefore.clear();
     _inspectorNatural.clear();
+    _inspectorChildren.clear();
     refreshInspector(false);
 }
 
@@ -2044,6 +2186,7 @@ void Editor::commitInspectorEdit(const QString& key, const QVariant& value, cons
     QList<QUuid> ids;
     QVector<EntityItemProperties> before;
     QVector<glm::vec3> naturalSizes;
+    QVector<ScaledChild> children;
     bool alreadyApplied = key == _inspectorEditKey && !_inspectorEditIds.isEmpty();
     bool entryRefused = false;   // an entry of a JSON property, on an entity whose property can't hold it
     if (alreadyApplied) {
@@ -2051,6 +2194,7 @@ void Editor::commitInspectorEdit(const QString& key, const QVariant& value, cons
         ids = _inspectorEditIds;
         before = _inspectorBefore;
         naturalSizes = _inspectorNatural;
+        children = _inspectorChildren;
         _liveEditTimer.stop();
         applyLiveEdit(key, value);
     } else {
@@ -2081,11 +2225,15 @@ void Editor::commitInspectorEdit(const QString& key, const QVariant& value, cons
             before << properties;
             naturalSizes << naturalSize;
         }
+        if (scalesChildren(key)) {
+            children = childrenToScale(ids);
+        }
     }
     _inspectorEditKey.clear();
     _inspectorEditIds.clear();
     _inspectorBefore.clear();
     _inspectorNatural.clear();
+    _inspectorChildren.clear();
     if (ids.isEmpty() || (!alreadyApplied && !editable())) {
         if (entryRefused) {
             auto spec = PropertySpecs::find(key);
@@ -2098,8 +2246,17 @@ void Editor::commitInspectorEdit(const QString& key, const QVariant& value, cons
         return;
     }
     QVector<EntityItemProperties> after;
+    QVector<glm::vec3> ratios;
     for (int i = 0; i < ids.size(); ++i) {
         after << inspectorEdit(key, value, naturalSizes[i], before[i]);
+        ratios << sizeRatio(before[i].getDimensions(), after[i].getDimensions());
+    }
+    // the children in the same undo step (sent already when the value went out live)
+    QVector<EntityItemProperties> childEdits = childScaleEdits(children, ratios);
+    for (int i = 0; i < children.size(); ++i) {
+        ids << children[i].id;
+        before << childScaleBefore(children[i]);
+        after << childEdits[i];
     }
     if (key == TRACK_POINTS_KEY) {
         // the box follows the curve, as after a drag, an insert or a delete in the viewport; a scrub's points went out
@@ -2284,7 +2441,8 @@ QString Editor::statusForTest() const {
     return _statusLabel ? _statusLabel->text() : QString();
 }
 
-void Editor::dragSelectionForTest(const glm::vec3& delta, const glm::quat& rotationDelta, bool rotate, bool begin, bool final) {
+void Editor::dragSelectionForTest(const glm::vec3& delta, const glm::quat& rotationDelta, bool rotate, bool begin, bool final,
+                                  const glm::vec3& scale, bool scaling) {
     if (!_active) {
         setActive(true);
     }
@@ -2298,7 +2456,7 @@ void Editor::dragSelectionForTest(const glm::vec3& delta, const glm::quat& rotat
         if (!tree) {
             return;
         }
-        DragKind kind = rotate ? DragKind::Rotate : DragKind::Move;
+        DragKind kind = rotate ? DragKind::Rotate : scaling ? DragKind::Scale : DragKind::Move;
         tree->withReadLock([&] {
             for (const auto& id : _selection.topLevel()) {
                 auto entity = tree->findEntityByEntityItemID(id);
@@ -2311,6 +2469,8 @@ void Editor::dragSelectionForTest(const glm::vec3& delta, const glm::quat& rotat
                 before.setPosition(position);
                 if (kind == DragKind::Rotate) {
                     before.setRotation(rotation);
+                } else if (kind == DragKind::Scale) {
+                    before.setDimensions(entity->getScaledDimensions());
                 }
                 _dragIds << id;
                 _dragPositions << position;
@@ -2322,6 +2482,7 @@ void Editor::dragSelectionForTest(const glm::vec3& delta, const glm::quat& rotat
         if (_dragIds.isEmpty()) {
             return;
         }
+        _dragChildren = kind == DragKind::Scale ? childrenToScale(_dragIds) : QVector<ScaledChild>();
         _dragKind = kind;
         _dragPivot = _dragPositions.first();
         _dragGizmoRotation = _gizmo.rotation();
@@ -2330,6 +2491,7 @@ void Editor::dragSelectionForTest(const glm::vec3& delta, const glm::quat& rotat
     }
     _dragDelta = delta;
     _dragRotationDelta = rotationDelta;
+    _dragScale = scale;
     applyDrag(final);
     if (final) {
         _dragKind = DragKind::None;
@@ -2968,6 +3130,7 @@ void Editor::beginGizmoDrag(GizmoHandle handle, const PickRay& ray) {
     if (_dragIds.isEmpty()) {
         return;
     }
+    _dragChildren = kind == DragKind::Scale ? childrenToScale(_dragIds) : QVector<ScaledChild>();
     _dragKind = kind;
     _dragPivot = _gizmo.position();
     _dragGizmoRotation = _gizmo.rotation();
@@ -3123,11 +3286,26 @@ void Editor::applyDrag(bool final) {
         }
         after << properties;
     }
+    QList<QUuid> ids = _dragIds;
+    QVector<EntityItemProperties> before = _dragBefore;
+    if (_dragKind == DragKind::Scale && !_dragChildren.isEmpty()) {
+        QVector<glm::vec3> ratios;
+        for (int i = 0; i < _dragIds.size(); ++i) {
+            ratios << sizeRatio(_dragDimensions[i], glm::max(_dragDimensions[i] * _dragScale, glm::vec3(MIN_DIMENSION)));
+        }
+        QVector<EntityItemProperties> childEdits = childScaleEdits(_dragChildren, ratios);
+        sendChildScale(_dragChildren, childEdits, final);
+        for (int i = 0; i < _dragChildren.size(); ++i) {
+            ids << _dragChildren[i].id;
+            before << childScaleBefore(_dragChildren[i]);
+            after << childEdits[i];
+        }
+    }
     bool changed = (_dragKind == DragKind::Move || _dragKind == DragKind::TrackPoint) ? _dragDelta != glm::vec3(0.0f)
                  : _dragKind == DragKind::Rotate ? _dragRotationDelta != glm::quat()
                  : _dragScale != glm::vec3(1.0f);
     if (final && changed) {
-        _undo.pushPropertyEdit(text, _dragIds, _dragBefore, after, true);
+        _undo.pushPropertyEdit(text, ids, before, after, true);
     }
 }
 

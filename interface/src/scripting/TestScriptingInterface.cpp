@@ -20,6 +20,7 @@
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtGui/QMouseEvent>
+#include <QtGui/QVector3D>
 #include <QtWidgets/QAbstractButton>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
@@ -583,6 +584,13 @@ void TestScriptingInterface::commitInspectorEdit(const QString& key, const QVari
         BLOCKING_INVOKE_METHOD(this, "commitInspectorEdit", Q_ARG(QString, key), Q_ARG(QVariant, value));
         return;
     }
+    // a script's { x, y, z } is a Vec3 field's value (Scale, Size, Position)
+    const QVariantMap map = value.toMap();
+    if (map.size() == 3 && map.contains("x") && map.contains("y") && map.contains("z")) {
+        DependencyManager::get<Editor>()->testInspectorEdit(key, QVector3D(map["x"].toFloat(), map["y"].toFloat(),
+                                                                           map["z"].toFloat()));
+        return;
+    }
     DependencyManager::get<Editor>()->testInspectorEdit(key, value);
 }
 
@@ -1141,4 +1149,12 @@ void TestScriptingInterface::editorDrag(const glm::vec3& delta, float yawDegrees
     bool rotate = yawDegrees != 0.0f || rollDegrees != 0.0f;
     glm::quat rotation = glm::quat(glm::radians(glm::vec3(0.0f, yawDegrees, rollDegrees)));
     DependencyManager::get<Editor>()->dragSelectionForTest(delta, rotation, rotate, begin, final);
+}
+
+void TestScriptingInterface::editorScaleDrag(const glm::vec3& scale, bool begin, bool final) {
+    if (QThread::currentThread() != thread()) {
+        BLOCKING_INVOKE_METHOD(this, "editorScaleDrag", Q_ARG(glm::vec3, scale), Q_ARG(bool, begin), Q_ARG(bool, final));
+        return;
+    }
+    DependencyManager::get<Editor>()->dragSelectionForTest(glm::vec3(0.0f), glm::quat(), false, begin, final, scale, true);
 }
