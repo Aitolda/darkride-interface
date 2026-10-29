@@ -3586,7 +3586,10 @@ void MyAvatar::preDisplaySide(const RenderArgs* renderArgs) {
 
     // toggle using the cauterizedBones depending on where the camera is and the rendering pass type.
     const bool shouldDrawHead = shouldRenderHead(renderArgs);
-    const bool shouldDrawBody = _closeCamera != CloseCamera::Body;
+    // a close camera hides the whole avatar, even when only its head is in the way: the head alone collapses to the
+    // neck and leaves it open, and a camera held in behind you (a seat back, a wall) looks down into it (Caity's beta
+    // bug #3, 10-29, seated in the Cinema)
+    const bool shouldDrawBody = _closeCamera == CloseCamera::None;
     if (shouldDrawHead != _prevShouldDrawHead || shouldDrawBody != _prevShouldDrawBody) {
         _cauterizationNeedsUpdate = true;
         // the whole body is hidden the way the head is, every bone collapsed to the neck in your own view only:
@@ -3666,7 +3669,7 @@ void MyAvatar::updateCloseCamera(const glm::vec3& cameraPosition) {
         _closeCamera = CloseCamera::None;
     }
     if (_closeCamera != was) {
-        static const char* NAMES[] = { "nothing", "the head", "the whole avatar" };
+        static const char* NAMES[] = { "nothing", "the whole avatar (near the head)", "the whole avatar (at the pivot)" };
         qCDebug(interfaceapp) << "the camera is" << distance << "from its pivot (camera mode" << (int)mode
                               << ", the avatar's size" << getModelScale() << (nearShapes ? ", near the head's shapes" : "")
                               << "): hiding" << NAMES[(int)_closeCamera];
