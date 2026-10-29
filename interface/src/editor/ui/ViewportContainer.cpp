@@ -110,6 +110,12 @@ void ViewportContainer::applySize() {
         // panels resize the view, crashed in Apple's GL driver, clearing the view while it was being resized
         gl::ViewChangeGuard guard;
         _viewport->setGeometry(area);
+#ifdef Q_OS_MACOS
+        // the Mac's GL surface can keep its old size after this one: the picture was drawn at the old shape into the
+        // new one, squeezed sideways with Chat docked until the dock closed (Caity, beta zip, 10-29). Put it again once
+        // the layout has settled, as after a change of scale
+        _rescale.start();
+#endif
     }
 }
 
