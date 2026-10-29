@@ -1303,7 +1303,7 @@ int AvatarData::parseDataFromBuffer(const QByteArray& buffer) {
         } else if (hasParentForLocalPosition()) {
             // the mixer, which can't find the parent: kept to pass on; the world position stays the one the avatar sent
             setLocalPosition(position);
-        } else {
+        } else if (shouldLogError(now)) {
             qCWarning(avatars) << "received localPosition for avatar with no parent";
         }
         sourceBuffer += sizeof(AvatarDataPacket::AvatarLocalPosition);
