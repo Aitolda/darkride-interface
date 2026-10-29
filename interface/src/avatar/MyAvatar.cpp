@@ -7484,7 +7484,6 @@ glm::vec3 MyAvatar::getLookAtPivotPoint() {
 glm::vec3 MyAvatar::getCameraEyesPosition(float deltaTime) {
     glm::vec3 defaultEyesPosition = getLookAtPivotPoint();
 
-    glm::vec3 avatarFrontVector = getWorldOrientation() * Vectors::FRONT;
     glm::vec3 avatarUpVector = getWorldOrientation() * Vectors::UP;
     // Compute the offset between the default and real eye positions.
     glm::vec3 defaultEyesToEyesVector = getHead()->getEyePosition() - defaultEyesPosition;
@@ -7493,10 +7492,12 @@ glm::vec3 MyAvatar::getCameraEyesPosition(float deltaTime) {
     // looking down turns the head forward of the pivot (0.04 m at 40 deg down seated, 0.18 m at 80), and a camera left
     // behind it sees the neck narrow into the hidden head's point (Caity's desk test s7, 10-29). High Fidelity moved it
     // only past 45 deg down, and only up to 3.5 times the default eyes' offset
-    float frontOffset = glm::dot(defaultEyesToEyesVector, avatarFrontVector);
-    // and sideways: in a quick turn the head follows the view before the body does, and a camera held on the body's
-    // front line looks down past the neck from beside it until the body catches up (Caity's batch-7 desk check, 10-29)
-    float rightOffset = glm::dot(defaultEyesToEyesVector, getWorldOrientation() * Vectors::RIGHT);
+    // along the view's heading, not the body's: in a quick turn the head follows the view before the body does, and a
+    // camera held on the body's front line looks down past the neck from beside it until the body catches up (Caity's
+    // batch-7 desk check, 10-29). Only along it: the head's sway from side to side as you walk stays out of the view
+    const glm::vec3 lookFront = _lookAtYaw * Vectors::FRONT;
+    const glm::vec3 lookFrontInBody = glm::inverse(getWorldOrientation()) * lookFront;
+    float frontOffset = glm::dot(defaultEyesToEyesVector, lookFront);
 
     bool isLanding = false;
     // When jumping the camera should follow the real eye on the Y coordenate
@@ -7512,7 +7513,6 @@ glm::vec3 MyAvatar::getCameraEyesPosition(float deltaTime) {
         float lookingDown = glm::dot(_lookAtPitch * Vectors::FRONT, -avatarUpVector);
         float followEyes = glm::clamp(lookingDown / glm::sin(glm::radians(FULL_FRONT_OFFSET_DEGREES)), 0.0f, 1.0f);
         frontOffset *= followEyes;
-        rightOffset *= followEyes;
         const float WAIT_TO_LAND_TIME = 1.0f;
         if (_landingAfterJumpTime < WAIT_TO_LAND_TIME) {
             _landingAfterJumpTime += deltaTime;
@@ -7522,7 +7522,7 @@ glm::vec3 MyAvatar::getCameraEyesPosition(float deltaTime) {
     const float FPS = 60.0f;
     float timeScale = deltaTime * FPS;
     frontOffset = frontOffset < 0.0f ? 0.0f : frontOffset;
-    glm::vec3 cameraOffset = upOffset * Vectors::UP + frontOffset * Vectors::FRONT + rightOffset * Vectors::RIGHT;
+    glm::vec3 cameraOffset = upOffset * Vectors::UP + frontOffset * lookFrontInBody;
     const float JUMPING_TAU = 0.1f;
     const float NO_JUMP_TAU = 0.3f;
     const float LANDING_TAU = 0.05f;
