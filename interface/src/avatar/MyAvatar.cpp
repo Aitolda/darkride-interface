@@ -3347,21 +3347,21 @@ void MyAvatar::attachmentDataToEntityProperties(const AttachmentData& data, Enti
 }
 
 void MyAvatar::initHeadBones() {
-    int neckJointIndex = -1;
+    // the head is hidden from its own joint down, and CauterizedModel collapses it to that joint: the neck stays whole.
+    // High Fidelity started at the neck, which folded the neck's skin (the collar, the tops of the shoulders) into one
+    // point under a first-person camera looking down (Caity's desk test s7, 10-29)
+    int headJointIndex = -1;
     if (_skeletonModel->isLoaded()) {
-        neckJointIndex = getJointIndex("Neck");
+        headJointIndex = getJointIndex("Head");
     }
-    if (neckJointIndex == -1) {
-        neckJointIndex = (getJointIndex("Head") - 1);
-        if (neckJointIndex < 0) {
-            // return if the head is not even there. can't cauterize!!
-            return;
-        }
+    if (headJointIndex < 0) {
+        // return if the head is not even there. can't cauterize!!
+        return;
     }
     _headBoneSet.clear();
     std::queue<int> q;
-    q.push(neckJointIndex);
-    _headBoneSet.insert(neckJointIndex);
+    q.push(headJointIndex);
+    _headBoneSet.insert(headJointIndex);
 
     // hfmJoints only hold links to parents not children, so we have to do a bit of extra work here.
     while (q.size() > 0) {
@@ -3586,13 +3586,13 @@ void MyAvatar::preDisplaySide(const RenderArgs* renderArgs) {
 
     // toggle using the cauterizedBones depending on where the camera is and the rendering pass type.
     const bool shouldDrawHead = shouldRenderHead(renderArgs);
-    // a close camera hides the whole avatar, even when only its head is in the way: the head alone collapses to the
-    // neck and leaves it open, and a camera held in behind you (a seat back, a wall) looks down into it (Caity's beta
-    // bug #3, 10-29, seated in the Cinema)
+    // a close camera hides the whole avatar, even when only its head is in the way: the head alone collapses to its
+    // joint and leaves the neck open, and a camera held in behind you (a seat back, a wall) looks down into it
+    // (Caity's beta bug #3, 10-29, seated in the Cinema)
     const bool shouldDrawBody = _closeCamera == CloseCamera::None;
     if (shouldDrawHead != _prevShouldDrawHead || shouldDrawBody != _prevShouldDrawBody) {
         _cauterizationNeedsUpdate = true;
-        // the whole body is hidden the way the head is, every bone collapsed to the neck in your own view only:
+        // the whole body is hidden the way the head is, every bone collapsed to the head joint in your own view only:
         // shadows and the secondary camera still draw it whole (CauterizedMeshPartPayload::bindTransform), and
         // simulate() hides the entities on any of its joints, as it does those on the head's
         if (shouldDrawBody) {
@@ -3630,7 +3630,7 @@ void MyAvatar::preDisplaySide(const RenderArgs* renderArgs) {
 
 void MyAvatar::updateCloseCamera(const glm::vec3& cameraPosition) {
     // not in first person, which hides the head already and shows the body on purpose, nor in the HMD's own view.
-    // No neck, nothing to collapse to (initHeadBones leaves the set empty)
+    // No head, nothing to collapse to (initHeadBones leaves the set empty)
     const CameraMode mode = qApp->getCamera().getMode();
     const bool firstPerson = mode == CAMERA_MODE_FIRST_PERSON || mode == CAMERA_MODE_FIRST_PERSON_LOOK_AT;
     if (firstPerson || qApp->isHMDMode() || !_skeletonModel || !_skeletonModel->isLoaded() || _headBoneSet.empty()) {

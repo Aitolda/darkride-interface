@@ -111,7 +111,7 @@ void CauterizedModel::updateClusterMatrices() {
     // as an optimization, don't build cautrizedClusterMatrices if the boneSet is empty.
     if (!_cauterizeBoneSet.empty()) {
 
-        AnimPose cauterizePose = _rig.getJointPose(_rig.indexOfJoint("Neck"));
+        AnimPose cauterizePose = _rig.getJointPose(_rig.indexOfJoint("Head"));
         cauterizePose.scale() = glm::vec3(0.0001f, 0.0001f, 0.0001f);
         Transform cauterizedDQTransform(cauterizePose.rot(), cauterizePose.scale(), cauterizePose.trans());
 
@@ -120,7 +120,7 @@ void CauterizedModel::updateClusterMatrices() {
             glm::vec4(0.0f, 0.0001f, 0.0f, 0.0f),
             glm::vec4(0.0f, 0.0f, 0.0001f, 0.0f),
             glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-        auto cauterizeMatrix = _rig.getJointTransform(_rig.indexOfJoint("Neck")) * zeroScale;
+        auto cauterizeMatrix = _rig.getJointTransform(_rig.indexOfJoint("Head")) * zeroScale;
 
         for (int skinDeformerIndex = 0; skinDeformerIndex < (int) _cauterizeMeshStates.size(); skinDeformerIndex++) {
             Model::MeshState& nonCauterizedState = _meshStates[skinDeformerIndex];
