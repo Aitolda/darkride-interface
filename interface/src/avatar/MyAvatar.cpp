@@ -7494,6 +7494,9 @@ glm::vec3 MyAvatar::getCameraEyesPosition(float deltaTime) {
     // behind it sees the neck narrow into the hidden head's point (Caity's desk test s7, 10-29). High Fidelity moved it
     // only past 45 deg down, and only up to 3.5 times the default eyes' offset
     float frontOffset = glm::dot(defaultEyesToEyesVector, avatarFrontVector);
+    // and sideways: in a quick turn the head follows the view before the body does, and a camera held on the body's
+    // front line looks down past the neck from beside it until the body catches up (Caity's batch-7 desk check, 10-29)
+    float rightOffset = glm::dot(defaultEyesToEyesVector, getWorldOrientation() * Vectors::RIGHT);
 
     bool isLanding = false;
     // When jumping the camera should follow the real eye on the Y coordenate
@@ -7507,7 +7510,9 @@ glm::vec3 MyAvatar::getCameraEyesPosition(float deltaTime) {
         // head's sway as you sprint (3.5 cm) or its lurch as you stop (6 cm) (walk-camera-test, 10-29)
         const float FULL_FRONT_OFFSET_DEGREES = 30.0f;
         float lookingDown = glm::dot(_lookAtPitch * Vectors::FRONT, -avatarUpVector);
-        frontOffset *= glm::clamp(lookingDown / glm::sin(glm::radians(FULL_FRONT_OFFSET_DEGREES)), 0.0f, 1.0f);
+        float followEyes = glm::clamp(lookingDown / glm::sin(glm::radians(FULL_FRONT_OFFSET_DEGREES)), 0.0f, 1.0f);
+        frontOffset *= followEyes;
+        rightOffset *= followEyes;
         const float WAIT_TO_LAND_TIME = 1.0f;
         if (_landingAfterJumpTime < WAIT_TO_LAND_TIME) {
             _landingAfterJumpTime += deltaTime;
@@ -7517,7 +7522,7 @@ glm::vec3 MyAvatar::getCameraEyesPosition(float deltaTime) {
     const float FPS = 60.0f;
     float timeScale = deltaTime * FPS;
     frontOffset = frontOffset < 0.0f ? 0.0f : frontOffset;
-    glm::vec3 cameraOffset = upOffset * Vectors::UP + frontOffset * Vectors::FRONT;
+    glm::vec3 cameraOffset = upOffset * Vectors::UP + frontOffset * Vectors::FRONT + rightOffset * Vectors::RIGHT;
     const float JUMPING_TAU = 0.1f;
     const float NO_JUMP_TAU = 0.3f;
     const float LANDING_TAU = 0.05f;
