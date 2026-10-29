@@ -847,6 +847,10 @@ void Editor::placeToolBars() {
 }
 
 void Editor::focusViewport() {
+    // and from a web entity clicked before (the Cinema's remote): it keeps the keyboard otherwise, every key going to
+    // its page first (KeyboardFocus::deliverKeyEvent), since build mode's clicks never reach the app's own focus change;
+    // F, Delete and the rest did nothing (Caity's desk test, 10-29)
+    qApp->getKeyboardFocus().setFocusedEntity(UNKNOWN_ENTITY_ID);
     if (auto viewport = qApp->getPrimaryWidget()) {
         if (!viewport->hasFocus()) {
             viewport->setFocus(Qt::MouseFocusReason);
