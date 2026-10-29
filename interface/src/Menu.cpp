@@ -159,7 +159,7 @@ Menu::Menu() {
     // File > Import Avatar: wear an .fst, or auto rig a character file (AUTO-RIGGING.md)
     addActionToQMenuAndActionHash(fileMenu, MenuOption::ImportAvatar, 0, qApp, SLOT(importAvatarDialog()));
 
-    // File > Put Avatar in My Files: the worn avatar, when it is on this computer, goes up so everyone sees it
+    // File > Put Avatar in My Files: the worn avatar, when it is on this computer, goes up, private, so others see it
     addActionToQMenuAndActionHash(fileMenu, MenuOption::PutAvatarInMyFiles, 0, qApp, SLOT(putAvatarInMyFiles()));
 
     // File > Quit

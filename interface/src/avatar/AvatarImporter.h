@@ -21,7 +21,8 @@
 // Avatars/<name>/, and the client offers to wear it, here only or put in My Files.
 //
 // File > Put Avatar in My Files. An avatar on this computer is seen only by this client (others get a blank address
-// and see the default). This uploads the worn one to the user's files on the metaverse and wears that copy.
+// and see the default). This uploads the worn one to the user's files on the metaverse, in a private folder (signed-in
+// Darkride apps load it; it has no public link), and wears that copy.
 class AvatarImporter {
 public:
     static void importFile(const QString& path);

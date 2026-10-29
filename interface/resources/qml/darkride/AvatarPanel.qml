@@ -570,7 +570,7 @@ Page {
 
         Section {
             title: "Body"
-            footer: "Put This Avatar in My Files uploads an avatar that is on this computer, so everyone can see it."
+            footer: "Put This Avatar in My Files uploads an avatar that is on this computer, private: people see it on you in Darkride, but it has no public link."
             rightsLine: true
 
             ListRow {
