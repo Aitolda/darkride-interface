@@ -69,8 +69,8 @@ Page {
     Connections {
         target: MyAvatar
         function onSkeletonModelURLChanged() {
-            if (avatar.linkGiven) {
-                avatar.linkWorn();
+            if (avatar.linkGiven !== "") {
+                avatar.linkWorn(String(MyAvatar.getFullAvatarURLFromPreferences()));
             }
             avatar.refresh();
             menu.reload();
@@ -94,7 +94,7 @@ Page {
         property real scale: 1
         property bool adding: false
         property bool linking: false         // Wear from Link…'s box is open
-        property bool linkGiven: false       // a link is being worn (after its license or the importer's questions)
+        property string linkGiven: ""        // a link being worn (after its license or the importer's questions)
         property string removing: ""         // the favourite whose Remove waits for a second press
 
         // the Avatar page's own setting, kept so a favourite worn there is still named here
@@ -132,7 +132,7 @@ Page {
         }
 
         function wear(address, modelName) {
-            linkGiven = false;
+            linkGiven = "";
             var before = String(MyAvatar.getFullAvatarURLFromPreferences());
             MyAvatar.useFullAvatarURL(address, modelName);
             var after = String(MyAvatar.getFullAvatarURLFromPreferences());
@@ -146,7 +146,7 @@ Page {
             refresh();
         }
         function wearDefault() {
-            linkGiven = false;
+            linkGiven = "";
             MyAvatar.randomizeDefaultAvatar();
             MyAvatar.useFullAvatarURL(MyAvatar.getDefaultFullAvatarURL(), "Default");
             MyAvatar.scale = 1;
@@ -154,7 +154,7 @@ Page {
             refresh();
         }
         function wearFavorite(favorite) {
-            linkGiven = false;
+            linkGiven = "";
             var bookmark = (AvatarBookmarks.getBookmarks() || {})[favorite] || {};
             var before = String(MyAvatar.getFullAvatarURLFromPreferences());
             AvatarBookmarks.loadBookmark(favorite);
@@ -175,13 +175,18 @@ Page {
                 return;
             }
             linking = false;
-            linkGiven = true;
+            linkGiven = link;
             ApplicationInterface.wearAvatarLink(link);
         }
-        function linkWorn() {
-            linkGiven = false;
-            MyAvatar.scale = 1;
-            Settings.setValue(favoriteNameSetting, "");
+        // a new avatar from the link given (a .glb's is the imported copy, on this computer) starts at scale 1 and is no
+        // favourite; any other change only forgets the link (its license or import was turned down)
+        function linkWorn(worn) {
+            var fromLink = worn === linkGiven || (/\.glb$/i.test(linkGiven) && /^file:.*\/Avatars\//.test(worn));
+            linkGiven = "";
+            if (fromLink) {
+                MyAvatar.scale = 1;
+                Settings.setValue(favoriteNameSetting, "");
+            }
         }
         function addFavorite(favorite) {
             favorite = favorite.trim();
@@ -470,6 +475,7 @@ Page {
                     horizontalAlignment: TextInput.AlignLeft
                     placeholderText: "https://…/avatar.fst"
                     onAccepted: avatar.wearLink(text)
+                    Keys.onEscapePressed: avatar.linking = false
                 }
             }
             ListRow {
