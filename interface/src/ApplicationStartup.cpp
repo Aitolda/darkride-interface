@@ -1291,6 +1291,14 @@ void Application::setupSettings() {
 
 
     Menu::getInstance()->setIsOptionChecked(MenuOption::ActionMotorControl, true);
+    // Macs upgrading from 1.0 and Tivoli have Custom Shaders on Models saved off, which no player chose; with the saved
+    // value honoured (below) they'd lose the Lightling's outline and worlds' custom-shader surfaces (Caity's bug 9,
+    // 10-29). So settings from before 1.1 have it switched on once; a player who turns it off afterwards keeps it off
+    Setting::Handle<bool> customShadersReset { "customShadersOnModelsReset1_1", false };
+    if (!customShadersReset.get()) {
+        Menu::getInstance()->setIsOptionChecked(MenuOption::MaterialProceduralShaders, true);
+        customShadersReset.set(true);
+    }
     // Settings > Custom Shaders on Models as the player saved it (loadSettings, above) reaches the renderer. Until 10-28
     // it was ticked back on here at every start (without telling the renderer), so a player who turned it off found it
     // on again (qa, windowz's run)
