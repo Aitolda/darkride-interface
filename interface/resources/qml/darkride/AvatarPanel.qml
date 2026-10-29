@@ -414,6 +414,12 @@ Page {
                 enabled: !thumb.busy
                 onClicked: thumb.choose()
             }
+            // here, not below My Files, where hundreds of avatars hid it (Caity's bug batch, 10-29)
+            ListRow {
+                action: true
+                label: "Use the Default Avatar"
+                onClicked: avatar.wearDefault()
+            }
         }
 
         // a picture taken or chosen, to look at before it is saved
@@ -559,12 +565,6 @@ Page {
                 action: true
                 label: "Wear This URL"
                 onClicked: avatar.wear(urlField.text.trim(), urlField.text.trim().split("/").pop())
-            }
-
-            ListRow {
-                action: true
-                label: "Use the Default Avatar"
-                onClicked: avatar.wearDefault()
             }
         }
 
