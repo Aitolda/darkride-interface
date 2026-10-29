@@ -27,6 +27,10 @@ vcpkg_from_github(
     PATCHES
         # the benchmark tool's protos need protobuf even when the tool isn't built
         benchmark-only-when-wanted.patch
+        # model_building.h befriends Tensor before declaring it. MSVC looks past the innermost namespace and binds that
+        # friend to the schema's tflite::Tensor (schema_generated.h), so model_builder::Tensor can't read Buffer's
+        # builder_ (C2248). Declared first here, as Graph and InterpreterInfo already are
+        msvc-friend-tensor.patch
 )
 
 # <name> <GitHub repository> <commit or tag> <SHA512 of GitHub's archive of it>
@@ -94,6 +98,17 @@ list(APPEND TFLITE_DEPENDENCY_OPTIONS "-DFETCHCONTENT_SOURCE_DIR_EIGEN=${eigen_P
 string(APPEND VCPKG_C_FLAGS " -DTFL_STATIC_LIBRARY_BUILD")
 string(APPEND VCPKG_CXX_FLAGS " -DTFL_STATIC_LIBRARY_BUILD")
 
+# XNNPACK's configure writes its list of kernels with a Python script (tools/update-microkernels.py). vcpkg builds
+# with a cleaned PATH, so on Windows no Python is found unless it is given: vcpkg's own (python.org's embeddable one).
+# The Mac finds its own python3.
+set(TFLITE_PYTHON_OPTIONS)
+if (VCPKG_TARGET_IS_WINDOWS)
+    vcpkg_find_acquire_program(PYTHON3)
+    get_filename_component(PYTHON3_DIR "${PYTHON3}" DIRECTORY)
+    vcpkg_add_to_path("${PYTHON3_DIR}")
+    set(TFLITE_PYTHON_OPTIONS "-DPython_EXECUTABLE=${PYTHON3}")
+endif()
+
 vcpkg_configure_cmake(
     SOURCE_PATH "${SOURCE_PATH}/tensorflow/lite/c"
     PREFER_NINJA
@@ -118,6 +133,7 @@ vcpkg_configure_cmake(
         -DKLEIDIAI_SOURCE_DIR=${kleidiai_PATH}
         -DXNNPACK_BUILD_TESTS=OFF
         -DXNNPACK_BUILD_BENCHMARKS=OFF
+        ${TFLITE_PYTHON_OPTIONS}
 )
 
 # Only the C API and what it links: everything else in TensorFlow Lite's tree (tools, examples) stays unbuilt

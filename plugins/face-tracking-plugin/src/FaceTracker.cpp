@@ -168,10 +168,25 @@ void FaceTracker::stop() {
 }
 
 void FaceTracker::openCamera() {
-    QCameraInfo info = QCameraInfo::defaultCamera();
-    for (const QCameraInfo& camera : QCameraInfo::availableCameras()) {
+    QCameraInfo info;
+    const QList<QCameraInfo> cameras = QCameraInfo::availableCameras();
+    for (const QCameraInfo& camera : cameras) {
         if (camera.deviceName() == _cameraId) {
             info = camera;
+        }
+    }
+    if (info.isNull()) {
+        // none chosen, or the chosen one is gone: the system's default, but a real camera before a virtual one. On
+        // Windows the default is whichever DirectShow lists first, and that can be a virtual camera ("@device:sw:...",
+        // a headset app's or a streaming app's) ahead of the real webcam ("@device:pnp:...")
+        info = QCameraInfo::defaultCamera();
+        if (info.deviceName().startsWith("@device:sw:")) {
+            for (const QCameraInfo& camera : cameras) {
+                if (camera.deviceName().startsWith("@device:pnp:")) {
+                    info = camera;
+                    break;
+                }
+            }
         }
     }
     if (info.isNull()) {
@@ -215,7 +230,10 @@ void FaceTracker::onCameraStatus(QCamera::Status status) {
             qCDebug(faceTracking) << "camera" << best.resolution() << best.maximumFrameRate() << "fps" << best.pixelFormat();
             _camera->setViewfinderSettings(best);
         }
-        _camera->start();
+        // started once load() has returned, not from in here: Windows' camera (DirectShow) says Loaded from inside
+        // load(), and a start from there is undone when load() finishes (it stops the preview before the first frame)
+        QCamera* camera = _camera;
+        QTimer::singleShot(0, camera, [camera] { camera->start(); });
     } else if (status == QCamera::ActiveStatus) {
         report(Status::LookingForFace);
     }
