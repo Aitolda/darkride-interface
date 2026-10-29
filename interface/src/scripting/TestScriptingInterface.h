@@ -792,6 +792,16 @@ public slots:
      */
     Q_INVOKABLE void editorDrag(const glm::vec3& delta, float yawDegrees, float rollDegrees, bool begin, bool final);
 
+    /**jsdoc
+     * Scales the editor's selection as a drag on the gizmo's scale handles would, from a script: as
+     * {@link Test.editorDrag}, begin captures the selection and final takes the undo step.
+     * @function Test.editorScaleDrag
+     * @param {Vec3} scale - The scale so far, along the gizmo's axes (1 is the size the drag began at).
+     * @param {boolean} begin - The first call of a drag.
+     * @param {boolean} final - The last call of a drag.
+     */
+    Q_INVOKABLE void editorScaleDrag(const glm::vec3& scale, bool begin, bool final);
+
 private:
     bool waitForCondition(qint64 maxWaitMs, std::function<bool()> condition);
     QString _testResultsLocation;

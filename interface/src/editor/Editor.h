@@ -148,8 +148,10 @@ public:
     QPixmap inspectorPicture() const;
     // a gizmo drag of the selection driven by a scripted test (Test.editorDrag): begin captures the selection as a
     // press on the gizmo would (a move handle, or a rotate ring when rotate), every call applies the delta or the
-    // rotation about the selection's centre as the pointer's motion would, final takes the undo step as the release would
-    void dragSelectionForTest(const glm::vec3& delta, const glm::quat& rotationDelta, bool rotate, bool begin, bool final);
+    // rotation about the selection's centre as the pointer's motion would, final takes the undo step as the release would;
+    // with scaling, a scale handle's drag, by `scale` along the gizmo's axes (Test.editorScaleDrag)
+    void dragSelectionForTest(const glm::vec3& delta, const glm::quat& rotationDelta, bool rotate, bool begin, bool final,
+                              const glm::vec3& scale = glm::vec3(1.0f), bool scaling = false);
     // files from this computer uploaded into the Assets panel's folder, as its Upload… does, and the status bar's text
     // (Test.editorUploadFiles, Test.editorStatus)
     void uploadFilesForTest(const QStringList& localPaths);
@@ -303,6 +305,28 @@ private:
     EntityItemProperties inspectorEdit(const QString& key, const QVariant& value, const glm::vec3& naturalSize,
                                        const EntityItemProperties& before) const;
 
+    // Scaling an entity scales what is under it, as in Unity (Caity's bug batch, 10-29): each child's offset and its
+    // own size grow with it, all the way down. A child as it was when the scaling began; `parent` is the entry it hangs
+    // from, or -1 - i for the i-th entity scaled
+    struct ScaledChild {
+        QUuid id;
+        int parent;
+        glm::vec3 localPosition;
+        glm::vec3 dimensions;      // its own
+        glm::quat localRotation;
+        glm::quat frame;           // the axes its offset is in, in its parent's: a joint's, else the parent's own
+        float lineHeight { 0.0f }; // a Text's, which grows with it
+        float falloff { 0.0f };    // a Light's, which keeps its glow in proportion to its range, as Range does
+    };
+    // the children of the entities, parents first: not those among the entities (scaled in their own right), the
+    // locked ones (they take no edits: they and theirs stay as they were) or an avatar sitting on one
+    QVector<ScaledChild> childrenToScale(const QList<QUuid>& ids) const;
+    // the children's edits for each entity's new size over its old, along its own axes
+    static QVector<EntityItemProperties> childScaleEdits(const QVector<ScaledChild>& children,
+                                                         const QVector<glm::vec3>& ratios);
+    static EntityItemProperties childScaleBefore(const ScaledChild& child);
+    void sendChildScale(const QVector<ScaledChild>& children, const QVector<EntityItemProperties>& edits, bool final);
+
     PickRay pickRay(const QPoint& viewportPos) const;
     QUuid pickEntity(const QPoint& viewportPos) const;
     QUuid pickEntityOnRay(const PickRay& ray) const;
@@ -440,6 +464,7 @@ private:
     glm::vec3 _dragDelta;
     glm::quat _dragRotationDelta;
     glm::vec3 _dragScale { 1.0f };
+    QVector<ScaledChild> _dragChildren;   // under the entities a scale drag scales
     QPoint _lastDragPos;
     QElapsedTimer _editTimer;
 
@@ -503,6 +528,7 @@ private:
     ulong _lastEscapeTime { 0 };        // the key event time of a first Escape, waiting for a second
     // per entity in an Inspector edit of Scale: its own size, to turn scale into dimensions
     QVector<glm::vec3> _inspectorNatural;
+    QVector<ScaledChild> _inspectorChildren;   // under the entities an Inspector edit of Scale or Size scales
 
     bool _panelsCreated { false };
     // a panel of ours put above another (placeAbove), sized once both show: Qt doesn't size a hidden one
