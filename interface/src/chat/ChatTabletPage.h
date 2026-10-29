@@ -10,6 +10,8 @@
 //
 //  The page's messages, {type: "darkride-chat", command, args}, are answered only when they carry the one-time code
 //  the page was opened with (args.bridge): another page in the tablet's browser gets no token and moves no one.
+//  This world (WorldChat) reaches the page the same way: its lines as they change ("world"), and yours from it
+//  ("worldSend").
 //
 //  Copyright 2026 Darkride.
 //
@@ -50,6 +52,7 @@ private:
     void screenChanged(const QVariant& type, const QVariant& url);
     void webEventReceived(const QVariant& message);
     void signIn();
+    void sendWorld();
     void answer(QJsonObject message);
 
     QPointer<TabletProxy> _tablet;

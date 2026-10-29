@@ -21,6 +21,8 @@
 #include "WindowLayout.h"
 #include "chat/ChatTabletPage.h"
 #include "chat/ChatWindow.h"
+#include "chat/WorldChat.h"
+#include "scripting/ControllerScriptingInterface.h"
 
 namespace {
     // Material's "chat", white, as people.svg beside it
@@ -62,6 +64,24 @@ ChatButton::ChatButton(TabletProxy* tablet) : QObject(tablet) {
     }
     // chat's panel is made by the layout's restore after sign-in (ui/WindowLayout.h), or by a first open
     connect(WindowLayout::instance(), &WindowLayout::restored, this, &ChatButton::watchDock);
+
+    // This world keeps its lines from now on, so a line said before chat opens is there when it does
+    WorldChat::instance();
+    // Enter or "/" in the 3D view (keys Build mode didn't take): This world, the box ready, as the old in-world chat
+    // had them
+    auto controller = dynamic_cast<ControllerScriptingInterface*>(qApp->getControllerScriptingInterface());
+    if (controller) {
+        connect(controller, &ControllerScriptingInterface::keyPressEvent, this, [](const KeyEvent& event) {
+            if (event.isAutoRepeat || event.isControl || event.isMeta || event.isAlt || qApp->isHMDMode()) {
+                return;
+            }
+            if (event.key == Qt::Key_Return || event.key == Qt::Key_Enter) {
+                ChatWindow::openWorld(false);
+            } else if (event.key == Qt::Key_Slash) {
+                ChatWindow::openWorld(true);
+            }
+        });
+    }
 }
 
 void ChatButton::watchDock() {

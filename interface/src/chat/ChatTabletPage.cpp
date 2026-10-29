@@ -24,6 +24,7 @@
 #include <ui/TabletScriptingInterface.h>
 
 #include "InterfaceLogging.h"
+#include "WorldChat.h"
 
 namespace {
     // the web chat, when the metaverse hasn't named a chat server yet (not signed in): the page then says to sign in
@@ -48,6 +49,12 @@ ChatTabletPage* ChatTabletPage::get() {
 ChatTabletPage::ChatTabletPage(TabletProxy* tablet) : QObject(tablet), _tablet(tablet) {
     connect(tablet, &TabletProxy::screenChanged, this, &ChatTabletPage::screenChanged);
     connect(tablet, &TabletProxy::webEventReceived, this, &ChatTabletPage::webEventReceived);
+    // This world's lines to the page as they change, while it's there
+    connect(WorldChat::instance(), &WorldChat::itemsChanged, this, [this] {
+        if (!_bridge.isEmpty()) {
+            sendWorld();
+        }
+    });
 }
 
 void ChatTabletPage::toggle() {
@@ -114,6 +121,12 @@ void ChatTabletPage::webEventReceived(const QVariant& message) {
     }
     if (command == "signIn") {
         signIn();
+    } else if (command == "world") {
+        sendWorld();
+    } else if (command == "worldSend") {
+        WorldChat::instance()->send(args.value("text").toString());
+    } else if (command == "worldRead") {
+        WorldChat::instance()->markRead();
     } else if (command == "goToAddress") {
         // a friend's Join (hifi://@username), or a place link
         static const QRegularExpression USER("^hifi://@([^/?#]+)$", QRegularExpression::CaseInsensitiveOption);
@@ -158,6 +171,10 @@ void ChatTabletPage::signIn() {
                  { "user_id", data.value("user_id") },
                  { "display_name", data.value("display_name") } });
     });
+}
+
+void ChatTabletPage::sendWorld() {
+    answer({ { "event", "world" }, { "items", WorldChat::instance()->items() } });
 }
 
 void ChatTabletPage::answer(QJsonObject message) {
