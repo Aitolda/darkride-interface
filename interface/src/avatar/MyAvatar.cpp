@@ -7488,29 +7488,21 @@ glm::vec3 MyAvatar::getCameraEyesPosition(float deltaTime) {
     glm::vec3 avatarUpVector = getWorldOrientation() * Vectors::UP;
     // Compute the offset between the default and real eye positions.
     glm::vec3 defaultEyesToEyesVector = getHead()->getEyePosition() - defaultEyesPosition;
-    const float FRONT_OFFSET_IDLE_MULTIPLIER = 3.5f;
     const float FRONT_OFFSET_JUMP_MULTIPLIER = 1.5f;
-    float frontOffset = FRONT_OFFSET_IDLE_MULTIPLIER * glm::length(defaultEyesPosition - getDefaultEyePosition());
-
-    // Looking down will move the camera forward to meet the real eye position
-    float mixAlpha = glm::dot(_lookAtPitch * Vectors::FRONT, -avatarUpVector);
+    // the camera keeps up with the real eyes' forward offset at every pitch, its height the default's so it doesn't
+    // bob: looking down turns the head forward of the pivot (0.04 m at 40 deg down seated, 0.18 m at 80), and a camera
+    // left behind it sees the neck narrow into the hidden head's point (Caity's desk test s7, 10-29). High Fidelity
+    // moved it only past 45 deg down, and only up to 3.5 times the default eyes' offset
+    float frontOffset = glm::dot(defaultEyesToEyesVector, avatarFrontVector);
 
     bool isLanding = false;
     // When jumping the camera should follow the real eye on the Y coordenate
     float upOffset = 0.0f;
     if (isJumping() || _characterController.getState() == CharacterController::State::Takeoff) {
         upOffset = glm::dot(defaultEyesToEyesVector, avatarUpVector);
-        frontOffset = glm::dot(defaultEyesToEyesVector, avatarFrontVector) * FRONT_OFFSET_JUMP_MULTIPLIER;
-        mixAlpha = 1.0f;
+        frontOffset *= FRONT_OFFSET_JUMP_MULTIPLIER;
         _landingAfterJumpTime = 0.0f;
     } else {
-        // Limit the range effect from 45 to 0 degrees
-        // between the front camera and the down vectors
-        const float HEAD_OFFSET_RANGE_IN_DEGREES = 45.0f;
-        const float HEAD_OFFSET_RANGE_OUT_DEGREES = 0.0f;
-        float rangeIn = glm::cos(glm::radians(HEAD_OFFSET_RANGE_IN_DEGREES));
-        float rangeOut = glm::cos(glm::radians(HEAD_OFFSET_RANGE_OUT_DEGREES));
-        mixAlpha = mixAlpha < rangeIn ? 0.0f : (mixAlpha - rangeIn) / (rangeOut - rangeIn);
         const float WAIT_TO_LAND_TIME = 1.0f;
         if (_landingAfterJumpTime < WAIT_TO_LAND_TIME) {
             _landingAfterJumpTime += deltaTime;
@@ -7519,7 +7511,7 @@ glm::vec3 MyAvatar::getCameraEyesPosition(float deltaTime) {
     }
     const float FPS = 60.0f;
     float timeScale = deltaTime * FPS;
-    frontOffset = frontOffset < 0.0f ? 0.0f : mixAlpha * frontOffset;
+    frontOffset = frontOffset < 0.0f ? 0.0f : frontOffset;
     glm::vec3 cameraOffset = upOffset * Vectors::UP + frontOffset * Vectors::FRONT;
     const float JUMPING_TAU = 0.1f;
     const float NO_JUMP_TAU = 0.3f;
