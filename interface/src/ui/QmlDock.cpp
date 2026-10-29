@@ -111,6 +111,16 @@ bool QmlDock::event(QEvent* event) {
             gl::ViewChangeGuard guard(event->type());
             return QDockWidget::event(event);
         }
+        // a key the page didn't take (a text field keeps what's typed) comes up to the panel: on to the controls, as the
+        // 3D view's keys go (gl/GLWidget.cpp), so push to talk's T and walking work while a panel has the keyboard
+        // (Caity's hand test 10-28: Push to talk switched on in Settings, then T did nothing)
+        case QEvent::KeyPress:
+        case QEvent::KeyRelease:
+            if (QCoreApplication::sendEvent(QCoreApplication::instance(), event)) {
+                event->accept();
+                return true;
+            }
+            return QDockWidget::event(event);
         default:
             return QDockWidget::event(event);
     }
