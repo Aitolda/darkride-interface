@@ -61,6 +61,8 @@ private:
     void add(QJsonObject item);
     // the account behind a session: asked of the world once, "" until it answers (and for a visitor)
     QString usernameOf(const QUuid& session);
+    // the name a line of theirs shows: their account, else the name their avatar shows the world ("" if none)
+    QString shownNameOf(const QUuid& session);
     void fetchProfile(const QString& username);
     void wearNames();
     void playSound();

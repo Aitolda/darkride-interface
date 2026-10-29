@@ -132,6 +132,7 @@ void WorldChat::messageReceived(const QVariantMap& data, const QUuid& sender) {
     QJsonObject item { { "body", body } };
     if (data.value("local").toBool()) {
         // a line only you see (a command's answer)
+        item.insert("body", body.trimmed());
         item.insert("kind", "notice");
         add(item);
         return;
@@ -188,9 +189,21 @@ void WorldChat::usernameReceived(const QString& session, const QString& username
     wearNames();
 }
 
+QString WorldChat::shownNameOf(const QUuid& session) {
+    QString username = usernameOf(session);
+    if (!username.isEmpty()) {
+        return username;
+    }
+    // until the world says (or for a visitor without an account): the name the avatar shows the world, unique in it
+    auto avatar = DependencyManager::get<AvatarManager>()->getAvatarBySessionID(session);
+    if (!avatar) {
+        return QString();
+    }
+    return avatar->getSessionDisplayName().isEmpty() ? avatar->getDisplayName() : avatar->getSessionDisplayName();
+}
+
 // each line's name and mark, from what is known of its session so far
 void WorldChat::wearNames() {
-    auto avatars = DependencyManager::get<AvatarManager>();
     for (int i = 0; i < _items.size(); i++) {
         QJsonObject item = _items[i].toObject();
         QString session = item.value("session").toString();
@@ -198,15 +211,7 @@ void WorldChat::wearNames() {
             continue;
         }
         QString username = usernameOf(QUuid(session));
-        QString name = username;
-        if (name.isEmpty()) {
-            // until the world says (or for a visitor without an account): the name the avatar shows
-            auto avatar = avatars->getAvatarBySessionID(QUuid(session));
-            name = avatar ? avatar->getSessionDisplayName() : QString();
-            if (name.isEmpty() && avatar) {
-                name = avatar->getDisplayName();
-            }
-        }
+        QString name = shownNameOf(QUuid(session));
         item.insert("sender", username.isEmpty() ? QString() : "@" + username + ":");
         item.insert("name", name.isEmpty() ? QString("Someone") : name);
         QString mark = _marks.value(username);
@@ -304,10 +309,8 @@ void WorldChat::teleportTo(const QString& params) {
         if (!avatar) {
             continue;
         }
-        QString name = _usernames.value(session);
-        if (name.isEmpty()) {
-            name = avatar->getDisplayName();
-        }
+        // by the name their lines show
+        QString name = shownNameOf(session);
         if (!name.isEmpty() && name.toLower().contains(wanted)) {
             chat->showMessage("Going to " + name + ".");
             avatars->getMyAvatar()->goToLocation(avatar->getWorldPosition(), true, avatar->getWorldOrientation(), true);

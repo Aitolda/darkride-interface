@@ -620,6 +620,8 @@ void ChatWindow::openWorld(bool command) {
 
 void ChatWindow::backToWorld(bool hide) {
     _worldByKey = false;
+    // the box lets the keys go too, so a floating chat window keeps none of them
+    _composer->clearFocus();
     if (hide && _worldHideOnEsc && _dock) {
         gl::ViewChangeGuard guard;
         _dock->hide();
