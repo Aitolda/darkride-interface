@@ -230,7 +230,10 @@ void FaceTracker::onCameraStatus(QCamera::Status status) {
             qCDebug(faceTracking) << "camera" << best.resolution() << best.maximumFrameRate() << "fps" << best.pixelFormat();
             _camera->setViewfinderSettings(best);
         }
-        _camera->start();
+        // started once load() has returned, not from in here: Windows' camera (DirectShow) says Loaded from inside
+        // load(), and a start from there is undone when load() finishes (it stops the preview before the first frame)
+        QCamera* camera = _camera;
+        QTimer::singleShot(0, camera, [camera] { camera->start(); });
     } else if (status == QCamera::ActiveStatus) {
         report(Status::LookingForFace);
     }
