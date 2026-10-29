@@ -6,7 +6,7 @@
 //  lit while chat is open, and carries a red badge with the number of unread mentions and direct messages
 //  (ChatService::getUnreadCount), counted from sign-in whether or not chat was ever opened. One button in the system
 //  tablet's list, so the docked bar, the floating bar and the tablet all show it. Made here rather than by a script:
-//  no script can see chat's count.
+//  no script can see chat's count. In VR it opens chat on the tablet instead (ChatTabletPage), lit while it's there.
 //
 //  Copyright 2026 Darkride.
 //
@@ -33,7 +33,7 @@ public:
 private:
     ChatButton(TabletProxy* tablet);
     void watchDock();    // chat's panel, once it exists: the button is lit while it is open
-    void setActive(bool active);
+    void updateActive(); // lit while the panel is open or the tablet shows chat
     void setUnread(int count);
 
     QPointer<TabletButtonProxy> _button;

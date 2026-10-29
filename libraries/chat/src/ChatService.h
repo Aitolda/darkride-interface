@@ -51,6 +51,9 @@ public:
     // a line for the panel when chat isn't ready: why, or what it is waiting for
     QString stateText() const { return _stateText; }
     QString userId() const { return _userId; }
+    // the chat server the metaverse named (https://chat.darkride.ai), which serves the web chat's page too; empty
+    // until the first chat token
+    QString homeserver() const { return _homeserver; }
     // the sync's state: running, offline (waiting for the server), error, idle, terminated
     QString syncState() const { return _syncState; }
     // [{id, name, dm, dm_user?, encrypted, invited, unread, notifications, members, avatar?, space?}]

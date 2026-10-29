@@ -415,6 +415,23 @@ public slots:
     Q_INVOKABLE bool setChatBadge(int count);
 
     /**jsdoc
+     * This world in chat (chat/WorldChat.h): its lines and unseen count, whether the chat panel is open, and the
+     * widget that has the keyboard (its object name, and its text when it is chat's message box).
+     * @function Test.worldChat
+     * @returns {object} <code>{items, unread, chatOpen, focus, focusText}</code>
+     */
+    Q_INVOKABLE QVariantMap worldChat();
+
+    /**jsdoc
+     * Keys, as if typed: to the 3D view (as Enter or "/" pressed there), or to the widget that has the keyboard (chat's
+     * message box). "\n" is Return, "\u001b" Escape.
+     * @function Test.typeKeys
+     * @param {string} text - The keys.
+     * @param {boolean} [toView=false] - To the 3D view.
+     */
+    Q_INVOKABLE void typeKeys(const QString& text, bool toView = false);
+
+    /**jsdoc
      * Answers the next of Darkride's alerts (ui/Popup.h) to open within 15 s, as a click would: after it has drawn,
      * saves its picture, types into its field, and presses the named button. Call it before what opens the alert
      * (an alert waits for its answer, so a call that opens one returns only once it is answered).

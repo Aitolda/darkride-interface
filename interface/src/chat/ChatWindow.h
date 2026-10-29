@@ -52,8 +52,11 @@ public:
     static void resetDock();
     static QKeySequence shortcut();
     // chat in front on your direct message with a Darkride user, made if there is none yet (Friends.openDirectMessage,
-    // People's Message); while chat is signing in, once it's ready
+    // People's Message); while chat is signing in, once it's ready. In VR, on the tablet (ChatTabletPage)
     static void openDirectMessage(const QString& username);
+    // Enter or "/" in the 3D view: chat in front on This world (WorldChat), the message box ready, with "/" in it for
+    // a command; the line sent (or Esc), back to the world
+    static void openWorld(bool command);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -69,6 +72,11 @@ private:
 
     void updateState();
     void updateRooms(const QJsonArray& rooms);
+    // This world's row, under Friends
+    void addWorldRow(QListWidgetItem*& current);
+    // after a line in This world opened by a key: the 3D view has the keys again; hide: the panel goes too if the
+    // key brought it
+    void backToWorld(bool hide);
     void updateTimeline(const QString& room, const QJsonArray& items);
     void commandDone(const QJsonObject& done);
     void updateSync(const QString& state);
@@ -165,6 +173,8 @@ private:
     QHash<QString, QPushButton*> _friendsTabs;
     QString _friendsTab { "online" };
     bool _friendsShown { false };               // the Friends page is up (the last room stays _room)
+    bool _worldByKey { false };                 // This world opened by Enter or "/" in the 3D view
+    bool _worldHideOnEsc { false };             // ... and the panel wasn't in sight before
     QString _dmWanted;                           // a friend's chat account whose new DM is being made, to open
     QString _dmWantedUser;                       // a username whose DM is to open once chat is ready
     QTimer* _friendsTimer { nullptr };          // asks for the lists again every minute while the window is up
