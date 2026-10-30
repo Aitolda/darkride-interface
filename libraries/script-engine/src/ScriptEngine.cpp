@@ -616,7 +616,11 @@ void ScriptEngine::loadURL(const QUrl& scriptURL, bool reload) {
 
 QUrl ScriptEngine::currentScriptOrigin() const {
     if (!currentSandboxURL.isEmpty()) {
-        if (!currentSandboxURL.scheme().isEmpty()) {
+        const QString scheme = currentSandboxURL.scheme().toLower();
+        if (scheme == "javascript") {
+            return QUrl("about:EmbeddedEntityScript");   // the code itself, as a javascript: URL
+        }
+        if (!scheme.isEmpty()) {
             return currentSandboxURL;
         }
         // an entity script given as code in the script property keeps that code as its sandbox (entityScriptContentAvailable)

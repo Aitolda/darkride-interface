@@ -242,7 +242,13 @@ bool ScriptNetworkPolicy::decideBlocking(const QUrl& target, const QUrl& origin,
 }
 
 QString ScriptNetworkPolicy::refusalLine(const QUrl& origin, const QUrl& target, const QString& reason) {
+    // a line stays a line: a very long address (code in a URL) is cut
+    const int MAX_SHOWN = 200;
+    auto shown = [](const QUrl& url) {
+        const QString text = url.toDisplayString();
+        return text.length() > MAX_SHOWN ? text.left(MAX_SHOWN) + "..." : text;
+    };
     return QString("%1 may not reach %2: %3. A script from the network uses web addresses to public hosts only; "
                    "a script loaded from this machine, or a world served from it or its network, keeps every address.")
-        .arg(origin.isEmpty() ? "a script" : origin.toDisplayString(), target.toDisplayString(), reason);
+        .arg(origin.isEmpty() ? QString("a script") : shown(origin), shown(target), reason);
 }
