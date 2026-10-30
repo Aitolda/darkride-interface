@@ -1381,9 +1381,37 @@ QString WasmScriptEngine::resolvePathFrom(const QString& path, const QString& pa
     return expandScriptUrl(parentURL.resolved(url)).toString();
 }
 
+QUrl WasmScriptEngine::verifiedSandbox(const QString& claimed) const {
+    if (!_isEntitiesEngine) {
+        return QUrl();      // a client script or an agent: the code is the engine's own, there is nothing to claim
+    }
+    if (claimed.isEmpty()) {
+        return QUrl("about:Entities");
+    }
+    const QUrl url(claimed);
+    if (url.scheme().toLower() == "about") {
+        return url;         // about:EmbeddedEntityScript: an entity script given as code; never local
+    }
+    QReadLocker locker { &_entityScriptsLock };
+    for (auto it = _entityScripts.constBegin(); it != _entityScripts.constEnd(); ++it) {
+        if ((it->status == EntityScriptStatus::RUNNING || it->status == EntityScriptStatus::LOADING) &&
+            it->definingSandboxURL == url) {
+            return url;
+        }
+    }
+    return QUrl("about:Entities");
+}
+
+QUrl WasmScriptEngine::verifiedScriptOrigin(const QString& claimed) const {
+    if (!_isEntitiesEngine) {
+        return currentScriptOrigin();   // the claim is not needed: the script is the engine's own file
+    }
+    return verifiedSandbox(claimed);
+}
+
 QVariantMap WasmScriptEngine::resolveInclude(const QString& file, const QString& parentUrl, const QString& sandboxUrl) {
     QVariantMap result;
-    const QUrl sandbox = sandboxUrl.isEmpty() ? currentSandboxURL : QUrl(sandboxUrl);
+    const QUrl sandbox = verifiedSandbox(sandboxUrl);
     QString normalized = DependencyManager::get<ResourceManager>()->normalizeURL(file);
     QUrl thisURL;
     bool isStandardLibrary = false;
@@ -1420,7 +1448,7 @@ QVariantMap WasmScriptEngine::resolveInclude(const QString& file, const QString&
 QVariantMap WasmScriptEngine::resolveModule(const QString& moduleId, const QString& relativeTo, const QString& parentUrl,
                                             const QString& sandboxUrl) {
     QVariantMap result;
-    const QUrl sandbox = sandboxUrl.isEmpty() ? currentSandboxURL : QUrl(sandboxUrl);
+    const QUrl sandbox = verifiedSandbox(sandboxUrl);
     QString displayId = moduleId.length() > MAX_DEBUG_VALUE_LENGTH ? moduleId.left(MAX_DEBUG_VALUE_LENGTH) + "..." : moduleId;
     auto fail = [&](const QString& details, const QString& type = QString("Error")) {
         result["error"] = QString("Cannot find module '%1' (%2)").arg(displayId, details);
@@ -1490,7 +1518,7 @@ QVariantMap WasmScriptEngine::resolveModule(const QString& moduleId, const QStri
 
 // The text of a script through the cache, waited for on this thread (an event loop, as the QtScript engine's
 // include and require wait), with a stop seen in time.
-QVariantMap WasmScriptEngine::fetchScript(const QString& url, bool forceDownload) {
+QVariantMap WasmScriptEngine::fetchScript(const QString& url, bool forceDownload, const QString& sandboxUrl) {
     // the loader's signal can still come after this returns (a stop ends the wait early, and the reply's events are
     // queued ahead of the loader's deletion), so the result lives on the heap and the loader is disconnected first
     auto result = std::make_shared<QVariantMap>();
@@ -1498,6 +1526,29 @@ QVariantMap WasmScriptEngine::fetchScript(const QString& url, bool forceDownload
     (*result)["success"] = false;
     if (isStopping()) {
         (*result)["status"] = "Stopped";
+        return *result;
+    }
+    // what include and require may read is decided here as well as where their URLs are resolved: this method is
+    // reachable by name too
+    const QUrl target(url);
+    const QUrl sandbox = verifiedSandbox(sandboxUrl);
+    const QUrl origin = sandbox.isEmpty() ? currentScriptOrigin() : sandbox;
+    QString reason;
+    if (target.isLocalFile() || target.scheme().toLower() == "qrc") {
+        // Script.include's rule for a file of this machine: the app's own scripts, any file for a script that is
+        // itself a local file (or the engine's own code), a file under the entity script's own folder
+        const bool standardLibrary = target.isLocalFile() && PathUtils::defaultScriptsLocation().isParentOf(target);
+        const bool ownCode = sandbox.isEmpty() && !_isEntitiesEngine;
+        if (!standardLibrary && !ownCode && !sandbox.isLocalFile() && !PathUtils::isDescendantOf(target, sandbox)) {
+            reason = "a file of this machine outside the script's own place";
+        }
+    }
+    if (reason.isEmpty() && isClientSide() && !ScriptNetworkPolicy::decideBlocking(target, origin, reason)) {
+        // the network rule for a script's own requests
+    }
+    if (!reason.isEmpty()) {
+        scriptWarningMessage(ScriptNetworkPolicy::refusalLine(origin, target, reason));
+        (*result)["status"] = "Refused";
         return *result;
     }
     auto scriptCache = DependencyManager::get<ScriptCache>();

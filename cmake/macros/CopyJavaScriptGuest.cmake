@@ -18,12 +18,14 @@
 #  whether to stop (darkride.interrupted), which the time limit per script needs; a host from before it refuses
 #  that import. Revision 3 names the script a request or socket is made for (the network rule for a script's
 #  own requests, ScriptNetworkPolicy); its imports and exports are revision 2's, so either host runs either.
+#  Revision 4 keeps the engine's request and socket makers to the shim and names the entity script asking for a
+#  file to include or require; imports and exports unchanged.
 #
 #  Distributed under the Apache License, Version 2.0.
 #  See the accompanying file LICENSE or http://www.apache.org/licenses/LICENSE-2.0.html
 #
 macro(COPY_JAVASCRIPT_GUEST DESTINATION_DIR)
-    set(JAVASCRIPT_GUEST_VERSION "0.17.0-3")
+    set(JAVASCRIPT_GUEST_VERSION "0.17.0-4")
     set(JAVASCRIPT_GUEST "")
     foreach(JAVASCRIPT_GUEST_CANDIDATE
             "$ENV{DARKRIDE_JS_WASM}"

@@ -165,8 +165,16 @@ public:
     /// Script.require.resolve's rules: {"url"} or {"error", "type"}.
     Q_INVOKABLE QVariantMap resolveModule(const QString& moduleId, const QString& relativeTo, const QString& parentUrl,
                                           const QString& sandboxUrl = QString());
-    /// A script's text through the script cache, synchronously: {"url", "status", "success", "contents"}.
-    Q_INVOKABLE QVariantMap fetchScript(const QString& url, bool forceDownload);
+    /// A script's text through the script cache, synchronously: {"url", "status", "success", "contents"}, for
+    /// Script.include and Script.require; sandboxUrl is the guest's claim of the entity script running (verified).
+    /// A file of this machine is served by Script.include's rule (the app's own scripts, a local script's files, a
+    /// file under the entity script's own folder); the rest by the network rule for a script's own requests.
+    Q_INVOKABLE QVariantMap fetchScript(const QString& url, bool forceDownload, const QString& sandboxUrl = QString());
+    QUrl verifiedScriptOrigin(const QString& claimed) const override;
+    /// The guest's claim of the entity script running, checked against the entity scripts this engine loaded: a
+    /// claim it did not load counts as the entities engine itself (about:Entities, never local). Empty for a client
+    /// script or an agent, which have no entity scripts and whose code is the engine's own.
+    QUrl verifiedSandbox(const QString& claimed) const;
     /// Script.dumpApi for this engine: the globals record the guest composed, written under the usual root.
     Q_INVOKABLE bool dumpApi(const QString& path, const QVariantMap& globals);
     using ScriptEngine::dumpApi;

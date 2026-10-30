@@ -172,6 +172,10 @@ public:
     /// The URL the running code came from: the entity script being run, else this script's own file. The network
     /// rule for a script's own requests (ScriptNetworkPolicy) judges them by it.
     QUrl currentScriptOrigin() const;
+    /// The origin for a call that names where its code came from (the WebAssembly guest does, for the entity script
+    /// running): the claim counts only when the engine loaded such a script itself; otherwise the engine's own
+    /// answer. On this engine, which tracks the running entity script itself, the claim is not needed.
+    virtual QUrl verifiedScriptOrigin(const QString& claimed) const { Q_UNUSED(claimed); return currentScriptOrigin(); }
     /// Whether this engine runs on a person's client, where its scripts' requests are held to that rule.
     bool isClientSide() const { return _context == CLIENT_SCRIPT || _context == ENTITY_CLIENT_SCRIPT; }
    

@@ -137,7 +137,28 @@
         }, 4000);
     }
 
+    function runtimeInternals() {
+        // security's probes (10-30): the engine's request and socket makers must not be reachable by name, and the
+        // runtime's own fetch helper must follow the same rules as include and require
+        print("NETWORK-RULES Http object: " + (typeof Http === "undefined" ? "hidden" : "VISIBLE"));
+        print("NETWORK-RULES Sockets object: " + (typeof Sockets === "undefined" ? "hidden" : "VISIBLE"));
+        if (typeof Script.fetchScript !== "function") {
+            print("NETWORK-RULES fetchScript: no such method (the QtScript engine)");
+            return;
+        }
+        ["file:///etc/hosts", "http://127.0.0.1:" + ECHO_PORT + "/world.json"].forEach(function (url) {
+            try {
+                var fetched = Script.fetchScript(url, false);
+                print("NETWORK-RULES fetchScript " + url + ": success " + (fetched && fetched.success) + ", status " +
+                    (fetched && fetched.status) + (fetched && fetched.contents ? " READ" : " nothing"));
+            } catch (e) {
+                print("NETWORK-RULES fetchScript " + url + ": threw " + e);
+            }
+        });
+    }
+
     print("NETWORK-RULES start");
+    runtimeInternals();
     requireAndInclude();
     request("xhr this machine by address", "http://127.0.0.1:" + ECHO_PORT + "/");
     request("xhr this machine by name", "http://localhost:" + ECHO_PORT + "/");

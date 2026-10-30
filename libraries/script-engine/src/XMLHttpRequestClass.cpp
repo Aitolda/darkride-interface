@@ -218,6 +218,14 @@ void XMLHttpRequestClass::doSend() {
     if (ruled) {
         QNetworkReply* reply = _reply;
         connect(reply, &QNetworkReply::redirected, this, [this, reply](const QUrl& url) {
+            if (reply->url().scheme().toLower() == "https" && url.scheme().toLower() != "https") {
+                // a secure request stays secure
+                if (auto scriptEngine = qobject_cast<ScriptEngine*>(_engine)) {
+                    scriptEngine->scriptWarningMessage(ScriptNetworkPolicy::refusalLine(_origin, url, "a redirect from https to a plain address"));
+                }
+                reply->abort();
+                return;
+            }
             ScriptNetworkPolicy::decide(url, _origin, this, [this, reply, url](const ScriptNetworkPolicy::Decision& decision) {
                 if (_reply != reply) {
                     return;
