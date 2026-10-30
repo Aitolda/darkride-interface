@@ -37,6 +37,7 @@
 #include <NetworkAccessManager.h>
 #include <OBJSerializer.h>
 #include <PathUtils.h>
+#include <SharedUtil.h>
 #include <StandardSkeleton.h>
 #include <UnityPackage.h>
 #include <UnityAvatar.h>
@@ -630,6 +631,44 @@ void AvatarImporter::importFile(const QString& path) {
         QMetaObject::invokeMethod(qApp, [import]() {
             decide(import);
         }, Qt::QueuedConnection);
+    });
+}
+
+void AvatarImporter::importLink(const QUrl& url) {
+    if (url.isLocalFile()) {
+        importFile(url.toLocalFile());
+        return;
+    }
+    const QString fileName = QFileInfo(url.path()).fileName();
+    announce("Downloading " + fileName, "It's imported once it's here.");
+    QNetworkRequest request { url };
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    request.setHeader(QNetworkRequest::UserAgentHeader, TIVOLI_CLOUD_VR_USER_AGENT);
+    QNetworkReply* reply = NetworkAccessManager::getInstance().get(request);
+    QObject::connect(reply, &QNetworkReply::finished, qApp, [reply, url, fileName]() {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            qCDebug(interfaceapp) << "Import Avatar: download failed" << url << reply->errorString();
+            warn("Couldn't download " + fileName, sentence(reply->errorString()));
+            return;
+        }
+        // kept beside the imported avatars, a new name each time, as avatarFolder does
+        const QString folder = PathUtils::getAppDataPath() + "Avatars/Downloads/";
+        QDir().mkpath(folder);
+        const QString base = avatarName(fileName);
+        const QString suffix = "." + QFileInfo(fileName).suffix();
+        QString path = folder + base + suffix;
+        for (int n = 2; QFileInfo::exists(path); n++) {
+            path = folder + base + "-" + QString::number(n) + suffix;
+        }
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly) || file.write(reply->readAll()) < 0) {
+            warn("Couldn't save " + fileName, sentence(file.errorString()));
+            return;
+        }
+        file.close();
+        qCDebug(interfaceapp) << "Import Avatar: downloaded" << url << "to" << path;
+        importFile(path);
     });
 }
 

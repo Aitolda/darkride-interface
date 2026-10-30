@@ -660,11 +660,22 @@ void TestScriptingInterface::showSignInScreen() {
     qApp->getSignInGate().showLoginScreen();
 }
 
-// a QML panel's item by its objectName, in the desktop (the panels are its windows)
+// a QML panel's item by its objectName: in the desktop (the floating panels are its windows), then in the docked ones
 static QObject* findPanelItem(const QString& objectName) {
     auto offscreenUi = DependencyManager::get<OffscreenUi>();
     QQuickItem* desktop = offscreenUi ? offscreenUi->getDesktop() : nullptr;
-    return desktop ? desktop->findChild<QObject*>(objectName) : nullptr;
+    QObject* found = desktop ? desktop->findChild<QObject*>(objectName) : nullptr;
+    auto window = qApp->getWindow();
+    if (!found && window) {
+        for (QmlDock* dock : window->findChildren<QmlDock*>()) {
+            QQuickItem* page = dock->panel();
+            found = page ? page->findChild<QObject*>(objectName) : nullptr;
+            if (found) {
+                break;
+            }
+        }
+    }
+    return found;
 }
 
 bool TestScriptingInterface::setPanelText(const QString& objectName, const QString& text) {
