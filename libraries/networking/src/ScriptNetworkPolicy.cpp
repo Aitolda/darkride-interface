@@ -243,7 +243,7 @@ bool ScriptNetworkPolicy::decideBlocking(const QUrl& target, const QUrl& origin,
 
 QString ScriptNetworkPolicy::refusalLine(const QUrl& origin, const QUrl& target, const QString& reason) {
     // a line stays a line: a very long address (code in a URL) is cut
-    const int MAX_SHOWN = 200;
+    static constexpr int MAX_SHOWN = 200;
     auto shown = [](const QUrl& url) {
         const QString text = url.toDisplayString();
         return text.length() > MAX_SHOWN ? text.left(MAX_SHOWN) + "..." : text;
