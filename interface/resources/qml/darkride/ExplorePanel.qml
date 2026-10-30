@@ -167,8 +167,12 @@ Page {
         }
 
         // the online worlds as listed, each replaced by its record with instances when there is one; then the rest of
-        // the instance worlds, those with people in them first
+        // the instance worlds, those with people in them first. Every tab comes through here: an entry that isn't a
+        // world is skipped (the online list gave a private world as null, 10-29, and the throw left Explore empty)
         function merge(online, withInstances) {
+            var isWorld = function (world) { return !!world && typeof world === "object" && !!world.id; };
+            online = online.filter(isWorld);
+            withInstances = withInstances.filter(isWorld);
             var byId = {};
             withInstances.forEach(function (world) { byId[world.id] = world; });
             var merged = online.map(function (world) { return byId[world.id] || world; });
