@@ -43,7 +43,6 @@
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QListWidget>
 #include <QtWidgets/QMenu>
-#include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QScrollBar>
@@ -69,6 +68,7 @@
 #include "MainWindow.h"
 #include "ui/PanelTheme.h"
 #include "ui/Panels.h"
+#include "ui/Popup.h"
 
 #if defined(Q_OS_MACOS)
 #include <sys/xattr.h>
@@ -2017,14 +2017,12 @@ void ChatWindow::stopEditing() {
 }
 
 void ChatWindow::deleteMessage(const QJsonObject& item) {
-    QMessageBox question(QMessageBox::NoIcon, "Delete Message", "Delete this message? It goes for everyone.",
-                         QMessageBox::NoButton, this);
-    QPushButton* remove = question.addButton("Delete", QMessageBox::DestructiveRole);
-    question.addButton(QMessageBox::Cancel);
-    question.setDefaultButton(QMessageBox::Cancel);
+    // Darkride's alert (ui/Popup.h): Cancel on the left, Delete red on the right; Return and Escape are Cancel
+    popup::Alert question(popup::appIcon(), "Delete this message?", "It goes for everyone.", QString(),
+                          { { "Cancel", popup::Role::Cancel }, { "Delete", popup::Role::Destructive } }, this);
     question.exec();
     auto service = DependencyManager::get<ChatService>();
-    if (question.clickedButton() == remove && service) {
+    if (question.answer() == 1 && service) {
         if (_editingId == item.value("id").toString()) {
             stopEditing();
         }
@@ -2288,14 +2286,12 @@ void ChatWindow::updateFriends() {
                 QMenu* menu = new QMenu(this);
                 menu->setAttribute(Qt::WA_DeleteOnClose);
                 connect(menu->addAction("Remove Friend"), &QAction::triggered, this, [this, username] {
-                    QMessageBox question(QMessageBox::NoIcon, "Remove Friend",
-                                         QString("Remove %1 as a friend?").arg(username), QMessageBox::NoButton, this);
-                    QPushButton* remove = question.addButton("Remove Friend", QMessageBox::DestructiveRole);
-                    question.addButton(QMessageBox::Cancel);
-                    question.setDefaultButton(QMessageBox::Cancel);
+                    popup::Alert question(popup::appIcon(), QString("Remove %1 as a friend?").arg(username), QString(),
+                                          QString(), { { "Cancel", popup::Role::Cancel },
+                                                       { "Remove Friend", popup::Role::Destructive } }, this);
                     question.exec();
                     auto friends = DependencyManager::get<FriendsService>();
-                    if (question.clickedButton() == remove && friends) {
+                    if (question.answer() == 1 && friends) {
                         friends->remove(username);
                     }
                 });
