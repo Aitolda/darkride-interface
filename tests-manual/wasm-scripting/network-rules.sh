@@ -19,7 +19,7 @@ NAME=$1
 if [ "$2" = "strict" ]; then
     export DARKRIDE_SCRIPT_NETWORK_STRICT=1
 fi
-python3 -I "$D/http-echo.py" 43110 "$D/../.." > /dev/null 2>&1 &
+python3 -I "$D/http-echo.py" 43110 "$D" > /dev/null 2>&1 &    # serves this folder: world.json, network-rules-included.js
 ECHO_PID=$!
 trap 'kill $ECHO_PID 2>/dev/null || true' EXIT
 sleep 1

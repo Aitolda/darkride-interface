@@ -99,12 +99,18 @@ void WebSocketObject::close(int code, const QString& reason) {
     _socket->close(QWebSocketProtocol::CloseCode(code), reason);
 }
 
+// The origin the guest names for a request: the entity script's URL, or the script's own file name, which may be a
+// bare path (then a file URL, as the engine would give).
+static QUrl originUrlFromText(const QString& origin) {
+    return origin.startsWith('/') ? QUrl::fromLocalFile(origin) : QUrl(origin);
+}
+
 // --- the factory ---------------------------------------------------------------------------------------------------
 
 WebSocketFactory::WebSocketFactory(ScriptEngine* engine) : QObject(engine), _engine(engine) {}
 
 WebSocketObject* WebSocketFactory::createWebSocket(const QString& url, const QString& origin) {
-    const QUrl originUrl = origin.isEmpty() && _engine ? _engine->currentScriptOrigin() : QUrl(origin);
+    const QUrl originUrl = origin.isEmpty() && _engine ? _engine->currentScriptOrigin() : originUrlFromText(origin);
     const bool ruled = _engine && _engine->isClientSide();
     QPointer<ScriptEngine> engine(_engine);
     return new WebSocketObject(url, originUrl, ruled, [engine](const QString& line) {

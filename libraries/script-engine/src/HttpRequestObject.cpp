@@ -241,6 +241,12 @@ void HttpRequestObject::setReadyState(ReadyState state) {
     }
 }
 
+// The origin the guest names for a request: the entity script's URL, or the script's own file name, which may be a
+// bare path (then a file URL, as the engine would give).
+static QUrl originUrlFromText(const QString& origin) {
+    return origin.startsWith('/') ? QUrl::fromLocalFile(origin) : QUrl(origin);
+}
+
 // --- the factory ---------------------------------------------------------------------------------------------------
 
 HttpRequestFactory::HttpRequestFactory(ScriptEngine* engine) : QObject(engine), _engine(engine) {}
@@ -248,7 +254,7 @@ HttpRequestFactory::HttpRequestFactory(ScriptEngine* engine) : QObject(engine), 
 HttpRequestObject* HttpRequestFactory::createRequest(const QString& origin) {
     auto request = new HttpRequestObject(this);
     if (_engine) {
-        request->setOrigin(origin.isEmpty() ? _engine->currentScriptOrigin() : QUrl(origin), _engine->isClientSide());
+        request->setOrigin(origin.isEmpty() ? _engine->currentScriptOrigin() : originUrlFromText(origin), _engine->isClientSide());
         QPointer<ScriptEngine> engine(_engine);
         request->setLogger([engine](const QString& line) {
             if (engine) {

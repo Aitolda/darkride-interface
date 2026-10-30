@@ -47,6 +47,7 @@
 #include <SignalRelay.h>
 
 #include "BatchLoader.h"
+#include <ScriptNetworkPolicy.h>
 #include "HttpRequestObject.h"
 #include "ScriptCache.h"
 #include "ScriptEngineLogging.h"
@@ -1380,7 +1381,7 @@ QString WasmScriptEngine::resolvePathFrom(const QString& path, const QString& pa
     return expandScriptUrl(parentURL.resolved(url)).toString();
 }
 
-QVariantMap WasmScriptEngine::resolveInclude(const QString& file, const QString& parentUrl, const QString& sandboxUrl) const {
+QVariantMap WasmScriptEngine::resolveInclude(const QString& file, const QString& parentUrl, const QString& sandboxUrl) {
     QVariantMap result;
     const QUrl sandbox = sandboxUrl.isEmpty() ? currentSandboxURL : QUrl(sandboxUrl);
     QString normalized = DependencyManager::get<ResourceManager>()->normalizeURL(file);
@@ -1401,6 +1402,15 @@ QVariantMap WasmScriptEngine::resolveInclude(const QString& file, const QString&
         result["reason"] = "outside of original entity script " + sandbox.toString();
         return result;
     }
+    if (isClientSide()) {
+        // the network rule for a script's own requests: an include's download is a request too
+        const QUrl origin = sandbox.isEmpty() ? currentScriptOrigin() : sandbox;
+        QString reason;
+        if (!ScriptNetworkPolicy::decideBlocking(thisURL, origin, reason)) {
+            result["reason"] = ScriptNetworkPolicy::refusalLine(origin, thisURL, reason);
+            return result;
+        }
+    }
     result["url"] = thisURL.toString();
     return result;
 }
@@ -1408,7 +1418,7 @@ QVariantMap WasmScriptEngine::resolveInclude(const QString& file, const QString&
 // Script.require.resolve's rules, as the QtScript engine's _requireResolve has them, with the error returned
 // in the record (the guest throws it).
 QVariantMap WasmScriptEngine::resolveModule(const QString& moduleId, const QString& relativeTo, const QString& parentUrl,
-                                            const QString& sandboxUrl) const {
+                                            const QString& sandboxUrl) {
     QVariantMap result;
     const QUrl sandbox = sandboxUrl.isEmpty() ? currentSandboxURL : QUrl(sandboxUrl);
     QString displayId = moduleId.length() > MAX_DEBUG_VALUE_LENGTH ? moduleId.left(MAX_DEBUG_VALUE_LENGTH) + "..." : moduleId;
@@ -1462,6 +1472,16 @@ QVariantMap WasmScriptEngine::resolveModule(const QString& moduleId, const QStri
         }
         if (!file.isFile()) {
             return fail("path is not a file: " + url.toLocalFile());
+        }
+    }
+    if (isClientSide()) {
+        // the network rule for a script's own requests: a module's download is a request too (a JSON module comes
+        // back to the script as data)
+        const QUrl origin = sandbox.isEmpty() ? currentScriptOrigin() : sandbox;
+        QString reason;
+        if (!ScriptNetworkPolicy::decideBlocking(url, origin, reason)) {
+            scriptWarningMessage(ScriptNetworkPolicy::refusalLine(origin, url, reason));
+            return fail("Refused: " + reason);
         }
     }
     result["url"] = url.toString();

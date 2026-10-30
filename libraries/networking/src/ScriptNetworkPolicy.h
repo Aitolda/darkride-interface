@@ -65,6 +65,10 @@ public:
     static void decide(const QUrl& target, const QUrl& origin, QObject* context,
                        std::function<void(const Decision&)> callback);
 
+    /// The whole judgement on the calling thread, with the name lookup waited for (for Script.include and
+    /// Script.require, which wait for their download anyway); reason is set when refused.
+    static bool decideBlocking(const QUrl& target, const QUrl& origin, QString& reason);
+
     /// The line for the log when a request is refused.
     static QString refusalLine(const QUrl& origin, const QUrl& target, const QString& reason);
 };

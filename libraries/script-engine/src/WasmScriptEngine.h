@@ -161,10 +161,10 @@ public:
     /// Script.resolvePath with the parent given.
     Q_INVOKABLE QString resolvePathFrom(const QString& path, const QString& parentUrl) const;
     /// Script.include's rules: {"url"} or {"reason"} when the file is not to be included.
-    Q_INVOKABLE QVariantMap resolveInclude(const QString& file, const QString& parentUrl, const QString& sandboxUrl = QString()) const;
+    Q_INVOKABLE QVariantMap resolveInclude(const QString& file, const QString& parentUrl, const QString& sandboxUrl = QString());
     /// Script.require.resolve's rules: {"url"} or {"error", "type"}.
     Q_INVOKABLE QVariantMap resolveModule(const QString& moduleId, const QString& relativeTo, const QString& parentUrl,
-                                          const QString& sandboxUrl = QString()) const;
+                                          const QString& sandboxUrl = QString());
     /// A script's text through the script cache, synchronously: {"url", "status", "success", "contents"}.
     Q_INVOKABLE QVariantMap fetchScript(const QString& url, bool forceDownload);
     /// Script.dumpApi for this engine: the globals record the guest composed, written under the usual root.

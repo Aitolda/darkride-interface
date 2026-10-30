@@ -28,6 +28,7 @@ private slots:
     void requestsFromLocalScripts();
     void resolvedAddresses();
     void lookupOfAPublicName();
+    void blockingDecisions();
 };
 
 #endif // hifi_ScriptNetworkPolicyTests_h

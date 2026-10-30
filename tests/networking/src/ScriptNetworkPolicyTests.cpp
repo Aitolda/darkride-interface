@@ -82,7 +82,9 @@ void ScriptNetworkPolicyTests::localOrigins_data() {
     QTest::addColumn<bool>("isLocal");
     QTest::newRow("a file") << "file:///Users/someone/scripts/test.js" << true;
     QTest::newRow("a resource of the app") << "qrc:///scripts/system/x.js" << true;
-    QTest::newRow("a bare path") << "/Users/someone/scripts/test.js" << true;
+    QTest::newRow("a bare path") << "/Users/someone/scripts/test.js" << false;    // not a URL: the engines give file URLs
+    QTest::newRow("an embedded entity script's code") << "(function () { print('x'); })" << false;
+    QTest::newRow("an embedded entity script") << "about:EmbeddedEntityScript" << false;
     QTest::newRow("served from this machine") << "http://127.0.0.1:8080/test.js" << true;
     QTest::newRow("served from localhost") << "http://localhost:8080/test.js" << true;
     QTest::newRow("served from the home network") << "http://192.168.1.10/test.js" << true;
@@ -185,4 +187,15 @@ void ScriptNetworkPolicyTests::lookupOfAPublicName() {
         QSKIP("no name lookup possible here (offline)");
     }
     QVERIFY(!got.allowed);     // either the lookup failed (refused) or it led to 127.0.0.1 (refused)
+}
+
+void ScriptNetworkPolicyTests::blockingDecisions() {
+    QString reason;
+    QVERIFY(ScriptNetworkPolicy::decideBlocking(QUrl("http://127.0.0.1:8080/x.json"), QUrl("file:///Users/someone/test.js"), reason));
+    QVERIFY(!ScriptNetworkPolicy::decideBlocking(QUrl("http://127.0.0.1:8080/x.json"), QUrl("https://cdn.example.com/x.js"), reason));
+    QVERIFY(!reason.isEmpty());
+    QVERIFY(ScriptNetworkPolicy::decideBlocking(QUrl("https://8.8.8.8/x.json"), QUrl("https://cdn.example.com/x.js"), reason));
+    QVERIFY(!ScriptNetworkPolicy::decideBlocking(QUrl("file:///etc/hosts"), QUrl("https://cdn.example.com/x.js"), reason));
+    // a name: looked up here, on this thread; refused when it leads home or cannot be found
+    QVERIFY(!ScriptNetworkPolicy::decideBlocking(QUrl("http://127.0.0.1.nip.io/"), QUrl("https://cdn.example.com/x.js"), reason));
 }

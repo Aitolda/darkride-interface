@@ -95,11 +95,14 @@ bool ScriptNetworkPolicy::isLocalOrigin(const QUrl& scriptUrl) {
         return false;   // unknown: held to the rule
     }
     const QString scheme = scriptUrl.scheme().toLower();
-    if (scheme.isEmpty() || scheme == "file" || scheme == "qrc") {
+    if (scheme == "file" || scheme == "qrc") {
         return true;
     }
     if (!WEB_SCHEMES.contains(scheme)) {
-        return false;   // atp (the world's asset server), about (an entities engine itself): judged by the world
+        // atp (the world's asset server) and about (an entities engine itself, an embedded entity script): judged by
+        // the world; no scheme at all (a bare path, or an entity script's own code standing in for its URL): not a
+        // URL, so not local. The engines give file URLs for scripts from disk.
+        return false;
     }
     const QString host = scriptUrl.host().toLower();
     const QHostAddress address(host);
@@ -208,6 +211,20 @@ void ScriptNetworkPolicy::decide(const QUrl& target, const QUrl& origin, QObject
         }
         callback(checkAddresses(info.addresses()));
     });
+}
+
+bool ScriptNetworkPolicy::decideBlocking(const QUrl& target, const QUrl& origin, QString& reason) {
+    Decision decision = check(target, origin);
+    if (decision.needsLookup) {
+        const QHostInfo info = QHostInfo::fromName(target.host());
+        if (info.error() != QHostInfo::NoError) {
+            reason = "the name could not be looked up (" + info.errorString() + ")";
+            return false;
+        }
+        decision = checkAddresses(info.addresses());
+    }
+    reason = decision.reason;
+    return decision.allowed;
 }
 
 QString ScriptNetworkPolicy::refusalLine(const QUrl& origin, const QUrl& target, const QString& reason) {

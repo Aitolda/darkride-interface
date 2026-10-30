@@ -10,7 +10,8 @@
 //  WebSocket reach from a script, on both engines. Run by network-rules.sh twice: as the local script it is (every
 //  address reachable, as before), and with DARKRIDE_SCRIPT_NETWORK_STRICT=1, which holds it to the rule as a script
 //  from the network (this machine's addresses and file:// refused, with one line in the log each; a public host
-//  reached after its name is looked up), then times 20 requests to a public host. Prints NETWORK-RULES lines and quits. The echo server on 127.0.0.1:43110 is
+//  reached after its name is looked up; a require of a local JSON and an include of a local script refused too), then
+//  times 20 requests to a public host. Prints NETWORK-RULES lines and quits. The echo server on 127.0.0.1:43110 is
 //  http-echo.py, started by network-rules.sh.
 //
 
@@ -111,7 +112,33 @@
         }
     }
 
+    function requireAndInclude() {
+        // require of a JSON file hands its content to the script; include runs the file: both are requests too
+        pending++;
+        try {
+            var world = Script.require("http://127.0.0.1:" + ECHO_PORT + "/world.json");
+            done("require a local json", (world && world.Entities ? "READ (" + world.Entities.length + " entities)" : "no content"));
+        } catch (e) {
+            done("require a local json", "threw " + e + (String(e).indexOf("Refused") >= 0 ? " REFUSED" : ""));
+        }
+        pending++;
+        var includeDone = false;
+        Script.include("http://127.0.0.1:" + ECHO_PORT + "/network-rules-included.js", function () {
+            if (!includeDone) {
+                includeDone = true;
+                done("include a local script", this.NETWORK_RULES_INCLUDED ? "RAN" : "did not run (refused or failed)");
+            }
+        });
+        Script.setTimeout(function () {
+            if (!includeDone) {
+                includeDone = true;
+                done("include a local script", this.NETWORK_RULES_INCLUDED ? "RAN" : "did not run (refused or failed)");
+            }
+        }, 4000);
+    }
+
     print("NETWORK-RULES start");
+    requireAndInclude();
     request("xhr this machine by address", "http://127.0.0.1:" + ECHO_PORT + "/");
     request("xhr this machine by name", "http://localhost:" + ECHO_PORT + "/");
     request("xhr a local file", "file:///etc/hosts");
