@@ -16,8 +16,8 @@
 //  on this machine, not the services on it or on its network. A host given by name is looked up first and refused
 //  when any of its addresses is private.
 //
-//  DARKRIDE_SCRIPT_NETWORK_STRICT=1 holds every script to the rule, local ones too (for testing the refusals on one
-//  machine). Nothing loosens it.
+//  DARKRIDE_SCRIPT_NETWORK_STRICT=1 holds every script to the rule, local ones too, except the app's own scripts (for
+//  testing the refusals on one machine with the client's interface still working). Nothing loosens it.
 //
 
 #ifndef hifi_ScriptNetworkPolicy_h
@@ -45,7 +45,7 @@ public:
     static bool isLocalOrigin(const QUrl& scriptUrl);
     /// Whether the world the client is in is served from this machine or its network, or loaded from a file here.
     static bool isWorldLocal();
-    /// Whether every script is held to the rule (DARKRIDE_SCRIPT_NETWORK_STRICT=1).
+    /// Whether every script but the app's own is held to the rule (DARKRIDE_SCRIPT_NETWORK_STRICT=1).
     static bool isStrict();
     /// Whether a script of this origin is held to the rule at all; false: it keeps every address.
     static bool applies(const QUrl& origin);

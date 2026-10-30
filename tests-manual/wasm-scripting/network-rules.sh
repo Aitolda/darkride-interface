@@ -29,4 +29,4 @@ echo "== $NAME: the script's lines"
 grep "NETWORK-RULES" "$LOG" | sed 's/^.*\[hifi.scriptengine[^]]*\] //'
 echo "== $NAME: the engine's refusal lines"
 grep -c "may not reach" "$LOG" | sed 's/^/count: /'
-grep "may not reach" "$LOG" | sed 's/^.*\[hifi.scriptengine\] //' | cut -c1-200
+grep "may not reach" "$LOG" | sed 's/^.*\[hifi.scriptengine\] //' | cut -c1-200 | head -20

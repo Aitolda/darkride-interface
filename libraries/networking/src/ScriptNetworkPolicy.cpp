@@ -15,6 +15,7 @@
 #include <QtNetwork/QHostInfo>
 
 #include <DependencyManager.h>
+#include <PathUtils.h>
 
 #include "NodeList.h"
 
@@ -132,9 +133,22 @@ bool ScriptNetworkPolicy::isStrict() {
     return strict;
 }
 
+// The app's own scripts (its scripts folder, its resources): the client's interface, which the strict switch must
+// not take apart.
+static bool isAppScript(const QUrl& origin) {
+    if (origin.scheme().toLower() == "qrc") {
+        return true;
+    }
+    if (!origin.isLocalFile()) {
+        return false;
+    }
+    const QUrl defaults = PathUtils::defaultScriptsLocation();
+    return !defaults.isEmpty() && defaults.isParentOf(origin);
+}
+
 bool ScriptNetworkPolicy::applies(const QUrl& origin) {
     if (isStrict()) {
-        return true;
+        return !isAppScript(origin);
     }
     return !isLocalOrigin(origin) && !isWorldLocal();
 }

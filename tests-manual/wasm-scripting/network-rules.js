@@ -18,7 +18,7 @@
 (function () {
     var ECHO_PORT = 43110;
     var WAIT_MS = 10000;
-    var pending = 0;
+    var pending = 1;        // one for the registering of the probes, so a probe that ends at once does not end the run
     var finished = false;
 
     function done(name, outcome) {
@@ -145,5 +145,6 @@
     request("xhr a public host", "https://example.com/");
     socket("websocket this machine", "ws://127.0.0.1:" + ECHO_PORT + "/");
     socket("websocket a public host", "wss://ws.postman-echo.com/raw");   // echo.websocket.events has no address any more (10-30)
+    done("all probes registered", "the run ends when the last one answers");
     Script.setTimeout(finish, WAIT_MS * 4);   // whatever is still pending
 })();
