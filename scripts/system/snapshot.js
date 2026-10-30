@@ -954,6 +954,17 @@ function cameraWindow(part, width, height, enabled) {
         enabled: enabled
     });
     overlay.webEventReceived.connect(onCameraEvent);
+    if (!enabled) {
+        // Window.qml enables a window each time it shows (enabled = visible), on the fade's first frame, after any
+        // setEnabled sent with setVisible; enabled, the frame took the mouse, and a press on the world raised it over
+        // the bars, where its band below the crop (on a window taller than a Snap, a 16:10 laptop) covered the
+        // shutter bar and took its clicks. Click-through again once shown, unless the review (in the frame) is open.
+        overlay.visibleChanged.connect(function () {
+            if (!camera.reviewOpen) {
+                overlay.setEnabled(false);
+            }
+        });
+    }
     return overlay;
 }
 
