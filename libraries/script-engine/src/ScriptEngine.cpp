@@ -613,6 +613,17 @@ void ScriptEngine::loadURL(const QUrl& scriptURL, bool reload) {
     }, reload, maxRetries);
 }
 
+QUrl ScriptEngine::currentScriptOrigin() const {
+    if (!currentSandboxURL.isEmpty()) {
+        return currentSandboxURL;
+    }
+    QUrl url(_fileNameString);
+    if (url.scheme().isEmpty() && !_fileNameString.isEmpty()) {
+        url = QUrl::fromLocalFile(_fileNameString);
+    }
+    return url;
+}
+
 void ScriptEngine::scriptErrorMessage(const QString& message) {
     qCCritical(scriptengine, "[%s] %s", qUtf8Printable(getFilename()), qUtf8Printable(message));
     emit errorMessage(message, getFilename());

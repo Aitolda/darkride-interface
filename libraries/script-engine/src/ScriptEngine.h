@@ -169,6 +169,11 @@ public:
     virtual void run();
 
     QString getFilename() const;
+    /// The URL the running code came from: the entity script being run, else this script's own file. The network
+    /// rule for a script's own requests (ScriptNetworkPolicy) judges them by it.
+    QUrl currentScriptOrigin() const;
+    /// Whether this engine runs on a person's client, where its scripts' requests are held to that rule.
+    bool isClientSide() const { return _context == CLIENT_SCRIPT || _context == ENTITY_CLIENT_SCRIPT; }
    
     QList<EntityItemID> getListOfEntityScriptIDs();
 

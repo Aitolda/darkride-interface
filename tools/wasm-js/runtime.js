@@ -954,7 +954,8 @@
         if (!global.Http) {
             throw new Error("XMLHttpRequest: the engine has no Http object");
         }
-        var request = global.Http.createRequest();
+        // made for the entity script running, else the script itself: the host's network rule judges it by that
+        var request = global.Http.createRequest(currentSandbox || fileName || "");
         var self = this;
         this.onreadystatechange = null;
         this.ontimeout = null;
@@ -1078,7 +1079,7 @@
         if (!global.Sockets) {
             throw new Error("WebSocket: the engine has no Sockets object");
         }
-        attachSocket(this, global.Sockets.createWebSocket(url === undefined ? "" : String(url)));
+        attachSocket(this, global.Sockets.createWebSocket(url === undefined ? "" : String(url), currentSandbox || fileName || ""));
     }
     WebSocket.CONNECTING = 0;
     WebSocket.OPEN = 1;
