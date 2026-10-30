@@ -117,6 +117,6 @@
     request("xhr a local file", "file:///etc/hosts");
     request("xhr a public host", "https://example.com/");
     socket("websocket this machine", "ws://127.0.0.1:" + ECHO_PORT + "/");
-    socket("websocket a public host", "wss://echo.websocket.events/");
+    socket("websocket a public host", "wss://ws.postman-echo.com/raw");   // echo.websocket.events has no address any more (10-30)
     Script.setTimeout(finish, WAIT_MS * 4);   // whatever is still pending
 })();
