@@ -122,16 +122,19 @@ var previousReticleEnabled;
 var POINTER_SIZE = 0.01;
 
 // What the camera follows: the entity or person you Alt-clicked (Caity, 2026-10-29), so a train or someone walking off
-// doesn't leave it behind. The camera is parented to it ("entity" mode), so the engine moves it every frame. Its
-// direction is kept in the frame of what carries the target: the vehicle or track car the target is or rides, which it
-// turns with as the riders do, else the world, so a person turning round doesn't swing it.
-//   id, isAvatar      the target
-//   carrierID         that vehicle or track car, or null for the world; carrierRotation its last rotation
-//   hitLocal          the point the camera looks at, in the target's frame
-//   offset, rotation  the camera from that point, and its orientation, in the carrier's frame
+// doesn't leave it behind. It looks at the clicked point, kept at its offset from the target's position: the target's
+// own turning moves nothing (a spinning sign or wheel, a person turning round). Everything is kept in the frame of
+// what carries the target: the vehicle or track car the target is, is part of, or rides. The camera is then parented
+// to it ("entity" mode), so the engine moves it every frame and it turns with it, as the riders do. Otherwise in the
+// world: the camera keeps its compass direction and moves with the target each script frame.
+//   id, isAvatar      the target; targetParentID its parent when last looked at
+//   carrierID         that vehicle or track car, or null for the world
+//   hitOffset         the clicked point from the target's position, in the carrier's axes
+//   offset, rotation  the camera from the clicked point, and its orientation, in the carrier's frame
 //   fromOffset, fromRotation, startTime   the ease in from where the camera was
 var follow = null;
 var MAX_PARENT_DEPTH = 16;
+var CARRYING_VEHICLES = ["wheeled", "airship", "aircraft"];
 
 var pointerEntityID = Entities.addEntity({
     type: "Sphere",
@@ -154,7 +157,12 @@ var pointerEntityID = Entities.addEntity({
 
 // the pointer rides on what the camera follows, as the camera does
 function pointerPlace(center) {
-    return follow ? { parentID: follow.id, localPosition: follow.hitLocal } : { parentID: Uuid.NULL, position: center };
+    var target = follow && targetPosition();
+    if (!target) {
+        return { parentID: Uuid.NULL, position: center || Vec3.ZERO };
+    }
+    var focus = Vec3.sum(target, follow.hitOffset);
+    return follow.carrierID ? { parentID: follow.carrierID, localPosition: focus } : { parentID: Uuid.NULL, position: focus };
 }
 
 function enablePointer(center) {
@@ -185,17 +193,12 @@ function avatarOf(id) {
     return (Uuid.isEqual(id, MyAvatar.sessionUUID) || Uuid.isEqual(id, MyAvatar.SELF_ID)) ? MyAvatar : AvatarList.getAvatar(id);
 }
 
-// where the target is now, or null once it has gone (deleted, out of range, left the world)
-function placeOf(id, isAvatar) {
-    if (Entities.getNestableType(id) !== (isAvatar ? "avatar" : "entity")) {
-        return null;
-    }
-    if (isAvatar) {
-        var avatar = avatarOf(id);
-        return { position: avatar.position, rotation: avatar.orientation };
-    }
-    var properties = Entities.getEntityProperties(id, ["position", "rotation"]);
-    return { position: properties.position, rotation: properties.rotation };
+function parentOf(id, isAvatar) {
+    return isAvatar ? avatarOf(id).parentID : Entities.getEntityProperties(id, ["parentID"]).parentID;
+}
+
+function exists(id, isAvatar) {
+    return Entities.getNestableType(id) === (isAvatar ? "avatar" : "entity");
 }
 
 // the person a clicked entity hangs off (something worn), if any: following it means following them
@@ -215,13 +218,15 @@ function wearerOf(entityID) {
     return null;
 }
 
-// the outermost vehicle or track car the target is (an entity) or rides, or null for the world
+// the outermost vehicle or track car (PHYSICS.md: a moving frame, a track car, a driven vehicle) the target is, is part
+// of, or rides, or null for the world
 function carrierOf(id, isAvatar) {
     var carrier = null;
     var current = isAvatar ? avatarOf(id).parentID : id;
     for (var depth = 0; depth < MAX_PARENT_DEPTH && Entities.getNestableType(current) === "entity"; depth++) {
-        var properties = Entities.getEntityProperties(current, ["parentID", "frame", "trackID"]);
-        if (properties.frame || !Uuid.isNull(properties.trackID)) {
+        var properties = Entities.getEntityProperties(current, ["parentID", "frame", "trackID", "vehicle"]);
+        if (properties.frame || !Uuid.isNull(properties.trackID) ||
+            (properties.vehicle && CARRYING_VEHICLES.indexOf(properties.vehicle.type) !== -1)) {
             carrier = current;
         }
         current = properties.parentID;
@@ -229,25 +234,84 @@ function carrierOf(id, isAvatar) {
     return carrier;
 }
 
-function carrierRotationOf(place) {
-    if (follow.carrierID) {
-        if (Uuid.isEqual(follow.carrierID, follow.id)) {
-            follow.carrierRotation = place.rotation;
-        } else if (Entities.getNestableType(follow.carrierID) === "entity") {
-            follow.carrierRotation = Entities.getEntityProperties(follow.carrierID, ["rotation"]).rotation;
+// a position given in a parent's frame, in the carrier's, from the local positions and rotations up the chain (all
+// from the same moment, so a fast train doesn't put it out by a frame of its motion), or null off the carrier
+function positionInCarrier(localPosition, parentID) {
+    var position = localPosition;
+    var id = parentID;
+    for (var depth = 0; depth < MAX_PARENT_DEPTH; depth++) {
+        if (Uuid.isEqual(id, follow.carrierID)) {
+            return position;
         }
+        if (Entities.getNestableType(id) !== "entity") {
+            return null;
+        }
+        var properties = Entities.getEntityProperties(id, ["localPosition", "localRotation", "parentID"]);
+        position = Vec3.sum(properties.localPosition, Vec3.multiplyQbyV(properties.localRotation, position));
+        id = properties.parentID;
     }
-    return follow.carrierRotation;
+    return null;
 }
 
-// the camera's place on the target from the follow state, eased in from where it was over the first moments
-function applyFollow(place) {
+// the target's position in the carrier's frame (or the world), or null when it's no longer on the carrier. Walked up
+// every time: something can move in a vehicle (a person, a crate sliding about its deck); a part of it stays put
+function targetPosition() {
+    if (!follow.carrierID) {
+        return follow.isAvatar ? avatarOf(follow.id).position : Entities.getEntityProperties(follow.id, ["position"]).position;
+    }
+    if (Uuid.isEqual(follow.id, follow.carrierID)) {
+        return Vec3.ZERO;
+    }
+    var target = follow.isAvatar ? avatarOf(follow.id) : Entities.getEntityProperties(follow.id, ["localPosition", "parentID"]);
+    return positionInCarrier(target.localPosition, target.parentID);
+}
+
+// the carrier's place in the world (the world's own for none)
+function carrierPlace() {
+    if (follow.carrierID && Entities.getNestableType(follow.carrierID) === "entity") {
+        return Entities.getEntityProperties(follow.carrierID, ["position", "rotation"]);
+    }
+    return { position: Vec3.ZERO, rotation: Quat.IDENTITY };
+}
+
+// keeps the follow in the frame of carrierID (null: the world) from a place in the world: the clicked point and the
+// camera's offset from it and orientation; the camera goes where it is
+function setCarrier(carrierID, worldFocus, worldOffset, worldRotation) {
+    follow.carrierID = carrierID;
+    follow.targetParentID = parentOf(follow.id, follow.isAvatar);
+    var frame = carrierPlace();
+    var toFrame = Quat.inverse(frame.rotation);
+    var focus = Vec3.multiplyQbyV(toFrame, Vec3.subtract(worldFocus, frame.position));
+    follow.hitOffset = Vec3.subtract(focus, targetPosition() || focus);
+    follow.offset = Vec3.multiplyQbyV(toFrame, worldOffset);
+    follow.rotation = Quat.multiply(toFrame, worldRotation);
+    follow.fromOffset = follow.offset;
+    follow.fromRotation = follow.rotation;
+    if (carrierID) {
+        Camera.localPosition = Vec3.sum(focus, follow.offset);
+        Camera.localRotation = follow.rotation;
+        Camera.parentID = carrierID;
+        Camera.mode = "entity";
+    } else {
+        Camera.parentID = Uuid.NULL;
+        Camera.mode = "independent";
+        Camera.setPosition(Vec3.sum(worldFocus, worldOffset));
+        Camera.setOrientation(worldRotation);
+    }
+}
+
+// the camera from the follow state, eased in from where it was over the first moments
+function applyFollow(target) {
     var eased = cubicBezier(0.4, 0, 0.2, 1, Math.min((Date.now() - follow.startTime) * timeDiv, 1));
-    var offset = Vec3.mix(follow.fromOffset, follow.offset, eased);
+    var position = Vec3.sum(Vec3.sum(target, follow.hitOffset), Vec3.mix(follow.fromOffset, follow.offset, eased));
     var rotation = Quat.mix(follow.fromRotation, follow.rotation, eased);
-    var toLocal = Quat.multiply(Quat.inverse(place.rotation), carrierRotationOf(place));
-    Camera.localPosition = Vec3.sum(follow.hitLocal, Vec3.multiplyQbyV(toLocal, offset));
-    Camera.localRotation = Quat.multiply(toLocal, rotation);
+    if (follow.carrierID) {
+        Camera.localPosition = position;
+        Camera.localRotation = rotation;
+    } else {
+        Camera.setPosition(position);
+        Camera.setOrientation(rotation);
+    }
 }
 
 // follows what the pick hit, from the camera's place now (center, vector: the orbit around the hit point), or doesn't
@@ -262,26 +326,13 @@ function startFollowing(result) {
             isAvatar = true;
         }
     }
-    var place = placeOf(targetID, isAvatar);
-    if (!place) {
+    if (!exists(targetID, isAvatar)) {
         return;
     }
-    follow = {
-        id: targetID,
-        isAvatar: isAvatar,
-        carrierID: carrierOf(targetID, isAvatar),
-        carrierRotation: Quat.IDENTITY,
-        hitLocal: Vec3.multiplyQbyV(Quat.inverse(place.rotation), Vec3.subtract(center, place.position)),
-        startTime: Date.now()
-    };
-    var toCarrier = Quat.inverse(carrierRotationOf(place));
-    follow.offset = Vec3.multiplyQbyV(toCarrier, vector);
-    follow.rotation = Quat.multiply(toCarrier, orientationOf(vector));
-    follow.fromOffset = follow.offset;
-    follow.fromRotation = Quat.multiply(toCarrier, Camera.getOrientation());
-    applyFollow(place);
-    Camera.parentID = targetID;
-    Camera.mode = "entity";
+    follow = { id: targetID, isAvatar: isAvatar, startTime: Date.now() };
+    setCarrier(carrierOf(targetID, isAvatar), center, vector, Camera.getOrientation());
+    // the ease in turns the camera to the clicked point
+    follow.rotation = Quat.multiply(Quat.inverse(carrierPlace().rotation), orientationOf(vector));
     // your avatar stays still while the camera is away, as in "independent" mode (which drives nothing)
     Controller.captureActionEvents();
 }
@@ -296,13 +347,31 @@ function stopFollowing() {
 }
 
 function updateFollow() {
-    var place = placeOf(follow.id, follow.isAvatar);
-    if (!place) {
+    if (!exists(follow.id, follow.isAvatar)) {
         mode = noMode;
         restoreCameraState();
         return;
     }
-    applyFollow(place);
+    var target = targetPosition();
+    // the target getting on or off a vehicle, or the vehicle gone: the follow goes on in what carries it now, from where
+    // the camera is
+    if (!target || !Uuid.isEqual(parentOf(follow.id, follow.isAvatar), follow.targetParentID) ||
+        (follow.carrierID && Entities.getNestableType(follow.carrierID) !== "entity")) {
+        var frame = carrierPlace();
+        var worldFocus = Vec3.sum(follow.isAvatar ? avatarOf(follow.id).position : Entities.getEntityProperties(follow.id, ["position"]).position,
+            Vec3.multiplyQbyV(frame.rotation, follow.hitOffset));
+        var cameraPosition = Camera.getPosition();
+        follow.startTime = 0;
+        setCarrier(carrierOf(follow.id, follow.isAvatar), worldFocus, Vec3.subtract(cameraPosition, worldFocus), Camera.getOrientation());
+        target = targetPosition();
+    }
+    if (!target) {
+        return;
+    }
+    applyFollow(target);
+    if (isActive) {
+        Entities.editEntity(pointerEntityID, pointerPlace());
+    }
 }
 
 function orientationOf(vector) {
@@ -673,11 +742,11 @@ function mouseMoveEvent(event) {
             timeDelta = (Date.now() - startTime) * timeDiv;
 
             // following: the orbit from where the target, and what carries it, are now
-            var place = follow && placeOf(follow.id, follow.isAvatar);
-            if (place) {
-                var carrierRotation = carrierRotationOf(place);
-                center = Vec3.sum(place.position, Vec3.multiplyQbyV(place.rotation, follow.hitLocal));
-                vector = Vec3.multiplyQbyV(carrierRotation, follow.offset);
+            var target = follow && exists(follow.id, follow.isAvatar) && targetPosition();
+            if (target) {
+                var frame = carrierPlace();
+                center = Vec3.sum(frame.position, Vec3.multiplyQbyV(frame.rotation, Vec3.sum(target, follow.hitOffset)));
+                vector = Vec3.multiplyQbyV(frame.rotation, follow.offset);
                 position = Vec3.sum(center, vector);
                 radius = Vec3.length(vector);
                 azimuth = Math.atan2(vector.z, vector.x);
@@ -694,12 +763,12 @@ function mouseMoveEvent(event) {
                 handlePanMode(event.x - mouseLastX, event.y - mouseLastY);
             }
 
-            if (place) {
-                var toCarrier = Quat.inverse(carrierRotation);
-                follow.hitLocal = Vec3.multiplyQbyV(Quat.inverse(place.rotation), Vec3.subtract(center, place.position));
-                follow.offset = Vec3.multiplyQbyV(toCarrier, vector);
-                follow.rotation = Quat.multiply(toCarrier, orientationOf(vector));
-                applyFollow(place);
+            if (target) {
+                var toFrame = Quat.inverse(frame.rotation);
+                follow.hitOffset = Vec3.subtract(Vec3.multiplyQbyV(toFrame, Vec3.subtract(center, frame.position)), target);
+                follow.offset = Vec3.multiplyQbyV(toFrame, vector);
+                follow.rotation = Quat.multiply(toFrame, orientationOf(vector));
+                applyFollow(target);
             } else if (!follow) {
                 Camera.setPosition(timeVLerp(startPosition, position));
                 Camera.setOrientation(timeQLerp(startOrientation, orientationOf(vector)));
