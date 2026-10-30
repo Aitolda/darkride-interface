@@ -77,6 +77,7 @@
 #include "ArrayBufferViewClass.h"
 #include "AssetScriptingInterface.h"
 #include "BatchLoader.h"
+#include <ScriptNetworkPolicy.h>
 #include "BaseScriptEngine.h"
 #include "DataViewClass.h"
 #include "EventTypes.h"
@@ -611,6 +612,26 @@ void ScriptEngine::loadURL(const QUrl& scriptURL, bool reload) {
         }
         emit scriptLoaded(url);
     }, reload, maxRetries);
+}
+
+QUrl ScriptEngine::currentScriptOrigin() const {
+    if (!currentSandboxURL.isEmpty()) {
+        const QString scheme = currentSandboxURL.scheme().toLower();
+        if (scheme == "javascript") {
+            return QUrl("about:EmbeddedEntityScript");   // the code itself, as a javascript: URL
+        }
+        if (!scheme.isEmpty()) {
+            return currentSandboxURL;
+        }
+        // an entity script given as code in the script property keeps that code as its sandbox (entityScriptContentAvailable)
+        const QString text = currentSandboxURL.toString();
+        return text.startsWith('/') ? QUrl::fromLocalFile(text) : QUrl("about:EmbeddedEntityScript");
+    }
+    QUrl url(_fileNameString);
+    if (url.scheme().isEmpty() && !_fileNameString.isEmpty()) {
+        url = QUrl::fromLocalFile(_fileNameString);
+    }
+    return url;
 }
 
 void ScriptEngine::scriptErrorMessage(const QString& message) {
@@ -1964,6 +1985,18 @@ QVariantMap ScriptEngine::fetchModuleSource(const QString& modulePath, const boo
     using UrlMap = QMap<QUrl, QString>;
     auto scriptCache = DependencyManager::get<ScriptCache>();
     QVariantMap req;
+    if (isClientSide()) {
+        // the network rule for a script's own requests: a module's download is a request too (a JSON module comes
+        // back to the script as data)
+        QString reason;
+        if (!ScriptNetworkPolicy::decideBlocking(QUrl(modulePath), currentScriptOrigin(), reason)) {
+            scriptWarningMessage(ScriptNetworkPolicy::refusalLine(currentScriptOrigin(), QUrl(modulePath), reason));
+            req["url"] = modulePath;
+            req["status"] = "Refused";
+            req["success"] = false;
+            return req;
+        }
+    }
     qCDebug(scriptengine_module) << "require.fetchModuleSource: " << QUrl(modulePath).fileName() << QThread::currentThread();
 
     auto onload = [=, &req](const UrlMap& data, const UrlMap& _status) {
@@ -2181,6 +2214,12 @@ void ScriptEngine::include(const QStringList& includeFiles, QScriptValue callbac
             scriptWarningMessage("Script.include() ignoring file path" + thisURL.toString()
                                 + "outside of original entity script" + currentSandboxURL.toString());
         } else {
+            QString reason;
+            if (isClientSide() && !ScriptNetworkPolicy::decideBlocking(thisURL, currentScriptOrigin(), reason)) {
+                // the network rule for a script's own requests: an include's download is a request too
+                scriptWarningMessage(ScriptNetworkPolicy::refusalLine(currentScriptOrigin(), thisURL, reason));
+                continue;
+            }
             // We could also check here for CORS, but we don't yet.
             // It turns out that QUrl.resolve will not change hosts and copy authority, so we don't need to check that here.
             urls.append(thisURL);
