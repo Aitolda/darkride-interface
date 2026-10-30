@@ -110,12 +110,20 @@ Display::~Display() {
 // ratio, which runs away on a tall, narrow viewport (build mode's panels) and flips past 180
 // degrees. Build mode keeps the vertical angle at its 16:9 value, so a narrower viewport crops
 // the sides instead, as Unity's scene view does.
+// Outside build mode the vertical angle is capped. A setting of 120 (kept from 1.0, where the number
+// was the vertical angle) in a 1190 x 953 window with Chat docked at the side (view 676 x 953) gave
+// 169 degrees: a near-fisheye picture, everything tiny at the centre, the first-person camera inside
+// the avatar's hair, and past 180 the picture turns inside out (Caity, the 1.1 beta zip, 10-29). At
+// the cap the docked view looks like the same window undocked (103 degrees); at the default 45 the
+// cap is reached only below an aspect ratio of 0.45.
+const float MAX_VERTICAL_FOV_DEGREES = 100.0f;
+
 float verticalFieldOfView(float horizontalFov, float aspectRatio) {   // the frame loop's render arguments read it too
     auto editor = DependencyManager::get<Editor>();
     if (editor && editor->isActive()) {
         return horizontalFov / (16.0f / 9.0f);
     }
-    return horizontalFov / aspectRatio;
+    return glm::min(horizontalFov / glm::max(aspectRatio, 0.01f), MAX_VERTICAL_FOV_DEGREES);
 }
 
 static const char* EXCLUSION_GROUP_KEY = "exclusionGroup";
