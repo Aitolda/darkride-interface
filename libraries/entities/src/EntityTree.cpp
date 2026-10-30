@@ -1731,6 +1731,74 @@ int EntityTree::processEditPacketData(ReceivedMessage& message, const unsigned c
                 validEditPacket = false;
             }
 
+            // What reaches everyone else takes the domain's owners and editors, or the right to make permanent entities. Who
+            // may only make temporary ones (a visitor) keeps the rest of an edit (a vehicle's seat, a colour). A clone's
+            // properties are the original's, copied here.
+            bool suppressScriptsOfVisitor = false;
+            bool suppressParentOfVisitor = false;
+            bool onlyTemporaryRights = !isClone && senderNode && !senderNode->isAllowedEditor() &&
+                !senderNode->getCanRez() && !senderNode->getCanRezCertified();
+
+            // a Web entity shows its page (and runs its script) on everyone's screen, and a zone sets the world around
+            // them: a visitor neither makes nor changes one
+            if (validEditPacket && onlyTemporaryRights) {
+                EntityTypes::EntityType type = isAdd ? properties.getType() : existingEntity->getType();
+                if (type == EntityTypes::Web || type == EntityTypes::Zone) {
+                    qCDebug(entities) << "User [" << senderNode->getUUID() << "] may not make or change a Web entity or a zone;"
+                        << entityItemID << (isAdd ? "not added" : "edit rejected");
+                    if (isAdd) {
+                        // tell the client that sent it that the entity was not added
+                        QWriteLocker locker(&_recentlyDeletedEntitiesLock);
+                        _recentlyDeletedEntityItemIDs.insert(usecTimestampNow(), entityItemID);
+                    } else if (!isPhysics) {
+                        sendBackRefusedEdit(existingEntity, properties);
+                    }
+                    validEditPacket = false;
+                }
+            }
+
+            if (validEditPacket && onlyTemporaryRights) {
+                // an entity's script runs on the client of everyone near it, and its server scripts on the entity script
+                // server: a visitor's edit keeps the entity's own
+                if (properties.scriptChanged() || properties.scriptTimestampChanged() || properties.serverScriptsChanged()) {
+                    qCDebug(entities) << "User [" << senderNode->getUUID() << "] may not change the scripts of" << entityItemID
+                        << (isAdd ? "; added without them" : "; kept them");
+                    if (isAdd) {
+                        properties.setScript(ENTITY_ITEM_DEFAULT_SCRIPT);
+                        properties.setScriptTimestamp(ENTITY_ITEM_DEFAULT_SCRIPT_TIMESTAMP);
+                        properties.setServerScripts(ENTITY_ITEM_DEFAULT_SERVER_SCRIPTS);
+                        bumpTimestamp(properties);
+                    } else {
+                        suppressScriptsOfVisitor = true;
+                    }
+                }
+
+                // a visitor parents only to themselves (their avatar) or to an entity they may change: never to someone
+                // else's avatar or to what isn't theirs to move
+                if (properties.parentIDChanged() && !properties.getParentID().isNull()) {
+                    QUuid parentID = properties.getParentID();
+                    if (parentID == AVATAR_SELF_ID) {
+                        // the client's stand-in for its own avatar (it sends its session id): kept as the sender's id, so
+                        // it means the sender for everyone, not each viewer
+                        properties.setParentID(senderNode->getUUID());
+                        bumpTimestamp(properties);
+                    } else if (parentID != senderNode->getUUID()) {
+                        EntityItemPointer parent = findEntityByID(parentID);
+                        if (!parent || !senderMayChange(senderNode, parent)) {
+                            qCDebug(entities) << "User [" << senderNode->getUUID() << "] may not parent" << entityItemID
+                                << "to" << parentID << (isAdd ? "; added without a parent" : "; kept its parent");
+                            if (isAdd) {
+                                properties.setParentID(UNKNOWN_ENTITY_ID);
+                                properties.setParentJointIndex(INVALID_JOINT_INDEX);
+                                bumpTimestamp(properties);
+                            } else {
+                                suppressParentOfVisitor = true;
+                            }
+                        }
+                    }
+                }
+            }
+
             if (!isClone) {
                 if ((isAdd || properties.lifetimeChanged()) &&
                     ((!senderNode->getCanRez() && senderNode->getCanRezTmp()) ||
@@ -1802,6 +1870,20 @@ int EntityTree::processEditPacketData(ReceivedMessage& message, const unsigned c
                     if (suppressDisallowedPrivateUserData) {
                         bumpTimestamp(properties);
                         properties.setPrivateUserData(existingEntity->getPrivateUserData());
+                    }
+
+                    if (suppressScriptsOfVisitor) {
+                        // the entity's own, sent back so the sender's client drops what it tried
+                        bumpTimestamp(properties);
+                        properties.setScript(existingEntity->getScript());
+                        properties.setScriptTimestamp(existingEntity->getScriptTimestamp());
+                        properties.setServerScripts(existingEntity->getServerScripts());
+                    }
+
+                    if (suppressParentOfVisitor) {
+                        bumpTimestamp(properties);
+                        properties.setParentID(existingEntity->getParentID());
+                        properties.setParentJointIndex(existingEntity->getParentJointIndex());
                     }
 
                     // if the EntityItem exists, then update it
