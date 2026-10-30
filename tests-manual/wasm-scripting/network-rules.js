@@ -157,8 +157,21 @@
         });
     }
 
+    function settingsWrites() {
+        // security's #4 (10-30): a script from the network may not write the settings that steer the client
+        var probes = [["Developer/networkRulesProbe", "steering"], ["Script Example/networkRulesProbe", "ordinary"]];
+        probes.forEach(function (probe) {
+            var key = probe[0], stamp = "probe " + Date.now();
+            Settings.setValue(key, stamp);
+            var stuck = Settings.getValue(key) === stamp;
+            print("NETWORK-RULES settings write to a " + probe[1] + " key (" + key + "): " + (stuck ? "WRITTEN" : "not written (refused)"));
+            if (stuck) { Settings.setValue(key, null); }
+        });
+    }
+
     print("NETWORK-RULES start");
     runtimeInternals();
+    settingsWrites();
     requireAndInclude();
     request("xhr this machine by address", "http://127.0.0.1:" + ECHO_PORT + "/");
     request("xhr this machine by name", "http://localhost:" + ECHO_PORT + "/");

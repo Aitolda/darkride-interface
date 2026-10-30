@@ -64,6 +64,7 @@
 #include "scripting/MenuScriptingInterface.h"
 #include "graphics-scripting/GraphicsScriptingInterface.h"
 #include "scripting/SettingsScriptingInterface.h"
+#include "scripting/ScriptSettingsInterface.h"
 #include "scripting/WindowScriptingInterface.h"
 #include "scripting/RatesScriptingInterface.h"
 #include "scripting/SelectionScriptingInterface.h"
@@ -365,7 +366,9 @@ void Application::registerScriptEngineWithApplicationServices(const ScriptEngine
     scriptEngine->registerGlobalObject("Menu", MenuScriptingInterface::getInstance());
     scriptEngine->registerGlobalObject("DesktopPreviewProvider", DependencyManager::get<DesktopPreviewProvider>().data());
     scriptEngine->registerGlobalObject("Stats", Stats::getInstance());
-    scriptEngine->registerGlobalObject("Settings", SettingsScriptingInterface::getInstance());
+    // one Settings object per engine: it knows the engine's scripts' origin, and a script from the network may not
+    // write the settings that steer the client (ScriptSettingsInterface)
+    scriptEngine->registerGlobalObject("Settings", new ScriptSettingsInterface(scriptEngine.data()));
     scriptEngine->registerGlobalObject("Snapshot", DependencyManager::get<Snapshot>().data());
     scriptEngine->registerGlobalObject("AudioStats", DependencyManager::get<AudioClient>()->getStats().data());
     scriptEngine->registerGlobalObject("AudioScope", DependencyManager::get<AudioScope>().data());

@@ -76,11 +76,12 @@ if [ $SCRIPTED = 1 ]; then
     # within seconds of starting crashes in tivoli.js's start-up evaluation (KNOWN-ISSUES, 2026-10-25)
     echo "{\"WindowGeometry\": \"@Rect(1110 470 800 600)\"}" > "$R/config/Tivoli Cloud VR - dev/Interface.json"
 fi
-"$D/stop-clients.sh" > /dev/null
 SESSION=scripting
 SANDBOX=$HOME/tivoli-sandboxes/wasm
 . "$D/../physics-baseline/harness.sh"
 lock_take "run-client $NAME" $((SECONDS_MAX / 60 + 2)) || exit 1
+# a client of ours left from an earlier run goes now, under the lock (stop-clients.sh touches only our own)
+"$D/stop-clients.sh" > /dev/null
 LOG="$R/client.log"
 XDG_CONFIG_HOME="$R/config" TIVOLI_APP_DATA_DIR="$R/data" CLIENT_FOREGROUND=$CLIENT_FOREGROUND \
     client_start "$LOG" --allowMultipleInstances "$@" &
