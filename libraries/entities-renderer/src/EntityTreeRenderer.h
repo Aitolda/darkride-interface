@@ -217,6 +217,7 @@ public:
     static void removeTaggedMaterial(const QUuid& materialEntityID);
     // the tagged materials and their version, which changes with every change to them
     static TaggedMaterials getTaggedMaterials(uint32_t& version);
+    static uint32_t getTaggedMaterialsVersion() { return _taggedMaterialsVersion; }
 
     int getPrevNumEntityUpdates() const { return _prevNumEntityUpdates; }
     int getPrevTotalNeededEntityUpdates() const { return _prevTotalNeededEntityUpdates; }
